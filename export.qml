@@ -7,8 +7,8 @@ import QtQuick.Window 2.1
 import Qt.labs.folderlistmodel 2.1
 import Qt.labs.settings 1.0
 
-import MuseScore 1.0
-import FileIO 1.0
+import MuseScore 3.0
+import FileIO 3.0
 
 
 MuseScore {
@@ -25,8 +25,17 @@ MuseScore {
         {
             part = curScore.parts[partIdx];
             //console.log ( "part partName/shortName: " + part.partName + "/" + part.shortName);
-            part.volume = vol
-            part.mute = false  
+
+            var instrs = part.instruments;
+            for (var j = 0; j < instrs.length; ++j) {
+                var instr = instrs[j];
+                var channels = instr.channels;
+                for (var k = 0; k < channels.length; ++k) {
+                    var channel = channels[k];
+                    channel.volume = vol;
+                    channel.mute = false;
+                }
+            }
         }
     }
 
@@ -45,7 +54,17 @@ MuseScore {
         part = curScore.parts[partIdx];
         // console.log ( "part partName/shortName: " + part.partName + "/" + part.shortName);
         part.volume = vol
-        part.mute = false  
+        part.mute = false
+
+        var instrs = part.instruments;
+        for (var j = 0; j < instrs.length; ++j) {
+            var instr = instrs[j];
+            var channels = instr.channels;
+            for (var k = 0; k < channels.length; ++k) {
+                var channel = channels[k];
+                channel.volume = vol;
+            }
+        }
     }
     
     // Get a Name/Volume pattern to be used in the export filename
@@ -83,21 +102,24 @@ exportDialog.visible = true;
         console.log(curScore);
 
         // export score as mp3 with all voices aat normal
-        expName =  getExportDir() + curScore.name + " ALL.mp3"
+        expName =  curScore.scoreName + " ALL.mp3"
         console.log ( "createfile: " + expName);
-        console.log(writeScore(curScore, expName,"mp3"))
+        writeScore(curScore, expName,"mp3")
         
         // get number of all parts without piano
         // for every choir voice (eq. part) set all others to volume 50
         var maxPart = getMaxChoirPart()
+
+
         for (var partIdx = 0; partIdx < maxPart; partIdx++)
         {
+            var partName = partNames.text.split(" ")[partIdx]
                 // all others to 50
                 mixerVolAll(30)
                 // single choir voice to 100
                 mixerVolPart(100,partIdx)		
                 
-                expName =  getExportDir() + curScore.name + " " + curScore.parts[partIdx].partName + ".mp3"
+                expName =  curScore.scoreName + " " + partName + ".mp3"
                 console.log ( "createfile: " + expName);
                 writeScore(curScore , expName, "mp3" )
         }
@@ -107,91 +129,8 @@ exportDialog.visible = true;
         Qt.quit()
     } // on run
 
-    function getExportDir() {
-        if (Qt.platform.os=="windows") {
-            if (exportDirectory.text.slice(-1) !== '\\') {
-                return exportDirectory.text + "\\";
-            }
-        }
-        if (exportDirectory.text.slice(-1) !== '/') {
-            return exportDirectory.text + "/";
-        }
-    }
-
-    function namePart(p, name) {
-        console.log("namePart", p, name);
-        if (curScore.parts.length > p) {
-            curScore.startCmd();
-            curScore.parts[p].longName = name;
-            curScore.parts[p].partName = name;
-            if (name.indexOf(".") === -1){
-                curScore.parts[p].shortName = name.slice(0,1);
-            } else {
-                curScore.parts[p].shortName = name.slice(0,3);
-            }
-            curScore.endCmd();
-        }
-    }
-
-    function nameAllParts() {
-        var abbr = partNames.text + "";
-        var p = 0;
-        var used = [1,1,1,1,1,1];
-        var addstr = "";
-        var len = abbr.length;
-        var c = "";
-        for (var i = 0; i < len; i++){
-            c = abbr.charAt(i);
-            console.log(c)
-            switch (c) {
-                case "S":
-                    nameAllPartsHelper(used[0], p, "Soprano");
-                    p++;
-                    used[0]++;
-                break;
-                case "A":
-                    nameAllPartsHelper(used[1], p, "Alto");
-                    p++;
-                    used[1]++;
-                break;
-                case "T":
-                    nameAllPartsHelper(used[2], p, "Tenor");
-                    p++;
-                    used[2]++;
-                break;
-                case "B":
-                    nameAllPartsHelper(used[3], p, "Bass");
-                    p++;
-                    used[3]++;
-                break;
-                case "W":
-                    nameAllPartsHelper(used[4], p, "Women");
-                    p++;
-                    used[4]++;
-                break;
-                case "M":
-                    nameAllPartsHelper(used[5], p, "Men");
-                    p++;
-                    used[5]++;
-                break;
-            }
-        }
-    }
-    function nameAllPartsHelper(used, p, str) {
-        var addstr = (used > 1 ? used + "." : "");
-        if (used === 2 && p > 0 && curScore.parts[p - 1].partName === str) {
-            namePart(p - 1, "1." + str);
-        }
-        namePart(p, addstr + str);
-    }
-
     Settings {
         id: settings
-        property alias exportDirectory: exportDirectory.text
-    }
-
-    Component.onDestruction: {
-        settings.exportDirectory = exportDirectory.text
     }
 
     Dialog {
@@ -212,13 +151,6 @@ exportDialog.visible = true;
                     columns: 2
                     anchors.fill: parent
                     anchors.margins: 10
-                    Label {
-                        text: "Directory for exporting: "
-                    }
-                    TextField {
-                        id: exportDirectory
-                        text: ""
-                    }
                     Button {
                         id: exportButton
                         text: qsTranslate("PrefsDialogBase", "Export")
@@ -233,14 +165,7 @@ exportDialog.visible = true;
                     }
                     TextField {
                         id: partNames
-                        text: "SATB"
-                    }
-                    Button {
-                        id: namePartsButton
-                        text: qsTr("Name parts (SATBWM)")
-                        onClicked: {
-                            nameAllParts();
-                        } // onClicked
+                        text: "T1 T2 B1 B2"
                     }
                     Button {
                         id: cancelButton
