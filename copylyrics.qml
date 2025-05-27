@@ -108,6 +108,15 @@ MuseScore {
                             applyCursor.element.add(lyric);
                             usedTopTicks[tick] = true;
                             matchedTicks.push(tick);
+                            console.log("Inserted lyric '" + topLyrics[j].text + "' at tick " + tick);
+                            // Remove from notesNoLyrics
+                            for (var k = 0; k < notesNoLyrics.length; k++) {
+                                if (notesNoLyrics[k].tick === tick) {
+                                    notesNoLyrics.splice(k, 1);
+                                    console.log("Removed note without lyrics at tick " + tick);
+                                    break;
+                                }
+                            }
                             break;
                         }
                     }
