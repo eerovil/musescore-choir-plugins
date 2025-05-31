@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import obsws_python as obs  # This is how you originally used it — and it works
 import logging
 
+from upload_to_youtube import get_authenticated_service, upload_to_youtube
+
 # === CONFIG ===
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
@@ -41,13 +43,20 @@ def get_latest_file(path: Path, pattern: str):
     files = list(path.glob(pattern))
     if not files:
         raise FileNotFoundError(f"No files matching {pattern} in {path}")
+    # if path is mov, ignore files less than 5MB
+    if pattern.endswith(".mov"):
+        logging.info(f"Filtering MOV files larger than 5MB in {path}")
+        files = [f for f in files if f.stat().st_size >= 5 * 1024 * 1024]  # 5MB
+        if not files:
+            raise FileNotFoundError(f"No MOV files larger than 5MB found in {path}")
     return max(files, key=os.path.getmtime)
 
 
 def get_filtered_mp3_files(mp3_basename):
     mp3_files = list(export_path.glob(f"{mp3_basename}*.mp3"))
-    to_remove = f"{mp3_basename} undefined.mp3"
-    mp3_files = [f for f in mp3_files if f.name != to_remove]
+    to_remove = f"undefined.mp3"
+    logging.info(f"Removing {to_remove} from the list of MP3s.")
+    mp3_files = [f for f in mp3_files if to_remove not in f.name]
 
     if not mp3_files:
         raise FileNotFoundError(f"No MP3s with base name '{mp3_basename}' found.")
@@ -93,6 +102,7 @@ def merge_mp3_to_video(mp3_basename):
     mov_file = get_latest_file(obs_path, "*.mov")
     output_dir = Path("output") / mp3_basename
     output_dir.mkdir(parents=True, exist_ok=True)
+    results = []
 
     for mp3 in mp3_files:
         output_path = output_dir / f"{mp3.stem}.mov"
@@ -106,23 +116,54 @@ def merge_mp3_to_video(mp3_basename):
             "-map", "[a]",
             "-map", "1:a:0",
             "-y",
-            str(output_path)
+            str(output_path),
         ]
         logging.info(f"Merging {mp3.name} → {output_path.name}")
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, capture_output=True)
+        results.append(output_path)
+    
+    logging.info(f"All videos merged: {', '.join(str(r) for r in results)}")
+    return results
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate MuseScore practice videos.")
     parser.add_argument("--basename", default='', help="Filter MP3 files by base name (e.g. song name)")
     parser.add_argument("--no-record", action="store_true", help="Skip recording, only merge audio to video")
+    parser.add_argument("--no-merge", action="store_true", help="Skip merge audio to video")
+    parser.add_argument("--youtube", action="store_true", help="Upload to YouTube after merging")
     args = parser.parse_args()
+    basename = args.basename.strip()
+    mp3 = get_latest_file(export_path, f"{basename}*.mp3")
+    basename = ' '.join(mp3.stem.split(' ')[:-1])
+    print("Basename:", basename)
+
+    if args.youtube:
+        get_authenticated_service()
 
     if not args.no_record:
-        mp3 = get_latest_file(export_path, f"{args.basename}*.mp3")
         record_video(mp3)
 
-    merge_mp3_to_video(args.basename)
+    if not args.no_merge:
+        results = merge_mp3_to_video(basename)
+        logging.info(f"Videos created: {', '.join(str(r) for r in results)}")
+    else:
+        # basename must be provided if merging is skipped
+        if not basename:
+            raise ValueError("Base name must be provided when skipping recording.")
+        results = []
+        # Find output/basename/*.mov files
+        output_dir = Path("output") / basename
+        if output_dir.exists():
+            results = list(output_dir.glob("*.mov"))
+            if not results:
+                raise FileNotFoundError(f"No video files found in {output_dir}")
+        else:
+            raise FileNotFoundError(f"Output directory {output_dir} does not exist.")
+
+    if args.youtube:
+        upload_to_youtube(results, basename=basename)
+        logging.info("Videos uploaded to YouTube.")
 
 
 if __name__ == "__main__":

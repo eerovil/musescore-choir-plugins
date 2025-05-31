@@ -2,3 +2,7 @@ scripts/output
 
 .DS_Store
 scripts/.env
+scripts/client_secrets.json
+
+*.pyc
+scripts/token.pickle
