@@ -1,0 +1,4 @@
+scripts/output
+
+.DS_Store
+scripts/.env
