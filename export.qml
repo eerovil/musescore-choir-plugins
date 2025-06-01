@@ -23,20 +23,6 @@ MuseScore {
 FileIO {
     id: fileWriter
 }
-    function clearLogFile() {
-
-        var path = "export.log"
-        fileWriter.write(path, "")
-    }
-
-    function writeLog(message) {
-        var path = "export.log"
-        console.log("path: " + path);
-        var timestamp = new Date().toISOString();
-        var logMessage = timestamp + " - " + message + "\n";
-        console.log(fileWriter.write(path, logMessage));
-        console.log("Log written: " + logMessage);
-    }
 
   // Set all parts to volume specified by vol
   // disable mute if enabled.
@@ -127,13 +113,10 @@ FileIO {
         partNames.text = defaultPartNames.join(" ");
         focusTimer.start();
 
-        writeLog("Choir Rehearsal Export started.");
-
         console.log("End");
     }
 
     function exportParts() {
-        clearLogFile();
         exportButton.enabled = false;
 
         var expName;
@@ -146,13 +129,6 @@ FileIO {
 
         console.log(curScore);
 
-        // export score as mp3 with all voices aat normal
-        expName =  curScore.scoreName + " ALL.mp3"
-        console.log ( "createfile: " + expName);
-        writeLog("Exporting " + expName);
-        var writeScoreResp = writeScore(curScore, expName,"mp3")
-        writeLog("Done exporting " + expName);
-        console.log("writeScoreResp: " + writeScoreResp);
         
         // get number of all parts without piano
         // for every choir voice (eq. part) set all others to volume 50
@@ -176,17 +152,21 @@ FileIO {
                 
                 expName =  curScore.scoreName + " " + partName + ".mp3"
                 console.log ( "createfile: " + expName);
-                writeLog("Exporting " + expName);
                 writeScoreResp = writeScore(curScore , expName, "mp3" )
-                writeLog("Done exporting " + expName);
                 console.log("writeScoreResp: " + writeScoreResp);
                 
         }
         
         // when finished set all back to normal
         mixerVolAll(100)
-        writeLog("Export completed successfully.");
-        writeLog("EXPORT_DONE");
+
+        // export score as mp3 with all voices aat normal
+        expName =  curScore.scoreName + " ALL.mp3"
+        console.log ( "createfile: " + expName);
+        var writeScoreResp = writeScore(curScore, expName,"mp3")
+        console.log("writeScoreResp: " + writeScoreResp);
+
+        exportDialog.visible = false;
         Qt.quit()
     } // on run
 

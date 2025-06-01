@@ -27,6 +27,7 @@ obs_path = Path(OBS_EXPORT_PATH)
 
 musescore_show_script = "show_musescore.scpt"
 musescore_play_script = "play_musescore.scpt"
+musescore_export_script = "export_musescore.scpt"
 
 
 def get_mp3_duration(mp3_path):
@@ -140,25 +141,115 @@ def merge_mp3_to_video(mp3_basename):
     return results
 
 
+def wait_for_all_mp3(export_dir, timeout=120, check_interval=1):
+    """
+    Wait for a file ending in ALL.mp3 to be created or updated and fully written in export_dir.
+    Logs any new or replaced files.
+    """
+    export_dir = Path(export_dir)
+    seen_files = {}
+
+    # Initialize seen_files with existing .mp3 files and their mtimes
+    for f in export_dir.glob("*.mp3"):
+        try:
+            seen_files[f] = f.stat().st_mtime
+        except FileNotFoundError:
+            pass  # In case file is deleted right after
+
+    target_file = None
+    elapsed = 0
+
+    print(f"Watching for '*ALL.mp3' in: {export_dir.resolve()}")
+
+    while elapsed < timeout:
+        for f in export_dir.glob("*.mp3"):
+            try:
+                mtime = f.stat().st_mtime
+            except FileNotFoundError:
+                continue
+
+            if f not in seen_files or seen_files[f] != mtime:
+                print(f"New or updated file detected: {f.name}")
+                seen_files[f] = mtime
+                elapsed = 0  # reset timeout on new activity
+
+                if f.name.endswith("ALL.mp3"):
+                    target_file = f
+
+        if target_file and target_file.exists():
+            # Wait until file size is stable for 3 seconds
+            last_size = -1
+            stable_seconds = 0
+
+            while stable_seconds < 3:
+                try:
+                    current_size = os.path.getsize(target_file)
+                    if current_size == last_size and current_size > 0:
+                        stable_seconds += 1
+                    else:
+                        stable_seconds = 0
+                    last_size = current_size
+                except FileNotFoundError:
+                    stable_seconds = 0
+                    last_size = -1
+
+                time.sleep(1)
+
+            print(f"{target_file.name} has finished writing.")
+            return target_file
+
+        time.sleep(check_interval)
+        elapsed += check_interval
+
+    raise TimeoutError("Timed out waiting for '*ALL.mp3' to appear or finish writing.")
+
+
+def export_mp3_from_musescore():
+    """
+    Export MP3 files from MuseScore using AppleScript.
+    """
+    script_path = Path(musescore_export_script)
+    if not script_path.exists():
+        raise FileNotFoundError(f"Script {script_path} does not exist.")
+    
+    subprocess.run(["osascript", str(script_path)], check=True)
+    time.sleep(5)
+    wait_for_all_mp3(export_dir=MUSESCORE_EXPORT_PATH, timeout=120, check_interval=1)
+    logging.info("MP3 export from MuseScore completed.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate MuseScore practice videos.")
     parser.add_argument("--basename", default='', help="Filter MP3 files by base name (e.g. song name)")
-    parser.add_argument("--no-record", action="store_true", help="Skip recording, only merge audio to video")
-    parser.add_argument("--no-merge", action="store_true", help="Skip merge audio to video")
+    parser.add_argument("--export-mp3", action="store_true", help="Export MP3 files from MuseScore")
+    parser.add_argument("--record", action="store_true", help="Record video using OBS")
+    parser.add_argument("--merge", action="store_true", help="Merge MP3 files with video")
     parser.add_argument("--youtube", action="store_true", help="Upload to YouTube after merging")
+    parser.add_argument("--full", action="store_true", help="Export, Record and merge and upload to YouTube")
     args = parser.parse_args()
+
+    if args.full:
+        args.export_mp3 = True
+        args.record = True
+        args.merge = True
+        args.youtube = True
+
+    if args.youtube:
+        get_authenticated_service()
+
     basename = args.basename.strip()
     mp3 = get_latest_file(export_path, f"{basename}*.mp3")
     basename = ' '.join(mp3.stem.split(' ')[:-1])
     print("Basename:", basename)
 
-    if args.youtube:
-        get_authenticated_service()
+    if args.export_mp3:
+        export_mp3_from_musescore()
+        logging.info("MP3 files exported from MuseScore.")
 
-    if not args.no_record:
+    if args.record:
         record_video(mp3)
 
-    if not args.no_merge:
+    if args.merge:
         results = merge_mp3_to_video(basename)
         logging.info(f"Videos created: {', '.join(str(r) for r in results)}")
     else:
