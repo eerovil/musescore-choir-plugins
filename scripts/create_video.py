@@ -5,6 +5,7 @@ import os
 import time
 import subprocess
 from pathlib import Path
+import unicodedata
 from dotenv import load_dotenv
 import obsws_python as obs  # This is how you originally used it — and it works
 import logging
@@ -40,7 +41,7 @@ def get_mp3_duration(mp3_path):
 
 
 def get_latest_file(path: Path, pattern: str):
-    files = list(path.glob(pattern))
+    files = glob_unicode(path, pattern)
     if not files:
         raise FileNotFoundError(f"No files matching {pattern} in {path}")
     # if path is mov, ignore files less than 5MB
@@ -52,8 +53,21 @@ def get_latest_file(path: Path, pattern: str):
     return max(files, key=os.path.getmtime)
 
 
+def glob_unicode(path: Path, pattern: str):
+    import fnmatch
+    pattern_nfc = unicodedata.normalize("NFC", pattern)
+    print(f"Searching for files in {path} matching pattern: {pattern_nfc}")
+    ret = []
+    for name in os.listdir(path):
+        name_nfc = unicodedata.normalize("NFC", name)
+        if fnmatch.fnmatch(name_nfc, pattern_nfc):
+            ret.append(path / name_nfc)
+    
+    return ret
+
+
 def get_filtered_mp3_files(mp3_basename):
-    mp3_files = list(export_path.glob(f"{mp3_basename}*.mp3"))
+    mp3_files = glob_unicode(export_path, f"{mp3_basename}*.mp3")
     to_remove = f"undefined.mp3"
     logging.info(f"Removing {to_remove} from the list of MP3s.")
     mp3_files = [f for f in mp3_files if to_remove not in f.name]
