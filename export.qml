@@ -83,11 +83,28 @@ MuseScore {
          return retName
     }
 
+    function readPartNames()
+    {
+        var currentPartNames = []
+        for (var partIdx = 0; partIdx < curScore.parts.length; partIdx++)
+        {
+            var part = curScore.parts[partIdx];
+            if (part.partName === "Drumset") {
+                continue;
+            }
+            currentPartNames.push(part.partName)
+        }
+        return currentPartNames
+    }
+
     onRun:
     {
         console.log("Start");
-exportDialog.visible = true;
-  console.log("End");
+        var defaultPartNames = readPartNames()
+        console.log("partNames: " + defaultPartNames);
+        exportDialog.visible = true;
+        partNames.text = defaultPartNames.join(" ");
+        console.log("End");
     }
 
     function exportParts() {
