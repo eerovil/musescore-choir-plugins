@@ -57,20 +57,23 @@ def upload_video(youtube, file_path, title, description, privacy="unlisted"):
 
 
 def create_playlist(youtube, title):
-    request = youtube.playlists().insert(
-        part="snippet,status",
-        body={
-            "snippet": {
-                "title": title,
-                "description": "Practice tracks playlist",
-            },
-            "status": {
-                "privacyStatus": "unlisted"
+    try:
+        request = youtube.playlists().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": title,
+                    "description": "Practice tracks playlist",
+                },
+                "status": {
+                    "privacyStatus": "unlisted"
+                }
             }
-        }
-    )
-    response = request.execute()
-    return response["id"]
+        )
+        response = request.execute()
+        return response["id"]
+    except Exception as e:
+        logging.error(f"Error creating playlist: {e}")
 
 
 def add_video_to_playlist(youtube, playlist_id, video_id):
@@ -103,7 +106,8 @@ def upload_to_youtube(video_paths, basename):
         logging.info(f"Uploading {video_path} as '{title}'...")
         video_id = upload_video(youtube, video_path, title, description="Practice track")
         logging.info(f"Uploaded: https://youtu.be/{video_id}")
-        add_video_to_playlist(youtube, playlist_id, video_id)
-        logging.info(f"Added to playlist.")
+        if playlist_id:
+            add_video_to_playlist(youtube, playlist_id, video_id)
+            logging.info(f"Added to playlist.")
 
     logging.info(f"All videos uploaded and added to playlist.")
