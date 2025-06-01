@@ -237,14 +237,14 @@ def main():
     if args.youtube:
         get_authenticated_service()
 
+    if args.export_mp3:
+        export_mp3_from_musescore()
+        logging.info("MP3 files exported from MuseScore.")
+
     basename = args.basename.strip()
     mp3 = get_latest_file(export_path, f"{basename}*.mp3")
     basename = ' '.join(mp3.stem.split(' ')[:-1])
     print("Basename:", basename)
-
-    if args.export_mp3:
-        export_mp3_from_musescore()
-        logging.info("MP3 files exported from MuseScore.")
 
     if args.record:
         record_video(mp3)
