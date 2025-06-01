@@ -12,9 +12,31 @@ import FileIO 3.0
 
 
 MuseScore {
+    QtObject {
+        id: scriptGlobals
+        property bool cancelRequested: false
+    }
     version:  "1.2"
     description: "Exports score as mp3 as well as every Choir voice twice as loud as other voices"
     menuPath: "Plugins.Choir Rehearsal Export"
+
+FileIO {
+    id: fileWriter
+}
+    function clearLogFile() {
+
+        var path = "export.log"
+        fileWriter.write(path, "")
+    }
+
+    function writeLog(message) {
+        var path = "export.log"
+        console.log("path: " + path);
+        var timestamp = new Date().toISOString();
+        var logMessage = timestamp + " - " + message + "\n";
+        console.log(fileWriter.write(path, logMessage));
+        console.log("Log written: " + logMessage);
+    }
 
   // Set all parts to volume specified by vol
   // disable mute if enabled.
@@ -97,17 +119,23 @@ MuseScore {
         return currentPartNames
     }
 
-    onRun:
-    {
+    onRun: {
         console.log("Start");
         var defaultPartNames = readPartNames()
         console.log("partNames: " + defaultPartNames);
         exportDialog.visible = true;
         partNames.text = defaultPartNames.join(" ");
+        focusTimer.start();
+
+        writeLog("Choir Rehearsal Export started.");
+
         console.log("End");
     }
 
     function exportParts() {
+        clearLogFile();
+        exportButton.enabled = false;
+
         var expName;
 
         if (typeof curScore == 'undefined') { Qt.quit()}
@@ -121,7 +149,10 @@ MuseScore {
         // export score as mp3 with all voices aat normal
         expName =  curScore.scoreName + " ALL.mp3"
         console.log ( "createfile: " + expName);
-        writeScore(curScore, expName,"mp3")
+        writeLog("Exporting " + expName);
+        var writeScoreResp = writeScore(curScore, expName,"mp3")
+        writeLog("Done exporting " + expName);
+        console.log("writeScoreResp: " + writeScoreResp);
         
         // get number of all parts without piano
         // for every choir voice (eq. part) set all others to volume 50
@@ -130,6 +161,13 @@ MuseScore {
 
         for (var partIdx = 0; partIdx < maxPart; partIdx++)
         {
+
+            if (scriptGlobals.cancelRequested) {
+                console.log("Export cancelled.");
+                break;
+            }
+
+
             var partName = partNames.text.split(" ")[partIdx]
                 // all others to 50
                 mixerVolAll(30)
@@ -138,11 +176,17 @@ MuseScore {
                 
                 expName =  curScore.scoreName + " " + partName + ".mp3"
                 console.log ( "createfile: " + expName);
-                writeScore(curScore , expName, "mp3" )
+                writeLog("Exporting " + expName);
+                writeScoreResp = writeScore(curScore , expName, "mp3" )
+                writeLog("Done exporting " + expName);
+                console.log("writeScoreResp: " + writeScoreResp);
+                
         }
         
         // when finished set all back to normal
         mixerVolAll(100)
+        writeLog("Export completed successfully.");
+        writeLog("EXPORT_DONE");
         Qt.quit()
     } // on run
 
@@ -183,17 +227,30 @@ MuseScore {
                     TextField {
                         id: partNames
                         text: "T1 T2 B1 B2"
+                        onAccepted: {
+                            exportParts();
+                        }
                     }
                     Button {
                         id: cancelButton
-                        text: qsTr("Close")
+                        text: qsTr("Cancel")
                         onClicked: {
+                            scriptGlobals.cancelRequested = true;
                             exportDialog.visible = false
                             Qt.quit()
                         } // onClicked
                     }
                 }
             }
+        }
+    }
+    Timer {
+        id: focusTimer
+        interval: 100
+        running: false
+        repeat: false
+        onTriggered: {
+            exportButton.forceActiveFocus()
         }
     }
 
