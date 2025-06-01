@@ -125,7 +125,7 @@ MuseScore {
         
         // get number of all parts without piano
         // for every choir voice (eq. part) set all others to volume 50
-        var maxPart = getMaxChoirPart()
+        var maxPart = partNames.text.split(" ").length
 
 
         for (var partIdx = 0; partIdx < maxPart; partIdx++)
