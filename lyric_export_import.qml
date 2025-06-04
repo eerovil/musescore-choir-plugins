@@ -52,8 +52,8 @@ MuseScore {
 function parseSyllabic(s) {
     if (s === "single") return 0;
     if (s === "begin") return 1;
-    if (s === "middle") return 2;
-    if (s === "end") return 3;
+    if (s === "end") return 2;
+    if (s === "middle") return 3;
     return s; // fallback
 }
 
@@ -74,6 +74,8 @@ function parseSyllabic(s) {
         var verse    = parseInt(parts[3]) - 1;
         var syllabic = parts[4];
         var text     = parts.slice(5).join("\t");
+        // Remove leading or trailing dash
+        text = text.replace(/^-|-$/g, "");
 
         var cursor = curScore.newCursor();
         cursor.rewind(0);
