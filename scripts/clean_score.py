@@ -53,8 +53,8 @@ def convert_to_tenor_clef(attributes):
                 clef_octave = etree.SubElement(clef, "clef-octave-change")
             clef_octave.text = "-1"
 
-# FIRST PASS: store lyrics by (part, direction, time)
-lyrics_by_time = defaultdict(lambda: defaultdict(dict))
+# FIRST PASS: store lyrics by (time position, lyric target part)
+lyrics_by_time = defaultdict(dict)
 
 for part in root.findall("part"):
     pid = part.attrib.get("id")
@@ -66,10 +66,17 @@ for part in root.findall("part"):
             if el.tag == "note":
                 duration_el = el.find("duration")
                 duration = int(duration_el.text) if duration_el is not None else 0
-                lyric = el.find("lyric")
                 direction = get_stem_direction(el)
-                if lyric is not None:
-                    lyrics_by_time[pid][time_position][direction] = deepcopy(lyric)
+                for lyric in el.findall("lyric"):
+                    verse = lyric.attrib.get("number", "1")
+                    placement = lyric.attrib.get("placement", "below")
+                    lyric_pid = pid
+                    if verse == "2":
+                        if pid == "P1" and placement == "below":
+                            lyric_pid = "B1"
+                    lyrics_by_time[time_position][lyric_pid] = deepcopy(lyric)
+                    # Force verse 1
+                    lyrics_by_time[time_position][lyric_pid].attrib["number"] = "1"
                 time_position += duration
             elif el.tag == "backup":
                 time_position -= int(el.find("duration").text)
@@ -111,13 +118,19 @@ for part in root.findall("part"):
                         new_note.remove(sub)
 
                 if not is_middle_of_slur(el):
-                    lyric = lyrics_by_time.get(pid, {}).get(time_position, {}).get(direction)
-                    if not lyric:
-                        lyric = lyrics_by_time.get("P1", {}).get(time_position, {}).get(direction)
-                    if not lyric:
-                        lyric = lyrics_by_time.get(pid, {}).get(time_position, {}).get("down" if direction == "up" else "up")
-                    if not lyric:
-                        lyric = lyrics_by_time.get("P1", {}).get(time_position, {}).get("down" if direction == "up" else "up")
+                    lyrics_for_time = lyrics_by_time.get(time_position, {})
+                    choices = [
+                        split_map[pid][direction],
+                        "B1" if pid == "P2" and direction == "up" else "B2" if pid == "P2" else "T1" if direction == "up" else "T2",
+                        pid,
+                        "P1" if pid.startswith("T") else "P2",
+                        "P1",
+                        "P2"
+                    ]
+                    for choice in choices:
+                        lyric = lyrics_for_time.get(choice)
+                        if lyric:
+                            break
                     if lyric:
                         new_note.append(deepcopy(lyric))
 
