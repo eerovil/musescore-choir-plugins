@@ -69,7 +69,7 @@ for part in root.findall("part"):
                 lyric = el.find("lyric")
                 direction = get_stem_direction(el)
                 if lyric is not None:
-                    lyrics_by_time["P1"][time_position][direction] = deepcopy(lyric)
+                    lyrics_by_time[pid][time_position][direction] = deepcopy(lyric)
                 time_position += duration
             elif el.tag == "backup":
                 time_position -= int(el.find("duration").text)
@@ -111,9 +111,13 @@ for part in root.findall("part"):
                         new_note.remove(sub)
 
                 if not is_middle_of_slur(el):
-                    lyric = lyrics_by_time["P1"].get(time_position, {}).get(direction)
+                    lyric = lyrics_by_time.get(pid, {}).get(time_position, {}).get(direction)
                     if not lyric:
-                        lyric = lyrics_by_time["P1"].get(time_position, {}).get("down" if direction == "up" else "up")
+                        lyric = lyrics_by_time.get("P1", {}).get(time_position, {}).get(direction)
+                    if not lyric:
+                        lyric = lyrics_by_time.get(pid, {}).get(time_position, {}).get("down" if direction == "up" else "up")
+                    if not lyric:
+                        lyric = lyrics_by_time.get("P1", {}).get(time_position, {}).get("down" if direction == "up" else "up")
                     if lyric:
                         new_note.append(deepcopy(lyric))
 
