@@ -33,6 +33,8 @@ split_map = {
 
 def get_stem_direction(note):
     stem = note.find("stem")
+    if stem is None:
+        return "up" if note.find("voice").text == "1" else "down"
     return stem.text.strip() if stem is not None else "up"
 
 def is_middle_of_slur(note):
@@ -86,6 +88,16 @@ for part in root.findall("part"):
 # SECOND PASS: rewrite with lyric per time and direction fallback
 new_measures = defaultdict(list)
 
+def copy_and_make_voice1(note):
+    new_note = deepcopy(note)
+    voice = new_note.find("voice")
+    if voice is not None:
+        voice.text = "1"
+    else:
+        voice = etree.SubElement(new_note, "voice")
+        voice.text = "1"
+    return new_note
+
 for part in root.findall("part"):
     pid = part.attrib.get("id")
     if pid not in split_map:
@@ -96,6 +108,8 @@ for part in root.findall("part"):
         m_num = measure.attrib.get("number")
         m_up = etree.Element("measure", number=m_num)
         m_down = etree.Element("measure", number=m_num)
+        m_up_by_time = defaultdict(list)
+        m_down_by_time = defaultdict(list)
 
         for el in measure:
             if el.tag == "attributes":
@@ -129,23 +143,39 @@ for part in root.findall("part"):
                     ]
                     for choice in choices:
                         lyric = lyrics_for_time.get(choice)
-                        if lyric:
+                        if lyric is not None:
                             break
-                    if lyric:
+                    if lyric is not None:
                         new_note.append(deepcopy(lyric))
 
                 if direction == "up":
-                    m_up.append(new_note)
+                    m_up_by_time[time_position].append(copy_and_make_voice1(new_note))
                     if el.find("rest") is not None:
-                        m_down.append(deepcopy(new_note))
+                        print("Adding rest to up part for note at time position", time_position, pid)
+                    else:
+                        print("Adding note to up part for note at time position", time_position, pid)
+                    #     m_down.append(copy_and_make_voice1(new_note))
+                    #     print("Adding rest to up and down part for note at time position", time_position, pid)
                 else:
-                    m_down.append(new_note)
+                    m_down_by_time[time_position].append(copy_and_make_voice1(new_note))
                     if el.find("rest") is not None:
-                        m_up.append(deepcopy(new_note))
+                        print("Adding rest to down part for note at time position", time_position, pid)
+                    else:
+                        print("Adding note to down part for note at time position", time_position, pid)
+                    # if el.find("rest") is not None:
+                    #     m_up.append(copy_and_make_voice1(new_note))
+                    #     print("Adding rest to up and down part for note at time position", time_position, pid)
 
                 duration_el = el.find("duration")
                 if duration_el is not None:
                     time_position += int(duration_el.text)
+
+        for time_pos in sorted(m_up_by_time.keys()):
+            for note in m_up_by_time[time_pos]:
+                m_up.append(note)
+        for time_pos in sorted(m_down_by_time.keys()):
+            for note in m_down_by_time[time_pos]:
+                m_down.append(note)
 
         new_measures[split_map[pid]["up"]].append(m_up)
         new_measures[split_map[pid]["down"]].append(m_down)
