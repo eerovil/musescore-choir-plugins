@@ -24,22 +24,37 @@ def get_voice_number(music21_element):
             logger.debug(f"get_voice_number: found Voice context: {voice_ctx}, id={getattr(voice_ctx, 'id', None)}, number={getattr(voice_ctx, 'number', None)}")
             # Try id or number
             if hasattr(voice_ctx, 'number') and voice_ctx.number is not None:
-                return voice_ctx.number
+                try:
+                    return int(voice_ctx.number)
+                except Exception:
+                    return voice_ctx.number
             if hasattr(voice_ctx, 'id') and voice_ctx.id is not None:
-                return voice_ctx.id
+                try:
+                    return int(voice_ctx.id)
+                except Exception:
+                    return voice_ctx.id
     except Exception as e:
         logger.debug(f"get_voice_number: Exception in getContextByClass('Voice'): {e}")
     # Try attribute 'voice'
     if hasattr(music21_element, 'voice') and music21_element.voice is not None:
-        return music21_element.voice
+        try:
+            return int(music21_element.voice)
+        except Exception:
+            return music21_element.voice
     # Try .voiceNumber
     if hasattr(music21_element, 'voiceNumber') and music21_element.voiceNumber is not None:
-        return music21_element.voiceNumber
+        try:
+            return int(music21_element.voiceNumber)
+        except Exception:
+            return music21_element.voiceNumber
     # Try .groups (sometimes used for context in music21)
     if hasattr(music21_element, 'groups') and music21_element.groups:
         for g in music21_element.groups:
             if hasattr(g, 'id') and g.id is not None:
-                return g.id
+                try:
+                    return int(g.id)
+                except Exception:
+                    return g.id
     return None # Return None if no explicit voice tag
 
 def get_stem_direction_music21(note_obj):
@@ -81,45 +96,27 @@ def convert_to_tenor_clef_music21(measure_stream_or_attributes_stream):
         measure_stream_or_attributes_stream.replace(old_clef, tenor_clef)
 
 
-def determine_note_voice_heuristic(music21_note_or_rest, voices_reversed):
-    logger.debug(f"determine_note_voice_heuristic: {music21_note_or_rest}, voices_reversed={voices_reversed}")
-    """
-    Determines the "voice" (up-stem or down-stem) for a note or rest,
-    prioritizing stem direction for OCR output.
-
-    Args:
-        music21_note_or_rest: The music21.note.Note or music21.note.Rest object.
-        voices_reversed: A boolean indicating if the 'up' and 'down' roles are reversed
-                         for the stem direction heuristic in this measure.
-
-    Returns:
-        'up' or 'down' based on the heuristic.
-    """
-    # 1. Explicit voice tag (if reliable, often not for OCR)
+def determine_note_voice_heuristic(music21_note_or_rest):
+    logger.debug(f"determine_note_voice_heuristic: {music21_note_or_rest}")
     explicit_voice = get_voice_number(music21_note_or_rest)
     if explicit_voice == 1:
-        return 'up' if not voices_reversed else 'down'
+        return 'up'
     elif explicit_voice == 2:
-        return 'down' if not voices_reversed else 'up'
-
-    # 2. Stem direction (primary heuristic for OCR)
+        return 'down'
+    # Only use fallback if not voice 1 or 2
+    # 2. Stem direction (primary heuristic for OCR if no explicit voice)
     if isinstance(music21_note_or_rest, note.Note):
         stem_direction = get_stem_direction_music21(music21_note_or_rest)
-        if stem_direction != 'none':
-            return stem_direction if not voices_reversed else ('down' if stem_direction == 'up' else 'up')
-
-        # If no stem direction, infer based on pitch relative to middle C (C4)
-        # This is a common engraving rule for single-voice notes.
+        if stem_direction == 'up':
+            return 'up'
+        elif stem_direction == 'down':
+            return 'down'
         if music21_note_or_rest.pitch:
-            if music21_note_or_rest.pitch.midi >= 60:  # C4 is MIDI 60
-                return 'down' if not voices_reversed else 'up' # Notes C4 and above usually down-stem
+            if music21_note_or_rest.pitch.midi >= 60:
+                return 'up'
             else:
-                return 'up' if not voices_reversed else 'down' # Notes below C4 usually up-stem
-
-    # 3. For rests without explicit voice, or notes without stem/pitch info,
-    #    make a best guess. Often rests belong to the 'down' voice in piano parts.
-    #    For simplicity, if no info, assign to the 'down' voice.
-    return 'down' if not voices_reversed else 'up'
+                return 'down'
+    return 'down'
 
 
 def main(score):
@@ -206,46 +203,8 @@ def main(score):
     for new_part in new_parts_to_add:
         split_parts.append(new_part)
 
-    # 0 PASS: Try to determine if voices are 'reversed' based on stem direction vs. assumed voice 1/2
-    # This is still a heuristic for OCR-generated XML where explicit voice tags might be wrong or missing.
-    # 'voices_reversed' means what would normally be 'up' stems are predominantly in the 'down' voice, or vice versa.
-    # This pass remains valuable if OCR sometimes flips the expected stem-to-voice mapping.
-    reversed_voices_by_part_measure = defaultdict(bool) # Default to False
-
-    for part in score.parts:
-        pid = part.id
-        if pid not in parts_to_split_ids:
-            continue
-        for measure in part.getElementsByClass('Measure'):
-            measure_num = measure.number
-            up_stems_in_voice2 = 0
-            down_stems_in_voice1 = 0
-            total_stems_voice1 = 0
-            total_stems_voice2 = 0
-
-            for el in measure.notesAndRests:
-                if isinstance(el, note.Note):
-                    stem_dir = get_stem_direction_music21(el)
-                    explicit_v = get_voice_number(el)
-
-                    if explicit_v == 1:
-                        total_stems_voice1 += 1
-                        if stem_dir == 'down':
-                            down_stems_in_voice1 += 1
-                    elif explicit_v == 2:
-                        total_stems_voice2 += 1
-                        if stem_dir == 'up':
-                            up_stems_in_voice2 += 1
-
-            # Simple heuristic for reversal: if more than half of voice 1 notes are down-stem
-            # AND more than half of voice 2 notes are up-stem.
-            if total_stems_voice1 > 0 and total_stems_voice2 > 0:
-                is_reversed = (down_stems_in_voice1 / total_stems_voice1 > 0.5) and \
-                              (up_stems_in_voice2 / total_stems_voice2 > 0.5)
-                reversed_voices_by_part_measure[(pid, measure_num)] = is_reversed
-                if is_reversed:
-                    print(f"Detected potential reversed voices in part {pid}, measure {measure_num}")
-
+    # Removed the 0 PASS: reversed_voices_by_part_measure logic
+    # As the heuristic is now simplified within determine_note_voice_heuristic and the flag is not used there.
 
     # FIRST PASS: store lyrics by (part_id, measure_number, offset, lyric_number)
     # Lyrics are usually associated with a specific note, not a general time position for a 'voice'.
@@ -265,7 +224,7 @@ def main(score):
                         lyrics_data[pid][measure_num][element.offset][lyric_obj.number] = lyric_obj.editor.copy()
 
     logger.debug(f"lyrics_data: {lyrics_data}")
-    # SECOND PASS: Separate notes/rests into new parts based on stem direction heuristic
+    # SECOND PASS: Separate notes/rests into new parts based on explicit Voice streams if present
     temp_new_measures = defaultdict(list) # {new_part_id: [music21.Measure objects]}
 
     for original_part in score.parts:
@@ -280,61 +239,113 @@ def main(score):
         for original_measure in original_part.getElementsByClass('Measure'):
             logger.debug(f"Second pass measure: {original_measure.number}")
             measure_num = original_measure.number
-            voices_reversed = reversed_voices_by_part_measure[(pid, measure_num)]
 
+            # --- NEW LOGIC: Split by Voice streams if present ---
+            voice_streams = list(original_measure.getElementsByClass('Voice'))
+            if len(voice_streams) > 1:
+                measure_up = stream.Measure()
+                measure_up.number = measure_num
+                measure_down = stream.Measure()
+                measure_down.number = measure_num
+                # Copy measure-level elements (attributes, directions, etc.), skipping Voice streams
+                for el in original_measure.elements:
+                    if (
+                        not isinstance(el, note.Note)
+                        and not isinstance(el, note.Rest)
+                        and not isinstance(el, chord.Chord)
+                        and not (isinstance(el, stream.Voice))
+                    ):
+                        if isinstance(el, stream.Stream) and hasattr(el, 'clefs') and el.clefs:
+                            copied_el_up = el.editor.copy()
+                            copied_el_down = el.editor.copy()
+                            measure_up.append(copied_el_up)
+                            if isinstance(copied_el_down.clefs[0], clef.TrebleClef) and copied_el_down.clefs[0].octaveShift == 0:
+                                convert_to_tenor_clef_music21(copied_el_down)
+                            measure_down.append(copied_el_down)
+                        else:
+                            if hasattr(el, 'editor') and hasattr(el.editor, 'copy'):
+                                measure_up.append(el.editor.copy())
+                                measure_down.append(el.editor.copy())
+                            else:
+                                measure_up.append(copy.deepcopy(el))
+                                measure_down.append(copy.deepcopy(el))
+                for v in voice_streams:
+                    vnum = None
+                    if hasattr(v, 'number') and v.number is not None:
+                        try:
+                            vnum = int(v.number)
+                        except Exception:
+                            vnum = v.number
+                    elif hasattr(v, 'id') and v.id is not None:
+                        try:
+                            vnum = int(v.id)
+                        except Exception:
+                            vnum = v.id
+                    logger.debug(f"Processing Voice stream: {v}, vnum={vnum}")
+                    for element in v.notesAndRests:
+                        element_copy = copy.deepcopy(element)
+                        if hasattr(element_copy, 'lyrics') and element_copy.lyrics:
+                            element_copy.lyrics = []
+                        lyrics_at_current_time = lyrics_data[pid][measure_num].get(element.offset, {})
+                        chosen_lyric = None
+                        if vnum == 1 and 1 in lyrics_at_current_time:
+                            chosen_lyric = lyrics_at_current_time[1]
+                        elif vnum == 2 and 2 in lyrics_at_current_time:
+                            chosen_lyric = lyrics_at_current_time[2]
+                        if chosen_lyric is None:
+                            for lyric_num in sorted(lyrics_at_current_time.keys()):
+                                chosen_lyric = lyrics_at_current_time[lyric_num]
+                                break
+                        if chosen_lyric and not is_middle_of_slur_music21(element_copy):
+                            element_copy.addLyric(chosen_lyric.text, lyricNumber=1, lyricPlacement=chosen_lyric.placement)
+                        if vnum == 1:
+                            measure_up.append(element_copy)
+                        elif vnum == 2:
+                            measure_down.append(element_copy)
+                measure_up.makeRests(fillGaps=True, inPlace=True)
+                measure_down.makeRests(fillGaps=True, inPlace=True)
+                temp_new_measures[up_part_id].append(measure_up)
+                temp_new_measures[down_part_id].append(measure_down)
+                continue  # Only do one logic per measure!
+
+            # --- STRICT VOICE SPLIT LOGIC ---
             measure_up = stream.Measure()
             measure_up.number = measure_num
             measure_down = stream.Measure()
             measure_down.number = measure_num
-
-            # Copy measure-level elements (attributes, directions, etc.)
-            for el in original_measure.elements: # Iterate through all elements, not just notesAndRests
-                # FIX: Check element type using isinstance() instead of isNote/isRest/isChord attributes
-                if not isinstance(el, note.Note) and not isinstance(el, note.Rest) and not isinstance(el, chord.Chord): # Only copy non-note/rest/chord elements
-                    # Handle clef conversion for the 'down' part based on original logic
-                    # Check if 'el' is a Stream (like an Attributes object containing clefs) and has clefs
+            # Copy measure-level elements (attributes, directions, etc.), skipping Voice streams
+            for el in original_measure.elements:
+                if (
+                    not isinstance(el, note.Note)
+                    and not isinstance(el, note.Rest)
+                    and not isinstance(el, chord.Chord)
+                    and not (isinstance(el, stream.Voice))
+                ):
                     if isinstance(el, stream.Stream) and hasattr(el, 'clefs') and el.clefs:
                         copied_el_up = el.editor.copy()
                         copied_el_down = el.editor.copy()
                         measure_up.append(copied_el_up)
-
-                        # If this is a G clef in the original, convert for the down part
                         if isinstance(copied_el_down.clefs[0], clef.TrebleClef) and copied_el_down.clefs[0].octaveShift == 0:
-                            # If the clef is a standard G clef, change it to tenor for the down part
                             convert_to_tenor_clef_music21(copied_el_down)
                         measure_down.append(copied_el_down)
-                    else: # For other elements, just copy to both
-                        # Use .editor.copy() if available, else fallback to copy.deepcopy
+                    else:
                         if hasattr(el, 'editor') and hasattr(el.editor, 'copy'):
                             measure_up.append(el.editor.copy())
                             measure_down.append(el.editor.copy())
                         else:
-                            # This path might be taken for objects like SystemLayout
                             measure_up.append(copy.deepcopy(el))
                             measure_down.append(copy.deepcopy(el))
-
-            # Now, process notes and rests for separation based on heuristic
             for element in original_measure.notesAndRests:
                 logger.debug(f"Second pass element: {element}, offset={element.offset}")
-                element_copy = element.editor.copy() # Make a single copy to avoid multiple modifications
-                # Assign by explicit voice number if present
-                explicit_voice = get_voice_number(element_copy)
-                if explicit_voice == 1:
-                    assigned_voice_type = 'up'
-                elif explicit_voice == 2:
-                    assigned_voice_type = 'down'
-                else:
-                    # Determine voice based on stem heuristic if no explicit voice
-                    assigned_voice_type = determine_note_voice_heuristic(element_copy, voices_reversed)
-                # Remove existing lyrics to re-add based on target voice logic
-                if element_copy.lyrics:
+                element_copy = copy.deepcopy(element)
+                vnum = get_voice_number(element_copy)
+                if hasattr(element_copy, 'lyrics') and element_copy.lyrics:
                     element_copy.lyrics = []
-                # Add lyrics based on the collected data
                 lyrics_at_current_time = lyrics_data[pid][measure_num].get(element.offset, {})
                 chosen_lyric = None
-                if assigned_voice_type == 'up' and 1 in lyrics_at_current_time:
+                if vnum == 1 and 1 in lyrics_at_current_time:
                     chosen_lyric = lyrics_at_current_time[1]
-                elif assigned_voice_type == 'down' and 2 in lyrics_at_current_time:
+                elif vnum == 2 and 2 in lyrics_at_current_time:
                     chosen_lyric = lyrics_at_current_time[2]
                 if chosen_lyric is None:
                     for lyric_num in sorted(lyrics_at_current_time.keys()):
@@ -342,24 +353,14 @@ def main(score):
                         break
                 if chosen_lyric and not is_middle_of_slur_music21(element_copy):
                     element_copy.addLyric(chosen_lyric.text, lyricNumber=1, lyricPlacement=chosen_lyric.placement)
-
-                # Append to the determined voice measure
-                if assigned_voice_type == 'up':
+                if vnum == 1:
                     measure_up.append(element_copy)
-                elif assigned_voice_type == 'down':
+                elif vnum == 2:
                     measure_down.append(element_copy)
-
-            # After populating measures, fill gaps with rests and finalize
             measure_up.makeRests(fillGaps=True, inPlace=True)
-            # FIX: Removed fillEmptyMeasures as it's not a method for music21.stream.Measure
-            # measure_up.fillEmptyMeasures(inPlace=True) 
             measure_down.makeRests(fillGaps=True, inPlace=True)
-            # FIX: Removed fillEmptyMeasures as it's not a method for music21.stream.Measure
-            # measure_down.fillEmptyMeasures(inPlace=True)
-
             temp_new_measures[up_part_id].append(measure_up)
             temp_new_measures[down_part_id].append(measure_down)
-
     logger.debug(f"temp_new_measures: {temp_new_measures}")
     # Populate the newly created music21 Part objects with their measures
     for new_part_id, measures_list in temp_new_measures.items():
