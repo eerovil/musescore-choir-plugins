@@ -247,6 +247,34 @@ def main(score):
                 measure_up.number = measure_num
                 measure_down = stream.Measure()
                 measure_down.number = measure_num
+                # --- FIX: Compose a full timeline for each measure, then assign elements by offset ---
+                offsets = set()
+                up_voice = voice_streams[0]
+                down_voice = voice_streams[1]
+                up_elements = {el.offset: el for el in up_voice.notesAndRests}
+                down_elements = {el.offset: el for el in down_voice.notesAndRests}
+                for el in up_voice.notesAndRests:
+                    offsets.add(el.offset)
+                for el in down_voice.notesAndRests:
+                    offsets.add(el.offset)
+                offsets = sorted(offsets)
+                for offset in offsets:
+                    up_el = up_elements.get(offset)
+                    down_el = down_elements.get(offset)
+                    # Up part
+                    if up_el is not None:
+                        measure_up.append(copy.deepcopy(up_el))
+                    elif down_el is not None:
+                        rest = note.Rest()
+                        rest.duration = copy.deepcopy(down_el.duration)
+                        measure_up.append(rest)
+                    # Down part
+                    if down_el is not None:
+                        measure_down.append(copy.deepcopy(down_el))
+                    elif up_el is not None:
+                        rest = note.Rest()
+                        rest.duration = copy.deepcopy(up_el.duration)
+                        measure_down.append(rest)
                 # Copy measure-level elements (attributes, directions, etc.), skipping Voice streams
                 for el in original_measure.elements:
                     if (
@@ -255,55 +283,12 @@ def main(score):
                         and not isinstance(el, chord.Chord)
                         and not (isinstance(el, stream.Voice))
                     ):
-                        if isinstance(el, stream.Stream) and hasattr(el, 'clefs') and el.clefs:
-                            copied_el_up = el.editor.copy()
-                            copied_el_down = el.editor.copy()
-                            measure_up.append(copied_el_up)
-                            if isinstance(copied_el_down.clefs[0], clef.TrebleClef) and copied_el_down.clefs[0].octaveShift == 0:
-                                convert_to_tenor_clef_music21(copied_el_down)
-                            measure_down.append(copied_el_down)
+                        if hasattr(el, 'editor') and hasattr(el.editor, 'copy'):
+                            measure_up.append(el.editor.copy())
+                            measure_down.append(el.editor.copy())
                         else:
-                            if hasattr(el, 'editor') and hasattr(el.editor, 'copy'):
-                                measure_up.append(el.editor.copy())
-                                measure_down.append(el.editor.copy())
-                            else:
-                                measure_up.append(copy.deepcopy(el))
-                                measure_down.append(copy.deepcopy(el))
-                for v in voice_streams:
-                    vnum = None
-                    if hasattr(v, 'number') and v.number is not None:
-                        try:
-                            vnum = int(v.number)
-                        except Exception:
-                            vnum = v.number
-                    elif hasattr(v, 'id') and v.id is not None:
-                        try:
-                            vnum = int(v.id)
-                        except Exception:
-                            vnum = v.id
-                    logger.debug(f"Processing Voice stream: {v}, vnum={vnum}")
-                    for element in v.notesAndRests:
-                        element_copy = copy.deepcopy(element)
-                        if hasattr(element_copy, 'lyrics') and element_copy.lyrics:
-                            element_copy.lyrics = []
-                        lyrics_at_current_time = lyrics_data[pid][measure_num].get(element.offset, {})
-                        chosen_lyric = None
-                        if vnum == 1 and 1 in lyrics_at_current_time:
-                            chosen_lyric = lyrics_at_current_time[1]
-                        elif vnum == 2 and 2 in lyrics_at_current_time:
-                            chosen_lyric = lyrics_at_current_time[2]
-                        if chosen_lyric is None:
-                            for lyric_num in sorted(lyrics_at_current_time.keys()):
-                                chosen_lyric = lyrics_at_current_time[lyric_num]
-                                break
-                        if chosen_lyric and not is_middle_of_slur_music21(element_copy):
-                            element_copy.addLyric(chosen_lyric.text, lyricNumber=1, lyricPlacement=chosen_lyric.placement)
-                        if vnum == 1:
-                            measure_up.append(element_copy)
-                        elif vnum == 2:
-                            measure_down.append(element_copy)
-                measure_up.makeRests(fillGaps=True, inPlace=True)
-                measure_down.makeRests(fillGaps=True, inPlace=True)
+                            measure_up.append(copy.deepcopy(el))
+                            measure_down.append(copy.deepcopy(el))
                 temp_new_measures[up_part_id].append(measure_up)
                 temp_new_measures[down_part_id].append(measure_down)
                 continue  # Only do one logic per measure!
