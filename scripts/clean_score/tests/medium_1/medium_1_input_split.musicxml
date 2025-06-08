@@ -59,49 +59,15 @@
           <line>2</line>
           </clef>
         </attributes>
-      <note default-x="73.72" default-y="-15.00">
-        <pitch>
-          <step>C</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>2</duration>
-        <voice>1</voice>
-        <type>quarter</type>
-        <stem>down</stem>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>Hei</text>
-          </lyric>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>Hei</text>
-          </lyric>
-        </note>
-      <note>
+      <forward><duration>2</duration>
+        </forward><note>
         <rest/>
         <duration>2</duration>
         <voice>1</voice>
         <type>quarter</type>
         </note>
-      <note default-x="212.97" default-y="-15.00">
-        <pitch>
-          <step>C</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>2</duration>
-        <voice>1</voice>
-        <type>quarter</type>
-        <stem>down</stem>
-        <lyric number="1" default-y="-49.00" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>o</text>
-          </lyric>
-        <lyric number="1" default-y="-49.00" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>o</text>
-          </lyric>
-        </note>
-      <backup>
+      <forward><duration>2</duration>
+        </forward><backup>
         <duration>6</duration>
         </backup>
       <note default-x="73.72" default-y="-5.00">
@@ -135,21 +101,8 @@
           <text>o</text>
           </lyric>
         </note>
-      </measure><measure number="2"><note default-x="21.75" default-y="-15.00">
-        <pitch>
-          <step>C</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>2</duration>
-        <voice>1</voice>
-        <type>quarter</type>
-        <stem>down</stem>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>len</text>
-          </lyric>
-        </note>
-      <note>
+      </measure><measure number="2"><forward><duration>2</duration>
+        </forward><note>
         <rest/>
         <duration>2</duration>
         <voice>1</voice>
@@ -164,10 +117,6 @@
         <voice>1</voice>
         <type>quarter</type>
         <stem>up</stem>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>La</text>
-          </lyric>
         <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
           <syllabic>begin</syllabic>
           <text>La</text>
@@ -189,18 +138,9 @@
           <syllabic>single</syllabic>
           <text>len</text>
           </lyric>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>len</text>
-          </lyric>
         </note>
-      <note>
-        <rest/>
-        <duration>4</duration>
-        <voice>2</voice>
-        <type>half</type>
-        </note>
-      </measure><measure number="3"><attributes>
+      <forward><duration>4</duration>
+        </forward></measure><measure number="3"><attributes>
         <time>
           <beats>2</beats>
           <beat-type>4</beat-type>
@@ -216,14 +156,6 @@
         <type>eighth</type>
         <stem>up</stem>
         <beam number="1">begin</beam>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>middle</syllabic>
-          <text>u</text>
-          </lyric>
-        <lyric number="2" default-y="-70.73" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>Lau</text>
-          </lyric>
         <lyric number="1" default-y="-70.73" relative-y="-30.00">
           <syllabic>begin</syllabic>
           <text>Lau</text>
@@ -243,10 +175,6 @@
           <syllabic>middle</syllabic>
           <text>lu</text>
           </lyric>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>middle</syllabic>
-          <text>lu</text>
-          </lyric>
         </note>
       <note default-x="157.09" default-y="-5.00">
         <pitch>
@@ -257,14 +185,6 @@
         <voice>1</voice>
         <type>eighth</type>
         <stem>up</stem>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>end</syllabic>
-          <text>nen</text>
-          </lyric>
-        <lyric number="2" default-x="6.50" default-y="-70.73" relative-y="-30.00">
-          <syllabic>end</syllabic>
-          <text>lu</text>
-          </lyric>
         <lyric number="1" default-x="6.50" default-y="-70.73" relative-y="-30.00">
           <syllabic>end</syllabic>
           <text>lu</text>
@@ -279,7 +199,9 @@
       <backup>
         <duration>4</duration>
         </backup>
-      </measure><measure number="4"><note default-x="22.46" default-y="5.00">
+      <forward><duration>2</duration>
+        </forward><forward><duration>2</duration>
+        </forward></measure><measure number="4"><note default-x="22.46" default-y="5.00">
         <pitch>
           <step>G</step>
           <octave>5</octave>
@@ -292,15 +214,12 @@
           <syllabic>single</syllabic>
           <text>jee!</text>
           </lyric>
-        <lyric number="1" default-x="7.81" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>jee!</text>
-          </lyric>
         </note>
       <backup>
         <duration>4</duration>
         </backup>
-      </measure></part><part id="P1_down"><measure number="1"><attributes>
+      <forward><duration>4</duration>
+        </forward></measure></part><part id="P1_down"><measure number="1"><attributes>
         <divisions>2</divisions>
         <key>
           <fifths>0</fifths>
@@ -327,10 +246,6 @@
           <syllabic>single</syllabic>
           <text>Hei</text>
           </lyric>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>Hei</text>
-          </lyric>
         </note>
       <note>
         <rest/>
@@ -351,18 +266,16 @@
           <syllabic>begin</syllabic>
           <text>o</text>
           </lyric>
-        <lyric number="1" default-y="-49.00" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>o</text>
-          </lyric>
         </note>
       <backup>
         <duration>6</duration>
         </backup>
-      <forward>
+      <forward><duration>2</duration>
+        </forward><forward>
         <duration>2</duration>
         </forward>
-      </measure><measure number="2"><note default-x="21.75" default-y="-15.00">
+      <forward><duration>2</duration>
+        </forward></measure><measure number="2"><note default-x="21.75" default-y="-15.00">
         <pitch>
           <step>C</step>
           <octave>5</octave>
@@ -376,104 +289,28 @@
           <text>len</text>
           </lyric>
         </note>
-      <note>
-        <rest/>
-        <duration>2</duration>
-        <voice>1</voice>
-        <type>quarter</type>
-        </note>
-      <note default-x="168.16" default-y="-5.00">
-        <pitch>
-          <step>E</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>2</duration>
-        <voice>1</voice>
-        <type>quarter</type>
-        <stem>up</stem>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>La</text>
-          </lyric>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>La</text>
-          </lyric>
-        </note>
-      <backup>
+      <forward><duration>2</duration>
+        </forward><forward><duration>2</duration>
+        </forward><backup>
         <duration>6</duration>
         </backup>
+      <forward><duration>2</duration>
+        </forward><note>
+        <rest/>
+        <duration>4</duration>
+        <voice>2</voice>
+        <type>half</type>
+        </note>
       </measure><measure number="3"><attributes>
         <time>
           <beats>2</beats>
           <beat-type>4</beat-type>
           </time>
         </attributes>
-      <note default-x="36.98" default-y="-5.00">
-        <pitch>
-          <step>E</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>1</duration>
-        <voice>1</voice>
-        <type>eighth</type>
-        <stem>up</stem>
-        <beam number="1">begin</beam>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>middle</syllabic>
-          <text>u</text>
-          </lyric>
-        <lyric number="2" default-y="-70.73" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>Lau</text>
-          </lyric>
-        <lyric number="1" default-y="-70.73" relative-y="-30.00">
-          <syllabic>begin</syllabic>
-          <text>Lau</text>
-          </lyric>
-        </note>
-      <note default-x="97.03" default-y="-5.00">
-        <pitch>
-          <step>E</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>1</duration>
-        <voice>1</voice>
-        <type>eighth</type>
-        <stem>up</stem>
-        <beam number="1">end</beam>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>middle</syllabic>
-          <text>lu</text>
-          </lyric>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>middle</syllabic>
-          <text>lu</text>
-          </lyric>
-        </note>
-      <note default-x="157.09" default-y="-5.00">
-        <pitch>
-          <step>E</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>1</duration>
-        <voice>1</voice>
-        <type>eighth</type>
-        <stem>up</stem>
-        <lyric number="1" default-x="6.50" default-y="-49.00" relative-y="-30.00">
-          <syllabic>end</syllabic>
-          <text>nen</text>
-          </lyric>
-        <lyric number="2" default-x="6.50" default-y="-70.73" relative-y="-30.00">
-          <syllabic>end</syllabic>
-          <text>lu</text>
-          </lyric>
-        <lyric number="1" default-x="6.50" default-y="-70.73" relative-y="-30.00">
-          <syllabic>end</syllabic>
-          <text>lu</text>
-          </lyric>
-        </note>
-      <note>
+      <forward><duration>1</duration>
+        </forward><forward><duration>1</duration>
+        </forward><forward><duration>1</duration>
+        </forward><note>
         <rest/>
         <duration>1</duration>
         <voice>1</voice>
@@ -496,41 +333,9 @@
           <text>Lau</text>
           </lyric>
         </note>
-      <note default-x="157.09" default-y="-30.00">
-        <pitch>
-          <step>G</step>
-          <alter>-1</alter>
-          <octave>4</octave>
-          </pitch>
-        <duration>2</duration>
-        <voice>2</voice>
-        <type>quarter</type>
-        <accidental>flat</accidental>
-        <stem>down</stem>
-        <lyric number="1" default-x="6.50" default-y="-70.73" relative-y="-30.00">
-          <syllabic>end</syllabic>
-          <text>lu</text>
-          </lyric>
-        </note>
-      </measure><measure number="4"><note default-x="22.46" default-y="5.00">
-        <pitch>
-          <step>G</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>4</duration>
-        <voice>1</voice>
-        <type>half</type>
-        <stem>up</stem>
-        <lyric number="1" default-x="7.81" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>jee!</text>
-          </lyric>
-        <lyric number="1" default-x="7.81" default-y="-49.00" relative-y="-30.00">
-          <syllabic>single</syllabic>
-          <text>jee!</text>
-          </lyric>
-        </note>
-      <backup>
+      <forward><duration>2</duration>
+        </forward></measure><measure number="4"><forward><duration>4</duration>
+        </forward><backup>
         <duration>4</duration>
         </backup>
       <note default-x="22.46" default-y="-15.00">

@@ -15,6 +15,35 @@ def debug_print(xml_el):
     print(etree.tostring(xml_el, pretty_print=True, encoding='unicode'))
 
 
+def note_to_string(note):
+    """
+    Convert a note element to a string representation.
+    include duration
+    """
+    duration_el = note.find("duration")
+    duration = duration_el.text if duration_el is not None else "0"
+    pitch_el = note.find("pitch")
+    pitch = f"{pitch_el.find('step').text}{pitch_el.find('octave').text}" if pitch_el is not None else note.tag
+    if note.find("rest") is not None:
+        pitch = "rest"
+    stem = note.find("stem")
+    repr = f"{pitch} ({duration})"
+    if stem is not None:
+        stem_direction = stem.text.strip()
+        if stem_direction == "up":
+            repr += " [up stem]"
+        elif stem_direction == "down":
+            repr += " [down stem]"
+    voice = note.find("voice")
+    if voice is not None:
+        repr += f" [voice {voice.text}]"
+    lyrics = note.findall("lyric")
+    if lyrics:
+        lyric_texts = [lyric.find("text").text for lyric in lyrics if lyric.find("text") is not None]
+        repr += f" [lyrics: {', '.join(lyric_texts)}]"
+    return repr
+
+
 def get_stem_direction(note, reversed_voice=None):
     stem = note.find("stem")
     if stem is None and reversed_voice is not None:
@@ -57,37 +86,70 @@ def copy_and_make_voice1(note):
 
 
 def remove_other_voice(this_direction, measure, voices_reversed):
+    print("")
+    print("Starting to remove other voice in measure:", measure.attrib.get("number"), "for direction:", this_direction)
 
-    correct_dir = True
     for el in measure:
+        if el.tag not in ("note", "forward", "backup"):
+            continue
+        print("Looking at element:", note_to_string(el), "this direction:", this_direction)
         if el.tag == "note":
             direction = get_stem_direction(el, voices_reversed)
-            correct_dir = direction == this_direction
+            if direction != this_direction:
+                if el.find("rest") is not None:
+                    continue
+                # Replace note with a forward
+                print("Removing note with wrong direction:", direction, "expected:", this_direction)
 
-        if el.tag == "forward":
-            # This will toggle correct dir also.
-            correct_dir = not correct_dir
+                forward_el = etree.Element("forward")
+                duration_el = el.find("duration")
+                if duration_el is not None:
+                    forward_el.append(deepcopy(duration_el))
+                measure.replace(el, forward_el)
 
-        if not correct_dir:
-            # Remove the note
-            print(f"Removing note in measure {measure.attrib.get('number')} with direction {direction} (expected {this_direction})")
-            measure.remove(el)
+    print("")
+    # Another loop, to check which rests to remove if any
+    time_pos = 0
+    notes_by_time_pos = defaultdict(list)
+    for el in measure:
+        if el.tag not in ("note", "forward", "backup"):
+            continue
+        if el.tag == "note":
+            notes_by_time_pos[time_pos].append(el)
+        duration_el = el.find("duration")
+        duration = int(duration_el.text) if duration_el is not None else 0
+        if el.tag == "note":
+            time_pos += duration
+        elif el.tag == "backup":
+            time_pos -= duration
         elif el.tag == "forward":
-            # This must be a rest now
-            duration_el = el.find("duration")
-            if duration_el is None:
-                raise ValueError("Forward element without duration in measure")
-            duration = int(duration_el.text)
-            # Create a rest note with the same duration
-            rest_note = etree.Element("note")
-            etree.SubElement(rest_note, "rest")
-            duration_el = etree.SubElement(rest_note, "duration")
-            duration_el.text = str(duration)
-            voice_el = etree.SubElement(rest_note, "voice")
-            voice_el.text = "1"
-            # replace el with rest_note
-            print(f"Replacing forward in measure {measure.attrib.get('number')} with rest note of duration {duration}")
-            measure.replace(el, rest_note)
+            time_pos += duration
+
+    max_time_pos = time_pos
+
+    sorted_times = sorted(notes_by_time_pos.keys())
+    for index in range(len(sorted_times)):
+        time = sorted_times[index]
+        if index + 1 >= len(sorted_times):
+            next_time = max_time_pos
+        else:
+            next_time = sorted_times[index + 1]
+        time_between = next_time - time
+        print(f"Checking time position {time} with next time {next_time}, time between: {time_between}")
+        print("Notes at this time position:", len(notes_by_time_pos[time]), [note_to_string(note) for note in notes_by_time_pos[time]])
+        for note in notes_by_time_pos[time]:
+            duration_el = note.find("duration")
+            if duration_el is not None:
+                duration = int(duration_el.text)
+                if duration != time_between:
+                    # This note is longer than the time between, so it should be converted
+                    # to a forward
+                    print("Note longer than time between, converting to forward:", note_to_string(note))
+                    forward_el = etree.Element("forward")
+                    forward_el.append(deepcopy(duration_el))
+                    measure.replace(note, forward_el)
+
+
 
 def main(root):
 
@@ -217,8 +279,6 @@ def main(root):
             m_up = etree.Element("measure", number=m_num)
             m_down = etree.Element("measure", number=m_num)
 
-            print(debug_print(measure))
-
             for el in measure:
                 if el.tag == "attributes":
                     m_up.append(deepcopy(el))
@@ -250,6 +310,9 @@ def main(root):
                             # Try to find any lyric
                             lyric = next(iter(lyrics_for_time.values()), None)
                         if lyric is not None:
+                            # Clear existing lyrics
+                            for existing_lyric in el.findall("lyric"):
+                                el.remove(existing_lyric)
                             el.append(deepcopy(lyric))
 
                     print(f"Processing note in part {pid}, measure {m_num}, time position {time_position}, is_rest: {is_rest}")
@@ -263,8 +326,6 @@ def main(root):
             remove_other_voice("down", m_down, voices_reversed)
 
             print("measure up")
-            print(debug_print(m_up))
-
             new_measures[split_map[pid]["up"]].append(m_up)
             new_measures[split_map[pid]["down"]].append(m_down)
 
