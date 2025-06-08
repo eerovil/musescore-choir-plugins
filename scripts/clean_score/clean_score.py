@@ -56,67 +56,38 @@ def copy_and_make_voice1(note):
     return new_note
 
 
-
-                    # if not is_rest and not is_middle_of_slur(new_note):
-                    #     lyrics_for_time = lyrics_by_time.get(time_position, {})
-                    #     choices = [
-                    #         split_map[pid][direction],
-                    #         "B1" if pid == "P2" and direction == "up" else "B2" if pid == "P2" else "T1" if direction == "up" else "T2",
-                    #         pid,
-                    #         "P1" if pid.startswith("T") else "P2",
-                    #         "P1",
-                    #         "P2"
-                    #     ]
-                    #     for choice in choices:
-                    #         lyric = lyrics_for_time.get(choice)
-                    #         if lyric is not None:
-                    #             break
-                    #     if lyric is not None:
-                    #         new_note.append(deepcopy(lyric))
-
-
 def remove_other_voice(this_direction, measure, voices_reversed):
-    notes_by_time = defaultdict(list)
-    time_position = 0
+
+    correct_dir = True
     for el in measure:
         if el.tag == "note":
-            duration_el = el.find("duration")
-            duration = int(duration_el.text) if duration_el is not None else 0
-            notes_by_time[time_position].append(el)
-            time_position += duration
-        elif el.tag == "backup":
-            time_position -= int(el.find("duration").text)
+            direction = get_stem_direction(el, voices_reversed)
+            correct_dir = direction == this_direction
+
+        if el.tag == "forward":
+            # This will toggle correct dir also.
+            correct_dir = not correct_dir
+
+        if not correct_dir:
+            # Remove the note
+            print(f"Removing note in measure {measure.attrib.get('number')} with direction {direction} (expected {this_direction})")
+            measure.remove(el)
         elif el.tag == "forward":
-            time_position += int(el.find("duration").text)
-
-    # When multiple notes at the same time position, we need to decide which voice to keep
-    for time, notes in notes_by_time.items():
-        if len(notes) == 1:
-            continue
-        index = -1
-        for note in notes:
-            index += 1
-            direction = get_stem_direction(note, voices_reversed)
-            if direction == this_direction:
-                continue
-            # Remove note if it is not in the correct voice
-            #
-            # But... We can't remove the note sometimes. It's possible
-            # that the XML is like this:
-            # <note></note>    # time 0
-            # <rest></rest>    # time 2 -> 4
-            # <backup></backup>  # time 4 -> 0
-            # <note></note>    # time 0
-            #
-            # If we remove the first note, we will end up with a rest at time 0
-            # which is not what we want.
-            if index == 0:
-                # If this is the first note, we can't directly remove it
-                print("Warning: Cannot remove first note at time", time, "in measure", measure.attrib.get("number"))
-                continue
-
-            measure.remove(note)
-            print(f"Removed note in {this_direction} voice at time {time} in measure {measure.attrib.get('number')}")
+            # This must be a rest now
+            duration_el = el.find("duration")
+            if duration_el is None:
+                raise ValueError("Forward element without duration in measure")
+            duration = int(duration_el.text)
+            # Create a rest note with the same duration
+            rest_note = etree.Element("note")
+            etree.SubElement(rest_note, "rest")
+            duration_el = etree.SubElement(rest_note, "duration")
+            duration_el.text = str(duration)
+            voice_el = etree.SubElement(rest_note, "voice")
+            voice_el.text = "1"
+            # replace el with rest_note
+            print(f"Replacing forward in measure {measure.attrib.get('number')} with rest note of duration {duration}")
+            measure.replace(el, rest_note)
 
 def main(root):
 
