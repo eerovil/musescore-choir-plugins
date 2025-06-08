@@ -6,3 +6,6 @@ scripts/client_secrets.json
 
 *.pyc
 scripts/token.pickle
+scripts/clean_score/test_output.txt
+
+pip-src

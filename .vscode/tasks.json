@@ -1,0 +1,21 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    // cwd scripts/clean_score
+    "version": "2.0.0",
+    "tasks": [
+        {
+        "label": "Test: Run Pytest to File",
+        "type": "shell",
+        "command": "pytest . --log-cli-level=DEBUG > test_output.txt 2>&1; tail -50 test_output.txt > test_output2.txt",
+        "problemMatcher": [],
+        "presentation": {
+            "reveal": "never"
+        },
+        "options": {
+            "cwd": "${workspaceFolder}/scripts/clean_score"
+        },
+
+        }
+    ]
+}
