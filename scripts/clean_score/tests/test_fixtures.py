@@ -5,7 +5,6 @@ from glob import glob
 import io
 from pathlib import Path
 import pytest  # noqa
-from music21 import converter
 import tempfile
 import xml.etree.ElementTree as ET
 
