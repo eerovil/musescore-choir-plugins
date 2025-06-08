@@ -8,6 +8,13 @@ from collections import defaultdict
 import argparse
 
 
+def debug_print(xml_el):
+    """
+    Print the XML element in a human-readable format.
+    """
+    print(etree.tostring(xml_el, pretty_print=True, encoding='unicode'))
+
+
 def get_stem_direction(note, reversed_voice=None):
     stem = note.find("stem")
     if stem is None and reversed_voice is not None:
@@ -86,11 +93,28 @@ def remove_other_voice(this_direction, measure, voices_reversed):
     for time, notes in notes_by_time.items():
         if len(notes) == 1:
             continue
+        index = -1
         for note in notes:
+            index += 1
             direction = get_stem_direction(note, voices_reversed)
             if direction == this_direction:
                 continue
             # Remove note if it is not in the correct voice
+            #
+            # But... We can't remove the note sometimes. It's possible
+            # that the XML is like this:
+            # <note></note>    # time 0
+            # <rest></rest>    # time 2 -> 4
+            # <backup></backup>  # time 4 -> 0
+            # <note></note>    # time 0
+            #
+            # If we remove the first note, we will end up with a rest at time 0
+            # which is not what we want.
+            if index == 0:
+                # If this is the first note, we can't directly remove it
+                print("Warning: Cannot remove first note at time", time, "in measure", measure.attrib.get("number"))
+                continue
+
             measure.remove(note)
             print(f"Removed note in {this_direction} voice at time {time} in measure {measure.attrib.get('number')}")
 
@@ -192,8 +216,9 @@ def main(root):
                         placement = lyric.attrib.get("placement", "below")
                         lyric_pid = pid
                         if verse == "2":
-                            if pid == "P1" and placement == "below":
-                                lyric_pid = "B1"
+                            # Force verse 2 + below to be in the down part
+                            if placement == "below":
+                                lyric_pid = split_map[pid]["down"]
                         lyrics_by_time[time_position][lyric_pid] = deepcopy(lyric)
                         # Force verse 1
                         lyrics_by_time[time_position][lyric_pid].attrib["number"] = "1"
@@ -216,11 +241,12 @@ def main(root):
             print(f"Processing measure {measure.attrib.get('number')} for part {pid} at time position {time_position}")
 
             m_num = measure.attrib.get("number")
-            m_by_time = defaultdict(list)
             voices_reversed = reversed_voices_by_part_measure[pid].get(m_num, False)
 
             m_up = etree.Element("measure", number=m_num)
             m_down = etree.Element("measure", number=m_num)
+
+            print(debug_print(measure))
 
             for el in measure:
                 if el.tag == "attributes":
@@ -238,9 +264,24 @@ def main(root):
                         # Add lyrics if available
                         lyrics_for_time = lyrics_by_time.get(time_position, {})
                         lyric = lyrics_for_time.get(split_map[pid][direction])
+                        if lyric is None:
+                            # Try to find a fallback lyric
+                            choices = [
+                                split_map[pid]["up"],
+                                split_map[pid]["down"],
+                                pid,
+                            ]
+                            for choice in choices:
+                                lyric = lyrics_for_time.get(choice)
+                                if lyric is not None:
+                                    break
+                        if lyric is None:
+                            # Try to find any lyric
+                            lyric = next(iter(lyrics_for_time.values()), None)
                         if lyric is not None:
                             el.append(deepcopy(lyric))
 
+                    print(f"Processing note in part {pid}, measure {m_num}, time position {time_position}, is_rest: {is_rest}")
                     m_up.append(deepcopy(el))
                     m_down.append(deepcopy(el))
                     duration_el = el.find("duration")
@@ -249,6 +290,9 @@ def main(root):
 
             remove_other_voice("up", m_up, voices_reversed)
             remove_other_voice("down", m_down, voices_reversed)
+
+            print("measure up")
+            print(debug_print(m_up))
 
             new_measures[split_map[pid]["up"]].append(m_up)
             new_measures[split_map[pid]["down"]].append(m_down)
