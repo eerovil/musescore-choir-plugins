@@ -177,45 +177,34 @@ def main(score):
         # Create new parts for up and down voices
         up_part = stream.Part()
         up_part.id = up_part_id
-        up_part.partId = up_part_id  # Ensure music21 recognizes this as a part
+        up_part.partId = up_part_id
         up_part.partName = f"{original_part.partName} Up"
-        # Copy instrument/clef information from original part to new parts
         instruments = original_part.getElementsByClass(instrument.Instrument)
         if instruments:
-            # FIX: Use deepcopy directly as 'Instrument' objects might not have '.editor.copy()'
             up_part.insert(0, copy.deepcopy(instruments[0]))
         new_parts_to_add.append(up_part)
 
         down_part = stream.Part()
         down_part.id = down_part_id
-        down_part.partId = down_part_id  # Ensure music21 recognizes this as a part
+        down_part.partId = down_part_id
         down_part.partName = f"{original_part.partName} Down"
         if instruments:
-            # FIX: Use deepcopy directly as 'Instrument' objects might not have '.editor.copy()'
             down_part.insert(0, copy.deepcopy(instruments[0]))
         new_parts_to_add.append(down_part)
 
         print(f"Splitting part {part_id} into {up_part_id} and {down_part_id}")
 
     logger.debug(f"split_part_mappings: {split_part_mappings}")
-    # Add new parts to a list (do not append to the original score)
     split_parts = []
     for new_part in new_parts_to_add:
         split_parts.append(new_part)
 
-    # Removed the 0 PASS: reversed_voices_by_part_measure logic
-    # As the heuristic is now simplified within determine_note_voice_heuristic and the flag is not used there.
-
     # FIRST PASS: store lyrics by (part_id, measure_number, offset, lyric_number)
-    # Lyrics are usually associated with a specific note, not a general time position for a 'voice'.
-    # We collect them here so they can be re-attached to the correct note in the split part.
-    lyrics_data = defaultdict(lambda: defaultdict(lambda: defaultdict(dict))) # {part_id: {measure_num: {offset: {lyric_num: lyric_obj}}}}
-
+    lyrics_data = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     for part in score.parts:
         pid = part.id
         if pid not in parts_to_split_ids:
             continue
-        
         for measure in part.getElementsByClass('Measure'):
             measure_num = measure.number
             for element in measure.notesAndRests:
@@ -224,146 +213,76 @@ def main(score):
                         lyrics_data[pid][measure_num][element.offset][lyric_obj.number] = lyric_obj.editor.copy()
 
     logger.debug(f"lyrics_data: {lyrics_data}")
-    # SECOND PASS: Separate notes/rests into new parts based on explicit Voice streams if present
-    temp_new_measures = defaultdict(list) # {new_part_id: [music21.Measure objects]}
-
+    # NEW LOGIC: Copy all elements, then prune by voice
+    temp_new_measures = defaultdict(list)
     for original_part in score.parts:
-        logger.debug(f"Second pass original_part: {original_part.id}")
         pid = original_part.id
         if pid not in parts_to_split_ids:
             continue
-
         up_part_id = split_part_mappings[pid]["up"]
         down_part_id = split_part_mappings[pid]["down"]
-
         for original_measure in original_part.getElementsByClass('Measure'):
-            logger.debug(f"Second pass measure: {original_measure.number}")
             measure_num = original_measure.number
-
-            # --- NEW LOGIC: Split by Voice streams if present ---
-            voice_streams = list(original_measure.getElementsByClass('Voice'))
-            if len(voice_streams) > 1:
-                measure_up = stream.Measure()
-                measure_up.number = measure_num
-                measure_down = stream.Measure()
-                measure_down.number = measure_num
-                # --- FIX: Compose a full timeline for each measure, then assign elements by offset ---
-                offsets = set()
-                up_voice = voice_streams[0]
-                down_voice = voice_streams[1]
-                up_elements = {el.offset: el for el in up_voice.notesAndRests}
-                down_elements = {el.offset: el for el in down_voice.notesAndRests}
-                for el in up_voice.notesAndRests:
-                    offsets.add(el.offset)
-                for el in down_voice.notesAndRests:
-                    offsets.add(el.offset)
-                offsets = sorted(offsets)
-                for offset in offsets:
-                    up_el = up_elements.get(offset)
-                    down_el = down_elements.get(offset)
-                    # Up part
-                    if up_el is not None:
-                        up_note = copy.deepcopy(up_el)
-                        # Merge lyrics from both voices at this offset
-                        lyrics = []
-                        if hasattr(up_el, 'lyrics') and up_el.lyrics:
-                            lyrics.extend([l for l in up_el.lyrics if l.text])
-                        if down_el and hasattr(down_el, 'lyrics') and down_el.lyrics:
-                            lyrics.extend([l for l in down_el.lyrics if l.text])
-                        up_note.lyrics = []
-                        for l in lyrics:
-                            up_note.addLyric(l.text)
-                        measure_up.append(up_note)
-                    elif down_el is not None:
-                        rest = note.Rest()
-                        rest.duration = copy.deepcopy(down_el.duration)
-                        measure_up.append(rest)
-                    # Down part
-                    if down_el is not None:
-                        down_note = copy.deepcopy(down_el)
-                        # Merge lyrics from both voices at this offset
-                        lyrics = []
-                        if hasattr(down_el, 'lyrics') and down_el.lyrics:
-                            lyrics.extend([l for l in down_el.lyrics if l.text])
-                        if up_el and hasattr(up_el, 'lyrics') and up_el.lyrics:
-                            lyrics.extend([l for l in up_el.lyrics if l.text])
-                        down_note.lyrics = []
-                        for l in lyrics:
-                            down_note.addLyric(l.text)
-                        measure_down.append(down_note)
-                    elif up_el is not None:
-                        rest = note.Rest()
-                        rest.duration = copy.deepcopy(up_el.duration)
-                        measure_down.append(rest)
-                # Copy measure-level elements (attributes, directions, etc.), skipping Voice streams
-                for el in original_measure.elements:
-                    if (
-                        not isinstance(el, note.Note)
-                        and not isinstance(el, note.Rest)
-                        and not isinstance(el, chord.Chord)
-                        and not (isinstance(el, stream.Voice))
-                    ):
-                        if hasattr(el, 'editor') and hasattr(el.editor, 'copy'):
-                            measure_up.append(el.editor.copy())
-                            measure_down.append(el.editor.copy())
-                        else:
-                            measure_up.append(copy.deepcopy(el))
-                            measure_down.append(copy.deepcopy(el))
-                temp_new_measures[up_part_id].append(measure_up)
-                temp_new_measures[down_part_id].append(measure_down)
-                continue  # Only do one logic per measure!
-
-            # --- STRICT VOICE SPLIT LOGIC ---
-            measure_up = stream.Measure()
-            measure_up.number = measure_num
-            measure_down = stream.Measure()
-            measure_down.number = measure_num
-            # Copy measure-level elements (attributes, directions, etc.), skipping Voice streams
-            for el in original_measure.elements:
-                if (
-                    not isinstance(el, note.Note)
-                    and not isinstance(el, note.Rest)
-                    and not isinstance(el, chord.Chord)
-                    and not (isinstance(el, stream.Voice))
-                ):
-                    if isinstance(el, stream.Stream) and hasattr(el, 'clefs') and el.clefs:
-                        copied_el_up = el.editor.copy()
-                        copied_el_down = el.editor.copy()
-                        measure_up.append(copied_el_up)
-                        if isinstance(copied_el_down.clefs[0], clef.TrebleClef) and copied_el_down.clefs[0].octaveShift == 0:
-                            convert_to_tenor_clef_music21(copied_el_down)
-                        measure_down.append(copied_el_down)
-                    else:
-                        if hasattr(el, 'editor') and hasattr(el.editor, 'copy'):
-                            measure_up.append(el.editor.copy())
-                            measure_down.append(el.editor.copy())
-                        else:
-                            measure_up.append(copy.deepcopy(el))
-                            measure_down.append(copy.deepcopy(el))
-            for element in original_measure.notesAndRests:
-                logger.debug(f"Second pass element: {element}, offset={element.offset}")
-                element_copy = copy.deepcopy(element)
-                vnum = get_voice_number(element_copy)
-                if hasattr(element_copy, 'lyrics') and element_copy.lyrics:
-                    element_copy.lyrics = []
-                lyrics_at_current_time = lyrics_data[pid][measure_num].get(element.offset, {})
-                chosen_lyric = None
-                if vnum == 1 and 1 in lyrics_at_current_time:
-                    chosen_lyric = lyrics_at_current_time[1]
-                elif vnum == 2 and 2 in lyrics_at_current_time:
-                    chosen_lyric = lyrics_at_current_time[2]
-                if chosen_lyric is None:
+            # Copy all elements to both measures
+            measure_up = copy.deepcopy(original_measure)
+            measure_down = copy.deepcopy(original_measure)
+            # Remove notes/rests not belonging to the correct voice
+            # Remove notes/rests not belonging to the correct voice (recursively)
+            def prune_by_voice(s, keep_voice):
+                to_remove = []
+                for el in s:
+                    if isinstance(el, (note.Note, note.Rest)):
+                        vnum = get_voice_number(el)
+                        if vnum != keep_voice:
+                            to_remove.append(el)
+                    elif isinstance(el, stream.Voice) or isinstance(el, stream.Measure) or isinstance(el, stream.Part):
+                        prune_by_voice(el, keep_voice)
+                for el in to_remove:
+                    s.remove(el)
+            for m, keep_voice in [(measure_up, 1), (measure_down, 2)]:
+                prune_by_voice(m, keep_voice)
+                # Move all notes/rests from any Voice streams to the measure level, then remove the Voice
+                for v in list(m.getElementsByClass(stream.Voice)):
+                    for el in list(v.notesAndRests):
+                        m.insert(el.offset, el)
+                    m.remove(v)
+                # Remove any empty Voice streams that may remain
+                for v in list(m.getElementsByClass(stream.Voice)):
+                    if len(v.notesAndRests) == 0:
+                        m.remove(v)
+                m.makeRests(fillGaps=True, inPlace=True)
+                # If still empty, add a full-measure rest
+                if len(m.notesAndRests) == 0:
+                    rest = note.Rest()
+                    rest.duration = m.barDuration
+                    m.append(rest)
+                # Sort notes/rests by offset, then by their order in the original measure
+                orig_order = {id(el): i for i, el in enumerate(m.notesAndRests)}
+                sorted_noterests = sorted(m.notesAndRests, key=lambda el: (el.offset, orig_order.get(id(el), 0)))
+                for el in m.notesAndRests:
+                    m.remove(el)
+                for el in sorted_noterests:
+                    m.append(el)
+                # Merge all unique lyrics at each offset from original measure, sorted by offset then lyric number
+                for el in m.notesAndRests:
+                    # Gather all lyrics from all original notes at this offset
+                    lyrics_at_current_time = lyrics_data[pid][measure_num].get(el.offset, {})
+                    all_lyrics = []
+                    seen_texts = set()
                     for lyric_num in sorted(lyrics_at_current_time.keys()):
-                        chosen_lyric = lyrics_at_current_time[lyric_num]
-                        break
-                if chosen_lyric and not is_middle_of_slur_music21(element_copy):
-                    element_copy.addLyric(chosen_lyric.text, lyricNumber=1, lyricPlacement=chosen_lyric.placement)
-                if vnum == 1:
-                    measure_up.append(element_copy)
-                elif vnum == 2:
-                    measure_down.append(element_copy)
-            measure_up.makeRests(fillGaps=True, inPlace=True)
-            measure_down.makeRests(fillGaps=True, inPlace=True)
+                        l = lyrics_at_current_time[lyric_num]
+                        if l.text and l.text not in seen_texts:
+                            all_lyrics.append((lyric_num, l))
+                            seen_texts.add(l.text)
+                    # Sort by lyric number for deterministic order
+                    all_lyrics.sort(key=lambda x: x[0])
+                    if all_lyrics:
+                        el.lyrics = []
+                        for idx, (lyric_num, l) in enumerate(all_lyrics, 1):
+                            if hasattr(l, 'placement') and l.placement is not None:
+                                el.addLyric(l.text, lyricNumber=idx, lyricPlacement=l.placement)
+                            else:
+                                el.addLyric(l.text, lyricNumber=idx)
             temp_new_measures[up_part_id].append(measure_up)
             temp_new_measures[down_part_id].append(measure_down)
     logger.debug(f"temp_new_measures: {temp_new_measures}")
