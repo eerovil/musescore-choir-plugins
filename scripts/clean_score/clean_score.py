@@ -263,14 +263,34 @@ def main(score):
                     down_el = down_elements.get(offset)
                     # Up part
                     if up_el is not None:
-                        measure_up.append(copy.deepcopy(up_el))
+                        up_note = copy.deepcopy(up_el)
+                        # Merge lyrics from both voices at this offset
+                        lyrics = []
+                        if hasattr(up_el, 'lyrics') and up_el.lyrics:
+                            lyrics.extend([l for l in up_el.lyrics if l.text])
+                        if down_el and hasattr(down_el, 'lyrics') and down_el.lyrics:
+                            lyrics.extend([l for l in down_el.lyrics if l.text])
+                        up_note.lyrics = []
+                        for l in lyrics:
+                            up_note.addLyric(l.text)
+                        measure_up.append(up_note)
                     elif down_el is not None:
                         rest = note.Rest()
                         rest.duration = copy.deepcopy(down_el.duration)
                         measure_up.append(rest)
                     # Down part
                     if down_el is not None:
-                        measure_down.append(copy.deepcopy(down_el))
+                        down_note = copy.deepcopy(down_el)
+                        # Merge lyrics from both voices at this offset
+                        lyrics = []
+                        if hasattr(down_el, 'lyrics') and down_el.lyrics:
+                            lyrics.extend([l for l in down_el.lyrics if l.text])
+                        if up_el and hasattr(up_el, 'lyrics') and up_el.lyrics:
+                            lyrics.extend([l for l in up_el.lyrics if l.text])
+                        down_note.lyrics = []
+                        for l in lyrics:
+                            down_note.addLyric(l.text)
+                        measure_down.append(down_note)
                     elif up_el is not None:
                         rest = note.Rest()
                         rest.duration = copy.deepcopy(up_el.duration)

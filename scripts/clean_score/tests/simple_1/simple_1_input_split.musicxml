@@ -4,7 +4,7 @@
   <work>
     <work-title>Test</work-title>
   </work>
-  <movement-title>lyric_1_input.musicxml</movement-title>
+  <movement-title>simple_1_input.musicxml</movement-title>
   <identification>
     <creator type="composer">Music21</creator>
     <encoding>
@@ -30,29 +30,29 @@
     </page-layout>
   </defaults>
   <credit page="1">
-    <credit-words default-x="600" default-y="1611.86" font-size="22" justify="center" valign="top">Test</credit-words>
+    <credit-words default-x="600" default-y="1611.43" font-size="22" justify="center" valign="top">Test</credit-words>
   </credit>
   <part-list>
     <score-part id="P1">
       <part-name>Piano Up</part-name>
       <part-abbreviation>Pno.</part-abbreviation>
-      <score-instrument id="I3312b2561019e6b107c5a6f7ceadf7bb">
+      <score-instrument id="I7b6988f8c184b3ef8ebb57150b7be794">
         <instrument-name>Piano</instrument-name>
         <instrument-abbreviation>Pno</instrument-abbreviation>
       </score-instrument>
-      <midi-instrument id="I3312b2561019e6b107c5a6f7ceadf7bb">
+      <midi-instrument id="I7b6988f8c184b3ef8ebb57150b7be794">
         <midi-channel>1</midi-channel>
         <midi-program>1</midi-program>
       </midi-instrument>
     </score-part>
-    <score-part id="P46a5137782dd37118dc341e2eb8d54cf">
+    <score-part id="Pd578b79823d8b275ce97f263abfc07ef">
       <part-name>Piano Down</part-name>
       <part-abbreviation>Pno.</part-abbreviation>
-      <score-instrument id="If207672afc703bef1e14494802638834">
+      <score-instrument id="I9c24e3af51ac1a976c10415518b2a7bb">
         <instrument-name>Piano</instrument-name>
         <instrument-abbreviation>Pno</instrument-abbreviation>
       </score-instrument>
-      <midi-instrument id="If207672afc703bef1e14494802638834">
+      <midi-instrument id="I9c24e3af51ac1a976c10415518b2a7bb">
         <midi-channel>2</midi-channel>
         <midi-program>1</midi-program>
       </midi-instrument>
@@ -74,49 +74,37 @@
       <attributes>
         <divisions>10080</divisions>
       </attributes>
-      <note default-x="73.72" default-y="-15">
+      <note default-x="80.72" default-y="-5">
         <pitch>
-          <step>C</step>
+          <step>E</step>
           <octave>5</octave>
         </pitch>
         <duration>10080</duration>
         <type>quarter</type>
-        <stem>down</stem>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>Hei</text>
-        </lyric>
+        <stem>up</stem>
       </note>
       <note>
         <rest />
         <duration>10080</duration>
         <type>quarter</type>
       </note>
-      <note default-x="290.07" default-y="-15">
+      <note default-x="298.82" default-y="-5">
         <pitch>
-          <step>C</step>
+          <step>E</step>
           <octave>5</octave>
         </pitch>
         <duration>10080</duration>
         <type>quarter</type>
-        <stem>down</stem>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>o</text>
-        </lyric>
+        <stem>up</stem>
       </note>
-      <note default-x="398.24" default-y="-15">
+      <note default-x="407.87" default-y="-5">
         <pitch>
-          <step>C</step>
+          <step>E</step>
           <octave>5</octave>
         </pitch>
         <duration>10080</duration>
         <type>quarter</type>
-        <stem>down</stem>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>len</text>
-        </lyric>
+        <stem>up</stem>
       </note>
       <attributes>
         <clef>
@@ -143,7 +131,7 @@
         <duration>20160</duration>
         <type>half</type>
       </note>
-      <note default-x="182.44" default-y="-20">
+      <note default-x="178.46" default-y="-20">
         <pitch>
           <step>B</step>
           <octave>4</octave>
@@ -152,46 +140,30 @@
         <type>eighth</type>
         <stem>up</stem>
         <beam number="1">begin</beam>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>lau</text>
-        </lyric>
       </note>
-      <note default-x="259.46" default-y="-20">
+      <note default-x="253.66" default-y="-20">
         <pitch>
           <step>B</step>
           <octave>4</octave>
         </pitch>
         <duration>5040</duration>
-        <tie type="start" />
         <type>eighth</type>
         <stem>up</stem>
         <beam number="1">end</beam>
-        <notations>
-          <tied type="start" />
-        </notations>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>lu.</text>
-        </lyric>
       </note>
-      <note default-x="336.48" default-y="-20">
+      <note default-x="328.87" default-y="-20">
         <pitch>
           <step>B</step>
           <octave>4</octave>
         </pitch>
         <duration>10080</duration>
-        <tie type="stop" />
         <type>quarter</type>
         <stem>up</stem>
-        <notations>
-          <tied type="stop" />
-        </notations>
       </note>
     </measure>
   </part>
   <!--=========================== Part 2 ===========================-->
-  <part id="P46a5137782dd37118dc341e2eb8d54cf">
+  <part id="Pd578b79823d8b275ce97f263abfc07ef">
     <!--========================= Measure 1 ==========================-->
     <measure implicit="no" number="1">
       <print>
@@ -206,49 +178,37 @@
       <attributes>
         <divisions>10080</divisions>
       </attributes>
-      <note default-x="73.72" default-y="-5">
+      <note default-x="80.72" default-y="-15">
         <pitch>
-          <step>E</step>
+          <step>C</step>
           <octave>5</octave>
         </pitch>
         <duration>10080</duration>
         <type>quarter</type>
-        <stem>up</stem>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>Hei</text>
-        </lyric>
+        <stem>down</stem>
       </note>
       <note>
         <rest />
         <duration>10080</duration>
         <type>quarter</type>
       </note>
-      <note default-x="290.07" default-y="-5">
+      <note default-x="298.82" default-y="-15">
         <pitch>
-          <step>E</step>
+          <step>C</step>
           <octave>5</octave>
         </pitch>
         <duration>10080</duration>
         <type>quarter</type>
-        <stem>up</stem>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>o</text>
-        </lyric>
+        <stem>down</stem>
       </note>
-      <note default-x="398.24" default-y="-5">
+      <note default-x="407.87" default-y="-15">
         <pitch>
-          <step>E</step>
+          <step>C</step>
           <octave>5</octave>
         </pitch>
         <duration>10080</duration>
         <type>quarter</type>
-        <stem>up</stem>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>len</text>
-        </lyric>
+        <stem>down</stem>
       </note>
       <attributes>
         <clef>
@@ -275,7 +235,7 @@
         <duration>20160</duration>
         <type>half</type>
       </note>
-      <note default-x="182.44" default-y="-20">
+      <note default-x="178.46" default-y="-20">
         <pitch>
           <step>B</step>
           <octave>4</octave>
@@ -284,41 +244,25 @@
         <type>eighth</type>
         <stem>down</stem>
         <beam number="1">begin</beam>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>lau</text>
-        </lyric>
       </note>
-      <note default-x="259.46" default-y="-20">
+      <note default-x="253.66" default-y="-20">
         <pitch>
           <step>B</step>
           <octave>4</octave>
         </pitch>
         <duration>5040</duration>
-        <tie type="start" />
         <type>eighth</type>
         <stem>down</stem>
         <beam number="1">end</beam>
-        <notations>
-          <tied type="start" />
-        </notations>
-        <lyric name="1" number="1">
-          <syllabic>single</syllabic>
-          <text>lu.</text>
-        </lyric>
       </note>
-      <note default-x="336.48" default-y="-20">
+      <note default-x="328.87" default-y="-20">
         <pitch>
           <step>B</step>
           <octave>4</octave>
         </pitch>
         <duration>10080</duration>
-        <tie type="stop" />
         <type>quarter</type>
         <stem>down</stem>
-        <notations>
-          <tied type="stop" />
-        </notations>
       </note>
     </measure>
   </part>
