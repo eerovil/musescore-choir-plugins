@@ -1,335 +1,325 @@
 #!/usr/bin/env python3
 
-import sys
-import argparse
-from music21 import converter, stream, note, chord, layout, duration, clef, instrument, metadata
+import sys  # noqa
+from lxml import etree
+from copy import deepcopy
 from collections import defaultdict
-import logging
-import copy # Import the copy module
 
-logger = logging.getLogger("clean_score")
-logging.basicConfig(level=logging.DEBUG)
+import argparse
 
-# Helper for debugging (music21 objects have .show('xml') or .show('text'))
-def debug_print(music21_obj):
-    logger.debug(f"debug_print: {music21_obj}")
-    music21_obj.show('xml')
 
-def get_voice_number(music21_element):
-    logger.debug(f"get_voice_number: {music21_element}")
-    # Try to get context Voice stream
-    try:
-        voice_ctx = music21_element.getContextByClass('Voice')
-        if voice_ctx is not None:
-            logger.debug(f"get_voice_number: found Voice context: {voice_ctx}, id={getattr(voice_ctx, 'id', None)}, number={getattr(voice_ctx, 'number', None)}")
-            # Try id or number
-            if hasattr(voice_ctx, 'number') and voice_ctx.number is not None:
-                try:
-                    return int(voice_ctx.number)
-                except Exception:
-                    return voice_ctx.number
-            if hasattr(voice_ctx, 'id') and voice_ctx.id is not None:
-                try:
-                    return int(voice_ctx.id)
-                except Exception:
-                    return voice_ctx.id
-    except Exception as e:
-        logger.debug(f"get_voice_number: Exception in getContextByClass('Voice'): {e}")
-    # Try attribute 'voice'
-    if hasattr(music21_element, 'voice') and music21_element.voice is not None:
-        try:
-            return int(music21_element.voice)
-        except Exception:
-            return music21_element.voice
-    # Try .voiceNumber
-    if hasattr(music21_element, 'voiceNumber') and music21_element.voiceNumber is not None:
-        try:
-            return int(music21_element.voiceNumber)
-        except Exception:
-            return music21_element.voiceNumber
-    # Try .groups (sometimes used for context in music21)
-    if hasattr(music21_element, 'groups') and music21_element.groups:
-        for g in music21_element.groups:
-            if hasattr(g, 'id') and g.id is not None:
-                try:
-                    return int(g.id)
-                except Exception:
-                    return g.id
-    return None # Return None if no explicit voice tag
-
-def get_stem_direction_music21(note_obj):
-    logger.debug(f"get_stem_direction_music21: {note_obj}")
+def debug_print(xml_el):
     """
-    Determines stem direction from a music21 note object.
-    Returns 'up', 'down', or 'none' if not explicitly set and not inferred by music21.
+    Print the XML element in a human-readable format.
     """
-    if note_obj.stemDirection is not None:
-        return note_obj.stemDirection.lower()
-    return 'none' # Explicitly return 'none' if no stem direction found
+    print(etree.tostring(xml_el, pretty_print=True, encoding='unicode'))
 
-def is_middle_of_slur_music21(note_obj):
-    logger.debug(f"is_middle_of_slur_music21: {note_obj}")
-    """
-    Checks if a music21 note is in the middle of a slur.
-    (i.e., has a slur that stops on it)
-    """
-    for spanner in note_obj.getSpanners():
-        if isinstance(spanner, stream.Slur) and spanner.isEnded(note_obj):
-            return True
+
+def get_stem_direction(note, reversed_voice=None):
+    stem = note.find("stem")
+    if stem is None and reversed_voice is not None:
+        ret = "down" if reversed_voice else "up"
+        if note.find("voice") is None:
+            return ret
+        if note.find("voice").text == "2":
+            ret = "up" if reversed_voice else "down"
+        return ret
+    return stem.text.strip() if stem is not None else "up"
+
+def is_middle_of_slur(note):
+    notations = note.find("notations")
+    if notations is not None:
+        for slur in notations.findall("slur"):
+            if slur.attrib.get("type") == "stop":
+                return True
     return False
 
-def convert_to_tenor_clef_music21(measure_stream_or_attributes_stream):
-    logger.debug(f"convert_to_tenor_clef_music21: {measure_stream_or_attributes_stream}")
-    """
-    Converts a G clef to a tenor clef (G clef with octave down)
-    within a measure stream or an attributes stream.
-    """
-    clefs_to_replace = []
-    for clef_obj in measure_stream_or_attributes_stream.getElementsByClass('Clef'):
-        if isinstance(clef_obj, clef.TrebleClef) and clef_obj.octaveShift == 0: # Only target standard G clef
-            clefs_to_replace.append(clef_obj)
-
-    for old_clef in clefs_to_replace:
-        # FIX: Corrected typo from TrebleCleblef to TrebleClef
-        tenor_clef = clef.TrebleClef()
-        tenor_clef.octaveShift = -1
-        measure_stream_or_attributes_stream.replace(old_clef, tenor_clef)
+def convert_to_tenor_clef(attributes):
+    clef = attributes.find("clef")
+    if clef is not None:
+        sign = clef.find("sign")
+        if sign is not None and sign.text == "G":
+            clef_octave = clef.find("clef-octave-change")
+            if clef_octave is None:
+                clef_octave = etree.SubElement(clef, "clef-octave-change")
+            clef_octave.text = "-1"
 
 
-def determine_note_voice_heuristic(music21_note_or_rest):
-    logger.debug(f"determine_note_voice_heuristic: {music21_note_or_rest}")
-    explicit_voice = get_voice_number(music21_note_or_rest)
-    if explicit_voice == 1:
-        return 'up'
-    elif explicit_voice == 2:
-        return 'down'
-    # Only use fallback if not voice 1 or 2
-    # 2. Stem direction (primary heuristic for OCR if no explicit voice)
-    if isinstance(music21_note_or_rest, note.Note):
-        stem_direction = get_stem_direction_music21(music21_note_or_rest)
-        if stem_direction == 'up':
-            return 'up'
-        elif stem_direction == 'down':
-            return 'down'
-        if music21_note_or_rest.pitch:
-            if music21_note_or_rest.pitch.midi >= 60:
-                return 'up'
-            else:
-                return 'down'
-    return 'down'
+def copy_and_make_voice1(note):
+    new_note = deepcopy(note)
+    voice = new_note.find("voice")
+    if voice is not None:
+        voice.text = "1"
+    else:
+        voice = etree.SubElement(new_note, "voice")
+        voice.text = "1"
+    return new_note
 
 
-def main(score):
-    logger.debug(f"main: score={score}")
-    # Find parts with multiple voices (based on presence of any voice tags or multiple notes at same time)
-    parts_to_split_ids = []
-    for part in score.parts:
-        logger.debug(f"Checking part: {part}, id={part.id}")
-        has_multiple_voices = False
-        for measure in part.getElementsByClass('Measure'):
-            logger.debug(f"Checking measure: {measure}, number={measure.number}")
-            # Check for multiple Voice streams in the measure
-            voice_streams = list(measure.getElementsByClass('Voice'))
-            if len(voice_streams) > 1:
-                logger.debug(f"Detected multiple Voice streams in measure {measure.number}: {[v.id for v in voice_streams]}")
-                has_multiple_voices = True
+
+                    # if not is_rest and not is_middle_of_slur(new_note):
+                    #     lyrics_for_time = lyrics_by_time.get(time_position, {})
+                    #     choices = [
+                    #         split_map[pid][direction],
+                    #         "B1" if pid == "P2" and direction == "up" else "B2" if pid == "P2" else "T1" if direction == "up" else "T2",
+                    #         pid,
+                    #         "P1" if pid.startswith("T") else "P2",
+                    #         "P1",
+                    #         "P2"
+                    #     ]
+                    #     for choice in choices:
+                    #         lyric = lyrics_for_time.get(choice)
+                    #         if lyric is not None:
+                    #             break
+                    #     if lyric is not None:
+                    #         new_note.append(deepcopy(lyric))
+
+
+def remove_other_voice(this_direction, measure, voices_reversed):
+    notes_by_time = defaultdict(list)
+    time_position = 0
+    for el in measure:
+        if el.tag == "note":
+            duration_el = el.find("duration")
+            duration = int(duration_el.text) if duration_el is not None else 0
+            notes_by_time[time_position].append(el)
+            time_position += duration
+        elif el.tag == "backup":
+            time_position -= int(el.find("duration").text)
+        elif el.tag == "forward":
+            time_position += int(el.find("duration").text)
+
+    # When multiple notes at the same time position, we need to decide which voice to keep
+    for time, notes in notes_by_time.items():
+        if len(notes) == 1:
+            continue
+        index = -1
+        for note in notes:
+            index += 1
+            direction = get_stem_direction(note, voices_reversed)
+            if direction == this_direction:
+                continue
+            # Remove note if it is not in the correct voice
+            #
+            # But... We can't remove the note sometimes. It's possible
+            # that the XML is like this:
+            # <note></note>    # time 0
+            # <rest></rest>    # time 2 -> 4
+            # <backup></backup>  # time 4 -> 0
+            # <note></note>    # time 0
+            #
+            # If we remove the first note, we will end up with a rest at time 0
+            # which is not what we want.
+            if index == 0:
+                # If this is the first note, we can't directly remove it
+                print("Warning: Cannot remove first note at time", time, "in measure", measure.attrib.get("number"))
+                continue
+
+            measure.remove(note)
+            print(f"Removed note in {this_direction} voice at time {time} in measure {measure.attrib.get('number')}")
+
+def main(root):
+
+    # Find parts with multiple voices
+    parts_with_multiple_voices = []
+    for part in root.findall("part"):
+        pid = part.attrib.get("id")
+        for measure in part.findall("measure"):
+            voices = set()
+            for el in measure:
+                if el.tag == "note":
+                    voice_el = el.find("voice")
+                    if voice_el is not None:
+                        voices.add(voice_el.text)
+                    else:
+                        voices.add("1")
+            if len(voices) > 1:
+                parts_with_multiple_voices.append(pid)
                 break
-            # Fallback: Check for multiple voice numbers as before
-            offset_map = defaultdict(list)
-            voices_in_measure = set()
-            for element in measure.notesAndRests:
-                logger.debug(f"Element in measure: {element}, offset={element.offset}, element.voice={getattr(element, 'voice', None)}")
-                # Try to get .voiceNumber if present
-                vnum = getattr(element, 'voiceNumber', None)
-                if vnum is None:
-                    vnum = get_voice_number(element)
-                if vnum is not None:
-                    voices_in_measure.add(vnum)
-                offset_map[element.offset].append(element)
-            logger.debug(f"voices_in_measure for measure {measure.number}: {voices_in_measure}")
-            if len(voices_in_measure) > 1:
-                has_multiple_voices = True
-                break
-            for offset, elements_at_offset in offset_map.items():
-                if len(elements_at_offset) > 1:
-                    has_multiple_voices = True
-                    break
-        if has_multiple_voices:
-            parts_to_split_ids.append(part.id)
-            print(f"Detected multiple voices in part: {part.id} (based on multiple Voice streams or voice numbers)")
-            break
 
-    logger.debug(f"parts_to_split_ids: {parts_to_split_ids}")
-    # Prepare for splitting
-    split_part_mappings = {} # Original_ID -> {'up': New_Up_ID, 'down': New_Down_ID}
-    new_parts_to_add = []
+    # For each part in parts_with_multiple_voices, create a split map
+    # create 2 new parts
 
-    for part_id in parts_to_split_ids:
-        logger.debug(f"Splitting part: {part_id}")
-        original_part = score.getElementById(part_id)
-        if original_part is None:
+    split_map = {}
+    for part in root.findall("part"):
+        pid = part.attrib.get("id")
+        if pid not in parts_with_multiple_voices:
             continue
 
-        up_part_id = f"{part_id}_up"
-        down_part_id = f"{part_id}_down"
-        split_part_mappings[part_id] = {"up": up_part_id, "down": down_part_id}
+        # Create a split map for this part
+        split_map[pid] = {
+            "up": f"{pid}_up",
+            "down": f"{pid}_down"
+        }
 
         # Create new parts for up and down voices
-        up_part = stream.Part()
-        up_part.id = up_part_id
-        up_part.partId = up_part_id
-        up_part.partName = f"{original_part.partName} Up"
-        instruments = original_part.getElementsByClass(instrument.Instrument)
-        if instruments:
-            up_part.insert(0, copy.deepcopy(instruments[0]))
-        new_parts_to_add.append(up_part)
+        up_part = etree.Element("part", id=split_map[pid]["up"])
+        down_part = etree.Element("part", id=split_map[pid]["down"])
 
-        down_part = stream.Part()
-        down_part.id = down_part_id
-        down_part.partId = down_part_id
-        down_part.partName = f"{original_part.partName} Down"
-        if instruments:
-            down_part.insert(0, copy.deepcopy(instruments[0]))
-        new_parts_to_add.append(down_part)
+        # Add these new parts to the root
+        root.append(up_part)
+        root.append(down_part)
 
-        print(f"Splitting part {part_id} into {up_part_id} and {down_part_id}")
+        # add to part list
+        part_list = root.find("part-list")
+        if part_list is None:
+            part_list = etree.SubElement(root, "part-list")
+        score_part_up = etree.SubElement(part_list, "score-part", id=split_map[pid]["up"])
+        score_part_down = etree.SubElement(part_list, "score-part", id=split_map[pid]["down"])
+        score_part_up.append(etree.Element("part-name", text=f"{pid} Up"))
+        score_part_down.append(etree.Element("part-name", text=f"{pid} Down"))
+        print("Splitting part", pid, "into", split_map[pid]["up"], "and", split_map[pid]["down"])
 
-    logger.debug(f"split_part_mappings: {split_part_mappings}")
-    split_parts = []
-    for new_part in new_parts_to_add:
-        split_parts.append(new_part)
+    # 0 PASS: Try to determine what voice is up or down using stem direction
+    reversed_voices_by_part_measure = defaultdict(dict)
 
-    # FIRST PASS: store lyrics by (part_id, measure_number, offset, lyric_number)
-    lyrics_data = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
-    for part in score.parts:
-        pid = part.id
-        if pid not in parts_to_split_ids:
+    for part in root.findall("part"):
+        pid = part.attrib.get("id")
+        if pid not in split_map:
             continue
-        for measure in part.getElementsByClass('Measure'):
-            measure_num = measure.number
-            for element in measure.notesAndRests:
-                if element.lyrics:
-                    for lyric_obj in element.lyrics:
-                        lyrics_data[pid][measure_num][element.offset][lyric_obj.number] = lyric_obj.editor.copy()
+        for measure in part.findall("measure"):
+            for el in measure:
+                if el.tag == "note":
+                    is_rest = el.find("rest") is not None
+                    if is_rest:
+                        continue
+                    direction = get_stem_direction(el)
+                    voice = "up"
+                    voice_el = el.find("voice")
+                    if voice_el is not None and voice_el.text == "2":
+                        voice = "down"
 
-    logger.debug(f"lyrics_data: {lyrics_data}")
-    # NEW LOGIC: Copy all elements, then prune by voice
-    temp_new_measures = defaultdict(list)
-    for original_part in score.parts:
-        pid = original_part.id
-        if pid not in parts_to_split_ids:
+                    if not direction:
+                        print("Warning: No stem direction found for note in part", pid, "measure", measure.attrib.get("number"))
+                        direction = voice
+
+                    reversed_voices_by_part_measure[pid][measure.attrib.get('number')] = voice != direction
+                    if voice != direction:
+                        print(f"Detected reversed voice in part {pid}, measure {measure.attrib.get('number')}: expected {direction}, found {voice}")
+
+    # FIRST PASS: store lyrics by (time position, lyric target part)
+    lyrics_by_time = defaultdict(dict)
+
+    for part in root.findall("part"):
+        pid = part.attrib.get("id")
+        if pid not in split_map:
             continue
-        up_part_id = split_part_mappings[pid]["up"]
-        down_part_id = split_part_mappings[pid]["down"]
-        for original_measure in original_part.getElementsByClass('Measure'):
-            measure_num = original_measure.number
-            # Copy all elements to both measures
-            measure_up = copy.deepcopy(original_measure)
-            measure_down = copy.deepcopy(original_measure)
-            # Remove notes/rests not belonging to the correct voice
-            # Remove notes/rests not belonging to the correct voice (recursively)
-            def prune_by_voice(s, keep_voice):
-                to_remove = []
-                for el in s:
-                    if isinstance(el, (note.Note, note.Rest)):
-                        vnum = get_voice_number(el)
-                        if vnum != keep_voice:
-                            to_remove.append(el)
-                    elif isinstance(el, stream.Voice) or isinstance(el, stream.Measure) or isinstance(el, stream.Part):
-                        prune_by_voice(el, keep_voice)
-                for el in to_remove:
-                    s.remove(el)
-            for m, keep_voice in [(measure_up, 1), (measure_down, 2)]:
-                prune_by_voice(m, keep_voice)
-                # Move all notes/rests from any Voice streams to the measure level, then remove the Voice
-                for v in list(m.getElementsByClass(stream.Voice)):
-                    for el in list(v.notesAndRests):
-                        m.insert(el.offset, el)
-                    m.remove(v)
-                # Remove any empty Voice streams that may remain
-                for v in list(m.getElementsByClass(stream.Voice)):
-                    if len(v.notesAndRests) == 0:
-                        m.remove(v)
-                m.makeRests(fillGaps=True, inPlace=True)
-                # If still empty, add a full-measure rest
-                if len(m.notesAndRests) == 0:
-                    rest = note.Rest()
-                    rest.duration = m.barDuration
-                    m.append(rest)
-                # Sort notes/rests by offset, then by their order in the original measure
-                orig_order = {id(el): i for i, el in enumerate(m.notesAndRests)}
-                sorted_noterests = sorted(m.notesAndRests, key=lambda el: (el.offset, orig_order.get(id(el), 0)))
-                for el in m.notesAndRests:
-                    m.remove(el)
-                for el in sorted_noterests:
-                    m.append(el)
-                # Merge all unique lyrics at each offset from original measure, sorted by offset then lyric number
-                for el in m.notesAndRests:
-                    # Gather all lyrics from all original notes at this offset
-                    lyrics_at_current_time = lyrics_data[pid][measure_num].get(el.offset, {})
-                    all_lyrics = []
-                    seen_texts = set()
-                    for lyric_num in sorted(lyrics_at_current_time.keys()):
-                        l = lyrics_at_current_time[lyric_num]
-                        if l.text and l.text not in seen_texts:
-                            all_lyrics.append((lyric_num, l))
-                            seen_texts.add(l.text)
-                    # Sort by lyric number for deterministic order
-                    all_lyrics.sort(key=lambda x: x[0])
-                    if all_lyrics:
-                        el.lyrics = []
-                        for idx, (lyric_num, l) in enumerate(all_lyrics, 1):
-                            if hasattr(l, 'placement') and l.placement is not None:
-                                el.addLyric(l.text, lyricNumber=idx, lyricPlacement=l.placement)
-                            else:
-                                el.addLyric(l.text, lyricNumber=idx)
-            temp_new_measures[up_part_id].append(measure_up)
-            temp_new_measures[down_part_id].append(measure_down)
-    logger.debug(f"temp_new_measures: {temp_new_measures}")
-    # Populate the newly created music21 Part objects with their measures
-    for new_part_id, measures_list in temp_new_measures.items():
-        logger.debug(f"Populating new_part_id: {new_part_id}, measures: {measures_list}")
-        for new_p in split_parts: # Find the actual music21 Part object
-            if new_p.id == new_part_id:
-                for m in measures_list:
-                    new_p.append(m)
-                break
+        time_position = 0
+        for measure in part.findall("measure"):
+            for el in measure:
+                if el.tag == "note":
+                    duration_el = el.find("duration")
+                    duration = int(duration_el.text) if duration_el is not None else 0
+                    direction = get_stem_direction(el)
+                    for lyric in el.findall("lyric"):
+                        verse = lyric.attrib.get("number", "1")
+                        placement = lyric.attrib.get("placement", "below")
+                        lyric_pid = pid
+                        if verse == "2":
+                            # Force verse 2 + below to be in the down part
+                            if placement == "below":
+                                lyric_pid = split_map[pid]["down"]
+                        lyrics_by_time[time_position][lyric_pid] = deepcopy(lyric)
+                        # Force verse 1
+                        lyrics_by_time[time_position][lyric_pid].attrib["number"] = "1"
+                    time_position += duration
+                elif el.tag == "backup":
+                    time_position -= int(el.find("duration").text)
+                elif el.tag == "forward":
+                    time_position += int(el.find("duration").text)
 
-    # Final score reconstruction: remove original parts, keep only new ones.
-    # Create a new score and add parts to it.
-    new_score = stream.Score()
-    
-    # FIX: Add a check for score.metadata being None and use deepcopy
-    if score.metadata is not None:
-        new_score.metadata = copy.deepcopy(score.metadata)
-    else:
-        new_score.metadata = metadata.Metadata() # Initialize with an empty Metadata object
+    # SECOND PASS: rewrite with lyric per time and direction fallback
+    new_measures = defaultdict(list)
 
+    for part in root.findall("part"):
+        pid = part.attrib.get("id")
+        if pid not in split_map:
+            continue
 
-    # Copy other score-level elements (title, composer, etc.), but skip layout/staff group elements
-    for element in score.elements:
-        if not isinstance(element, stream.Part) and not isinstance(element, layout.StaffGroup):
-            # Use .editor.copy() if available, else fallback to copy.deepcopy
-            if hasattr(element, 'editor') and hasattr(element.editor, 'copy'):
-                new_score.append(element.editor.copy())
-            else:
-                new_score.append(copy.deepcopy(element))
+        time_position = 0
+        for measure in part.findall("measure"):
+            print(f"Processing measure {measure.attrib.get('number')} for part {pid} at time position {time_position}")
 
-    logger.debug(f"split_parts: {split_parts}")
-    # Add only the parts we want to keep (the split parts)
-    for part in split_parts:
-        logger.debug(f"Appending split part: {part}, id={part.id}, measures={len(part.getElementsByClass('Measure'))}")
-        new_score.append(part)
+            m_num = measure.attrib.get("number")
+            voices_reversed = reversed_voices_by_part_measure[pid].get(m_num, False)
 
-    logger.debug(f"new_score elements: {[(el, getattr(el, 'id', None), type(el)) for el in new_score]}")
-    logger.debug(f"new_score.parts: {[(p, p.id) for p in new_score.parts]}")
-    assert len(new_score.parts) == len(split_parts), f"Split parts not added correctly: {len(new_score.parts)} vs {len(split_parts)}"
+            m_up = etree.Element("measure", number=m_num)
+            m_down = etree.Element("measure", number=m_num)
 
-    return new_score
+            print(debug_print(measure))
 
+            for el in measure:
+                if el.tag == "attributes":
+                    m_up.append(deepcopy(el))
+                    m_down.append(deepcopy(el))
+                elif el.tag in ("forward", "backup"):
+                    m_up.append(deepcopy(el))
+                    m_down.append(deepcopy(el))
+                    dur = int(el.find("duration").text)
+                    time_position += dur if el.tag == "forward" else -dur
+                elif el.tag == "note":
+                    is_rest = el.find("rest") is not None
+
+                    if not is_middle_of_slur(el):
+                        # Add lyrics if available
+                        lyrics_for_time = lyrics_by_time.get(time_position, {})
+                        lyric = lyrics_for_time.get(split_map[pid][direction])
+                        if lyric is None:
+                            # Try to find a fallback lyric
+                            choices = [
+                                split_map[pid]["up"],
+                                split_map[pid]["down"],
+                                pid,
+                            ]
+                            for choice in choices:
+                                lyric = lyrics_for_time.get(choice)
+                                if lyric is not None:
+                                    break
+                        if lyric is None:
+                            # Try to find any lyric
+                            lyric = next(iter(lyrics_for_time.values()), None)
+                        if lyric is not None:
+                            el.append(deepcopy(lyric))
+
+                    print(f"Processing note in part {pid}, measure {m_num}, time position {time_position}, is_rest: {is_rest}")
+                    m_up.append(deepcopy(el))
+                    m_down.append(deepcopy(el))
+                    duration_el = el.find("duration")
+                    duration = int(duration_el.text) if duration_el is not None else 0
+                    time_position += duration
+
+            remove_other_voice("up", m_up, voices_reversed)
+            remove_other_voice("down", m_down, voices_reversed)
+
+            print("measure up")
+            print(debug_print(m_up))
+
+            new_measures[split_map[pid]["up"]].append(m_up)
+            new_measures[split_map[pid]["down"]].append(m_down)
+
+    for part in root.findall("part"):
+        pid = part.attrib.get("id")
+        if pid in new_measures:
+            part[:] = new_measures[pid]
+
+    # ---
+    ## Remove Original Parts from Part-List
+    # ---
+    part_list = root.find("part-list")
+    if part_list is not None:
+        for part in part_list.findall("score-part"):
+            pid = part.attrib.get("id")
+            if pid in split_map:
+                part_list.remove(part)
+
+    # Delete original parts P1 and P2
+    for part in root.findall("part"):
+        pid = part.attrib.get("id")
+        if pid in split_map:
+            root.remove(part)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Split MusicXML score into separate voice parts using music21 and stem direction heuristic.")
+    parser = argparse.ArgumentParser(description="Split MusicXML score into tenor parts.")
 
     parser.add_argument(
         "input_file", type=str, default="test.musicxml",
@@ -347,20 +337,14 @@ if __name__ == "__main__":
     else:
         raise ValueError("Input file must be a .musicxml or .xml file.")
 
-    # Load MusicXML file using music21
-    try:
-        score = converter.parse(INPUT_FILE)
-    except Exception as e:
-        print(f"Error parsing MusicXML file: {e}")
-        sys.exit(1)
+    # Load MusicXML file
+    tree = etree.parse(INPUT_FILE)
+    root = tree.getroot()
 
-    # Process the score
-    transformed_score = main(score)
+    # Side effect
+    main(root)
 
-    # Write the transformed score to a new MusicXML file
-    try:
-        transformed_score.write('musicxml', fp=OUTPUT_FILE)
-        print(f"Written transformed MusicXML to {OUTPUT_FILE}")
-    except Exception as e:
-        print(f"Error writing MusicXML file: {e}")
-        sys.exit(1)
+    with open(OUTPUT_FILE, "wb") as f:
+        tree.write(f, pretty_print=True, xml_declaration=True, encoding="UTF-8")
+
+    print(f"Written transformed MusicXML to {OUTPUT_FILE}")
