@@ -168,38 +168,27 @@ def main(root):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Split MusicXML score into separate voice parts using music21 and stem direction heuristic.")
+    parser = argparse.ArgumentParser(description="Split mscx score into separate voice parts using lxml only.")
 
     parser.add_argument(
-        "input_file", type=str, default="test.musicxml",
-        help="Input MusicXML file to process."
+        "input_file", type=str, default="test.mscx",
+        help="Input mscx file to process."
     )
 
     args = parser.parse_args()
 
     INPUT_FILE = args.input_file
 
-    if '.musicxml' in INPUT_FILE:
-        OUTPUT_FILE = INPUT_FILE.replace(".musicxml", "_split.musicxml")
+    if '.mscx' in INPUT_FILE:
+        OUTPUT_FILE = INPUT_FILE.replace(".mscx", "_split.mscx")
     elif '.xml' in INPUT_FILE:
         OUTPUT_FILE = INPUT_FILE.replace(".xml", "_split.xml")
     else:
-        raise ValueError("Input file must be a .musicxml or .xml file.")
+        raise ValueError("Input file must be a .mscx or .xml file.")
 
-    # Load MusicXML file using music21
-    try:
-        score = converter.parse(INPUT_FILE)
-    except Exception as e:
-        print(f"Error parsing MusicXML file: {e}")
-        sys.exit(1)
-
-    # Process the score
-    transformed_score = main(score)
-
-    # Write the transformed score to a new MusicXML file
-    try:
-        transformed_score.write('musicxml', fp=OUTPUT_FILE)
-        print(f"Written transformed MusicXML to {OUTPUT_FILE}")
-    except Exception as e:
-        print(f"Error writing MusicXML file: {e}")
-        sys.exit(1)
+    # Load mscx file using lxml
+    tree = etree.parse(INPUT_FILE)
+    root = tree.getroot()
+    main(root)
+    tree.write(OUTPUT_FILE, pretty_print=True, xml_declaration=True, encoding="UTF-8")
+    print(f"Written transformed mscx to {OUTPUT_FILE}")

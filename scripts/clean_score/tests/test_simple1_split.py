@@ -42,7 +42,11 @@ class TestSimple1(BaseScoreTest):
         staffs = [el for el in score if el.tag == 'Staff']
         assert len(parts) == 2, f"Expected 2 parts, got {len(parts)}"
         assert len(staffs) == 2, f"Expected 2 staffs, got {len(staffs)}"
-        for part, staff in zip(parts, staffs):
+        # Map staff id to staff
+        staff_map = {staff.get('id'): staff for staff in staffs}
+        for part in parts:
+            staff = staff_map.get(part.get('id'))
+            assert staff is not None, f"No staff found for part {part.get('id')}"
             notes = []
             rests = []
             measures = []
