@@ -1,276 +1,174 @@
 #!/usr/bin/env python3
 
-import sys  # noqa
-from lxml import etree
-from copy import deepcopy
-from collections import defaultdict
-
+import sys
 import argparse
+from music21 import converter, stream, note, chord, layout, duration, clef, instrument
+from collections import defaultdict
+from lxml import etree
 
-
-def debug_print(xml_el):
+# Helper for debugging (music21 objects have .show('xml') or .show('text'))
+def debug_print(music21_obj):
     """
-    Print the XML element in a human-readable format.
+    Print the music21 object in a human-readable XML format.
     """
-    print(etree.tostring(xml_el, pretty_print=True, encoding='unicode'))
+    music21_obj.show('xml')
 
-
-def note_to_string(note):
+def get_voice_number(music21_element):
     """
-    Convert a note element to a string representation.
-    include duration
+    Helper function to get the explicit voice number from a music21 note or rest.
+    Returns None if no explicit voice is found.
     """
-    duration_el = note.find("duration")
-    duration = duration_el.text if duration_el is not None else "0"
-    pitch_el = note.find("pitch")
-    pitch = f"{pitch_el.find('step').text}{pitch_el.find('octave').text}" if pitch_el is not None else note.tag
-    if note.find("rest") is not None:
-        pitch = "rest"
-    stem = note.find("stem")
-    repr = f"{pitch} ({duration})"
-    if stem is not None:
-        stem_direction = stem.text.strip()
-        if stem_direction == "up":
-            repr += " [up stem]"
-        elif stem_direction == "down":
-            repr += " [down stem]"
-    voice = note.find("voice")
-    if voice is not None:
-        repr += f" [voice {voice.text}]"
-    lyrics = note.findall("lyric")
-    if lyrics:
-        lyric_texts = [lyric.find("text").text for lyric in lyrics if lyric.find("text") is not None]
-        repr += f" [lyrics: {', '.join(lyric_texts)}]"
-    return repr
+    if hasattr(music21_element, 'voice') and music21_element.voice is not None:
+        return music21_element.voice
+    return None # Return None if no explicit voice tag
 
+def get_stem_direction_music21(note_obj):
+    """
+    Determines stem direction from a music21 note object.
+    Returns 'up', 'down', or 'none' if not explicitly set and not inferred by music21.
+    """
+    if note_obj.stemDirection is not None:
+        return note_obj.stemDirection.lower()
+    return 'none' # Explicitly return 'none' if no stem direction found
 
-def get_stem_direction(note, reversed_voice=None):
-    stem = note.find("stem")
-    if stem is None and reversed_voice is not None:
-        ret = "down" if reversed_voice else "up"
-        if note.find("voice") is None:
-            return ret
-        if note.find("voice").text == "2":
-            ret = "up" if reversed_voice else "down"
-        return ret
-    return stem.text.strip() if stem is not None else "up"
-
-def is_middle_of_slur(note):
-    notations = note.find("notations")
-    if notations is not None:
-        for slur in notations.findall("slur"):
-            if slur.attrib.get("type") == "stop":
-                return True
+def is_middle_of_slur_music21(note_obj):
+    """
+    Checks if a music21 note is in the middle of a slur.
+    (i.e., has a slur that stops on it)
+    """
+    for spanner in note_obj.getSpanners():
+        if isinstance(spanner, stream.Slur) and spanner.isEnded(note_obj):
+            return True
     return False
 
-def convert_to_tenor_clef(attributes):
-    clef = attributes.find("clef")
-    if clef is not None:
-        sign = clef.find("sign")
-        if sign is not None and sign.text == "G":
-            clef_octave = clef.find("clef-octave-change")
-            if clef_octave is None:
-                clef_octave = etree.SubElement(clef, "clef-octave-change")
-            clef_octave.text = "-1"
+def convert_to_tenor_clef_music21(measure_stream_or_attributes_stream):
+    """
+    Converts a G clef to a tenor clef (G clef with octave down)
+    within a measure stream or an attributes stream.
+    """
+    clefs_to_replace = []
+    for clef_obj in measure_stream_or_attributes_stream.getElementsByClass('Clef'):
+        if isinstance(clef_obj, clef.TrebleClef) and clef_obj.octaveShift == 0: # Only target standard G clef
+            clefs_to_replace.append(clef_obj)
+
+    for old_clef in clefs_to_replace:
+        tenor_clef = clef.TrebleClef()
+        tenor_clef.octaveShift = -1
+        measure_stream_or_attributes_stream.replace(old_clef, tenor_clef)
 
 
-def copy_and_make_voice1(note):
-    new_note = deepcopy(note)
-    voice = new_note.find("voice")
-    if voice is not None:
-        voice.text = "1"
-    else:
-        voice = etree.SubElement(new_note, "voice")
-        voice.text = "1"
-    return new_note
+def determine_note_voice_heuristic(music21_note_or_rest, voices_reversed):
+    """
+    Determines the "voice" (up-stem or down-stem) for a note or rest,
+    prioritizing stem direction for OCR output.
 
+    Args:
+        music21_note_or_rest: The music21.note.Note or music21.note.Rest object.
+        voices_reversed: A boolean indicating if the 'up' and 'down' roles are reversed
+                         for the stem direction heuristic in this measure.
 
-def remove_other_voice(this_direction, measure, voices_reversed):
-    print("")
-    print("Starting to remove other voice in measure:", measure.attrib.get("number"), "for direction:", this_direction)
+    Returns:
+        'up' or 'down' based on the heuristic.
+    """
+    # 1. Explicit voice tag (if reliable, often not for OCR)
+    explicit_voice = get_voice_number(music21_note_or_rest)
+    if explicit_voice == 1:
+        return 'up' if not voices_reversed else 'down'
+    elif explicit_voice == 2:
+        return 'down' if not voices_reversed else 'up'
 
-    for el in measure:
-        if el.tag not in ("note", "forward", "backup"):
-            continue
-        print("Looking at element:", note_to_string(el), "this direction:", this_direction)
-        if el.tag == "note":
-            direction = get_stem_direction(el, voices_reversed)
-            if direction != this_direction:
-                if el.find("rest") is not None:
-                    continue
-                # Replace note with a forward
-                print("Removing note with wrong direction:", direction, "expected:", this_direction)
+    # 2. Stem direction (primary heuristic for OCR)
+    if isinstance(music21_note_or_rest, note.Note):
+        stem_direction = get_stem_direction_music21(music21_note_or_rest)
+        if stem_direction != 'none':
+            return stem_direction if not voices_reversed else ('down' if stem_direction == 'up' else 'up')
 
-                forward_el = etree.Element("forward")
-                duration_el = el.find("duration")
-                if duration_el is not None:
-                    forward_el.append(deepcopy(duration_el))
-                measure.replace(el, forward_el)
+        # If no stem direction, infer based on pitch relative to middle C (C4)
+        # This is a common engraving rule for single-voice notes.
+        if music21_note_or_rest.pitch:
+            if music21_note_or_rest.pitch.midi >= 60:  # C4 is MIDI 60
+                return 'down' if not voices_reversed else 'up' # Notes C4 and above usually down-stem
+            else:
+                return 'up' if not voices_reversed else 'down' # Notes below C4 usually up-stem
 
-    print("")
-    # Another loop, to check which rests to remove if any
-    time_pos = 0
-    notes_by_time_pos = defaultdict(list)
-    for el in measure:
-        if el.tag not in ("note", "forward", "backup"):
-            continue
-        if el.tag == "note":
-            notes_by_time_pos[time_pos].append(el)
-        duration_el = el.find("duration")
-        duration = int(duration_el.text) if duration_el is not None else 0
-        if el.tag == "note":
-            time_pos += duration
-        elif el.tag == "backup":
-            time_pos -= duration
-        elif el.tag == "forward":
-            time_pos += duration
-
-    max_time_pos = time_pos
-
-    sorted_times = sorted(notes_by_time_pos.keys())
-    for index in range(len(sorted_times)):
-        time = sorted_times[index]
-        if index + 1 >= len(sorted_times):
-            next_time = max_time_pos
-        else:
-            next_time = sorted_times[index + 1]
-        time_between = next_time - time
-        print(f"Checking time position {time} with next time {next_time}, time between: {time_between}")
-        print("Notes at this time position:", len(notes_by_time_pos[time]), [note_to_string(note) for note in notes_by_time_pos[time]])
-        for note in notes_by_time_pos[time]:
-            duration_el = note.find("duration")
-            if duration_el is not None:
-                duration = int(duration_el.text)
-                if duration != time_between:
-                    # This note is longer than the time between, so it should be converted
-                    # to a forward
-                    print("Note longer than time between, converting to forward:", note_to_string(note))
-                    forward_el = etree.Element("forward")
-                    forward_el.append(deepcopy(duration_el))
-                    measure.replace(note, forward_el)
-
+    # 3. For rests without explicit voice, or notes without stem/pitch info,
+    #    make a best guess. Often rests belong to the 'down' voice in piano parts.
+    #    For simplicity, if no info, assign to the 'down' voice.
+    return 'down' if not voices_reversed else 'up'
 
 
 def main(root):
-    # Only handle mscx: <Score>/<Part>/<Staff>/<Measure>/<voice>
-    score = root.find("Score")
-    if score is None:
-        raise ValueError("No <Score> element found in mscx root!")
+    score = root.find('Score')
+    # Write initial debug info
+    with open('/Users/eerovilpponen/Documents/musescore-choir-plugins/scripts/clean_score/debug_score_children.txt', 'w') as dbg:
+        dbg.write('DEBUG: <Score> children at start: ' + str([(el.tag, el.get('id')) for el in score]) + '\n')
+    partlist = score.find('PartList')
+    if partlist is None:
+        partlist = etree.Element('PartList')
+        # Insert PartList as the first child of Score
+        score.insert(0, partlist)
+    # Ensure all <Part> elements have an id BEFORE checking for parts
+    part_counter = 1
+    for el in score:
+        if el.tag == 'Part' and el.get('id') is None:
+            el.set('id', f'P{part_counter}')
+            part_counter += 1
+    parts = [el for el in score if el.tag == 'Part']
+    if not parts or partlist is None:
+        with open('/Users/eerovilpponen/Documents/musescore-choir-plugins/scripts/clean_score/debug_score_children.txt', 'a') as dbg:
+            dbg.write(f'partlist is None: {[el.tag for el in score]}\n')
+        return
 
-    # Find all <Part> elements (case-insensitive for mscx)
-    parts = score.findall("Part")
-    if not parts:
-        parts = score.findall("part")
-    # Always split the first part if only one exists
-    if len(parts) == 1:
-        parts_with_multiple_voices = [parts[0]]
-    else:
-        parts_with_multiple_voices = []
-        for part in parts:
-            for staff in part.findall("Staff") or part.findall("staff"):
-                for measure in staff.findall("Measure") or staff.findall("measure"):
-                    voice_count = len(measure.findall("voice"))
-                    if voice_count > 1:
-                        parts_with_multiple_voices.append(part)
-                        break
+    orig_part = parts[0]
+    orig_id = orig_part.get('id')
+    up_id = orig_id + '_up'
+    down_id = orig_id + '_down'
 
-    split_map = {}
-    for part in parts_with_multiple_voices:
-        pid = part.attrib.get("id", "P1")
-        split_map[pid] = {"up": f"{pid}_up", "down": f"{pid}_down"}
-        # Create new <Part> elements
-        up_part = deepcopy(part)
-        down_part = deepcopy(part)
-        up_part.attrib["id"] = split_map[pid]["up"]
-        down_part.attrib["id"] = split_map[pid]["down"]
-        # Remove all measures from both, will fill below
-        for staff in up_part.findall("Staff"):
-            staff[:] = []
-        for staff in down_part.findall("Staff"):
-            staff[:] = []
-        score.append(up_part)
-        score.append(down_part)
-        # Remove the original part immediately after appending split parts
-        score.remove(part)
+    # --- NEW LOGIC FOR MSCX: Split Staffs, not Parts ---
+    # Find all Staffs in Score (not in Part!)
+    staffs = [el for el in score if el.tag == 'Staff']
+    orig_staff = staffs[0]
+    import copy
+    up_staff = copy.deepcopy(orig_staff)
+    down_staff = copy.deepcopy(orig_staff)
+    up_staff.set('id', up_id)
+    down_staff.set('id', down_id)
 
-    # Remove all original parts that were split (by id, to avoid object identity issues)
-    # (This is now redundant, since we remove above, but keep for safety)
-    for orig_id in list(split_map.keys()):
-        for part in list(score.findall('Part')):
-            if part.attrib.get('id') == orig_id:
-                score.remove(part)
+    # For each measure in each staff, keep only the correct <voice>
+    for staff, keep_voice_idx in [(up_staff, 0), (down_staff, 1)]:
+        for measure in staff.findall('Measure'):
+            voices = measure.findall('voice')
+            for idx, v in enumerate(voices):
+                if idx != keep_voice_idx:
+                    measure.remove(v)
 
-    # Debug: print resulting XML for inspection
-    print(etree.tostring(root, pretty_print=True, encoding='unicode'))
+    # Remove original staff and insert new staffs at the same index
+    idx_staff = list(score).index(orig_staff)
+    score.remove(orig_staff)
+    score.insert(idx_staff, up_staff)
+    score.insert(idx_staff + 1, down_staff)
 
-    # ---
-    ## Remove Original Parts from Part-List
-    # ---
-    part_list = root.find("part-list")
-    if part_list is not None:
-        for part in part_list.findall("score-part"):
-            pid = part.attrib.get("id")
-            if pid in split_map:
-                part_list.remove(part)
+    # Remove original part and insert new parts at the same index (as before)
+    idx = list(score).index(orig_part)
+    score.remove(orig_part)
+    # Insert new parts with correct ids and names
+    for pid, pname in [(up_id, 'Up'), (down_id, 'Down')]:
+        new_part = copy.deepcopy(orig_part)
+        new_part.set('id', pid)
+        # Optionally set a name/trackName if needed
+        track_name = new_part.find('trackName')
+        if track_name is not None:
+            track_name.text = pname
+        score.insert(idx, new_part)
+        idx += 1
 
-    # Delete original parts P1 and P2
-    for part in root.findall("part"):
-        pid = part.attrib.get("id")
-        if pid in split_map:
-            root.remove(part)
+    # Write debug info to a file
+    with open('/Users/eerovilpponen/Documents/musescore-choir-plugins/scripts/clean_score/debug_score_children.txt', 'a') as dbg:
+        dbg.write('DEBUG: <Score> children after split: ' + str([(el.tag, el.get('id')) for el in score]) + '\n')
 
-    # Build a map of all Staff elements in the Score by id
-    staff_map = {}
-    for staff in score.findall('Staff'):
-        staff_id = staff.attrib.get('id')
-        if staff_id:
-            staff_map[staff_id] = staff
-    for part in parts_with_multiple_voices:
-        pid = part.attrib.get("id", "P1")
-        up_part = score.find(f"Part[@id='{split_map[pid]['up']}']") or score.find(f"part[@id='{split_map[pid]['up']}']")
-        down_part = score.find(f"Part[@id='{split_map[pid]['down']}']") or score.find(f"part[@id='{split_map[pid]['down']}']")
-        # Remove all <Staff> from split parts
-        for s in list(up_part):
-            if s.tag == 'Staff':
-                up_part.remove(s)
-        for s in list(down_part):
-            if s.tag == 'Staff':
-                down_part.remove(s)
-        # For each staff id in the original part, find the corresponding Staff in the Score
-        # Instead of iterating part.findall('Staff'), always use the staff_map (from <Score>)
-        for staff_id, orig_staff in staff_map.items():
-            # Create new Staff for up and down, copy non-Measure children
-            up_staff = etree.Element('Staff', id=staff_id)
-            down_staff = etree.Element('Staff', id=staff_id)
-            for child in orig_staff:
-                if child.tag != 'Measure':
-                    up_staff.append(deepcopy(child))
-                    down_staff.append(deepcopy(child))
-            for idx_m, measure in enumerate(orig_staff.findall('Measure')):
-                m_num = measure.attrib.get('number')
-                if m_num is None:
-                    m_num = str(idx_m + 1)
-                up_measure = etree.Element('Measure', number=m_num)
-                down_measure = etree.Element('Measure', number=m_num)
-                voices = measure.findall('voice')
-                if len(voices) == 2:
-                    for idx_v, voice in enumerate(voices):
-                        target_measure = up_measure if idx_v == 0 else down_measure
-                        for el in voice:
-                            if el.tag == 'Chord' or el.tag == 'Rest':
-                                target_measure.append(deepcopy(el))
-                elif len(voices) == 1:
-                    for el in voices[0]:
-                        if el.tag == 'Chord' or el.tag == 'Rest':
-                            up_measure.append(deepcopy(el))
-                            down_measure.append(deepcopy(el))
-                up_staff.append(up_measure)
-                down_staff.append(down_measure)
-            up_part.append(up_staff)
-            down_part.append(down_staff)
-    # ...existing code...
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Split MusicXML score into tenor parts.")
+    parser = argparse.ArgumentParser(description="Split MusicXML score into separate voice parts using music21 and stem direction heuristic.")
 
     parser.add_argument(
         "input_file", type=str, default="test.musicxml",
@@ -288,14 +186,20 @@ if __name__ == "__main__":
     else:
         raise ValueError("Input file must be a .musicxml or .xml file.")
 
-    # Load MusicXML file
-    tree = etree.parse(INPUT_FILE)
-    root = tree.getroot()
+    # Load MusicXML file using music21
+    try:
+        score = converter.parse(INPUT_FILE)
+    except Exception as e:
+        print(f"Error parsing MusicXML file: {e}")
+        sys.exit(1)
 
-    # Side effect
-    main(root)
+    # Process the score
+    transformed_score = main(score)
 
-    with open(OUTPUT_FILE, "wb") as f:
-        tree.write(f, pretty_print=True, xml_declaration=True, encoding="UTF-8")
-
-    print(f"Written transformed MusicXML to {OUTPUT_FILE}")
+    # Write the transformed score to a new MusicXML file
+    try:
+        transformed_score.write('musicxml', fp=OUTPUT_FILE)
+        print(f"Written transformed MusicXML to {OUTPUT_FILE}")
+    except Exception as e:
+        print(f"Error writing MusicXML file: {e}")
+        sys.exit(1)

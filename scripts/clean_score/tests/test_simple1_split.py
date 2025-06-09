@@ -38,16 +38,18 @@ class TestSimple1(BaseScoreTest):
         tree = self.get_output_tree()
         root = tree.getroot()
         score = root.find('Score')
-        parts = score.findall('Part')
+        parts = [el for el in score if el.tag == 'Part']
+        staffs = [el for el in score if el.tag == 'Staff']
         assert len(parts) == 2, f"Expected 2 parts, got {len(parts)}"
-        for part in parts:
+        assert len(staffs) == 2, f"Expected 2 staffs, got {len(staffs)}"
+        for part, staff in zip(parts, staffs):
             notes = []
             rests = []
             measures = []
-            for staff in part.findall('.//Staff'):
-                for measure in staff.findall('Measure'):
-                    measures.append(measure)
-                    for el in measure:
+            for measure in staff.findall('Measure'):
+                measures.append(measure)
+                for voice in measure.findall('voice'):
+                    for el in voice:
                         if el.tag == 'Chord':
                             notes.extend(el.findall('Note'))
                         elif el.tag == 'Rest':
@@ -65,11 +67,12 @@ class TestSimple1(BaseScoreTest):
             m2 = measures[1]
             def get_types(measure):
                 types = []
-                for el in measure:
-                    if el.tag == 'Chord':
-                        types.append('Note')
-                    elif el.tag == 'Rest':
-                        types.append('Rest')
+                for voice in measure.findall('voice'):
+                    for el in voice:
+                        if el.tag == 'Chord':
+                            types.append('Note')
+                        elif el.tag == 'Rest':
+                            types.append('Rest')
                 return types
             m1_types = get_types(m1)
             m2_types = get_types(m2)
