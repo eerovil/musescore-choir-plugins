@@ -3,7 +3,7 @@
   <programVersion>3.6.2</programVersion>
   <programRevision>3224f34</programRevision>
   <Score>
-    <PartList/><LayerTag id="0" tag="default"/>
+    <PartList><ScorePart id="P1_up"><part-name>Up</part-name></ScorePart><ScorePart id="P1_down"><part-name>Down</part-name></ScorePart></PartList><LayerTag id="0" tag="default"/>
     <currentLayer>0</currentLayer>
     <Division>480</Division>
     <Style>
@@ -57,13 +57,10 @@
     <metaTag name="workNumber"/>
     <metaTag name="workTitle">Test</metaTag>
     <Part id="P1_up">
-      <Staff id="1">
-        <StaffType group="pitched">
-          <name>stdNormal</name>
-          </StaffType>
+      <Staff id="P1_up">
         </Staff>
       <trackName>Up</trackName>
-      <Instrument id="piano">
+      <Instrument id="P1_up">
         <longName>Piano</longName>
         <shortName>Pno.</shortName>
         <trackName>Piano</trackName>
@@ -121,13 +118,10 @@
         </Instrument>
       </Part>
     <Part id="P1_down">
-      <Staff id="1">
-        <StaffType group="pitched">
-          <name>stdNormal</name>
-          </StaffType>
+      <Staff id="P1_down">
         </Staff>
       <trackName>Down</trackName>
-      <Instrument id="piano">
+      <Instrument id="P1_down">
         <longName>Piano</longName>
         <shortName>Pno.</shortName>
         <trackName>Piano</trackName>
@@ -185,14 +179,6 @@
         </Instrument>
       </Part>
     <Staff id="P1_up">
-      <VBox>
-        <height>3.5</height>
-        <Text>
-          <style>Title</style>
-          <offset x="0" y="-0.07525"/>
-          <text><font size="22"/>Test</text>
-          </Text>
-        </VBox>
       <Measure>
         <voice>
           <Clef>
@@ -271,14 +257,6 @@
         </Measure>
       </Staff>
     <Staff id="P1_down">
-      <VBox>
-        <height>3.5</height>
-        <Text>
-          <style>Title</style>
-          <offset x="0" y="-0.07525"/>
-          <text><font size="22"/>Test</text>
-          </Text>
-        </VBox>
       <Measure>
         <voice>
           <Chord>

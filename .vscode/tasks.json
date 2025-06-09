@@ -16,6 +16,19 @@
             "cwd": "${workspaceFolder}/scripts/clean_score"
         },
 
+        },
+        {
+        "label": "Test: Run simple_1 File",
+        "type": "shell",
+        "command": "rm tests/simple_1/simple_1_input_split.mscx; python clean_score.py tests/simple_1/simple_1_input.mscx",
+        "problemMatcher": [],
+        "presentation": {
+            "reveal": "never"
+        },
+        "options": {
+            "cwd": "${workspaceFolder}/scripts/clean_score"
+        },
+
         }
     ]
 }
