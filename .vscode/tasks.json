@@ -5,22 +5,9 @@
     "version": "2.0.0",
     "tasks": [
         {
-        "label": "Test: Run Pytest to File",
-        "type": "shell",
-        "command": "rm test_outpu*.txt; pytest . -k test_simple1_split --log-cli-level=DEBUG > test_output.txt 2>&1; tail -50 test_output.txt > test_output2.txt",
-        "problemMatcher": [],
-        "presentation": {
-            "reveal": "never"
-        },
-        "options": {
-            "cwd": "${workspaceFolder}/scripts/clean_score"
-        },
-
-        },
-        {
         "label": "Test: Run simple_1 File",
         "type": "shell",
-        "command": "rm tests/simple_1/simple_1_input_split.mscx; python clean_score.py tests/simple_1/simple_1_input.mscx",
+        "command": "rm tests/test_files/simple_1_input_split.mscx; python clean_score.py tests/test_files/simple_1_input.mscx",
         "problemMatcher": [],
         "presentation": {
             "reveal": "never"

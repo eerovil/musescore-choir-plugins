@@ -1,66 +1,15 @@
-<?xml version='1.0' encoding='UTF-8'?>
+<?xml version="1.0" encoding="UTF-8"?>
 <museScore version="3.02">
   <programVersion>3.6.2</programVersion>
   <programRevision>3224f34</programRevision>
-  <Score>
-    <PartList><ScorePart id="P1_up"><part-name>Up</part-name></ScorePart><ScorePart id="P1_down"><part-name>Down</part-name></ScorePart></PartList><LayerTag id="0" tag="default"/>
-    <currentLayer>0</currentLayer>
-    <Division>480</Division>
-    <Style>
-      <pageHeight>11.6929</pageHeight>
-      <pagePrintableWidth>7.08661</pagePrintableWidth>
-      <pageEvenLeftMargin>0.590551</pageEvenLeftMargin>
-      <pageOddLeftMargin>0.590551</pageOddLeftMargin>
-      <pageEvenTopMargin>0.590551</pageEvenTopMargin>
-      <pageEvenBottomMargin>0.590551</pageEvenBottomMargin>
-      <pageOddTopMargin>0.590551</pageOddTopMargin>
-      <pageOddBottomMargin>0.590551</pageOddBottomMargin>
-      <chordSymbolAFontSize>10</chordSymbolAFontSize>
-      <chordSymbolBFontSize>10</chordSymbolBFontSize>
-      <nashvilleNumberFontSize>10</nashvilleNumberFontSize>
-      <tupletFontSize>10</tupletFontSize>
-      <fingeringFontSize>10</fingeringFontSize>
-      <lhGuitarFingeringFontSize>10</lhGuitarFingeringFontSize>
-      <rhGuitarFingeringFontSize>10</rhGuitarFingeringFontSize>
-      <stringNumberFontSize>10</stringNumberFontSize>
-      <partInstrumentFontSize>10</partInstrumentFontSize>
-      <dynamicsFontSize>10</dynamicsFontSize>
-      <tempoFontSize>10</tempoFontSize>
-      <metronomeFontSize>10</metronomeFontSize>
-      <measureNumberFontSize>10</measureNumberFontSize>
-      <mmRestRangeFontSize>10</mmRestRangeFontSize>
-      <rehearsalMarkFontSize>10</rehearsalMarkFontSize>
-      <repeatLeftFontSize>10</repeatLeftFontSize>
-      <repeatRightFontSize>10</repeatRightFontSize>
-      <glissandoFontSize>10</glissandoFontSize>
-      <bendFontSize>10</bendFontSize>
-      <headerFontSize>10</headerFontSize>
-      <footerFontSize>10</footerFontSize>
-      <Spatium>1.75</Spatium>
-      </Style>
-    <showInvisible>1</showInvisible>
-    <showUnprintable>1</showUnprintable>
-    <showFrames>1</showFrames>
-    <showMargins>0</showMargins>
-    <metaTag name="arranger"/>
-    <metaTag name="composer"/>
-    <metaTag name="copyright"/>
-    <metaTag name="creationDate">2025-06-08</metaTag>
-    <metaTag name="lyricist"/>
-    <metaTag name="movementNumber"/>
-    <metaTag name="movementTitle"/>
-    <metaTag name="originalFormat">musicxml</metaTag>
-    <metaTag name="platform">Apple Macintosh</metaTag>
-    <metaTag name="poet"/>
-    <metaTag name="source"/>
-    <metaTag name="translator"/>
-    <metaTag name="workNumber"/>
-    <metaTag name="workTitle">Test</metaTag>
-    <Part id="P1_up">
-      <Staff id="P1_up">
+  <Score><LayerTag id="0" tag="default"/><currentLayer>0</currentLayer><Division>480</Division><Style/><showInvisible>1</showInvisible><showUnprintable>1</showUnprintable><showFrames>1</showFrames><showMargins>0</showMargins><metaTag name="arranger"/><metaTag name="composer"/><metaTag name="copyright"/><metaTag name="creationDate">2025-06-08</metaTag><metaTag name="lyricist"/><metaTag name="movementNumber"/><metaTag name="movementTitle"/><metaTag name="originalFormat">musicxml</metaTag><metaTag name="platform">Apple Macintosh</metaTag><metaTag name="poet"/><metaTag name="source"/><metaTag name="translator"/><metaTag name="workNumber"/><metaTag name="workTitle">Test</metaTag><Part id="1">
+      <Staff id="1">
+        <StaffType group="pitched">
+          <name>stdNormal</name>
+          </StaffType>
         </Staff>
-      <trackName>Up</trackName>
-      <Instrument id="P1_up">
+      <trackName>Piano</trackName>
+      <Instrument id="piano">
         <longName>Piano</longName>
         <shortName>Pno.</shortName>
         <trackName>Piano</trackName>
@@ -70,46 +19,6 @@
         <maxPitchA>108</maxPitchA>
         <instrumentId>keyboard.piano</instrumentId>
         <clef staff="2">F</clef>
-        <Articulation>
-          <velocity>100</velocity>
-          <gateTime>95</gateTime>
-          </Articulation>
-        <Articulation name="staccatissimo">
-          <velocity>100</velocity>
-          <gateTime>33</gateTime>
-          </Articulation>
-        <Articulation name="staccato">
-          <velocity>100</velocity>
-          <gateTime>50</gateTime>
-          </Articulation>
-        <Articulation name="portato">
-          <velocity>100</velocity>
-          <gateTime>67</gateTime>
-          </Articulation>
-        <Articulation name="tenuto">
-          <velocity>100</velocity>
-          <gateTime>100</gateTime>
-          </Articulation>
-        <Articulation name="marcato">
-          <velocity>120</velocity>
-          <gateTime>67</gateTime>
-          </Articulation>
-        <Articulation name="sforzato">
-          <velocity>150</velocity>
-          <gateTime>100</gateTime>
-          </Articulation>
-        <Articulation name="sforzatoStaccato">
-          <velocity>150</velocity>
-          <gateTime>50</gateTime>
-          </Articulation>
-        <Articulation name="marcatoStaccato">
-          <velocity>120</velocity>
-          <gateTime>50</gateTime>
-          </Articulation>
-        <Articulation name="marcatoTenuto">
-          <velocity>120</velocity>
-          <gateTime>100</gateTime>
-          </Articulation>
         <Channel>
           <program value="0"/>
           <controller ctrl="10" value="63"/>
@@ -117,11 +26,14 @@
           </Channel>
         </Instrument>
       </Part>
-    <Part id="P1_down">
-      <Staff id="P1_down">
+    <Part id="2">
+      <Staff id="1">
+        <StaffType group="pitched">
+          <name>stdNormal</name>
+          </StaffType>
         </Staff>
-      <trackName>Down</trackName>
-      <Instrument id="P1_down">
+      <trackName>Piano</trackName>
+      <Instrument id="piano">
         <longName>Piano</longName>
         <shortName>Pno.</shortName>
         <trackName>Piano</trackName>
@@ -131,46 +43,6 @@
         <maxPitchA>108</maxPitchA>
         <instrumentId>keyboard.piano</instrumentId>
         <clef staff="2">F</clef>
-        <Articulation>
-          <velocity>100</velocity>
-          <gateTime>95</gateTime>
-          </Articulation>
-        <Articulation name="staccatissimo">
-          <velocity>100</velocity>
-          <gateTime>33</gateTime>
-          </Articulation>
-        <Articulation name="staccato">
-          <velocity>100</velocity>
-          <gateTime>50</gateTime>
-          </Articulation>
-        <Articulation name="portato">
-          <velocity>100</velocity>
-          <gateTime>67</gateTime>
-          </Articulation>
-        <Articulation name="tenuto">
-          <velocity>100</velocity>
-          <gateTime>100</gateTime>
-          </Articulation>
-        <Articulation name="marcato">
-          <velocity>120</velocity>
-          <gateTime>67</gateTime>
-          </Articulation>
-        <Articulation name="sforzato">
-          <velocity>150</velocity>
-          <gateTime>100</gateTime>
-          </Articulation>
-        <Articulation name="sforzatoStaccato">
-          <velocity>150</velocity>
-          <gateTime>50</gateTime>
-          </Articulation>
-        <Articulation name="marcatoStaccato">
-          <velocity>120</velocity>
-          <gateTime>50</gateTime>
-          </Articulation>
-        <Articulation name="marcatoTenuto">
-          <velocity>120</velocity>
-          <gateTime>100</gateTime>
-          </Articulation>
         <Channel>
           <program value="0"/>
           <controller ctrl="10" value="63"/>
@@ -178,150 +50,5 @@
           </Channel>
         </Instrument>
       </Part>
-    <Staff id="P1_up">
-      <Measure>
-        <voice>
-          <Clef>
-            <concertClefType>G</concertClefType>
-            <transposingClefType>G</transposingClefType>
-            </Clef>
-          <TimeSig>
-            <sigN>4</sigN>
-            <sigD>4</sigD>
-            </TimeSig>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>up</StemDirection>
-            <Note>
-              <pitch>76</pitch>
-              <tpc>18</tpc>
-              </Note>
-            </Chord>
-          <Rest>
-            <durationType>quarter</durationType>
-            </Rest>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>up</StemDirection>
-            <Note>
-              <pitch>76</pitch>
-              <tpc>18</tpc>
-              </Note>
-            </Chord>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>up</StemDirection>
-            <Note>
-              <pitch>76</pitch>
-              <tpc>18</tpc>
-              </Note>
-            </Chord>
-          </voice>
-        </Measure>
-      <Measure>
-        <voice>
-          <Rest>
-            <durationType>half</durationType>
-            </Rest>
-          <Beam>
-            <StemDirection>up</StemDirection>
-            </Beam>
-          <Chord>
-            <BeamMode>begin</BeamMode>
-            <durationType>eighth</durationType>
-            <Note>
-              <pitch>71</pitch>
-              <tpc>19</tpc>
-              </Note>
-            </Chord>
-          <Chord>
-            <BeamMode>mid</BeamMode>
-            <durationType>eighth</durationType>
-            <Note>
-              <pitch>71</pitch>
-              <tpc>19</tpc>
-              </Note>
-            </Chord>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>up</StemDirection>
-            <Note>
-              <pitch>71</pitch>
-              <tpc>19</tpc>
-              </Note>
-            </Chord>
-          <BarLine>
-            <subtype>end</subtype>
-            </BarLine>
-          </voice>
-        </Measure>
-      </Staff>
-    <Staff id="P1_down">
-      <Measure>
-        <voice>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>down</StemDirection>
-            <Note>
-              <pitch>72</pitch>
-              <tpc>14</tpc>
-              </Note>
-            </Chord>
-          <Rest>
-            <durationType>quarter</durationType>
-            </Rest>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>down</StemDirection>
-            <Note>
-              <pitch>72</pitch>
-              <tpc>14</tpc>
-              </Note>
-            </Chord>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>down</StemDirection>
-            <Note>
-              <pitch>72</pitch>
-              <tpc>14</tpc>
-              </Note>
-            </Chord>
-          </voice>
-        </Measure>
-      <Measure>
-        <voice>
-          <location>
-            <fractions>1/2</fractions>
-            </location>
-          <Beam>
-            <StemDirection>down</StemDirection>
-            </Beam>
-          <Chord>
-            <BeamMode>begin</BeamMode>
-            <durationType>eighth</durationType>
-            <Note>
-              <pitch>71</pitch>
-              <tpc>19</tpc>
-              </Note>
-            </Chord>
-          <Chord>
-            <BeamMode>mid</BeamMode>
-            <durationType>eighth</durationType>
-            <Note>
-              <pitch>71</pitch>
-              <tpc>19</tpc>
-              </Note>
-            </Chord>
-          <Chord>
-            <durationType>quarter</durationType>
-            <StemDirection>down</StemDirection>
-            <Note>
-              <pitch>71</pitch>
-              <tpc>19</tpc>
-              </Note>
-            </Chord>
-          </voice>
-        </Measure>
-      </Staff>
     </Score>
-  </museScore>
+</museScore>
