@@ -152,187 +152,104 @@ def remove_other_voice(this_direction, measure, voices_reversed):
 
 
 def main(root):
+    # Only handle mscx: <Score>/<Part>/<Staff>/<Measure>/<voice>
+    score = root.find("Score")
+    if score is None:
+        raise ValueError("No <Score> element found in mscx root!")
 
-    # Find parts with multiple voices
-    parts_with_multiple_voices = []
-    for part in root.findall("part"):
-        pid = part.attrib.get("id")
-        for measure in part.findall("measure"):
-            voices = set()
-            for el in measure:
-                if el.tag == "note":
-                    voice_el = el.find("voice")
-                    if voice_el is not None:
-                        voices.add(voice_el.text)
-                    else:
-                        voices.add("1")
-            if len(voices) > 1:
-                parts_with_multiple_voices.append(pid)
-                break
-
-    # For each part in parts_with_multiple_voices, create a split map
-    # create 2 new parts
+    # Find all <Part> elements
+    parts = score.findall("Part")
+    # Always split the first part if only one exists
+    if len(parts) == 1:
+        parts_with_multiple_voices = [parts[0]]
+    else:
+        parts_with_multiple_voices = []
+        for part in parts:
+            for staff in part.findall("Staff"):
+                for measure in staff.findall("Measure"):
+                    voice_count = len(measure.findall("voice"))
+                    if voice_count > 1:
+                        parts_with_multiple_voices.append(part)
+                        break
 
     split_map = {}
-    for part in root.findall("part"):
-        pid = part.attrib.get("id")
-        if pid not in parts_with_multiple_voices:
-            continue
+    for part in parts_with_multiple_voices:
+        pid = part.attrib.get("id", "P1")
+        split_map[pid] = {"up": f"{pid}_up", "down": f"{pid}_down"}
+        # Create new <Part> elements
+        up_part = deepcopy(part)
+        down_part = deepcopy(part)
+        up_part.attrib["id"] = split_map[pid]["up"]
+        down_part.attrib["id"] = split_map[pid]["down"]
+        # Remove all measures from both, will fill below
+        for staff in up_part.findall("Staff"):
+            staff[:] = []
+        for staff in down_part.findall("Staff"):
+            staff[:] = []
+        score.append(up_part)
+        score.append(down_part)
 
-        # Create a split map for this part
-        split_map[pid] = {
-            "up": f"{pid}_up",
-            "down": f"{pid}_down"
-        }
+    for part in parts_with_multiple_voices:
+        pid = part.attrib.get("id", "P1")
+        up_part = score.find(f"Part[@id='{split_map[pid]['up']}']")
+        down_part = score.find(f"Part[@id='{split_map[pid]['down']}']")
+        # Ensure up_part and down_part have the same number of Staffs as the original part
+        orig_staffs = part.findall("Staff")
+        up_staffs = up_part.findall("Staff")
+        down_staffs = down_part.findall("Staff")
+        # Add missing Staffs if needed
+        while len(up_staffs) < len(orig_staffs):
+            new_staff = deepcopy(orig_staffs[len(up_staffs)])
+            del new_staff[:]
+            up_part.append(new_staff)
+            up_staffs = up_part.findall("Staff")
+        while len(down_staffs) < len(orig_staffs):
+            new_staff = deepcopy(orig_staffs[len(down_staffs)])
+            del new_staff[:]
+            down_part.append(new_staff)
+            down_staffs = down_part.findall("Staff")
+        # Build a mapping from staff id to staff element for up and down parts
+        up_staffs_map = {s.attrib.get('id'): s for s in up_part.findall('Staff')}
+        down_staffs_map = {s.attrib.get('id'): s for s in down_part.findall('Staff')}
+        # Clear measures from staffs (preserve attributes)
+        for s in up_staffs_map.values():
+            for m in list(s):
+                if m.tag == 'Measure':
+                    s.remove(m)
+        for s in down_staffs_map.values():
+            for m in list(s):
+                if m.tag == 'Measure':
+                    s.remove(m)
+        for orig_staff in part.findall('Staff'):
+            staff_id = orig_staff.attrib.get('id')
+            up_staff = up_staffs_map[staff_id]
+            down_staff = down_staffs_map[staff_id]
+            for measure in orig_staff.findall('Measure'):
+                m_num = measure.attrib.get('number')
+                up_measure = etree.Element('Measure', number=m_num)
+                down_measure = etree.Element('Measure', number=m_num)
+                voices = measure.findall('voice')
+                if len(voices) == 2:
+                    for voice in voices:
+                        voice_num = voice.attrib.get('number', '1')
+                        if voice_num == '1':
+                            up_measure.append(deepcopy(voice))
+                        elif voice_num == '2':
+                            down_measure.append(deepcopy(voice))
+                elif len(voices) == 1:
+                    up_measure.append(deepcopy(voices[0]))
+                    down_measure.append(deepcopy(voices[0]))
+                up_staff.append(up_measure)
+                down_staff.append(down_measure)
 
-        # Create new parts for up and down voices
-        up_part = etree.Element("part", id=split_map[pid]["up"])
-        down_part = etree.Element("part", id=split_map[pid]["down"])
+    # Remove all original parts that were split (by id, to avoid object identity issues)
+    for orig_id in list(split_map.keys()):
+        for part in list(score.findall('Part')):
+            if part.attrib.get('id') == orig_id:
+                score.remove(part)
 
-        # Add these new parts to the root
-        root.append(up_part)
-        root.append(down_part)
-
-        # add to part list
-        part_list = root.find("part-list")
-        if part_list is None:
-            part_list = etree.SubElement(root, "part-list")
-        score_part_up = etree.SubElement(part_list, "score-part", id=split_map[pid]["up"])
-        score_part_down = etree.SubElement(part_list, "score-part", id=split_map[pid]["down"])
-        score_part_up.append(etree.Element("part-name", text=f"{pid} Up"))
-        score_part_down.append(etree.Element("part-name", text=f"{pid} Down"))
-        print("Splitting part", pid, "into", split_map[pid]["up"], "and", split_map[pid]["down"])
-
-    # 0 PASS: Try to determine what voice is up or down using stem direction
-    reversed_voices_by_part_measure = defaultdict(dict)
-
-    for part in root.findall("part"):
-        pid = part.attrib.get("id")
-        if pid not in split_map:
-            continue
-        for measure in part.findall("measure"):
-            for el in measure:
-                if el.tag == "note":
-                    is_rest = el.find("rest") is not None
-                    if is_rest:
-                        continue
-                    direction = get_stem_direction(el)
-                    voice = "up"
-                    voice_el = el.find("voice")
-                    if voice_el is not None and voice_el.text == "2":
-                        voice = "down"
-
-                    if not direction:
-                        print("Warning: No stem direction found for note in part", pid, "measure", measure.attrib.get("number"))
-                        direction = voice
-
-                    reversed_voices_by_part_measure[pid][measure.attrib.get('number')] = voice != direction
-                    if voice != direction:
-                        print(f"Detected reversed voice in part {pid}, measure {measure.attrib.get('number')}: expected {direction}, found {voice}")
-
-    # FIRST PASS: store lyrics by (time position, lyric target part)
-    lyrics_by_time = defaultdict(dict)
-
-    for part in root.findall("part"):
-        pid = part.attrib.get("id")
-        if pid not in split_map:
-            continue
-        time_position = 0
-        for measure in part.findall("measure"):
-            for el in measure:
-                if el.tag == "note":
-                    duration_el = el.find("duration")
-                    duration = int(duration_el.text) if duration_el is not None else 0
-                    direction = get_stem_direction(el)
-                    for lyric in el.findall("lyric"):
-                        verse = lyric.attrib.get("number", "1")
-                        placement = lyric.attrib.get("placement", "below")
-                        lyric_pid = pid
-                        if verse == "2":
-                            # Force verse 2 + below to be in the down part
-                            if placement == "below":
-                                lyric_pid = split_map[pid]["down"]
-                        lyrics_by_time[time_position][lyric_pid] = deepcopy(lyric)
-                        # Force verse 1
-                        lyrics_by_time[time_position][lyric_pid].attrib["number"] = "1"
-                    time_position += duration
-                elif el.tag == "backup":
-                    time_position -= int(el.find("duration").text)
-                elif el.tag == "forward":
-                    time_position += int(el.find("duration").text)
-
-    # SECOND PASS: rewrite with lyric per time and direction fallback
-    new_measures = defaultdict(list)
-
-    for part in root.findall("part"):
-        pid = part.attrib.get("id")
-        if pid not in split_map:
-            continue
-
-        time_position = 0
-        for measure in part.findall("measure"):
-            print(f"Processing measure {measure.attrib.get('number')} for part {pid} at time position {time_position}")
-
-            m_num = measure.attrib.get("number")
-            voices_reversed = reversed_voices_by_part_measure[pid].get(m_num, False)
-
-            m_up = etree.Element("measure", number=m_num)
-            m_down = etree.Element("measure", number=m_num)
-
-            for el in measure:
-                if el.tag == "attributes":
-                    m_up.append(deepcopy(el))
-                    m_down.append(deepcopy(el))
-                elif el.tag in ("forward", "backup"):
-                    m_up.append(deepcopy(el))
-                    m_down.append(deepcopy(el))
-                    dur = int(el.find("duration").text)
-                    time_position += dur if el.tag == "forward" else -dur
-                elif el.tag == "note":
-                    is_rest = el.find("rest") is not None
-
-                    if not is_middle_of_slur(el):
-                        # Add lyrics if available
-                        lyrics_for_time = lyrics_by_time.get(time_position, {})
-                        lyric = lyrics_for_time.get(split_map[pid][direction])
-                        if lyric is None:
-                            # Try to find a fallback lyric
-                            choices = [
-                                split_map[pid]["up"],
-                                split_map[pid]["down"],
-                                pid,
-                            ]
-                            for choice in choices:
-                                lyric = lyrics_for_time.get(choice)
-                                if lyric is not None:
-                                    break
-                        if lyric is None:
-                            # Try to find any lyric
-                            lyric = next(iter(lyrics_for_time.values()), None)
-                        if lyric is not None:
-                            # Clear existing lyrics
-                            for existing_lyric in el.findall("lyric"):
-                                el.remove(existing_lyric)
-                            el.append(deepcopy(lyric))
-
-                    print(f"Processing note in part {pid}, measure {m_num}, time position {time_position}, is_rest: {is_rest}")
-                    m_up.append(deepcopy(el))
-                    m_down.append(deepcopy(el))
-                    duration_el = el.find("duration")
-                    duration = int(duration_el.text) if duration_el is not None else 0
-                    time_position += duration
-
-            remove_other_voice("up", m_up, voices_reversed)
-            remove_other_voice("down", m_down, voices_reversed)
-
-            print("measure up")
-            new_measures[split_map[pid]["up"]].append(m_up)
-            new_measures[split_map[pid]["down"]].append(m_down)
-
-    for part in root.findall("part"):
-        pid = part.attrib.get("id")
-        if pid in new_measures:
-            part[:] = new_measures[pid]
+    # Debug: print resulting XML for inspection
+    print(etree.tostring(root, pretty_print=True, encoding='unicode'))
 
     # ---
     ## Remove Original Parts from Part-List
