@@ -157,16 +157,18 @@ def main(root):
     if score is None:
         raise ValueError("No <Score> element found in mscx root!")
 
-    # Find all <Part> elements
+    # Find all <Part> elements (case-insensitive for mscx)
     parts = score.findall("Part")
+    if not parts:
+        parts = score.findall("part")
     # Always split the first part if only one exists
     if len(parts) == 1:
         parts_with_multiple_voices = [parts[0]]
     else:
         parts_with_multiple_voices = []
         for part in parts:
-            for staff in part.findall("Staff"):
-                for measure in staff.findall("Measure"):
+            for staff in part.findall("Staff") or part.findall("staff"):
+                for measure in staff.findall("Measure") or staff.findall("measure"):
                     voice_count = len(measure.findall("voice"))
                     if voice_count > 1:
                         parts_with_multiple_voices.append(part)
@@ -188,61 +190,11 @@ def main(root):
             staff[:] = []
         score.append(up_part)
         score.append(down_part)
-
-    for part in parts_with_multiple_voices:
-        pid = part.attrib.get("id", "P1")
-        up_part = score.find(f"Part[@id='{split_map[pid]['up']}']")
-        down_part = score.find(f"Part[@id='{split_map[pid]['down']}']")
-        # Ensure up_part and down_part have the same number of Staffs as the original part
-        orig_staffs = part.findall("Staff")
-        up_staffs = up_part.findall("Staff")
-        down_staffs = down_part.findall("Staff")
-        # Add missing Staffs if needed
-        while len(up_staffs) < len(orig_staffs):
-            new_staff = deepcopy(orig_staffs[len(up_staffs)])
-            del new_staff[:]
-            up_part.append(new_staff)
-            up_staffs = up_part.findall("Staff")
-        while len(down_staffs) < len(orig_staffs):
-            new_staff = deepcopy(orig_staffs[len(down_staffs)])
-            del new_staff[:]
-            down_part.append(new_staff)
-            down_staffs = down_part.findall("Staff")
-        # Build a mapping from staff id to staff element for up and down parts
-        up_staffs_map = {s.attrib.get('id'): s for s in up_part.findall('Staff')}
-        down_staffs_map = {s.attrib.get('id'): s for s in down_part.findall('Staff')}
-        # Clear measures from staffs (preserve attributes)
-        for s in up_staffs_map.values():
-            for m in list(s):
-                if m.tag == 'Measure':
-                    s.remove(m)
-        for s in down_staffs_map.values():
-            for m in list(s):
-                if m.tag == 'Measure':
-                    s.remove(m)
-        for orig_staff in part.findall('Staff'):
-            staff_id = orig_staff.attrib.get('id')
-            up_staff = up_staffs_map[staff_id]
-            down_staff = down_staffs_map[staff_id]
-            for measure in orig_staff.findall('Measure'):
-                m_num = measure.attrib.get('number')
-                up_measure = etree.Element('Measure', number=m_num)
-                down_measure = etree.Element('Measure', number=m_num)
-                voices = measure.findall('voice')
-                if len(voices) == 2:
-                    for voice in voices:
-                        voice_num = voice.attrib.get('number', '1')
-                        if voice_num == '1':
-                            up_measure.append(deepcopy(voice))
-                        elif voice_num == '2':
-                            down_measure.append(deepcopy(voice))
-                elif len(voices) == 1:
-                    up_measure.append(deepcopy(voices[0]))
-                    down_measure.append(deepcopy(voices[0]))
-                up_staff.append(up_measure)
-                down_staff.append(down_measure)
+        # Remove the original part immediately after appending split parts
+        score.remove(part)
 
     # Remove all original parts that were split (by id, to avoid object identity issues)
+    # (This is now redundant, since we remove above, but keep for safety)
     for orig_id in list(split_map.keys()):
         for part in list(score.findall('Part')):
             if part.attrib.get('id') == orig_id:
@@ -267,6 +219,56 @@ def main(root):
         if pid in split_map:
             root.remove(part)
 
+    # Build a map of all Staff elements in the Score by id
+    staff_map = {}
+    for staff in score.findall('Staff'):
+        staff_id = staff.attrib.get('id')
+        if staff_id:
+            staff_map[staff_id] = staff
+    for part in parts_with_multiple_voices:
+        pid = part.attrib.get("id", "P1")
+        up_part = score.find(f"Part[@id='{split_map[pid]['up']}']") or score.find(f"part[@id='{split_map[pid]['up']}']")
+        down_part = score.find(f"Part[@id='{split_map[pid]['down']}']") or score.find(f"part[@id='{split_map[pid]['down']}']")
+        # Remove all <Staff> from split parts
+        for s in list(up_part):
+            if s.tag == 'Staff':
+                up_part.remove(s)
+        for s in list(down_part):
+            if s.tag == 'Staff':
+                down_part.remove(s)
+        # For each staff id in the original part, find the corresponding Staff in the Score
+        # Instead of iterating part.findall('Staff'), always use the staff_map (from <Score>)
+        for staff_id, orig_staff in staff_map.items():
+            # Create new Staff for up and down, copy non-Measure children
+            up_staff = etree.Element('Staff', id=staff_id)
+            down_staff = etree.Element('Staff', id=staff_id)
+            for child in orig_staff:
+                if child.tag != 'Measure':
+                    up_staff.append(deepcopy(child))
+                    down_staff.append(deepcopy(child))
+            for idx_m, measure in enumerate(orig_staff.findall('Measure')):
+                m_num = measure.attrib.get('number')
+                if m_num is None:
+                    m_num = str(idx_m + 1)
+                up_measure = etree.Element('Measure', number=m_num)
+                down_measure = etree.Element('Measure', number=m_num)
+                voices = measure.findall('voice')
+                if len(voices) == 2:
+                    for idx_v, voice in enumerate(voices):
+                        target_measure = up_measure if idx_v == 0 else down_measure
+                        for el in voice:
+                            if el.tag == 'Chord' or el.tag == 'Rest':
+                                target_measure.append(deepcopy(el))
+                elif len(voices) == 1:
+                    for el in voices[0]:
+                        if el.tag == 'Chord' or el.tag == 'Rest':
+                            up_measure.append(deepcopy(el))
+                            down_measure.append(deepcopy(el))
+                up_staff.append(up_measure)
+                down_staff.append(down_measure)
+            up_part.append(up_staff)
+            down_part.append(down_staff)
+    # ...existing code...
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Split MusicXML score into tenor parts.")
 
