@@ -1,21 +1,26 @@
 # Test that splitting simple_1_input.mscx produces two parts with correct note/rest counts
 
+import pytest
 import os
 from scripts.clean_score.clean_score import main
 
 CURRENT_PATH = os.path.dirname(__file__)
 
 
-def test_simple1_split():
+@pytest.mark.parametrize("base_filename", [
+    'simple_1',
+    'medium_1'
+])
+def test_split(base_filename):
     import xml.etree.ElementTree as ET
-    input_file = os.path.join(CURRENT_PATH, 'test_files/simple_1_input.mscx')
-    output_file = os.path.join(CURRENT_PATH, 'test_files/simple_1_test_output.mscx')
+    input_file = os.path.join(CURRENT_PATH, f'test_files/{base_filename}_input.mscx')
+    output_file = os.path.join(CURRENT_PATH, f'test_files/{base_filename}_test_output.mscx')
 
     # Run the main function to process the input file
     main(input_file=input_file, output_file=output_file)
 
     # Compare the output file with the expected output as XML trees
-    expected_output_file = os.path.join(CURRENT_PATH, 'test_files/simple_1_output.mscx')
+    expected_output_file = os.path.join(CURRENT_PATH, f'test_files/{base_filename}_output.mscx')
     with open(expected_output_file, 'r', encoding='utf-8') as f:
         expected_content = f.read()
     with open(output_file, 'r', encoding='utf-8') as f:
