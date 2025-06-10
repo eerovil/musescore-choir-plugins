@@ -3,164 +3,216 @@
 from lxml import etree
 import argparse
 import sys
+import xml.etree.ElementTree as ET
+import copy
 
-def main(input_file, output_file):
-    # Parse the input MSCX file
+def main(input_path, output_path):
+    """
+    Converts a MuseScore XML file from a single-staff, two-voice structure
+    to a two-staff, single-voice-per-staff structure, and duplicates the Part
+    element.
+
+    This function is designed to convert files similar to 'simple_1_input.xml'
+    to the format of 'simple_1_output.xml'.
+
+    Args:
+        input_path (str): Path to the input MuseScore XML file.
+        output_path (str): Path where the converted XML file will be saved.
+    """
     try:
-        tree = etree.parse(input_file)
+        # Parse the XML input file
+        tree = ET.parse(input_path)
         root = tree.getroot()
-    except etree.XMLSyntaxError as e:
-        print(f"Error parsing XML: {e}")
-        sys.exit(1)
 
-    # Only modify <Part> elements, preserve the rest of the MuseScore structure
-    # Find the <Score> element
-    score_elem = root.find(".//Score")
-    if score_elem is None:
-        print("No <Score> element found in input file.")
-        sys.exit(1)
+        # Find the Score element, which is the main container for musical data
+        score_element = root.find('Score')
+        if score_element is None:
+            print("Error: <Score> element not found in the input XML.")
+            return
 
-    # --- Explicitly rebuild <Score> children in correct order ---
-    import copy
-    children = list(score_elem)
-    # Find indices for first and last <Part>
-    part_indices = [i for i, c in enumerate(children) if c.tag == 'Part']
-    if part_indices:
-        first_part_idx = part_indices[0]
-        last_part_idx = part_indices[-1]
-    else:
-        first_part_idx = len(children)
-        last_part_idx = len(children) - 1
-    # Prepare new <Part> elements (just as in input, but duplicated)
-    parts = [c for c in children if c.tag == 'Part']
-    new_parts = []
-    for idx, part in enumerate(parts):
-        part1 = copy.deepcopy(part)
-        part2 = copy.deepcopy(part)
-        # For each, keep only the <StaffType> in <Staff> (remove measures)
-        for p, staff_id in zip([part1, part2], ['1', '2']):
-            staff = p.find('./Staff')
-            if staff is not None:
-                # Remove everything except StaffType
-                for elem in list(staff):
-                    if elem.tag != 'StaffType':
-                        staff.remove(elem)
-                staff.attrib['id'] = staff_id
-            p.attrib['id'] = staff_id
-        new_parts.extend([part1, part2])
-    # Prepare new <Staff> elements (top-level, with measures split by voice)
-    orig_staff = None
-    for c in children:
-        if c.tag == 'Staff':
-            orig_staff = c
-            break
-    new_staffs = []
-    if orig_staff is not None:
-        # For staff 1 (voice 1)
-        staff1 = copy.deepcopy(orig_staff)
-        staff1.attrib['id'] = '1'
-        # Remove all measures
-        for elem in list(staff1):
-            if elem.tag == 'Measure':
-                staff1.remove(elem)
-        # For each measure in original, keep only first <voice>
-        for measure in [m for m in orig_staff if m.tag == 'Measure']:
-            m1 = copy.deepcopy(measure)
-            voices = [v for v in list(m1) if v.tag == 'voice']
-            for v in voices[1:]:
-                m1.remove(v)
-            staff1.append(m1)
-        # For staff 2 (voice 2)
-        staff2 = copy.deepcopy(orig_staff)
-        staff2.attrib['id'] = '2'
-        for elem in list(staff2):
-            if elem.tag == 'Measure':
-                staff2.remove(elem)
-        for measure in [m for m in orig_staff if m.tag == 'Measure']:
-            m2 = copy.deepcopy(measure)
-            voices = [v for v in list(m2) if v.tag == 'voice']
-            for v in voices[:1] + voices[2:]:
-                m2.remove(v)
-            staff2.append(m2)
-        new_staffs = [staff1, staff2]
-    # Build new children list for <Score>
-    new_children = []
-    new_children.extend(children[:first_part_idx])
-    new_children.extend(new_parts)
-    new_children.extend(new_staffs)
-    new_children.extend(children[last_part_idx+1:])
-    # Remove all children and set new ones
-    for c in list(score_elem):
-        score_elem.remove(c)
-    for c in new_children:
-        score_elem.append(c)
+        # Based on simple_1_output, the <Score> element does not have an 'id' attribute.
+        # If it exists in the input, remove it.
+        if 'id' in score_element.attrib:
+            del score_element.attrib['id']
 
-    # Remove comments and blank text nodes from the root before writing
-    for elem in root.xpath('//comment()'):
-        parent = elem.getparent()
-        if parent is not None:
-            parent.remove(elem)
-    def remove_blank_text(e):
-        # Remove blank text and tail recursively
-        if e.text is not None and e.text.strip() == '':
-            e.text = None
-        if e.tail is not None and e.tail.strip() == '':
-            e.tail = None
-        for c in e:
-            remove_blank_text(c)
-    remove_blank_text(root)
+        # Clean up the <Style> tag: In the output, it's self-closing if empty.
+        # The input has whitespace which prevents self-closing, so clear it.
+        style_element = score_element.find('Style')
+        if style_element is not None:
+            style_element.clear() # Clears any text content and children, making it self-closing on write
 
-    # Find and store the original top-level <Staff> before any removals
-    orig_top_staff = None
-    for c in children:
-        if c.tag == 'Staff':
-            orig_top_staff = c
-            break
-    # Remove all <Part> and all top-level <Staff> from <Score> before inserting new ones
-    for elem in list(score_elem):
-        if elem.tag == 'Part' or elem.tag == 'Staff':
-            score_elem.remove(elem)
-    # Insert <Part> elements after <metaTag> or <showMargins>
-    children = list(score_elem)
-    insert_idx = 0
-    for i, child in enumerate(children):
-        if child.tag == 'metaTag':
-            insert_idx = i + 1
-    if insert_idx == 0:
-        for i, child in enumerate(children):
-            if child.tag == 'showMargins':
-                insert_idx = i + 1
-    score_elem.insert(insert_idx, part1)
-    score_elem.insert(insert_idx + 1, part2)
-    # Build new top-level <Staff> elements for each part using the saved original top-level <Staff>
-    if orig_top_staff is not None:
-        orig_staff_type = orig_top_staff.find('StaffType')
-        vbox = orig_top_staff.find('VBox')
-        orig_measures = [m for m in list(orig_top_staff) if m.tag == 'Measure']
-        for idx, voice_idx in [(1, 0), (2, 1)]:
-            new_staff = etree.Element('Staff', id=str(idx))
-            if orig_staff_type is not None:
-                new_staff.append(copy.deepcopy(orig_staff_type))
-            if vbox is not None:
-                new_staff.append(copy.deepcopy(vbox))
-            for measure in orig_measures:
-                m_copy = copy.deepcopy(measure)
-                voices = [v for v in list(m_copy) if v.tag == 'voice']
-                # Remove all voices except the one for this staff
-                for i, v in enumerate(voices):
-                    if i != voice_idx:
-                        m_copy.remove(v)
-                # If the measure has at least one <voice>, append it
-                if m_copy.find('voice') is not None:
-                    new_staff.append(m_copy)
-            score_elem.insert(insert_idx + 2 + (idx - 1), new_staff)
 
-    # Write the modified MuseScore XML to the output file
-    try:
-        tree.write(output_file, pretty_print=True, xml_declaration=True, encoding="UTF-8")
+        # --- Step 1: Duplicate and modify the <Part> element ---
+        # The output file has two <Part> elements, both for 'Piano'.
+        # We find the existing one and create a copy.
+        original_part = score_element.find('Part')
+        if original_part is None:
+            print("Error: <Part> element not found in the input XML.")
+            return
+
+        # Get the index of the original <Part> element to insert the new one correctly.
+        # We convert to a list to easily find the index of mutable elements.
+        score_children = list(score_element)
+        original_part_index = -1
+        for idx, child in enumerate(score_children):
+            # Find the first <Part> element; assuming only one <Part> initially as per input.
+            if child.tag == 'Part':
+                original_part_index = idx
+                break
+
+        if original_part_index == -1:
+             print("Error: Could not find original <Part> element's index for insertion.")
+             return
+
+        # Create a deep copy of the original <Part> to serve as the second part.
+        new_part = copy.deepcopy(original_part)
+
+        # Modify the new <Part>: remove the <controller> element from its <Channel>.
+        # This matches the structure of the second <Part> in simple_1_output.xml.
+        channel_in_new_part = new_part.find('.//Channel')
+        if channel_in_new_part is not None:
+            controller_to_remove = channel_in_new_part.find('controller')
+            if controller_to_remove is not None:
+                channel_in_new_part.remove(controller_to_remove)
+
+        # Insert the new <Part> directly after the original <Part> in the <Score> element.
+        score_element.insert(original_part_index + 1, new_part)
+
+
+        # --- Step 2: Process Staffs and Voices ---
+        # The input has a single <Staff id="1"> with two <voice> elements per <Measure>.
+        # The output has two <Staff> elements (<Staff id="1"> and <Staff id="2">),
+        # each containing one <voice> element per <Measure>.
+        original_staff1 = score_element.find('Staff[@id="1"]')
+        if original_staff1 is None:
+            print("Error: <Staff id='1'> element not found in the input XML.")
+            return
+
+        # Create the new <Staff id="2"> element, which will hold the content of the second voice.
+        new_staff2 = ET.Element('Staff', id='2')
+
+        # Define templates for <KeySig> and <TimeSig> to be added to the first measure of Staff id="2",
+        # as seen in simple_1_output.xml.
+        key_sig_template = ET.fromstring('''<KeySig><accidental>0</accidental></KeySig>''')
+        time_sig_template = ET.fromstring('''<TimeSig><sigN>4</sigN><sigD>4</sigD></TimeSig>''')
+
+        # This list will temporarily hold the measures that will populate new_staff2.
+        measures_to_add_to_staff2 = []
+
+        # Get all <Measure> elements from the original Staff id="1".
+        # We iterate over a copy to safely modify the original 'original_staff1' during the loop.
+        measures_in_staff1_copy = list(original_staff1.findall('Measure'))
+
+        for i, measure in enumerate(measures_in_staff1_copy):
+            voices = measure.findall('voice')
+            
+            # Ensure the measure has at least two voices as expected for this transformation.
+            if len(voices) < 2:
+                print(f"Warning: Measure {i+1} in Staff 1 does not have two voices. "
+                      "This measure's second voice content will not be processed for Staff 2. "
+                      "Original Staff 1 will retain its existing voice(s).")
+                # If there are extra voices beyond the first, remove them for staff1.
+                for j in range(1, len(voices)):
+                    measure.remove(voices[j])
+                continue # Skip processing for Staff 2 for this measure
+
+            first_voice = voices[0]
+            second_voice = voices[1]
+
+            # --- Construct Measure for new Staff id="2" ---
+            new_measure_for_staff2 = ET.Element('Measure')
+            voice_for_staff2 = ET.Element('voice')
+
+            # Add KeySig and TimeSig to the first measure of Staff id="2" as per output example.
+            if i == 0:
+                voice_for_staff2.append(copy.deepcopy(key_sig_template))
+                voice_for_staff2.append(copy.deepcopy(time_sig_template))
+
+            # Handle the <location> tag: In input, <location><fractions>1/2</fractions></location>
+            # indicates a mid-measure start. In output, this is represented by a half-note rest.
+            location_tag = second_voice.find('location')
+            if location_tag is not None:
+                fractions = location_tag.find('fractions')
+                if fractions is not None and fractions.text == '1/2':
+                    half_rest = ET.fromstring('''<Rest><durationType>half</durationType></Rest>''')
+                    voice_for_staff2.append(half_rest)
+            
+            # Append all children of the second voice (from input) to the new voice for Staff id="2".
+            # We explicitly exclude the <location> tag itself from being copied.
+            for child in second_voice:
+                if child.tag != 'location':
+                    voice_for_staff2.append(copy.deepcopy(child))
+
+            # Check if the first voice of the current measure has a <BarLine> and copy it
+            # to ensure both staffs have end barlines in the final measure.
+            barline_in_first_voice = first_voice.find('BarLine')
+            if barline_in_first_voice is not None:
+                voice_for_staff2.append(copy.deepcopy(barline_in_first_voice))
+
+            # Add the constructed voice to the new measure, and then add the measure to our list.
+            new_measure_for_staff2.append(voice_for_staff2)
+            measures_to_add_to_staff2.append(new_measure_for_staff2)
+
+            # --- Modify original Staff id="1" ---
+            # Remove all voices except the first one from the original measure.
+            # Iterate over a copy of the list of voices to safely modify the 'measure' element.
+            for j, v in enumerate(list(measure.findall('voice'))):
+                if j > 0: # If it's the second voice or any subsequent voice
+                    measure.remove(v)
+
+        # After processing all measures, append the prepared measures to new_staff2.
+        for measure_elem in measures_to_add_to_staff2:
+            new_staff2.append(measure_elem)
+
+        # Insert new_staff2 into the Score element at the correct position.
+        # In simple_1_output.xml, <Staff id="2"> comes after <VBox>, which comes after <Staff id="1">.
+        # Re-list children of score_element as it might have changed after <Part> insertion.
+        score_children_current = list(score_element)
+        insert_after_element_index = -1
+
+        # First, try to find the <VBox> element to insert after it.
+        vbox_element = None
+        for idx, child in enumerate(score_children_current):
+            if child.tag == 'VBox':
+                vbox_element = child
+                insert_after_element_index = idx
+                break
+        
+        # If <VBox> is not found (though it should be present in simple_1_input.xml),
+        # fallback to inserting after the original <Staff id="1">.
+        if vbox_element is None:
+            print("Warning: <VBox> element not found. Attempting to insert new Staff after original Staff id='1'.")
+            for idx, child in enumerate(score_children_current):
+                # Ensure we find the specific original_staff1 object, not just any Staff id="1" if duplicated.
+                if child.tag == 'Staff' and child.get('id') == '1' and child is original_staff1:
+                    insert_after_element_index = idx
+                    break
+            
+        if insert_after_element_index == -1:
+            print("Error: Could not determine an appropriate insertion point for new <Staff id='2'>.")
+            return
+
+        score_element.insert(insert_after_element_index + 1, new_staff2)
+
+        # --- Step 3: Write the modified XML to the output file ---
+        # Create an ElementTree object from the modified root element.
+        final_tree = ET.ElementTree(root)
+
+        # Add the XML declaration (<?xml version="1.0" encoding="UTF-8"?>)
+        # and pretty-print the output for readability with an indent of 2 spaces.
+        ET.indent(final_tree, space="  ", level=0)
+        final_tree.write(output_path, encoding='UTF-8', xml_declaration=True)
+
+        print(f"Conversion successful! Output saved to {output_path}")
+
+    except FileNotFoundError:
+        print(f"Error: Input file not found at {input_path}. Please check the path and try again.")
+    except ET.ParseError as e:
+        print(f"Error parsing XML file: {e}. Please ensure the input file is valid XML.")
     except Exception as e:
-        print(f"Error writing output file: {e}")
-        sys.exit(1)
+        print(f"An unexpected error occurred during conversion: {e}")
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process and modify an MSCX file.")

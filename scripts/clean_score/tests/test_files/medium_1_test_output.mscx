@@ -3,29 +3,29 @@
   <programVersion>3.6.2</programVersion>
   <programRevision>3224f34</programRevision>
   <Score>
-    <LayerTag id="0" tag="default"/>
+    <LayerTag id="0" tag="default" />
     <currentLayer>0</currentLayer>
     <Division>480</Division>
-    <Style/>
+    <Style />
     <showInvisible>1</showInvisible>
     <showUnprintable>1</showUnprintable>
     <showFrames>1</showFrames>
     <showMargins>0</showMargins>
-    <metaTag name="arranger"/>
-    <metaTag name="composer"/>
-    <metaTag name="copyright"/>
+    <metaTag name="arranger" />
+    <metaTag name="composer" />
+    <metaTag name="copyright" />
     <metaTag name="creationDate">2025-06-08</metaTag>
-    <metaTag name="lyricist"/>
-    <metaTag name="movementNumber"/>
-    <metaTag name="movementTitle"/>
+    <metaTag name="lyricist" />
+    <metaTag name="movementNumber" />
+    <metaTag name="movementTitle" />
     <metaTag name="originalFormat">musicxml</metaTag>
     <metaTag name="platform">Apple Macintosh</metaTag>
-    <metaTag name="poet"/>
-    <metaTag name="source"/>
-    <metaTag name="translator"/>
-    <metaTag name="workNumber"/>
+    <metaTag name="poet" />
+    <metaTag name="source" />
+    <metaTag name="translator" />
+    <metaTag name="workNumber" />
     <metaTag name="workTitle">Test</metaTag>
-    <Part id="1">
+    <Part>
       <Staff id="1">
         <StaffType group="pitched">
           <name>stdNormal</name>
@@ -43,14 +43,14 @@
         <instrumentId>keyboard.piano</instrumentId>
         <clef staff="2">F</clef>
         <Channel>
-          <program value="0"/>
-          <controller ctrl="10" value="63"/>
+          <program value="0" />
+          <controller ctrl="10" value="63" />
           <synti>Fluid</synti>
         </Channel>
       </Instrument>
     </Part>
-    <Part id="2">
-      <Staff id="2">
+    <Part>
+      <Staff id="1">
         <StaffType group="pitched">
           <name>stdNormal</name>
         </StaffType>
@@ -67,8 +67,7 @@
         <instrumentId>keyboard.piano</instrumentId>
         <clef staff="2">F</clef>
         <Channel>
-          <program value="0"/>
-          <controller ctrl="10" value="63"/>
+          <program value="0" />
           <synti>Fluid</synti>
         </Channel>
       </Instrument>
@@ -78,8 +77,9 @@
         <height>3.5</height>
         <Text>
           <style>Title</style>
-          <offset x="0" y="-0.1505"/>
-          <text><font size="22"/>Test</text>
+          <offset x="0" y="-0.1505" />
+          <text>
+            <font size="22" />Test</text>
         </Text>
       </VBox>
       <Measure>
@@ -131,7 +131,7 @@
             </Note>
           </Chord>
           <Rest>
-            <offset x="0" y="2.81548"/>
+            <offset x="0" y="2.81548" />
             <durationType>half</durationType>
           </Rest>
         </voice>
@@ -217,16 +217,15 @@
       </Measure>
     </Staff>
     <Staff id="2">
-      <VBox>
-        <height>3.5</height>
-        <Text>
-          <style>Title</style>
-          <offset x="0" y="-0.1505"/>
-          <text><font size="22"/>Test</text>
-        </Text>
-      </VBox>
       <Measure>
         <voice>
+          <KeySig>
+            <accidental>0</accidental>
+          </KeySig>
+          <TimeSig>
+            <sigN>4</sigN>
+            <sigD>4</sigD>
+          </TimeSig>
           <Chord>
             <durationType>quarter</durationType>
             <StemDirection>up</StemDirection>
@@ -235,9 +234,6 @@
               <tpc>18</tpc>
             </Note>
           </Chord>
-          <location>
-            <fractions>1/4</fractions>
-          </location>
           <Chord>
             <durationType>quarter</durationType>
             <StemDirection>up</StemDirection>
@@ -262,7 +258,7 @@
             </Note>
           </Chord>
           <Rest>
-            <offset x="0.0970855" y="-4.56302"/>
+            <offset x="0.0970855" y="-4.56302" />
             <durationType>quarter</durationType>
           </Rest>
           <Chord>
@@ -308,6 +304,9 @@
               <tpc>14</tpc>
             </Note>
           </Chord>
+          <BarLine>
+            <subtype>end</subtype>
+          </BarLine>
         </voice>
       </Measure>
     </Staff>

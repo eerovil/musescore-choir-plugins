@@ -7,10 +7,10 @@
         {
             "label": "Test: Run Pytest to File",
             "type": "shell",
-            "command": "rm tests/test_files/*test_output.mscx; rm test_outpu*.txt; pytest . -k test_simple1_split --log-cli-level=DEBUG > test_output.txt 2>&1; tail -50 test_output.txt > test_output2.txt",
+            "command": "rm tests/test_files/*test_output.mscx; rm test_outpu*.txt; pytest . -k test_simple1_split --log-cli-level=DEBUG 2>&1 | tee test_output.txt; tail -50 test_output.txt > test_output2.txt",
             "problemMatcher": [],
             "presentation": {
-                "reveal": "never"
+                "reveal": "always"
             },
             "options": {
                 "cwd": "${workspaceFolder}/scripts/clean_score"
