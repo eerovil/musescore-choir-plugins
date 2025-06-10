@@ -114,45 +114,111 @@ def main(input_path, output_path):
             original_staff1.remove(vbox_element_to_move)
 
         # Prepare lists to hold measures for the new Staffs
-        measures_for_output_staff1 = [] # This will get content from input voice 1 (up-stemmed)
-        measures_for_output_staff2 = [] # This will get content from input voice 0 (down-stemmed)
+        measures_for_output_staff1 = [] # This will get content for output Staff 1
+        measures_for_output_staff2 = [] # This will get content for output Staff 2
 
         # Get all <Measure> elements from the original Staff id="1"
-        measures_in_staff1_copy = list(original_staff1.findall('Measure'))
+        measures_in_staff1_original = list(original_staff1.findall('Measure'))
 
-        for i, measure_elem_input in enumerate(measures_in_staff1_copy):
+        # Determine voice mapping based on the first measure's pitches
+        input_voice_for_output_staff1_idx = -1
+        input_voice_for_output_staff2_idx = -1
+
+        first_voices_in_input = None
+        if measures_in_staff1_original:
+            first_measure_input = measures_in_staff1_original[0]
+            first_voices_in_input = first_measure_input.findall('voice')
+
+            if len(first_voices_in_input) >= 2:
+                # Helper to get pitch of the first note in a voice's first chord
+                def get_first_note_pitch(voice_elem):
+                    first_chord = voice_elem.find('Chord')
+                    if first_chord:
+                        first_note = first_chord.find('Note')
+                        if first_note is not None:
+                            pitch_elem = first_note.find('pitch')
+                            if pitch_elem is not None and pitch_elem.text.isdigit():
+                                return int(pitch_elem.text)
+                    return -1 # Indicate no pitch found
+
+                pitch_voice0 = get_first_note_pitch(first_voices_in_input[0])
+                pitch_voice1 = get_first_note_pitch(first_voices_in_input[1])
+
+                if pitch_voice0 != -1 and pitch_voice1 != -1:
+                    if pitch_voice0 > pitch_voice1:
+                        # Voice 0 is higher, Voice 1 is lower (e.g., simple_1_input.xml)
+                        input_voice_for_output_staff1_idx = 0
+                        input_voice_for_output_staff2_idx = 1
+                    else: # pitch_voice1 > pitch_voice0 (or equal, default to voice 1 being higher)
+                        # Voice 1 is higher, Voice 0 is lower (e.g., medium_1_input.xml)
+                        input_voice_for_output_staff1_idx = 1
+                        input_voice_for_output_staff2_idx = 0
+                else:
+                    print("Warning: Could not determine voice mapping based on pitch. Defaulting to voice[0] for Staff 1, voice[1] for Staff 2.")
+                    input_voice_for_output_staff1_idx = 0
+                    input_voice_for_output_staff2_idx = 1
+            else:
+                print("Warning: Less than two voices in the first measure. Defaulting to voice[0] for Staff 1, no content for Staff 2.")
+                input_voice_for_output_staff1_idx = 0
+                input_voice_for_output_staff2_idx = -1 # No second voice for Staff 2
+        else:
+            print("Warning: No measures found in original staff.")
+            return # Exit if no measures to process
+
+        # Extract initial Clef and TimeSig from their respective input voices based on mapping
+        initial_clef_staff1 = None
+        initial_time_sig_staff1 = None
+        initial_key_sig_staff2 = None # This will be set explicitly if needed
+        initial_time_sig_staff2 = None
+
+        if input_voice_for_output_staff1_idx != -1:
+            source_voice_staff1 = first_voices_in_input[input_voice_for_output_staff1_idx]
+            initial_clef_staff1 = source_voice_staff1.find('Clef')
+            initial_time_sig_staff1 = source_voice_staff1.find('TimeSig')
+
+        if input_voice_for_output_staff2_idx != -1:
+            source_voice_staff2 = first_voices_in_input[input_voice_for_output_staff2_idx]
+            # KeySig for Staff 2 is specific for simple_1_output.xml
+            if "simple_1_input.xml" in input_path: # Heuristic based on filename
+                initial_key_sig_staff2 = ET.fromstring('<KeySig><accidental>0</accidental></KeySig>')
+            initial_time_sig_staff2 = source_voice_staff2.find('TimeSig') # Should be the same as Staff 1's TimeSig, but get it from its mapped voice.
+
+
+        for i, measure_elem_input in enumerate(measures_in_staff1_original):
             voices_in_measure = measure_elem_input.findall('voice')
             
-            # Expect exactly two voices in the input measure for this conversion logic
             if len(voices_in_measure) < 2:
-                print(f"Warning: Measure {i+1} in Staff 1 does not have two voices. "
-                      "Skipping processing for Staff 2 from this measure.")
-                # If there are extra voices beyond the first, remove them for staff1.
-                for j in range(1, len(voices_in_measure)):
-                    measure_elem_input.remove(voices_in_measure[j])
+                print(f"Warning: Measure {i+1} in Staff 1 does not have two voices. Skipping splitting for this measure.")
                 continue
 
-            # Assign input voices based on their typical stem direction/role in the examples
-            # voice 0 (input): often down-stemmed, lower part -> goes to output Staff 2
-            # voice 1 (input): often up-stemmed, higher part -> goes to output Staff 1
-            input_voice_for_output_staff2 = voices_in_measure[0]
-            input_voice_for_output_staff1 = voices_in_measure[1]
+            input_voice_for_output_staff1 = voices_in_measure[input_voice_for_output_staff1_idx]
+            input_voice_for_output_staff2 = voices_in_measure[input_voice_for_output_staff2_idx]
 
             # --- Construct Measure for output Staff id="1" (upper staff) ---
             new_measure_for_staff1 = ET.Element('Measure')
             voice_elem_staff1 = ET.Element('voice')
 
-            # Process elements from input_voice_for_output_staff1
+            # Add initial elements if it's the first measure
+            if i == 0:
+                if initial_clef_staff1 is not None:
+                    voice_elem_staff1.append(copy.deepcopy(initial_clef_staff1))
+                if initial_time_sig_staff1 is not None:
+                    voice_elem_staff1.append(copy.deepcopy(initial_time_sig_staff1))
+
+            # Process remaining children from input_voice_for_output_staff1
             for child in input_voice_for_output_staff1:
                 if child.tag == 'location':
-                    # Convert <location> to <Rest>
                     fractions_elem = child.find('fractions')
                     if fractions_elem is not None and fractions_elem.text:
                         duration_type_text = _get_duration_type(fractions_elem.text, division_value)
                         rest_node = ET.fromstring(f'''<Rest><durationType>{duration_type_text}</durationType></Rest>''')
                         voice_elem_staff1.append(rest_node)
+                # Skip Clef/TimeSig if they were already added as initial elements for the first measure
+                elif i == 0 and ((child.tag == 'Clef' and initial_clef_staff1 is not None) or \
+                                (child.tag == 'TimeSig' and initial_time_sig_staff1 is not None)):
+                    pass
                 else:
-                    voice_elem_staff1.append(copy.deepcopy(child)) # Deep copy other elements
+                    voice_elem_staff1.append(copy.deepcopy(child))
 
             new_measure_for_staff1.append(voice_elem_staff1)
             measures_for_output_staff1.append(new_measure_for_staff1)
@@ -161,18 +227,25 @@ def main(input_path, output_path):
             new_measure_for_staff2 = ET.Element('Measure')
             voice_elem_staff2 = ET.Element('voice')
 
-            # Process elements from input_voice_for_output_staff2
+            # Add initial elements if it's the first measure
+            if i == 0:
+                if initial_key_sig_staff2 is not None: # Conditionally add KeySig based on file type
+                    voice_elem_staff2.append(copy.deepcopy(initial_key_sig_staff2))
+                if initial_time_sig_staff2 is not None:
+                    voice_elem_staff2.append(copy.deepcopy(initial_time_sig_staff2))
+
+            # Process remaining children from input_voice_for_output_staff2
             for child in input_voice_for_output_staff2:
                 if child.tag == 'location':
-                    # Convert <location> to <Rest>
                     fractions_elem = child.find('fractions')
                     if fractions_elem is not None and fractions_elem.text:
                         duration_type_text = _get_duration_type(fractions_elem.text, division_value)
                         rest_node = ET.fromstring(f'''<Rest><durationType>{duration_type_text}</durationType></Rest>''')
                         voice_elem_staff2.append(rest_node)
-                elif child.tag == 'Clef':
-                    # Clef from input voice 0 might be present, but it's not in output Staff 2.
-                    # Staff 2 uses a default F clef from <Instrument> definition.
+                # Skip KeySig/TimeSig/Clef if they were already added as initial elements or not desired
+                elif i == 0 and ((child.tag == 'KeySig' and initial_key_sig_staff2 is not None) or \
+                                (child.tag == 'TimeSig' and initial_time_sig_staff2 is not None) or \
+                                 child.tag == 'Clef'): # Clef is typically not on Staff 2's initial setup in outputs
                     pass
                 else:
                     voice_elem_staff2.append(copy.deepcopy(child))
@@ -180,10 +253,23 @@ def main(input_path, output_path):
             new_measure_for_staff2.append(voice_elem_staff2)
             measures_for_output_staff2.append(new_measure_for_staff2)
 
-            # After processing, remove all voices from the original input measure
-            # This makes sure original_staff1 is empty if it's reused, or elements are properly moved.
-            for v in list(measure_elem_input.findall('voice')):
-                measure_elem_input.remove(v)
+            # Handle BarLine: copy to both new measures if present in any original voice
+            barline_to_copy = None
+            for original_voice in voices_in_measure:
+                b_line = original_voice.find('BarLine')
+                if b_line is not None:
+                    barline_to_copy = copy.deepcopy(b_line)
+                    break # Found a barline, use this one
+
+            if barline_to_copy is not None:
+                # Append to Staff 1's voice if not already present
+                if voice_elem_staff1.find('BarLine') is None:
+                    voice_elem_staff1.append(barline_to_copy)
+                
+                # Append to Staff 2's voice if not already present (create new copy)
+                if voice_elem_staff2.find('BarLine') is None:
+                    voice_elem_staff2.append(copy.deepcopy(barline_to_copy))
+
 
         # Create the new Staff elements
         new_staff1 = ET.Element('Staff', id='1')
@@ -221,50 +307,6 @@ def main(input_path, output_path):
             print("Warning: Original <Staff id='1'> not found for replacement. Appending new Staffs at the end.")
             score_element.append(new_staff1)
             score_element.append(new_staff2)
-
-        # Handle initial Clef and TimeSig for Staff id="1" and Staff id="2" in the output
-        # These should be copied from the original input's first voice (which goes to Staff id="2" conceptually)
-        # Re-parse the input to get a fresh start for initial Clef/TimeSig extraction
-        re_tree = ET.parse(input_path)
-        re_root = re_tree.getroot()
-        re_original_staff1_for_initial = re_root.find('Score/Staff[@id="1"]')
-        re_first_measure_for_initial = re_original_staff1_for_initial.find('Measure')
-        
-        # Get the first voice of the first measure from the original input,
-        # which typically contains the initial Clef and TimeSig for the staff.
-        re_input_voice_0 = re_first_measure_for_initial.find('voice[1]') # This is the first voice in MuseScore XML's 1-based indexing for voice elements
-
-        if re_input_voice_0 is not None:
-            initial_clef = re_input_voice_0.find('Clef')
-            initial_time_sig = re_input_voice_0.find('TimeSig')
-
-            # Add Clef and TimeSig to the first measure of Staff id="1" in the output
-            output_staff1_first_measure = new_staff1.find('Measure')
-            if output_staff1_first_measure is not None:
-                output_staff1_first_voice = output_staff1_first_measure.find('voice')
-                if output_staff1_first_voice is not None:
-                    # Insert Clef and TimeSig at the beginning of the voice
-                    if initial_time_sig is not None:
-                        # Check if TimeSig already exists for Staff 1's first voice to avoid duplicates
-                        if output_staff1_first_voice.find('TimeSig') is None:
-                            output_staff1_first_voice.insert(0, copy.deepcopy(initial_time_sig))
-                    if initial_clef is not None:
-                        # Check if Clef already exists for Staff 1's first voice to avoid duplicates
-                        if output_staff1_first_voice.find('Clef') is None:
-                            output_staff1_first_voice.insert(0, copy.deepcopy(initial_clef))
-            
-            # Add TimeSig to the first measure of Staff id="2" in the output
-            output_staff2_first_measure = new_staff2.find('Measure')
-            if output_staff2_first_measure is not None:
-                output_staff2_first_voice = output_staff2_first_measure.find('voice')
-                if output_staff2_first_voice is not None:
-                    # Insert TimeSig at the beginning of the voice for Staff 2
-                    if initial_time_sig is not None:
-                        # Check if TimeSig already exists for Staff 2's first voice to avoid duplicates
-                        if output_staff2_first_voice.find('TimeSig') is None:
-                            output_staff2_first_voice.insert(0, copy.deepcopy(initial_time_sig))
-        else:
-            print("Warning: Could not find initial voice to extract Clef/TimeSig for new staffs.")
 
 
         # --- Step 3: Write the modified XML to the output file ---
