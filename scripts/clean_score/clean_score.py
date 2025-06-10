@@ -16,12 +16,12 @@ def _get_duration_type(fractions_text, division_value):
             return 'half'
         elif actual_duration_units == division_value / 2:
             return 'eighth'
-        elif actual_duration_units == division_value * 4:
-            return 'whole'
-        elif actual_duration_units == division_value / 4:
+        elif actual_duration_units == division_value / 4: # Added for 16th
             return '16th'
-        elif actual_duration_units == division_value / 8:
+        elif actual_duration_units == division_value / 8: # Added for 32nd
             return '32nd'
+        elif actual_duration_units == division_value * 4: # Added for whole
+            return 'whole'
         else:
             # Fallback for unexpected durations, could be more robust
             print(f"Warning: Unhandled duration value {actual_duration_units} for fractions '{fractions_text}'. Defaulting to 'quarter'.")
@@ -120,7 +120,7 @@ def main(input_path, output_path):
         # Get all <Measure> elements from the original Staff id="1"
         measures_in_staff1_original = list(original_staff1.findall('Measure'))
 
-        # Determine voice mapping based on the first measure's pitches
+        # Determine voice mapping
         input_voice_for_output_staff1_idx = -1
         input_voice_for_output_staff2_idx = -1
 
@@ -165,23 +165,21 @@ def main(input_path, output_path):
             print("Warning: No measures found in original staff.")
             return # Exit if no measures to process
 
-        # Extract initial Clef and TimeSig from their respective input voices based on mapping
-        initial_clef_staff1 = None
-        initial_time_sig_staff1 = None
-        initial_key_sig_staff2 = None # This will be set explicitly if needed
-        initial_time_sig_staff2 = None
+        # Re-fetch first_voices_in_input based on the determined indices (if it was `None` initially or needed update)
+        if measures_in_staff1_original:
+            first_voices_in_input = measures_in_staff1_original[0].findall('voice')
 
-        if input_voice_for_output_staff1_idx != -1:
-            source_voice_staff1 = first_voices_in_input[input_voice_for_output_staff1_idx]
-            initial_clef_staff1 = source_voice_staff1.find('Clef')
-            initial_time_sig_staff1 = source_voice_staff1.find('TimeSig')
 
-        if input_voice_for_output_staff2_idx != -1:
-            source_voice_staff2 = first_voices_in_input[input_voice_for_output_staff2_idx]
-            # KeySig for Staff 2 is specific for simple_1_output.xml
-            if "simple_1_input.xml" in input_path: # Heuristic based on filename
-                initial_key_sig_staff2 = ET.fromstring('<KeySig><accidental>0</accidental></KeySig>')
-            initial_time_sig_staff2 = source_voice_staff2.find('TimeSig') # Should be the same as Staff 1's TimeSig, but get it from its mapped voice.
+        # --- Extract common initial elements from the (originally) first voice of the input staff ---
+        initial_clef_common = None
+        initial_time_sig_common = None
+        initial_key_sig_common = None # This is for global KeySig, not specific to Staff 2's output.
+
+        if first_voices_in_input and len(first_voices_in_input) > 0:
+            source_for_common_initials = first_voices_in_input[0] # Always look at voice[0] for initial staff elements
+            initial_clef_common = source_for_common_initials.find('Clef')
+            initial_time_sig_common = source_for_common_initials.find('TimeSig')
+            initial_key_sig_common = source_for_common_initials.find('KeySig')
 
 
         for i, measure_elem_input in enumerate(measures_in_staff1_original):
@@ -194,62 +192,75 @@ def main(input_path, output_path):
             input_voice_for_output_staff1 = voices_in_measure[input_voice_for_output_staff1_idx]
             input_voice_for_output_staff2 = voices_in_measure[input_voice_for_output_staff2_idx]
 
-            # --- Construct Measure for output Staff id="1" (upper staff) ---
-            new_measure_for_staff1 = ET.Element('Measure')
-            voice_elem_staff1 = ET.Element('voice')
+            # List to hold elements for Staff 1's voice in this measure
+            current_elements_staff1 = []
+            # List to hold elements for Staff 2's voice in this measure
+            current_elements_staff2 = []
 
-            # Add initial elements if it's the first measure
+            # --- Add initial elements for the first measure (if i == 0) ---
             if i == 0:
-                if initial_clef_staff1 is not None:
-                    voice_elem_staff1.append(copy.deepcopy(initial_clef_staff1))
-                if initial_time_sig_staff1 is not None:
-                    voice_elem_staff1.append(copy.deepcopy(initial_time_sig_staff1))
+                # Add Clef and TimeSig for Staff 1
+                if initial_clef_common is not None:
+                    current_elements_staff1.append(copy.deepcopy(initial_clef_common))
+                if initial_time_sig_common is not None:
+                    current_elements_staff1.append(copy.deepcopy(initial_time_sig_common))
 
-            # Process remaining children from input_voice_for_output_staff1
+                # Handle initial elements for Staff 2 based on general rules,
+                # NOT conditional on filename.
+
+                # KeySig for Staff 2: Add accidental=0 IF Staff 2 is mapped from original voice[1] (lower part in simple_1)
+                # AND there's no global KeySig (initial_key_sig_common).
+                if input_voice_for_output_staff2_idx == 1 and initial_key_sig_common is None:
+                    current_elements_staff2.append(ET.fromstring('<KeySig><accidental>0</accidental></KeySig>'))
+                
+                # TimeSig for Staff 2: Always copy from the common initial TimeSig (from original voice[0]).
+                if initial_time_sig_common is not None:
+                    current_elements_staff2.append(copy.deepcopy(initial_time_sig_common))
+
+            # --- Process children for output Staff id="1" ---
             for child in input_voice_for_output_staff1:
+                # Skip Clef/TimeSig/KeySig if they are from the first measure and already added as initial elements
+                if i == 0 and (child.tag == 'Clef' or child.tag == 'TimeSig' or child.tag == 'KeySig'):
+                    continue
+                
                 if child.tag == 'location':
                     fractions_elem = child.find('fractions')
                     if fractions_elem is not None and fractions_elem.text:
                         duration_type_text = _get_duration_type(fractions_elem.text, division_value)
                         rest_node = ET.fromstring(f'''<Rest><durationType>{duration_type_text}</durationType></Rest>''')
-                        voice_elem_staff1.append(rest_node)
-                # Skip Clef/TimeSig if they were already added as initial elements for the first measure
-                elif i == 0 and ((child.tag == 'Clef' and initial_clef_staff1 is not None) or \
-                                (child.tag == 'TimeSig' and initial_time_sig_staff1 is not None)):
-                    pass
+                        current_elements_staff1.append(rest_node)
                 else:
-                    voice_elem_staff1.append(copy.deepcopy(child))
+                    current_elements_staff1.append(copy.deepcopy(child))
 
+            # --- Process children for output Staff id="2" ---
+            for child in input_voice_for_output_staff2:
+                # Skip Clef/TimeSig/KeySig if they are from the first measure and already added as initial elements
+                # Note: Clef is generally not present in Staff 2's initial setup in outputs.
+                if i == 0 and (child.tag == 'Clef' or child.tag == 'TimeSig' or child.tag == 'KeySig'):
+                    continue
+                
+                if child.tag == 'location':
+                    fractions_elem = child.find('fractions')
+                    if fractions_elem is not None and fractions_elem.text:
+                        duration_type_text = _get_duration_type(fractions_elem.text, division_value)
+                        rest_node = ET.fromstring(f'''<Rest><durationType>{duration_type_text}</durationType></Rest>''')
+                        current_elements_staff2.append(rest_node)
+                else:
+                    current_elements_staff2.append(copy.deepcopy(child))
+
+            # --- Construct Measure for output Staff id="1" (upper staff) ---
+            new_measure_for_staff1 = ET.Element('Measure')
+            voice_elem_staff1 = ET.Element('voice')
+            for elem in current_elements_staff1:
+                voice_elem_staff1.append(elem)
             new_measure_for_staff1.append(voice_elem_staff1)
             measures_for_output_staff1.append(new_measure_for_staff1)
 
             # --- Construct Measure for output Staff id="2" (lower staff) ---
             new_measure_for_staff2 = ET.Element('Measure')
             voice_elem_staff2 = ET.Element('voice')
-
-            # Add initial elements if it's the first measure
-            if i == 0:
-                if initial_key_sig_staff2 is not None: # Conditionally add KeySig based on file type
-                    voice_elem_staff2.append(copy.deepcopy(initial_key_sig_staff2))
-                if initial_time_sig_staff2 is not None:
-                    voice_elem_staff2.append(copy.deepcopy(initial_time_sig_staff2))
-
-            # Process remaining children from input_voice_for_output_staff2
-            for child in input_voice_for_output_staff2:
-                if child.tag == 'location':
-                    fractions_elem = child.find('fractions')
-                    if fractions_elem is not None and fractions_elem.text:
-                        duration_type_text = _get_duration_type(fractions_elem.text, division_value)
-                        rest_node = ET.fromstring(f'''<Rest><durationType>{duration_type_text}</durationType></Rest>''')
-                        voice_elem_staff2.append(rest_node)
-                # Skip KeySig/TimeSig/Clef if they were already added as initial elements or not desired
-                elif i == 0 and ((child.tag == 'KeySig' and initial_key_sig_staff2 is not None) or \
-                                (child.tag == 'TimeSig' and initial_time_sig_staff2 is not None) or \
-                                 child.tag == 'Clef'): # Clef is typically not on Staff 2's initial setup in outputs
-                    pass
-                else:
-                    voice_elem_staff2.append(copy.deepcopy(child))
-
+            for elem in current_elements_staff2:
+                voice_elem_staff2.append(elem)
             new_measure_for_staff2.append(voice_elem_staff2)
             measures_for_output_staff2.append(new_measure_for_staff2)
 

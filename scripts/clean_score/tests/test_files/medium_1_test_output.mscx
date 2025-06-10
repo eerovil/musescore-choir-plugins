@@ -84,6 +84,14 @@
       </VBox>
       <Measure>
         <voice>
+          <Clef>
+            <concertClefType>G</concertClefType>
+            <transposingClefType>G</transposingClefType>
+          </Clef>
+          <TimeSig>
+            <sigN>3</sigN>
+            <sigD>4</sigD>
+          </TimeSig>
           <Chord>
             <durationType>quarter</durationType>
             <StemDirection>up</StemDirection>
