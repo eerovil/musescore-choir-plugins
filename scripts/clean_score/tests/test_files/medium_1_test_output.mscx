@@ -89,7 +89,7 @@
             <transposingClefType>G</transposingClefType>
           </Clef>
           <TimeSig>
-            <sigN>3</sigN>
+            <sigN>4</sigN>
             <sigD>4</sigD>
           </TimeSig>
           <Chord>
@@ -99,6 +99,9 @@
               <pitch>76</pitch>
               <tpc>18</tpc>
             </Note>
+            <Lyrics>
+              <text>Hei</text>
+            </Lyrics>
           </Chord>
           <Rest>
             <durationType>16th</durationType>
@@ -110,6 +113,10 @@
               <pitch>76</pitch>
               <tpc>18</tpc>
             </Note>
+            <Lyrics>
+              <syllabic>begin</syllabic>
+              <text>o</text>
+            </Lyrics>
           </Chord>
         </voice>
       </Measure>
@@ -117,14 +124,14 @@
         <voice>
           <Chord>
             <durationType>quarter</durationType>
-            <Lyrics>
-              <text>len</text>
-            </Lyrics>
             <StemDirection>up</StemDirection>
             <Note>
               <pitch>76</pitch>
               <tpc>18</tpc>
             </Note>
+            <Lyrics>
+              <text>len</text>
+            </Lyrics>
           </Chord>
           <Rest>
             <offset x="0.0970855" y="-4.56302" />
@@ -149,6 +156,10 @@
               <pitch>72</pitch>
               <tpc>14</tpc>
             </Note>
+            <Lyrics>
+              <syllabic>middle</syllabic>
+              <text>u</text>
+            </Lyrics>
           </Chord>
           <Chord>
             <durationType>quarter</durationType>
@@ -160,6 +171,10 @@
               <pitch>66</pitch>
               <tpc>8</tpc>
             </Note>
+            <Lyrics>
+              <syllabic>middle</syllabic>
+              <text>lu</text>
+            </Lyrics>
           </Chord>
         </voice>
       </Measure>
@@ -172,6 +187,9 @@
               <pitch>72</pitch>
               <tpc>14</tpc>
             </Note>
+            <Lyrics>
+              <text>jee!</text>
+            </Lyrics>
           </Chord>
           <BarLine>
             <subtype>end</subtype>
@@ -182,15 +200,15 @@
     <Staff id="2">
       <Measure>
         <voice>
+          <KeySig>
+            <accidental>0</accidental>
+          </KeySig>
           <TimeSig>
-            <sigN>3</sigN>
+            <sigN>2</sigN>
             <sigD>4</sigD>
           </TimeSig>
           <Chord>
             <durationType>quarter</durationType>
-            <Lyrics>
-              <text>Hei</text>
-            </Lyrics>
             <StemDirection>down</StemDirection>
             <Note>
               <pitch>72</pitch>
@@ -202,10 +220,6 @@
           </Rest>
           <Chord>
             <durationType>quarter</durationType>
-            <Lyrics>
-              <syllabic>begin</syllabic>
-              <text>o</text>
-            </Lyrics>
             <StemDirection>down</StemDirection>
             <Note>
               <pitch>72</pitch>
@@ -243,10 +257,6 @@
             <BeamMode>begin</BeamMode>
             <durationType>eighth</durationType>
             <Lyrics>
-              <syllabic>middle</syllabic>
-              <text>u</text>
-            </Lyrics>
-            <Lyrics>
               <no>1</no>
               <syllabic>begin</syllabic>
               <text>Lau</text>
@@ -259,10 +269,6 @@
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
-            <Lyrics>
-              <syllabic>middle</syllabic>
-              <text>lu</text>
-            </Lyrics>
             <Note>
               <pitch>76</pitch>
               <tpc>18</tpc>
@@ -271,10 +277,6 @@
           <Chord>
             <BeamMode>no</BeamMode>
             <durationType>eighth</durationType>
-            <Lyrics>
-              <syllabic>end</syllabic>
-              <text>nen</text>
-            </Lyrics>
             <Lyrics>
               <no>1</no>
               <syllabic>end</syllabic>
@@ -295,9 +297,6 @@
         <voice>
           <Chord>
             <durationType>half</durationType>
-            <Lyrics>
-              <text>jee!</text>
-            </Lyrics>
             <StemDirection>up</StemDirection>
             <Note>
               <pitch>79</pitch>
