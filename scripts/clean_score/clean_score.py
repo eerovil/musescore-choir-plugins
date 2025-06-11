@@ -72,20 +72,28 @@ def handle_staff(staff, direction):
     Delete notes not matching the specified direction
     """
     staff_id = staff.get("id")
+    original_staff_id = staff_id
+    for parent_staff_id, child_staff_id in STAFF_MAPPING.items():
+        if child_staff_id == staff_id:
+            original_staff_id = parent_staff_id
+            logging.debug(
+                f"Found original staff ID {original_staff_id} for staff {staff_id}"
+            )
+            break
+
     logging.debug(f"Handling staff {staff_id} for direction {direction}")
     index = -1
     for measure in staff.findall(".//Measure"):
         index += 1
-        reversed_voices = REVERSED_VOICES_BY_STAFF_MEASURE.get(staff_id, {}).get(
-            index, False
-        )
+        reversed_voices = REVERSED_VOICES_BY_STAFF_MEASURE.get(
+            original_staff_id, {}
+        ).get(index, False)
         if reversed_voices:
             voice_to_remove = 1 if direction == "down" else 0
         else:
             voice_to_remove = 1 if direction == "up" else 0
         voice_index = -1
         voices = list(measure.findall(".//voice"))
-
         keysig = deepcopy(measure.find(".//KeySig"))
         timesig = deepcopy(measure.find(".//TimeSig"))
 
@@ -93,18 +101,21 @@ def handle_staff(staff, direction):
             voice_index += 1
             # First measure requires TimeSig and KeySig
             if index == 0:
-                timesig = voice.find(".//TimeSig")
+                timesig = voice.find(".//TimeSig") if timesig is None else timesig
                 if timesig is None:
                     timesig = default_timesig()
 
-                keysig = voice.find(".//KeySig")
+                keysig = voice.find(".//KeySig") if keysig is None else keysig
                 if keysig is None:
                     keysig = default_keysig()
 
             if timesig is not None:
                 voice.insert(0, timesig)
+                timesig_info = (
+                    f"{timesig.find('.//sigN').text}/{timesig.find('.//sigD').text}"
+                )
                 logging.debug(
-                    f"Inserted TimeSig in staff {staff_id}, measure {index}, voice {voice_index}"
+                    f"Inserted TimeSig {timesig_info} in staff {staff_id}, measure {index}, voice {voice_index}"
                 )
             if keysig is not None:
                 voice.insert(0, keysig)
