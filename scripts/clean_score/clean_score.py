@@ -1,3 +1,4 @@
+from collections import defaultdict
 from copy import deepcopy
 from lxml import etree
 
@@ -8,6 +9,77 @@ logging.basicConfig(level=logging.DEBUG)
 
 STAFF_MAPPING = {}
 REVERSED_VOICES_BY_STAFF_MEASURE = {}
+LYRICS_BY_TIMEPOS = {}
+RESOLUTION = 128  # Default resolution for durations in MuseScore XML
+
+
+def resolve_duration(fraction_or_duration):
+    """
+    Resolves a duration string (either a fraction like "1/4" or a MuseScore duration type like "quarter")
+    into its equivalent duration in ticks.
+
+    Args:
+        fraction_or_duration (str): A string representing a musical duration.
+                                   Examples: "1/4", "half", "quarter", "eighth", "16th".
+
+    Returns:
+        int: The duration in ticks. Returns 0 if the input is not recognized.
+    """
+    if "/" in fraction_or_duration:
+        try:
+            numerator, denominator = map(int, fraction_or_duration.split("/"))
+            return int(RESOLUTION * (numerator / denominator))
+        except ValueError:
+            return 0  # Invalid fraction format
+    else:
+        # Handle MuseScore's standard duration type strings
+        duration_map = {
+            "whole": RESOLUTION,
+            "half": RESOLUTION // 2,
+            "quarter": RESOLUTION // 4,
+            "eighth": RESOLUTION // 8,
+            "16th": RESOLUTION // 16,
+            "32nd": RESOLUTION // 32,
+            "64th": RESOLUTION // 64,
+            "128th": RESOLUTION // 128,
+            # Add more as needed
+        }
+        return duration_map.get(fraction_or_duration.lower(), 0)
+
+
+def lyric_to_dict(lyric):
+    return {
+        "syllabic": (
+            lyric.find(".//syllabic").text
+            if lyric.find(".//syllabic") is not None
+            else ""
+        ),
+        "text": (
+            lyric.find(".//text").text if lyric.find(".//text") is not None else ""
+        ),
+        "no": (lyric.find(".//no").text if lyric.find(".//no") is not None else ""),
+    }
+
+
+def find_lyric(staff_id=None, measure_index=None, voice_index=None, time_pos=None):
+    """
+    Find a lyric for the given staff ID, measure index, voice index, and time position.
+    Returns the first lyric found or None if no lyric is found.
+    """
+    global LYRICS_BY_TIMEPOS
+    key = f"{measure_index}-{time_pos}"
+    if key in LYRICS_BY_TIMEPOS:
+        lyric_choices = LYRICS_BY_TIMEPOS[key]
+        # Try to find the most correct lyric.
+        # If voice_index matches, that's the best match.
+        for lyric in lyric_choices:
+            if lyric["voice_index"] == voice_index:
+                return lyric["lyric"]
+        # If no exact match, return the first lyric found
+        for lyric in lyric_choices:
+            return lyric["lyric"]
+
+    return None
 
 
 def default_keysig():
@@ -37,6 +109,88 @@ def default_timesig():
     return timesig
 
 
+def loop_staff(staff):
+    """
+    Generator function to loop through the staff and yield elements
+    with their time positions.
+    """
+    staff_id = staff.get("id")
+    measure_index = -1
+    for measure in staff.findall(".//Measure"):
+        measure_index += 1
+        voice_index = -1
+        for voice in measure.findall(".//voice"):
+            voice_index += 1
+            time_pos = 0
+            for el in voice:
+                # logging.debug(
+                #     f"Yielding element {el.tag} in staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}"
+                # )
+                yield {
+                    "staff_id": staff_id,
+                    "measure_index": measure_index,
+                    "voice_index": voice_index,
+                    "time_pos": time_pos,
+                    "element": el,
+                }
+                if el.tag in ["Chord", "Rest"]:
+                    duration_type = el.find(".//durationType")
+                    time_pos += resolve_duration(
+                        duration_type.text if duration_type is not None else "0"
+                    )
+                if el.tag == "location":
+                    fractions = el.find(".//fractions")
+                    if fractions is not None:
+                        time_pos += resolve_duration(
+                            fractions.text if fractions is not None else "0"
+                        )
+
+
+def read_lyrics(staff):
+    """
+    Read lyrics from the staff and store them in a dictionary.
+    The dictionary is keyed by staff ID and time position.
+    """
+    staff_id = staff.get("id")
+    global LYRICS_BY_TIMEPOS, REVERSED_VOICES_BY_STAFF_MEASURE
+    for el in loop_staff(staff):
+        staff_id = el["staff_id"]
+        measure_index = el["measure_index"]
+        voice_index = el["voice_index"]
+        time_pos = el["time_pos"]
+        element = el["element"]
+
+        reversed_voices = REVERSED_VOICES_BY_STAFF_MEASURE.get(staff_id, {}).get(
+            measure_index, False
+        )
+        if reversed_voices:
+            # If the voices are reversed, we need to adjust the voice index
+            voice_index = 1 if voice_index == 0 else 0
+
+        if element.tag == "Chord":
+            for lyric in element.findall(".//Lyrics"):
+                logging.debug(
+                    f"Found lyric in staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric_to_dict(lyric)}"
+                )
+                LYRICS_BY_TIMEPOS[f"{measure_index}-{time_pos}"] = (
+                    LYRICS_BY_TIMEPOS.get(f"{measure_index}-{time_pos}", [])
+                )
+                LYRICS_BY_TIMEPOS[f"{measure_index}-{time_pos}"].append(
+                    {
+                        "staff_id": staff_id,
+                        "measure_index": measure_index,
+                        "voice_index": voice_index,
+                        "lyric": lyric_to_dict(lyric),
+                    }
+                )
+
+    import json
+
+    print(
+        f"Read lyrics for staff {staff_id}: {json.dumps(LYRICS_BY_TIMEPOS, indent=2)}"
+    )
+
+
 def find_reversed_voices_by_staff_measure(staff):
     """
     Find reversed voices for a given staff ID.
@@ -58,20 +212,10 @@ def find_reversed_voices_by_staff_measure(staff):
                 stem_voice = 0 if stem_direction == "up" else 1
                 if stem_voice != voice_index:
                     # This voice is reversed (up stem but voice 2)
-                    logging.debug(
-                        f"Reversed voice found in staff {staff.get('id')}, measure {index}, voice {voice_index}, direction {stem_direction}"
-                    )
-                    logging.debug(
-                        f"Chord: {etree.tostring(chord, pretty_print=True).decode('utf-8')}"
-                    )
                     REVERSED_VOICES_BY_STAFF_MEASURE[staff.get("id")][index] = True
 
 
-def handle_staff(staff, direction):
-    """
-    Delete notes not matching the specified direction
-    """
-    staff_id = staff.get("id")
+def get_original_staff_id(staff_id):
     original_staff_id = staff_id
     for parent_staff_id, child_staff_id in STAFF_MAPPING.items():
         if child_staff_id == staff_id:
@@ -80,6 +224,15 @@ def handle_staff(staff, direction):
                 f"Found original staff ID {original_staff_id} for staff {staff_id}"
             )
             break
+    return original_staff_id
+
+
+def handle_staff(staff, direction):
+    """
+    Delete notes not matching the specified direction
+    """
+    staff_id = staff.get("id")
+    original_staff_id = get_original_staff_id(staff_id)
 
     logging.debug(f"Handling staff {staff_id} for direction {direction}")
     index = -1
@@ -111,43 +264,61 @@ def handle_staff(staff, direction):
 
             if timesig is not None:
                 voice.insert(0, timesig)
-                timesig_info = (
-                    f"{timesig.find('.//sigN').text}/{timesig.find('.//sigD').text}"
-                )
-                logging.debug(
-                    f"Inserted TimeSig {timesig_info} in staff {staff_id}, measure {index}, voice {voice_index}"
-                )
             if keysig is not None:
                 voice.insert(0, keysig)
-                logging.debug(
-                    f"Inserted KeySig in staff {staff_id}, measure {index}, voice {voice_index}"
-                )
             if voice_index == voice_to_remove:
                 # Remove the voice that does not match the direction
                 measure.remove(voice)
-                logging.debug(
-                    f"Removed voice {voice_index} from staff {staff_id}, measure {index}"
-                )
-            else:
-                logging.debug(
-                    f"Keeping voice {voice_index} in staff {staff_id}, measure {index}"
-                )
 
     # Finally, set StemDiretion up for all Chords in the staff
     for chord in staff.findall(".//Chord"):
         stem_direction = chord.find(".//StemDirection")
         if stem_direction is not None:
             stem_direction.text = "up"
-            logging.debug(
-                f"Set StemDirection to {stem_direction.text} for chord in staff {staff_id}"
-            )
 
     # Delete all <offset> elements in the staff
     for offset in staff.findall(".//offset"):
         parent = offset.getparent()
         if parent is not None:
             parent.remove(offset)
-            logging.debug(f"Removed <offset> element from staff {staff_id}")
+
+    # Try to find a lyric for each Chord in the staff
+    for el in loop_staff(staff):
+        staff_id = el["staff_id"]
+        measure_index = el["measure_index"]
+        voice_index = el["voice_index"]
+        time_pos = el["time_pos"]
+        element = el["element"]
+
+        if element.tag == "Chord":
+            lyric = find_lyric(
+                staff_id=staff_id,
+                measure_index=measure_index,
+                voice_index=voice_index,
+                time_pos=time_pos,
+            )
+            logging.debug(
+                f"Found lyric for staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric}"
+            )
+            if lyric:
+                # Delete old lyrics
+                for old_lyric in element.findall(".//Lyrics"):
+                    element.remove(old_lyric)
+                    logging.debug(
+                        f"Removed old lyric from staff {staff_id}, measure {measure_index}, voice {voice_index}"
+                    )
+                # Add the new lyric
+                new_lyric = etree.Element("Lyrics")
+                syllabic = etree.Element("syllabic")
+                syllabic.text = lyric["syllabic"]
+                new_lyric.append(syllabic)
+                text = etree.Element("text")
+                text.text = lyric["text"]
+                new_lyric.append(text)
+                no = etree.Element("no")
+                no.text = lyric["no"]
+                new_lyric.append(no)
+                element.append(new_lyric)
 
 
 def split_part(part):
@@ -175,6 +346,11 @@ def main(input_path, output_path):
         input_path (str): Path to the input MuseScore XML file.
         output_path (str): Path where the converted XML file will be saved.
     """
+    global STAFF_MAPPING, REVERSED_VOICES_BY_STAFF_MEASURE, LYRICS_BY_TIMEPOS
+    STAFF_MAPPING = {}
+    REVERSED_VOICES_BY_STAFF_MEASURE = {}
+    LYRICS_BY_TIMEPOS = {}
+
     with open(input_path, "r", encoding="utf-8") as f:
         input_content = f.readlines()
 
@@ -212,6 +388,8 @@ def main(input_path, output_path):
         # Which is a direct child of <Score>
         staff_element = root.find(f".//Score/Staff[@id='{staff_id}']")
         find_reversed_voices_by_staff_measure(staff_element)
+        # Read lyrics from the staff
+        read_lyrics(staff_element)
         new_staff_element = deepcopy(staff_element)
         new_staff_element.set("id", new_staff_id)
         # Insert the new Staff element into the Score next to the original
