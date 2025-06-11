@@ -10,10 +10,7 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 @pytest.mark.parametrize(
     "base_filename",
-    [
-        "simple_1",
-        # 'medium_1'
-    ],
+    ["simple_1", "medium_1"],
 )
 def test_split(base_filename):
     import xml.etree.ElementTree as ET

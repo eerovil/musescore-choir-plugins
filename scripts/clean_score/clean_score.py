@@ -84,27 +84,33 @@ def handle_staff(staff, direction):
         else:
             voice_to_remove = 1 if direction == "up" else 0
         voice_index = -1
-        voices = measure.findall(".//voice")
-        if not voices:
-            voices = [measure]
+        voices = list(measure.findall(".//voice"))
+
+        keysig = deepcopy(measure.find(".//KeySig"))
+        timesig = deepcopy(measure.find(".//TimeSig"))
+
         for voice in voices:
+            voice_index += 1
             # First measure requires TimeSig and KeySig
             if index == 0:
                 timesig = voice.find(".//TimeSig")
                 if timesig is None:
                     timesig = default_timesig()
-                    voice.insert(0, timesig)
-                    logging.debug(
-                        f"Inserted default TimeSig in staff {staff_id}, measure {index}"
-                    )
+
                 keysig = voice.find(".//KeySig")
                 if keysig is None:
                     keysig = default_keysig()
-                    voice.insert(0, keysig)
-                    logging.debug(
-                        f"Inserted default KeySig in staff {staff_id}, measure {index}"
-                    )
-            voice_index += 1
+
+            if timesig is not None:
+                voice.insert(0, timesig)
+                logging.debug(
+                    f"Inserted TimeSig in staff {staff_id}, measure {index}, voice {voice_index}"
+                )
+            if keysig is not None:
+                voice.insert(0, keysig)
+                logging.debug(
+                    f"Inserted KeySig in staff {staff_id}, measure {index}, voice {voice_index}"
+                )
             if voice_index == voice_to_remove:
                 # Remove the voice that does not match the direction
                 measure.remove(voice)
@@ -124,6 +130,13 @@ def handle_staff(staff, direction):
             logging.debug(
                 f"Set StemDirection to {stem_direction.text} for chord in staff {staff_id}"
             )
+
+    # Delete all <offset> elements in the staff
+    for offset in staff.findall(".//offset"):
+        parent = offset.getparent()
+        if parent is not None:
+            parent.remove(offset)
+            logging.debug(f"Removed <offset> element from staff {staff_id}")
 
 
 def split_part(part):
