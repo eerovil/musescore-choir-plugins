@@ -75,19 +75,27 @@ def find_lyric(staff_id=None, measure_index=None, voice_index=None, time_pos=Non
         # Try to find the most correct lyric.
         # Sometimes there is verse 2 lyric in the staff above
         # That would mean the lyric is for the upper voice in the lower staff
-        if staff_id is not None:
-            original_staff_id = get_original_staff_id(staff_id)
-            upper_staff_id = str(int(original_staff_id) - 2)
-            if voice_index == 0:
-                for lyric in lyric_choices:
-                    if (
-                        lyric["staff_id"] == upper_staff_id
-                        and lyric["lyric"]["no"] == "1"
-                    ):
-                        # Force "no" to be empty
-                        lyric["lyric"]["no"] = ""
-                        return lyric["lyric"]
+        original_staff_id = get_original_staff_id(staff_id)
+        upper_staff_id = str(int(original_staff_id) - 2)
+        if voice_index == 0:
+            for lyric in lyric_choices:
+                if lyric["staff_id"] == upper_staff_id and lyric["lyric"]["no"] == "1":
+                    # Force "no" to be empty
+                    lyric["lyric"]["no"] = ""
+                    return lyric["lyric"]
 
+        # If voice_index and original_staff_id matches, that's the best match.
+        for lyric in lyric_choices:
+            if (
+                lyric["voice_index"] == voice_index
+                and lyric["staff_id"] == original_staff_id
+            ):
+                return lyric["lyric"]
+        # if staff_id matches, that's the next best match.
+        for lyric in lyric_choices:
+            if lyric["staff_id"] == original_staff_id:
+                return lyric["lyric"]
+        # If no staff_id match, try to find a lyric with the same voice_index
         # If voice_index matches, that's the best match.
         for lyric in lyric_choices:
             if lyric["voice_index"] == voice_index:
@@ -293,11 +301,26 @@ def handle_staff(staff, direction):
             if clef is not None:
                 delete_all_elements_by_selector(voice, ".//Clef")
                 voice.insert(0, deepcopy(clef))
-            if voice_index == voice_to_remove:
+            if voice_index == voice_to_remove or len(voices) == 1:
                 # Remove the voice that does not match the direction
                 # Unless only one voice is present, then we keep it
                 if len(voices) > 1:
                     measure.remove(voice)
+                else:
+                    # We must try to remove the upper/lower notes from each chord, if possible
+                    for chord in voice.findall(".//Chord"):
+                        notes = sorted(
+                            chord.findall(".//Note"),
+                            key=lambda n: int(n.find(".//pitch").text),
+                        )
+                        if voice_to_remove == 0:
+                            # Remove the upper note
+                            if len(notes) > 1:
+                                chord.remove(notes[-1])
+                        else:
+                            # Remove the lower note
+                            if len(notes) > 1:
+                                chord.remove(notes[0])
 
     # Finally, set StemDiretion up for all Chords in the staff
     for chord in staff.findall(".//Chord"):
@@ -313,6 +336,17 @@ def handle_staff(staff, direction):
     delete_all_elements_by_selector(staff, ".//Spanner[@type='HairPin']")
     # Delete all StemDirection elements
     delete_all_elements_by_selector(staff, ".//StemDirection")
+    # Delete all Articulation elements
+    delete_all_elements_by_selector(staff, ".//Articulation")
+    # Delete all Tempo elements
+    delete_all_elements_by_selector(staff, ".//Tempo")
+
+    # Add <timeStretch>3</timeStretch>
+    # to each <Fermata>
+    for fermata in staff.findall(".//Fermata"):
+        time_stretch = etree.Element("timeStretch")
+        time_stretch.text = "3"
+        fermata.append(time_stretch)
 
     # Try to find a lyric for each Chord in the staff
     for el in loop_staff(staff):
