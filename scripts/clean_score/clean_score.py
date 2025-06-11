@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from collections import defaultdict
 from copy import deepcopy
 from lxml import etree
@@ -182,9 +184,9 @@ def read_lyrics(staff):
 
         if element.tag == "Chord":
             for lyric in element.findall(".//Lyrics"):
-                logging.debug(
-                    f"Found lyric in staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric_to_dict(lyric)}"
-                )
+                # logging.debug(
+                #     f"Found lyric in staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric_to_dict(lyric)}"
+                # )
                 LYRICS_BY_TIMEPOS[f"{measure_index}-{time_pos}"] = (
                     LYRICS_BY_TIMEPOS.get(f"{measure_index}-{time_pos}", [])
                 )
@@ -240,6 +242,16 @@ def get_original_staff_id(staff_id):
     return original_staff_id
 
 
+def delete_all_elements_by_selector(staff, selector):
+    """
+    Delete all elements with the specified tag from the staff.
+    """
+    for element in staff.findall(selector):
+        parent = element.getparent()
+        if parent is not None:
+            parent.remove(element)
+
+
 def handle_staff(staff, direction):
     """
     Delete notes not matching the specified direction
@@ -262,6 +274,9 @@ def handle_staff(staff, direction):
         voices = list(measure.findall(".//voice"))
         keysig = deepcopy(measure.find(".//KeySig"))
         timesig = deepcopy(measure.find(".//TimeSig"))
+        logging.debug(
+            f"Processing measure {index} in staff {staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}"
+        )
 
         for voice in voices:
             voice_index += 1
@@ -276,12 +291,14 @@ def handle_staff(staff, direction):
                     keysig = default_keysig()
 
             if timesig is not None:
-                voice.insert(0, timesig)
+                voice.insert(0, deepcopy(timesig))
             if keysig is not None:
-                voice.insert(0, keysig)
+                voice.insert(0, deepcopy(keysig))
             if voice_index == voice_to_remove:
                 # Remove the voice that does not match the direction
-                measure.remove(voice)
+                # Unless only one voice is present, then we keep it
+                if len(voices) > 1:
+                    measure.remove(voice)
 
     # Finally, set StemDiretion up for all Chords in the staff
     for chord in staff.findall(".//Chord"):
@@ -290,10 +307,11 @@ def handle_staff(staff, direction):
             stem_direction.text = "up"
 
     # Delete all <offset> elements in the staff
-    for offset in staff.findall(".//offset"):
-        parent = offset.getparent()
-        if parent is not None:
-            parent.remove(offset)
+    delete_all_elements_by_selector(staff, ".//offset")
+    delete_all_elements_by_selector(staff, ".//Dynamic")
+    delete_all_elements_by_selector(staff, ".//LayoutBreak")
+    # Delete all <Spanner type="HairPin">
+    delete_all_elements_by_selector(staff, ".//Spanner[@type='HairPin']")
 
     # Try to find a lyric for each Chord in the staff
     for el in loop_staff(staff):
@@ -310,16 +328,16 @@ def handle_staff(staff, direction):
                 voice_index=voice_index,
                 time_pos=time_pos,
             )
-            logging.debug(
-                f"Found lyric for staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric}"
-            )
+            # logging.debug(
+            #     f"Found lyric for staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric}"
+            # )
             if lyric:
                 # Delete old lyrics
                 for old_lyric in element.findall(".//Lyrics"):
                     element.remove(old_lyric)
-                    logging.debug(
-                        f"Removed old lyric from staff {staff_id}, measure {measure_index}, voice {voice_index}"
-                    )
+                    # logging.debug(
+                    #     f"Removed old lyric from staff {staff_id}, measure {measure_index}, voice {voice_index}"
+                    # )
                 # Add the new lyric
                 new_lyric = etree.Element("Lyrics")
                 syllabic = etree.Element("syllabic")
@@ -423,3 +441,19 @@ def main(input_path, output_path):
     # Write the output XML to the specified file
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(output_content)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Convert MuseScore XML from single-staff, two-voice to two-staff, single-voice-per-staff."
+    )
+    parser.add_argument("input", help="Path to the input MuseScore XML file.")
+    parser.add_argument("output", help="Path to save the converted MuseScore XML file.")
+    args = parser.parse_args()
+
+    logging.info(f"Converting {args.input} to {args.output}")
+    main(args.input, args.output)
+    logging.info("Conversion completed successfully.")
+    logging.info(f"Output written to {args.output}")
