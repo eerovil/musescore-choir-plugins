@@ -13,5 +13,6 @@
                 "cmd": "testing.runAll"
             },
         ],
-    }
+    },
+    "editor.formatOnSave": true
 }

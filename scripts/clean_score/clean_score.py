@@ -10,6 +10,33 @@ STAFF_MAPPING = {}
 REVERSED_VOICES_BY_STAFF_MEASURE = {}
 
 
+def default_keysig():
+    """
+    Returns a default key signature element.
+    This is used to ensure that the key signature is set correctly in the output.
+    """
+    keysig = etree.Element("KeySig")
+    accidental = etree.Element("accidental")
+    accidental.text = "0"
+    keysig.append(accidental)
+    return keysig
+
+
+def default_timesig():
+    """
+    Returns a default time signature element.
+    This is used to ensure that the time signature is set correctly in the output.
+    """
+    timesig = etree.Element("TimeSig")
+    sigN = etree.Element("sigN")
+    sigN.text = "4"
+    sigD = etree.Element("sigD")
+    sigD.text = "4"
+    timesig.append(sigN)
+    timesig.append(sigD)
+    return timesig
+
+
 def find_reversed_voices_by_staff_measure(staff):
     """
     Find reversed voices for a given staff ID.
@@ -57,7 +84,26 @@ def handle_staff(staff, direction):
         else:
             voice_to_remove = 1 if direction == "up" else 0
         voice_index = -1
-        for voice in measure.findall(".//voice"):
+        voices = measure.findall(".//voice")
+        if not voices:
+            voices = [measure]
+        for voice in voices:
+            # First measure requires TimeSig and KeySig
+            if index == 0:
+                timesig = voice.find(".//TimeSig")
+                if timesig is None:
+                    timesig = default_timesig()
+                    voice.insert(0, timesig)
+                    logging.debug(
+                        f"Inserted default TimeSig in staff {staff_id}, measure {index}"
+                    )
+                keysig = voice.find(".//KeySig")
+                if keysig is None:
+                    keysig = default_keysig()
+                    voice.insert(0, keysig)
+                    logging.debug(
+                        f"Inserted default KeySig in staff {staff_id}, measure {index}"
+                    )
             voice_index += 1
             if voice_index == voice_to_remove:
                 # Remove the voice that does not match the direction
