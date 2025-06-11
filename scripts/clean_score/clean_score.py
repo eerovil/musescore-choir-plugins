@@ -73,13 +73,15 @@ def find_lyric(staff_id=None, measure_index=None, voice_index=None, time_pos=Non
     if key in LYRICS_BY_TIMEPOS:
         lyric_choices = LYRICS_BY_TIMEPOS[key]
         # Try to find the most correct lyric.
-        # If staff_id is parent staff and this is child staff, and lyric "no" is 1, use that
+        # Sometimes there is verse 2 lyric in the staff above
+        # That would mean the lyric is for the upper voice in the lower staff
         if staff_id is not None:
             original_staff_id = get_original_staff_id(staff_id)
-            if staff_id != original_staff_id:
+            upper_staff_id = str(int(original_staff_id) - 2)
+            if voice_index == 0:
                 for lyric in lyric_choices:
                     if (
-                        lyric["staff_id"] == original_staff_id
+                        lyric["staff_id"] == upper_staff_id
                         and lyric["lyric"]["no"] == "1"
                     ):
                         # Force "no" to be empty
@@ -199,12 +201,6 @@ def read_lyrics(staff):
                     }
                 )
 
-    import json
-
-    print(
-        f"Read lyrics for staff {staff_id}: {json.dumps(LYRICS_BY_TIMEPOS, indent=2)}"
-    )
-
 
 def find_reversed_voices_by_staff_measure(staff):
     """
@@ -235,9 +231,6 @@ def get_original_staff_id(staff_id):
     for parent_staff_id, child_staff_id in STAFF_MAPPING.items():
         if child_staff_id == staff_id:
             original_staff_id = parent_staff_id
-            logging.debug(
-                f"Found original staff ID {original_staff_id} for staff {staff_id}"
-            )
             break
     return original_staff_id
 
@@ -274,6 +267,7 @@ def handle_staff(staff, direction):
         voices = list(measure.findall(".//voice"))
         keysig = deepcopy(measure.find(".//KeySig"))
         timesig = deepcopy(measure.find(".//TimeSig"))
+        clef = deepcopy(measure.find(".//Clef"))
         logging.debug(
             f"Processing measure {index} in staff {staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}"
         )
@@ -291,9 +285,14 @@ def handle_staff(staff, direction):
                     keysig = default_keysig()
 
             if timesig is not None:
+                delete_all_elements_by_selector(voice, ".//TimeSig")
                 voice.insert(0, deepcopy(timesig))
             if keysig is not None:
+                delete_all_elements_by_selector(voice, ".//KeySig")
                 voice.insert(0, deepcopy(keysig))
+            if clef is not None:
+                delete_all_elements_by_selector(voice, ".//Clef")
+                voice.insert(0, deepcopy(clef))
             if voice_index == voice_to_remove:
                 # Remove the voice that does not match the direction
                 # Unless only one voice is present, then we keep it
@@ -312,6 +311,8 @@ def handle_staff(staff, direction):
     delete_all_elements_by_selector(staff, ".//LayoutBreak")
     # Delete all <Spanner type="HairPin">
     delete_all_elements_by_selector(staff, ".//Spanner[@type='HairPin']")
+    # Delete all StemDirection elements
+    delete_all_elements_by_selector(staff, ".//StemDirection")
 
     # Try to find a lyric for each Chord in the staff
     for el in loop_staff(staff):
@@ -393,13 +394,20 @@ def main(input_path, output_path):
     if not staffs:
         raise ValueError("No Staff elements found in the input XML.")
 
+    # Convert staff ids to make space after each staff
+    # id="1" becomes id="1" and
+    # id="2" becomes id="3"
+    # so 2n - 1
+
+    for staff in staffs:
+        staff_id = int(staff.get("id"))
+        new_staff_id = (staff_id * 2) - 1
+        staff.set("id", str(new_staff_id))
+        logging.debug(f"Updated staff id from {staff_id} to {new_staff_id}")
+
     for staff in staffs:
         staff_id = staff.get("id")
-        STAFF_MAPPING[staff_id] = {}
-
-    mapping_index_start = len(list(STAFF_MAPPING.keys())) + 1
-    for i, staff_id in enumerate(STAFF_MAPPING.keys(), start=mapping_index_start):
-        STAFF_MAPPING[staff_id] = str(i)
+        STAFF_MAPPING[staff_id] = str(int(staff_id) + 1)
 
     logging.debug("Staff mapping: %s", STAFF_MAPPING)
 
