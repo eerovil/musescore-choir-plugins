@@ -71,6 +71,19 @@ def find_lyric(staff_id=None, measure_index=None, voice_index=None, time_pos=Non
     if key in LYRICS_BY_TIMEPOS:
         lyric_choices = LYRICS_BY_TIMEPOS[key]
         # Try to find the most correct lyric.
+        # If staff_id is parent staff and this is child staff, and lyric "no" is 1, use that
+        if staff_id is not None:
+            original_staff_id = get_original_staff_id(staff_id)
+            if staff_id != original_staff_id:
+                for lyric in lyric_choices:
+                    if (
+                        lyric["staff_id"] == original_staff_id
+                        and lyric["lyric"]["no"] == "1"
+                    ):
+                        # Force "no" to be empty
+                        lyric["lyric"]["no"] = ""
+                        return lyric["lyric"]
+
         # If voice_index matches, that's the best match.
         for lyric in lyric_choices:
             if lyric["voice_index"] == voice_index:
