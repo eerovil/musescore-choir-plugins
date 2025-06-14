@@ -6,17 +6,18 @@ import json
 from lxml import etree
 
 import logging
+from typing import Dict, List, Set, Optional, Any, Tuple
 
 logging.basicConfig(level=logging.DEBUG)
 
 
-STAFF_MAPPING = {}
-REVERSED_VOICES_BY_STAFF_MEASURE = {}
-LYRICS_BY_TIMEPOS = {}
-RESOLUTION = 128  # Default resolution for durations in MuseScore XML
+STAFF_MAPPING: Dict[int, int] = {}
+REVERSED_VOICES_BY_STAFF_MEASURE: Dict[int, Dict[int, bool]] = {}
+LYRICS_BY_TIMEPOS: Dict[str, List[Dict[str, Any]]] = {}
+RESOLUTION: int = 128  # Default resolution for durations in MuseScore XML
 
 
-def resolve_duration(fraction_or_duration, dots="0"):
+def resolve_duration(fraction_or_duration: str, dots: str = "0") -> int:
     """
     Resolves a duration string (either a fraction like "1/4" or a MuseScore duration type like "quarter")
     into its equivalent duration in ticks.
@@ -24,6 +25,7 @@ def resolve_duration(fraction_or_duration, dots="0"):
     Args:
         fraction_or_duration (str): A string representing a musical duration.
                                    Examples: "1/4", "half", "quarter", "eighth", "16th".
+        dots (str): The number of dots as a string ("0", "1", "2", "3").
 
     Returns:
         int: The duration in ticks. Returns 0 if the input is not recognized.
@@ -36,7 +38,7 @@ def resolve_duration(fraction_or_duration, dots="0"):
             return 0  # Invalid fraction format
     else:
         # Handle MuseScore's standard duration type strings
-        duration_map = {
+        duration_map: Dict[str, int] = {
             "whole": RESOLUTION,
             "half": RESOLUTION // 2,
             "quarter": RESOLUTION // 4,
@@ -47,7 +49,7 @@ def resolve_duration(fraction_or_duration, dots="0"):
             "128th": RESOLUTION // 128,
             # Add more as needed
         }
-        ret = duration_map.get(fraction_or_duration.lower(), 0)
+        ret: int = duration_map.get(fraction_or_duration.lower(), 0)
         if dots == "1":
             ret += ret // 2  # Add half of the duration for one dot
         elif dots == "2":
@@ -57,7 +59,16 @@ def resolve_duration(fraction_or_duration, dots="0"):
         return ret
 
 
-def lyric_to_dict(lyric):
+def lyric_to_dict(lyric: etree._Element) -> Dict[str, str]:
+    """
+    Converts a <Lyrics> etree element into a dictionary.
+
+    Args:
+        lyric (etree._Element): The <Lyrics> XML element.
+
+    Returns:
+        Dict[str, str]: A dictionary containing 'syllabic', 'text', and 'no' fields.
+    """
     return {
         "syllabic": (
             lyric.find(".//syllabic").text
@@ -71,94 +82,119 @@ def lyric_to_dict(lyric):
     }
 
 
-def find_lyric(staff_id=None, measure_index=None, voice_index=None, time_pos=None):
+def find_lyric(
+    staff_id: Optional[int] = None,
+    measure_index: Optional[int] = None,
+    voice_index: Optional[int] = None,
+    time_pos: Optional[int] = None,
+) -> Optional[Dict[str, str]]:
     """
     Find a lyric for the given staff ID, measure index, voice index, and time position.
     Returns the first lyric found or None if no lyric is found.
+
+    Args:
+        staff_id (Optional[int]): The ID of the staff.
+        measure_index (Optional[int]): The index of the measure.
+        voice_index (Optional[int]): The index of the voice.
+        time_pos (Optional[int]): The time position within the measure.
+
+    Returns:
+        Optional[Dict[str, str]]: The lyric dictionary if found, otherwise None.
     """
     global LYRICS_BY_TIMEPOS
-    key = f"{measure_index}-{time_pos}"
+    if measure_index is None or time_pos is None:
+        return None
+    key: str = f"{measure_index}-{time_pos}"
     if key in LYRICS_BY_TIMEPOS:
-        lyric_choices = LYRICS_BY_TIMEPOS[key]
+        lyric_choices: List[Dict[str, Any]] = LYRICS_BY_TIMEPOS[key]
         # Try to find the most correct lyric.
         # Sometimes there is verse 2 lyric in the staff above
         # That would mean the lyric is for the upper voice in the lower staff
-        original_staff_id = get_original_staff_id(staff_id)
-        upper_staff_id = original_staff_id - 2
+        original_staff_id: int = (
+            get_original_staff_id(staff_id) if staff_id is not None else -1
+        )
+        upper_staff_id: int = original_staff_id - 2
         if voice_index == 0:
-            for lyric in lyric_choices:
-                if lyric["staff_id"] == upper_staff_id and lyric["lyric"]["no"] == "1":
+            for lyric_choice in lyric_choices:
+                if (
+                    lyric_choice["staff_id"] == upper_staff_id
+                    and lyric_choice["lyric"]["no"] == "1"
+                ):
                     # Force "no" to be empty
-                    lyric["lyric"]["no"] = ""
-                    return lyric["lyric"]
+                    lyric_choice["lyric"]["no"] = ""
+                    return lyric_choice["lyric"]
 
         # If voice_index and original_staff_id matches, that's the best match.
-        for lyric in lyric_choices:
+        for lyric_choice in lyric_choices:
             if (
-                lyric["voice_index"] == voice_index
-                and lyric["staff_id"] == original_staff_id
+                lyric_choice["voice_index"] == voice_index
+                and lyric_choice["staff_id"] == original_staff_id
             ):
-                return lyric["lyric"]
+                return lyric_choice["lyric"]
         # if staff_id matches, that's the next best match.
-        for lyric in lyric_choices:
-            if lyric["staff_id"] == original_staff_id:
-                return lyric["lyric"]
+        for lyric_choice in lyric_choices:
+            if lyric_choice["staff_id"] == original_staff_id:
+                return lyric_choice["lyric"]
         # If no staff_id match, try to find a lyric with the same voice_index
         # If voice_index matches, that's the best match.
-        for lyric in lyric_choices:
-            if lyric["voice_index"] == voice_index:
-                return lyric["lyric"]
+        for lyric_choice in lyric_choices:
+            if lyric_choice["voice_index"] == voice_index:
+                return lyric_choice["lyric"]
         # If no exact match, return the first lyric found
-        for lyric in lyric_choices:
-            return lyric["lyric"]
+        for lyric_choice in lyric_choices:
+            return lyric_choice["lyric"]
 
     return None
 
 
-def default_keysig():
+def default_keysig() -> etree._Element:
     """
     Returns a default key signature element.
     This is used to ensure that the key signature is set correctly in the output.
     """
-    keysig = etree.Element("KeySig")
-    accidental = etree.Element("accidental")
+    keysig: etree._Element = etree.Element("KeySig")
+    accidental: etree._Element = etree.Element("accidental")
     accidental.text = "0"
     keysig.append(accidental)
     return keysig
 
 
-def default_timesig():
+def default_timesig() -> etree._Element:
     """
     Returns a default time signature element.
     This is used to ensure that the time signature is set correctly in the output.
     """
-    timesig = etree.Element("TimeSig")
-    sigN = etree.Element("sigN")
+    timesig: etree._Element = etree.Element("TimeSig")
+    sigN: etree._Element = etree.Element("sigN")
     sigN.text = "4"
-    sigD = etree.Element("sigD")
+    sigD: etree._Element = etree.Element("sigD")
     sigD.text = "4"
     timesig.append(sigN)
     timesig.append(sigD)
     return timesig
 
 
-def loop_staff(staff):
+def loop_staff(staff: etree._Element) -> Any:
     """
     Generator function to loop through the staff and yield elements
     with their time positions.
+
+    Args:
+        staff (etree._Element): The staff XML element.
+
+    Yields:
+        Dict[str, Any]: A dictionary containing 'staff_id', 'measure_index',
+                        'voice_index', 'time_pos', and 'element'.
     """
-    staff_id = int(staff.get("id"))
-    measure_index = -1
+    staff_id: int = int(staff.get("id", "0"))
+    measure_index: int = -1
     for measure in staff.findall(".//Measure"):
         measure_index += 1
-        voice_index = -1
+        voice_index: int = -1
         for voice in measure.findall(".//voice"):
             voice_index += 1
-            time_pos = 0
+            time_pos: int = 0
             for el in voice:
-                # logging.debug(
-                #     f"Yielding element {el.tag} in staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}"
-                # )
                 yield {
                     "staff_id": staff_id,
                     "measure_index": measure_index,
@@ -167,52 +203,49 @@ def loop_staff(staff):
                     "element": el,
                 }
                 if el.tag in ["Chord", "Rest"]:
-                    duration_type = el.find(".//durationType")
-                    dots = el.find(".//dots")
+                    duration_type: Optional[etree._Element] = el.find(".//durationType")
+                    dots: Optional[etree._Element] = el.find(".//dots")
                     time_pos += resolve_duration(
                         duration_type.text if duration_type is not None else "0",
                         dots.text if dots is not None else "0",
                     )
                 if el.tag == "location":
-                    fractions = el.find(".//fractions")
+                    fractions: Optional[etree._Element] = el.find(".//fractions")
                     if fractions is not None:
                         time_pos += resolve_duration(
                             fractions.text if fractions is not None else "0"
                         )
 
 
-def read_lyrics(staff):
+def read_lyrics(staff: etree._Element) -> None:
     """
     Read lyrics from the staff and store them in a dictionary.
     The dictionary is keyed by staff ID and time position.
+
+    Args:
+        staff (etree._Element): The staff XML element.
     """
-    staff_id = int(staff.get("id"))
+    staff_id: int = int(staff.get("id", "0"))
     global LYRICS_BY_TIMEPOS, REVERSED_VOICES_BY_STAFF_MEASURE
     for el in loop_staff(staff):
-        staff_id = int(el["staff_id"])
-        measure_index = el["measure_index"]
-        voice_index = el["voice_index"]
-        time_pos = el["time_pos"]
-        element = el["element"]
+        staff_id_loop: int = int(el["staff_id"])
+        measure_index: int = el["measure_index"]
+        voice_index: int = el["voice_index"]
+        time_pos: int = el["time_pos"]
+        element: etree._Element = el["element"]
 
-        reversed_voices = REVERSED_VOICES_BY_STAFF_MEASURE.get(staff_id, {}).get(
-            measure_index, False
-        )
+        reversed_voices: bool = REVERSED_VOICES_BY_STAFF_MEASURE.get(
+            staff_id_loop, {}
+        ).get(measure_index, False)
         if reversed_voices:
             # If the voices are reversed, we need to adjust the voice index
             voice_index = 1 if voice_index == 0 else 0
 
         if element.tag == "Chord":
             for lyric in element.findall(".//Lyrics"):
-                # logging.debug(
-                #     f"Found lyric in staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric_to_dict(lyric)}"
-                # )
-                LYRICS_BY_TIMEPOS[f"{measure_index}-{time_pos}"] = (
-                    LYRICS_BY_TIMEPOS.get(f"{measure_index}-{time_pos}", [])
-                )
-                LYRICS_BY_TIMEPOS[f"{measure_index}-{time_pos}"].append(
+                LYRICS_BY_TIMEPOS.setdefault(f"{measure_index}-{time_pos}", []).append(
                     {
-                        "staff_id": staff_id,
+                        "staff_id": staff_id_loop,
                         "measure_index": measure_index,
                         "voice_index": voice_index,
                         "lyric": lyric_to_dict(lyric),
@@ -220,21 +253,27 @@ def read_lyrics(staff):
                 )
 
 
-def find_reversed_voices_by_staff_measure(staff):
+def find_reversed_voices_by_staff_measure(staff: etree._Element) -> None:
     """
     Find reversed voices for a given staff ID.
     This function should return a list of reversed voices for the specified staff.
+
+    Args:
+        staff (etree._Element): The staff XML element.
     """
-    REVERSED_VOICES_BY_STAFF_MEASURE[int(staff.get("id"))] = {}
+    staff_id: int = int(staff.get("id", "0"))
+    REVERSED_VOICES_BY_STAFF_MEASURE[staff_id] = {}
     # First pass: add stem directions to measures that do not have them
-    els_by_timepos = defaultdict(lambda: defaultdict(list))
-    measures_with_stem_direction = set()
+    els_by_timepos: Dict[int, Dict[int, List[Dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    measures_with_stem_direction: Set[int] = set()
     for el in loop_staff(staff):
-        staff_id = int(el["staff_id"])
-        measure_index = el["measure_index"]
-        voice_index = el["voice_index"]
-        element = el["element"]
-        time_pos = el["time_pos"]
+        staff_id_loop: int = int(el["staff_id"])
+        measure_index: int = el["measure_index"]
+        voice_index: int = el["voice_index"]
+        element: etree._Element = el["element"]
+        time_pos: int = el["time_pos"]
 
         if element.tag == "Chord":
             els_by_timepos[measure_index][time_pos].append(
@@ -254,53 +293,68 @@ def find_reversed_voices_by_staff_measure(staff):
             if len(elements) < 2:
                 continue
             # Find which voice has the higher pitch in the elements
-            highest_element_index = 0
-            highest_element = elements[0]
+            highest_element_index: int = 0
+            highest_element: Dict[str, Any] = elements[0]
             for i, el in enumerate(elements):
-                if el["element"].find(".//pitch") is not None:
-                    pitch = int(el["element"].find(".//pitch").text)
-                    if highest_element["element"].find(
-                        ".//pitch"
-                    ) is not None and pitch > int(
-                        highest_element["element"].find(".//pitch").text
+                pitch_el: Optional[etree._Element] = el["element"].find(".//pitch")
+                if pitch_el is not None and pitch_el.text is not None:
+                    pitch: int = int(pitch_el.text)
+                    highest_pitch_el: Optional[etree._Element] = highest_element[
+                        "element"
+                    ].find(".//pitch")
+                    if (
+                        highest_pitch_el is not None
+                        and highest_pitch_el.text is not None
+                        and pitch > int(highest_pitch_el.text)
                     ):
                         highest_element_index = i
                         highest_element = el
             # Add stem direction up to the highest element
-            stem_direction = etree.Element("StemDirection")
-            stem_direction.text = "up"
-            highest_element["element"].append(stem_direction)
+            stem_direction_up: etree._Element = etree.Element("StemDirection")
+            stem_direction_up.text = "up"
+            highest_element["element"].append(stem_direction_up)
             # Add stem direction down to the other elements
             for i, el in enumerate(elements):
                 if i == highest_element_index:
                     continue
-                stem_direction = etree.Element("StemDirection")
-                stem_direction.text = "down"
-                el["element"].append(stem_direction)
+                stem_direction_down: etree._Element = etree.Element("StemDirection")
+                stem_direction_down.text = "down"
+                el["element"].append(stem_direction_down)
 
-    index = -1
+    index: int = -1
     for measure in staff.findall(".//Measure"):
         index += 1
-        voice_index = -1
+        voice_index_in_measure: int = -1
         for voice in measure.findall(".//voice"):
-            voice_index += 1
+            voice_index_in_measure += 1
             for chord in voice.findall(".//Chord"):
-                stem_direction = chord.find(".//StemDirection")
-                logging.debug(
-                    f"Processing chord in staff {staff.get('id')}, measure {index}, voice {voice_index}, stem direction: {stem_direction}"
+                stem_direction_el: Optional[etree._Element] = chord.find(
+                    ".//StemDirection"
                 )
-                if stem_direction is None:
+                logging.debug(
+                    f"Processing chord in staff {staff.get('id')}, measure {index}, voice {voice_index_in_measure}, stem direction: {stem_direction_el.text if stem_direction_el is not None else 'None'}"
+                )
+                if stem_direction_el is None or stem_direction_el.text is None:
                     continue  # No stem direction, skip this chord
                 else:
-                    stem_direction = stem_direction.text.strip().lower()
-                stem_voice = 0 if stem_direction == "up" else 1
-                if stem_voice != voice_index:
+                    stem_direction_text: str = stem_direction_el.text.strip().lower()
+                stem_voice: int = 0 if stem_direction_text == "up" else 1
+                if stem_voice != voice_index_in_measure:
                     # This voice is reversed (up stem but voice 2)
-                    REVERSED_VOICES_BY_STAFF_MEASURE[int(staff.get("id"))][index] = True
+                    REVERSED_VOICES_BY_STAFF_MEASURE[staff_id][index] = True
 
 
-def get_original_staff_id(staff_id):
-    original_staff_id = staff_id
+def get_original_staff_id(staff_id: int) -> int:
+    """
+    Gets the original staff ID before any remapping.
+
+    Args:
+        staff_id (int): The current staff ID.
+
+    Returns:
+        int: The original staff ID.
+    """
+    original_staff_id: int = staff_id
     for parent_staff_id, child_staff_id in STAFF_MAPPING.items():
         if child_staff_id == staff_id:
             original_staff_id = parent_staff_id
@@ -308,40 +362,48 @@ def get_original_staff_id(staff_id):
     return original_staff_id
 
 
-def delete_all_elements_by_selector(staff, selector):
+def delete_all_elements_by_selector(staff: etree._Element, selector: str) -> None:
     """
     Delete all elements with the specified tag from the staff.
+
+    Args:
+        staff (etree._Element): The staff XML element.
+        selector (str): The XPath selector for the elements to delete.
     """
     for element in staff.findall(selector):
-        parent = element.getparent()
+        parent: Optional[etree._Element] = element.getparent()
         if parent is not None:
             parent.remove(element)
 
 
-def handle_staff(staff, direction):
+def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
     """
-    Delete notes not matching the specified direction
+    Deletes notes not matching the specified direction and cleans up other elements.
+
+    Args:
+        staff (etree._Element): The staff XML element to process.
+        direction (Optional[str]): The direction to keep notes ("up" or "down"), or None to keep all.
     """
-    staff_id = int(staff.get("id"))
-    original_staff_id = get_original_staff_id(staff_id)
+    staff_id: int = int(staff.get("id", "0"))
+    original_staff_id: int = get_original_staff_id(staff_id)
 
     logging.debug(f"Handling staff {staff_id} for direction {direction}")
     if direction is not None:
-        index = -1
+        index: int = -1
         for measure in staff.findall(".//Measure"):
             index += 1
-            reversed_voices = REVERSED_VOICES_BY_STAFF_MEASURE.get(
+            reversed_voices: bool = REVERSED_VOICES_BY_STAFF_MEASURE.get(
                 original_staff_id, {}
             ).get(index, False)
             if reversed_voices:
-                voice_to_remove = 1 if direction == "down" else 0
+                voice_to_remove: int = 1 if direction == "down" else 0
             else:
-                voice_to_remove = 1 if direction == "up" else 0
-            voice_index = -1
-            voices = list(measure.findall(".//voice"))
-            keysig = deepcopy(measure.find(".//KeySig"))
-            timesig = deepcopy(measure.find(".//TimeSig"))
-            clef = deepcopy(measure.find(".//Clef"))
+                voice_to_remove: int = 1 if direction == "up" else 0
+            voice_index: int = -1
+            voices: List[etree._Element] = list(measure.findall(".//voice"))
+            keysig: Optional[etree._Element] = deepcopy(measure.find(".//KeySig"))
+            timesig: Optional[etree._Element] = deepcopy(measure.find(".//TimeSig"))
+            clef: Optional[etree._Element] = deepcopy(measure.find(".//Clef"))
             logging.debug(
                 f"Processing measure {index} in staff {staff_id}, original_staff_id {original_staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}, reversed_voices: {reversed_voices}"
             )
@@ -375,9 +437,14 @@ def handle_staff(staff, direction):
                     else:
                         # We must try to remove the upper/lower notes from each chord, if possible
                         for chord in voice.findall(".//Chord"):
-                            notes = sorted(
+                            notes: List[etree._Element] = sorted(
                                 chord.findall(".//Note"),
-                                key=lambda n: int(n.find(".//pitch").text),
+                                key=lambda n: (
+                                    int(n.find(".//pitch").text)
+                                    if n.find(".//pitch") is not None
+                                    and n.find(".//pitch").text is not None
+                                    else 0
+                                ),
                             )
                             if voice_to_remove == 0:
                                 # Remove the upper note
@@ -388,9 +455,9 @@ def handle_staff(staff, direction):
                                 if len(notes) > 1:
                                     chord.remove(notes[0])
 
-    # Finally, set StemDiretion up for all Chords in the staff
+    # Finally, set StemDirection up for all Chords in the staff
     for chord in staff.findall(".//Chord"):
-        stem_direction = chord.find(".//StemDirection")
+        stem_direction: Optional[etree._Element] = chord.find(".//StemDirection")
         if stem_direction is not None:
             stem_direction.text = "up"
 
@@ -412,92 +479,104 @@ def handle_staff(staff, direction):
     # Add <timeStretch>3</timeStretch>
     # to each <Fermata>
     for fermata in staff.findall(".//Fermata"):
-        time_stretch = etree.Element("timeStretch")
+        time_stretch: etree._Element = etree.Element("timeStretch")
         time_stretch.text = "3"
         fermata.append(time_stretch)
 
-    def create_lyric_element(syllabic, text, no):
+    def create_lyric_element(syllabic: str, text: str, no: str) -> etree._Element:
         """
         Create a new Lyrics element with the given syllabic, text, and no.
         """
-        lyric = etree.Element("Lyrics")
-        syllabic_el = etree.Element("syllabic")
+        lyric_el: etree._Element = etree.Element("Lyrics")
+        syllabic_el: etree._Element = etree.Element("syllabic")
         syllabic_el.text = syllabic
-        lyric.append(syllabic_el)
-        text_el = etree.Element("text")
+        lyric_el.append(syllabic_el)
+        text_el: etree._Element = etree.Element("text")
         text_el.text = text
-        lyric.append(text_el)
-        no_el = etree.Element("no")
+        lyric_el.append(text_el)
+        no_el: etree._Element = etree.Element("no")
         no_el.text = no
-        lyric.append(no_el)
-        return lyric
+        lyric_el.append(no_el)
+        return lyric_el
 
-    found_lyrics = defaultdict(list)
+    found_lyrics: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
 
     # Try to find a lyric for each Chord in the staff
     for el in loop_staff(staff):
-        staff_id = int(el["staff_id"])
-        measure_index = el["measure_index"]
-        voice_index = el["voice_index"]
-        time_pos = el["time_pos"]
-        element = el["element"]
+        staff_id_loop: int = int(el["staff_id"])
+        measure_index_loop: int = el["measure_index"]
+        voice_index_loop: int = el["voice_index"]
+        time_pos_loop: int = el["time_pos"]
+        element_loop: etree._Element = el["element"]
 
-        if element.tag == "Chord":
-            lyric = find_lyric(
-                staff_id=staff_id,
-                measure_index=measure_index,
-                voice_index=voice_index,
-                time_pos=time_pos,
+        if element_loop.tag == "Chord":
+            lyric_data: Optional[Dict[str, str]] = find_lyric(
+                staff_id=staff_id_loop,
+                measure_index=measure_index_loop,
+                voice_index=voice_index_loop,
+                time_pos=time_pos_loop,
             )
-            if lyric:
+            if lyric_data:
                 # Delete old lyrics
-                for old_lyric in element.findall(".//Lyrics"):
-                    element.remove(old_lyric)
-                element.append(
-                    create_lyric_element(lyric["syllabic"], lyric["text"], lyric["no"])
+                for old_lyric in element_loop.findall(".//Lyrics"):
+                    element_loop.remove(old_lyric)
+                element_loop.append(
+                    create_lyric_element(
+                        lyric_data["syllabic"], lyric_data["text"], lyric_data["no"]
+                    )
                 )
 
-            found_lyrics[staff_id].append(
+            found_lyrics[staff_id_loop].append(
                 {
-                    "staff_id": staff_id,
-                    "measure_index": measure_index,
-                    "voice_index": voice_index,
-                    "lyric": lyric,
-                    "element": element,
-                    "time_pos": time_pos,
+                    "staff_id": staff_id_loop,
+                    "measure_index": measure_index_loop,
+                    "voice_index": voice_index_loop,
+                    "lyric": lyric_data,
+                    "element": element_loop,
+                    "time_pos": time_pos_loop,
                 }
             )
 
-    for staff_id, lyrics in found_lyrics.items():
-        index = -1
-        for lyric in lyrics:
-            index += 1
-            if lyric["lyric"] is not None:
+    for staff_id_found, lyrics_list in found_lyrics.items():
+        for index, lyric_item in enumerate(lyrics_list):
+            if lyric_item["lyric"] is not None:
                 continue
-            element = lyric["element"]
+            element_to_process: etree._Element = lyric_item["element"]
             # If element has Spanner type="Tie" and a <prev> inside it, skip.
-            spanner = element.find(".//Spanner[@type='Tie']")
+            spanner: Optional[etree._Element] = element_to_process.find(
+                ".//Spanner[@type='Tie']"
+            )
             if spanner is not None:
-                prev_el = spanner.find(".//prev")
-                if prev_el is not None:
+                prev_el_spanner: Optional[etree._Element] = spanner.find(".//prev")
+                if prev_el_spanner is not None:
                     continue
-            prev_lyric = lyrics[index - 1] if index > 0 else None
-            prev_lyric = prev_lyric["lyric"] if prev_lyric else None
-            next_lyric = lyrics[index + 1] if index < len(lyrics) - 1 else None
-            next_lyric = next_lyric["lyric"] if next_lyric else None
+            prev_lyric_item: Optional[Dict[str, Any]] = (
+                lyrics_list[index - 1] if index > 0 else None
+            )
+            prev_lyric_data: Optional[Dict[str, str]] = (
+                prev_lyric_item["lyric"] if prev_lyric_item else None
+            )
+            next_lyric_item: Optional[Dict[str, Any]] = (
+                lyrics_list[index + 1] if index < len(lyrics_list) - 1 else None
+            )
+            next_lyric_data: Optional[Dict[str, str]] = (
+                next_lyric_item["lyric"] if next_lyric_item else None
+            )
             logging.debug(
-                f"Trying to find a lyric for staff {staff_id}, measure {lyric['measure_index']}, prev_lyric: {prev_lyric}, next_lyric: {next_lyric}"
+                f"Trying to find a lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}, prev_lyric: {prev_lyric_data}, next_lyric: {next_lyric_data}"
             )
             # Go to previous time position in LYRICS_BY_TIMEPOS
-            lyric_time_positions = list(LYRICS_BY_TIMEPOS.keys())
+            lyric_time_positions: List[str] = list(LYRICS_BY_TIMEPOS.keys())
             lyric_time_positions.sort(
                 key=lambda x: (int(x.split("-")[0]), int(x.split("-")[1]))
             )
-            time_pos_key = f"{lyric['measure_index']}-{lyric['time_pos']}"
-            prev_time_pos_key = None
-            next_time_pos_key = None
+            time_pos_key: str = (
+                f"{lyric_item['measure_index']}-{lyric_item['time_pos']}"
+            )
+            prev_time_pos_key: Optional[str] = None
+            next_time_pos_key: Optional[str] = None
 
-            def cmp_keys(key1, key2):
+            def cmp_keys(key1: str, key2: str) -> int:
                 """
                 Compare two keys based on measure index and time position.
                 """
@@ -523,41 +602,60 @@ def handle_staff(staff, direction):
                     prev_time_pos_key = lyric_time_positions[i - 1] if i > 0 else None
                     next_time_pos_key = lyric_time_positions[i]
                     break
+            else:  # If the loop completes without a break (meaning time_pos_key is the last or only key)
+                if len(lyric_time_positions) > 0:
+                    if (
+                        cmp_keys(time_pos_key, lyric_time_positions[-1]) == 0
+                    ):  # If it's the last key
+                        prev_time_pos_key = (
+                            lyric_time_positions[-2]
+                            if len(lyric_time_positions) > 1
+                            else None
+                        )
+                        next_time_pos_key = None  # No next key
+                    elif (
+                        cmp_keys(time_pos_key, lyric_time_positions[0]) < 0
+                    ):  # If it's before the first key
+                        prev_time_pos_key = None
+                        next_time_pos_key = lyric_time_positions[0]
+                    else:  # Handle cases where time_pos_key isn't found or is exactly the last one
+                        # This case is tricky, might need more specific logic depending on expected behavior
+                        pass
 
-            prev_matching_lyric = (
+            prev_matching_lyric: Optional[Dict[str, str]] = (
                 find_lyric(
-                    staff_id=staff_id,
-                    measure_index=prev_time_pos_key.split("-")[0],
-                    voice_index=lyric["voice_index"],
-                    time_pos=prev_time_pos_key.split("-")[1],
+                    staff_id=staff_id_found,
+                    measure_index=int(prev_time_pos_key.split("-")[0]),
+                    voice_index=lyric_item["voice_index"],
+                    time_pos=int(prev_time_pos_key.split("-")[1]),
                 )
                 if prev_time_pos_key
                 else None
             )
             logging.debug(
-                f"Previous matching lyric for staff {staff_id}, measure {lyric['measure_index']}, time_pos: {prev_time_pos_key.split('-')[1] if prev_time_pos_key else None}: {prev_matching_lyric}"
+                f"Previous matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}, time_pos: {int(prev_time_pos_key.split('-')[1]) if prev_time_pos_key else None}: {prev_matching_lyric}"
             )
-            next_matching_lyric = (
+            next_matching_lyric: Optional[Dict[str, str]] = (
                 find_lyric(
-                    staff_id=staff_id,
-                    measure_index=next_time_pos_key.split("-")[0],
-                    voice_index=lyric["voice_index"],
-                    time_pos=next_time_pos_key.split("-")[1],
+                    staff_id=staff_id_found,
+                    measure_index=int(next_time_pos_key.split("-")[0]),
+                    voice_index=lyric_item["voice_index"],
+                    time_pos=int(next_time_pos_key.split("-")[1]),
                 )
                 if next_time_pos_key
                 else None
             )
             logging.debug(
-                f"Next matching lyric for staff {staff_id}, measure {lyric['measure_index']}, time_pos: {next_time_pos_key.split('-')[1] if next_time_pos_key else None}: {next_matching_lyric}"
+                f"Next matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}, time_pos: {int(next_time_pos_key.split('-')[1]) if next_time_pos_key else None}: {next_matching_lyric}"
             )
             if prev_matching_lyric is not None and prev_matching_lyric["text"] != (
-                prev_lyric["text"] if prev_lyric else None
+                prev_lyric_data["text"] if prev_lyric_data else None
             ):
                 # This is good!
                 logging.debug(
-                    f"Found previous matching lyric for staff {staff_id}, measure {lyric['measure_index']}: {prev_matching_lyric}"
+                    f"Found previous matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}: {prev_matching_lyric}"
                 )
-                element.append(
+                element_to_process.append(
                     create_lyric_element(
                         prev_matching_lyric["syllabic"],
                         prev_matching_lyric["text"],
@@ -565,13 +663,13 @@ def handle_staff(staff, direction):
                     )
                 )
             elif next_matching_lyric is not None and next_matching_lyric["text"] != (
-                next_lyric["text"] if next_lyric else None
+                next_lyric_data["text"] if next_lyric_data else None
             ):
                 # This is good!
                 logging.debug(
-                    f"Found next matching lyric for staff {staff_id}, measure {lyric['measure_index']}: {next_matching_lyric}"
+                    f"Found next matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}: {next_matching_lyric}"
                 )
-                element.append(
+                element_to_process.append(
                     create_lyric_element(
                         next_matching_lyric["syllabic"],
                         next_matching_lyric["text"],
@@ -580,54 +678,62 @@ def handle_staff(staff, direction):
                 )
 
 
-def split_part(part):
+def split_part(part: etree._Element) -> etree._Element:
     """
-    Create a new Part element based on the original part
+    Create a new Part element based on the original part.
+
+    Args:
+        part (etree._Element): The original Part XML element.
+
+    Returns:
+        etree._Element: A deep copy of the original Part element with updated staff IDs.
     """
-    new_part = deepcopy(part)
+    new_part: etree._Element = deepcopy(part)
     # Modify the new_part as needed
     for from_staff, to_staff in STAFF_MAPPING.items():
         # Update the staff ID in the new part
         for staff in new_part.findall(".//Staff"):
-            if int(staff.get("id")) == from_staff:
+            if int(staff.get("id", "0")) == from_staff:
                 staff.set("id", str(to_staff))
     return new_part
 
 
-def get_rest_length(rest, tick_diff):
+def get_rest_length(rest: etree._Element, tick_diff: int) -> int:
     """
     Get the length of a Rest element in ticks.
+
+    Args:
+        rest (etree._Element): The Rest XML element.
+        tick_diff (int): The difference in ticks to subtract from the rest's duration.
+
+    Returns:
+        int: The adjusted duration of the rest in ticks.
     """
-    duration_type = rest.find(".//durationType")
-    dots = rest.find(".//dots")
+    duration_type: Optional[etree._Element] = rest.find(".//durationType")
+    dots: Optional[etree._Element] = rest.find(".//dots")
     if duration_type is not None:
         return (
             resolve_duration(
-                duration_type.text, dots=dots.text if dots is not None else "0"
+                duration_type.text if duration_type is not None else "0",
+                dots.text if dots is not None else "0",
             )
             - tick_diff
         )
     return 0
 
 
-def shorten_rest_to(rest, new_duration_in_ticks):
+def shorten_rest_to(rest: etree._Element, new_duration_in_ticks: int) -> None:
     """
     Shorten a Rest element to a new duration in ticks.
+
+    Args:
+        rest (etree._Element): The Rest XML element to shorten.
+        new_duration_in_ticks (int): The target duration in ticks.
     """
-    BASE_NOTE_VALUES = {
-        "whole": [
-            1.0,
-            1.5,
-            1.75,
-            1.875,
-        ],  # whole, dotted whole, double dotted whole, triple dotted whole
-        "half": [
-            0.5,
-            0.75,
-            0.875,
-            0.9375,
-        ],  # half, dotted half, double dotted half, triple dotted half
-        "quarter": [0.25, 0.375, 0.4375, 0.46875],  # quarter, dotted quarter, etc.
+    BASE_NOTE_VALUES: Dict[str, List[float]] = {
+        "whole": [1.0, 1.5, 1.75, 1.875],
+        "half": [0.5, 0.75, 0.875, 0.9375],
+        "quarter": [0.25, 0.375, 0.4375, 0.46875],
         "eighth": [0.125, 0.1875, 0.21875, 0.234375],
         "16th": [0.0625, 0.09375, 0.109375, 0.1171875],
         "32nd": [0.03125, 0.046875, 0.0546875, 0.05859375],
@@ -635,56 +741,75 @@ def shorten_rest_to(rest, new_duration_in_ticks):
         # Add more if needed
     }
 
-    duration_type = rest.find(".//durationType")
-    if duration_type is not None:
+    duration_type_el: Optional[etree._Element] = rest.find(".//durationType")
+    if duration_type_el is not None:
         # Convert the new duration to a fraction
         if new_duration_in_ticks == 0:
             # If the new duration is 0, remove the rest
-            parent = rest.getparent()
+            parent: Optional[etree._Element] = rest.getparent()
             if parent is not None:
                 parent.remove(rest)
         else:
-            # Find whick value in the map multiplied by RESOLUTION
-            # is the correct value
+            found_match: bool = False
             for note_type, values in BASE_NOTE_VALUES.items():
                 for i, value in enumerate(values):
                     if int(value * RESOLUTION) == new_duration_in_ticks:
                         # Found the correct value
-                        duration_type.text = note_type
+                        duration_type_el.text = note_type
                         # If there are dots, we need to adjust them
+                        dots_el: Optional[etree._Element] = rest.find(".//dots")
                         if i > 0:
-                            dots = rest.find(".//dots")
-                            if dots is None:
-                                dots = etree.Element("dots")
-                                rest.append(dots)
+                            if dots_el is None:
+                                dots_el = etree.Element("dots")
+                                rest.append(dots_el)
                             # Set the number of dots based on the index
-                            dots.text = str(i)
+                            dots_el.text = str(i)
+                        elif dots_el is not None:
+                            # Remove dots if no longer needed
+                            rest.remove(dots_el)
+                        found_match = True
+                        break
+                if found_match:
+                    break
+            if not found_match:
+                logging.warning(
+                    f"Could not find a matching duration type for {new_duration_in_ticks} ticks."
+                )
             logging.debug(
-                f"Shortened rest to {duration_type.text} in element {rest.tag}"
+                f"Shortened rest to {duration_type_el.text if duration_type_el.text else 'unknown'} in element {rest.tag}"
             )
 
 
-def preprocess_corrupted_measures(root):
+def preprocess_corrupted_measures(root: etree._Element) -> None:
     """
     Try to find measures with len="17/16" or similar
     and try to fix them.
-    """
-    problem_measures = defaultdict(list)
-    for staff in root.findall(".//Score/Staff"):
-        staff_id = int(staff.get("id"))
-        measure_index = -1
-        time_sig = None
-        for measure in staff.findall(".//Measure"):
-            new_time_sig = measure.find(".//TimeSig")
-            if new_time_sig is not None:
-                time_sig = f"{new_time_sig.find('.//sigN').text}/{new_time_sig.find('.//sigD').text}"
-            measure_index += 1
-            voice_index = -1
-            problem_measure = measure.get("len") is not None and "/" in measure.get(
-                "len"
-            )
-            if problem_measure:
 
+    Args:
+        root (etree._Element): The root XML element of the MuseScore file.
+    """
+    problem_measures: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for staff in root.findall(".//Score/Staff"):
+        staff_id: int = int(staff.get("id", "0"))
+        measure_index: int = -1
+        time_sig: Optional[str] = None
+        for measure in staff.findall(".//Measure"):
+            new_time_sig_el: Optional[etree._Element] = measure.find(".//TimeSig")
+            if new_time_sig_el is not None:
+                sigN_el: Optional[etree._Element] = new_time_sig_el.find(".//sigN")
+                sigD_el: Optional[etree._Element] = new_time_sig_el.find(".//sigD")
+                if (
+                    sigN_el is not None
+                    and sigN_el.text is not None
+                    and sigD_el is not None
+                    and sigD_el.text is not None
+                ):
+                    time_sig = f"{sigN_el.text}/{sigD_el.text}"
+            measure_index += 1
+            problem_measure_flag: bool = measure.get(
+                "len"
+            ) is not None and "/" in measure.get("len", "")
+            if problem_measure_flag:
                 problem_measures[measure_index].append(
                     {
                         "staff_id": staff_id,
@@ -696,9 +821,10 @@ def preprocess_corrupted_measures(root):
                 )
 
             for voice in measure.findall(".//voice"):
+                voice_index: int = -1
                 voice_index += 1
-                time_pos = 0
-                if problem_measure:
+                time_pos: int = 0
+                if problem_measure_flag:
                     if (
                         voice_index
                         not in problem_measures[measure_index][-1]["elements"]
@@ -708,25 +834,27 @@ def preprocess_corrupted_measures(root):
                             "max_time_pos": 0,
                         }
                 for el in voice:
-                    if problem_measure:
+                    if problem_measure_flag:
                         problem_measures[measure_index][-1]["elements"][voice_index][
                             "elements"
                         ][time_pos] = el
                     if el.tag in ["Chord", "Rest"]:
-                        duration_type = el.find(".//durationType")
-                        dots = el.find(".//dots")
+                        duration_type: Optional[etree._Element] = el.find(
+                            ".//durationType"
+                        )
+                        dots: Optional[etree._Element] = el.find(".//dots")
                         time_pos += resolve_duration(
                             duration_type.text if duration_type is not None else "0",
                             dots.text if dots is not None else "0",
                         )
                     if el.tag == "location":
-                        fractions = el.find(".//fractions")
+                        fractions: Optional[etree._Element] = el.find(".//fractions")
                         if fractions is not None:
                             time_pos += resolve_duration(
                                 fractions.text if fractions is not None else "0"
                             )
 
-                    if problem_measure:
+                    if problem_measure_flag:
                         problem_measures[measure_index][-1]["elements"][voice_index][
                             "max_time_pos"
                         ] = max(
@@ -736,7 +864,7 @@ def preprocess_corrupted_measures(root):
                             time_pos,
                         )
 
-                if problem_measure:
+                if problem_measure_flag:
                     problem_measures[measure_index][-1]["elements"][voice_index][
                         "elements"
                     ][time_pos] = None
@@ -744,19 +872,25 @@ def preprocess_corrupted_measures(root):
     # For each corrupted measure, try to fix it by adjusting the final rest in each voice
     # If all voices don't have a final rest, we can't fix it
     for measure_index, staff_list in problem_measures.items():
-        possible_to_fix = True
-        max_time_pos = 0
+        possible_to_fix: bool = True
+        max_time_pos_in_measure: int = 0
         for staff_values in staff_list:
-            for voice_index, voice_values in staff_values["elements"].items():
-                max_time_pos = max(max_time_pos, voice_values["max_time_pos"])
+            for voice_values in staff_values["elements"].values():
+                max_time_pos_in_measure = max(
+                    max_time_pos_in_measure, voice_values["max_time_pos"]
+                )
         for staff_values in staff_list:
-            for voice_index, voice_values in staff_values["elements"].items():
-                if voice_values["max_time_pos"] < max_time_pos:
+            for voice_values in staff_values["elements"].values():
+                if voice_values["max_time_pos"] < max_time_pos_in_measure:
                     # Ignore this voice, it is not complete any way
                     continue
                 # Check last element
-                last_element = list(voice_values["elements"].values())[-2]
-                if last_element.tag != "Rest":
+                elements_in_voice: List[Any] = list(voice_values["elements"].values())
+                if len(elements_in_voice) < 2:
+                    possible_to_fix = False
+                    break
+                last_element_in_voice: Optional[etree._Element] = elements_in_voice[-2]
+                if last_element_in_voice is None or last_element_in_voice.tag != "Rest":
                     possible_to_fix = False
                     break
 
@@ -764,37 +898,37 @@ def preprocess_corrupted_measures(root):
             f"Measure {measure_index} is {'possible' if possible_to_fix else 'not possible'} to fix"
         )
         if possible_to_fix:
-            time_sig = staff_list[0]["time_sig"]
-            correct_measeure_len = 0
-            if "/" in time_sig:
-                sig_n, sig_d = map(int, time_sig.split("/"))
-                correct_measeure_len = RESOLUTION * (sig_n / sig_d)
-            else:
-                correct_measeure_len = int(time_sig) * RESOLUTION
+            time_sig_str: Optional[str] = staff_list[0]["time_sig"]
+            correct_measure_len: float = 0.0
+            if time_sig_str is not None and "/" in time_sig_str:
+                sig_n_str, sig_d_str = time_sig_str.split("/")
+                sig_n: int = int(sig_n_str)
+                sig_d: int = int(sig_d_str)
+                correct_measure_len = RESOLUTION * (sig_n / sig_d)
+            elif time_sig_str is not None:
+                correct_measure_len = int(time_sig_str) * RESOLUTION
 
-            to_remove = max_time_pos - correct_measeure_len
-            logging.debug(
-                f"Correct measure length for measure {measure_index} is {correct_measeure_len}. Must remove {to_remove} ticks."
-            )
-            cant_fix = False
-            to_remove = []
-            to_shorten = []
+            cant_fix_current_measure: bool = False
+            elements_to_remove: List[etree._Element] = []
+            rests_to_shorten: List[Tuple[etree._Element, int]] = []
             for staff_values in staff_list:
-                if cant_fix:
+                if cant_fix_current_measure:
                     break
                 for voice_index, voice_values in staff_values["elements"].items():
-                    prev_el = None
-                    prev_prev_el = None
-                    remove_rest_of_elements = False
+                    prev_el: Optional[etree._Element] = None
+                    prev_prev_el: Optional[etree._Element] = None
+                    remove_rest_of_elements: bool = False
 
-                    for time_pos, element in list(voice_values["elements"].items()):
-                        # logging.debug(
-                        #     f"Processing element at time position {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index}"
-                        # )
-                        element_tag = element.tag if element is not None else None
+                    elements_list_in_voice: List[
+                        Tuple[int, Optional[etree._Element]]
+                    ] = list(voice_values["elements"].items())
+                    for time_pos, element in elements_list_in_voice:
+                        element_tag: Optional[str] = (
+                            element.tag if element is not None else None
+                        )
                         if remove_rest_of_elements:
                             if element_tag == "Chord":
-                                cant_fix = True
+                                cant_fix_current_measure = True
                                 logging.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} voice {voice_index} has a chord after prev deleted, cannot fix."
                                 )
@@ -803,118 +937,121 @@ def preprocess_corrupted_measures(root):
                                 )
                                 break
                             # We have started removing elements, so we will remove all after it
-                            to_remove.append(element)
+                            if element is not None:
+                                elements_to_remove.append(element)
                             continue
 
-                        if element is not None and time_pos == correct_measeure_len:
+                        if element is not None and time_pos == correct_measure_len:
                             # Nice, there is a rest at the end of the measure.
                             # Just remove this element and all after it.
                             if element_tag == "Chord":
-                                cant_fix = True
+                                cant_fix_current_measure = True
                                 logging.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has a chord at the end, cannot fix."
                                 )
                                 break
-                            to_remove.append(element)
+                            elements_to_remove.append(element)
                             remove_rest_of_elements = True
                             continue
 
-                        if time_pos >= correct_measeure_len:
+                        if time_pos > correct_measure_len:
                             # We have passed the correct measure length
                             # We need to shorten the previous rest and remove all after it
                             if prev_el is None:
                                 logging.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has no previous element to shorten."
                                 )
-                                cant_fix = True
+                                cant_fix_current_measure = True
                                 break
                             if prev_el.tag == "Chord":
                                 logging.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has no previous rest to shorten."
                                 )
-                                cant_fix = True
+                                cant_fix_current_measure = True
                                 break
                             # Shorten the previous rest
-                            if correct_measeure_len - time_pos <= 0:
+                            if correct_measure_len - time_pos <= 0:
                                 # Can't shorten it enough, we need to remove it
-                                to_remove.append(prev_el)
+                                elements_to_remove.append(prev_el)
                                 if prev_prev_el is not None:
                                     if prev_prev_el.tag != "Rest":
                                         logging.warning(
                                             f"Measure {measure_index} in staff {staff_values['staff_id']} has no prev previous rest to shorten."
                                         )
-                                        cant_fix = True
+                                        cant_fix_current_measure = True
                                         break
                                     # If there is a previous element, we can shorten it
                                     # By a delta...
                                     logging.debug(
                                         f"Shortening prev_prev rest in time_pos {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index} to 0 ticks"
                                     )
-                                    to_shorten.append(
+                                    rests_to_shorten.append(
                                         (
                                             prev_prev_el,
                                             get_rest_length(
                                                 prev_prev_el,
-                                                correct_measeure_len - time_pos,
+                                                int(time_pos - correct_measure_len),
                                             ),
                                         )
                                     )
                             else:
                                 logging.debug(
-                                    f"Shortening rest in time_pos {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index} to {correct_measeure_len - time_pos} ticks"
+                                    f"Shortening rest in time_pos {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index} to {int(correct_measure_len - time_pos)} ticks"
                                 )
-                                to_shorten.append(
-                                    (prev_el, correct_measeure_len - time_pos)
+                                rests_to_shorten.append(
+                                    (prev_el, int(correct_measure_len - time_pos))
                                 )
                             if element_tag == "Chord":
-                                cant_fix = True
+                                cant_fix_current_measure = True
                                 logging.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has a chord after the rest, cannot fix."
                                 )
                                 break
-                            to_remove.append(element)
+                            if element is not None:
+                                elements_to_remove.append(element)
                             remove_rest_of_elements = True
                             continue
 
                         prev_prev_el = prev_el
                         prev_el = element
 
-                    if cant_fix:
+                    if cant_fix_current_measure:
                         logging.warning(
                             f"Measure {measure_index} in staff {staff_values['staff_id']} cannot be fixed."
                         )
                         break
 
-            if cant_fix:
+            if cant_fix_current_measure:
                 continue
 
-            if to_shorten:
-                for el, new_duration in to_shorten:
+            if rests_to_shorten:
+                for el, new_duration in rests_to_shorten:
                     logging.debug(
                         f"Shortening rest {el.tag} in, measure {measure_index} to {new_duration} ticks"
                     )
                     shorten_rest_to(el, new_duration)
-            if to_remove:
+            if elements_to_remove:
                 logging.debug(
-                    f"Removing elements {to_remove} from, measure {measure_index}"
+                    f"Removing elements {elements_to_remove} from, measure {measure_index}"
                 )
-                for element in to_remove:
-                    if element is not None:
-                        parent = element.getparent()
+                for element_to_remove in elements_to_remove:
+                    if element_to_remove is not None:
+                        parent: Optional[etree._Element] = element_to_remove.getparent()
                         if parent is not None:
-                            parent.remove(element)
+                            parent.remove(element_to_remove)
 
                 # remove len attribute from the measure
                 for staff_values in staff_list:
-                    measure = staff_values["measure"]
+                    measure: Optional[etree._Element] = staff_values["measure"]
                     if measure is not None:
-                        measure.attrib.pop("len", None)
+                        if "len" in measure.attrib:
+                            del measure.attrib["len"]
                         logging.debug(
                             f"Removed len attribute from measure {measure_index} in staff {staff_values['staff_id']}"
                         )
 
 
-def main(input_path, output_path):
+def main(input_path: str, output_path: str) -> None:
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
     to a two-staff, single-voice-per-staff structure, and duplicates the Part
@@ -931,13 +1068,13 @@ def main(input_path, output_path):
     LYRICS_BY_TIMEPOS = {}
 
     with open(input_path, "r", encoding="utf-8") as f:
-        input_content = f.readlines()
+        input_content: str = f.read()
 
     # Parse the input XML
-    root = etree.fromstringlist(input_content)
+    root: etree._Element = etree.fromstring(input_content)
 
     # Perform the conversion
-    staffs = root.findall(".//Staff")
+    staffs: List[etree._Element] = root.findall(".//Staff")
     if not staffs:
         raise ValueError("No Staff elements found in the input XML.")
 
@@ -948,9 +1085,9 @@ def main(input_path, output_path):
     # so 2n - 1
     # ... unless the staff only has one voice, then we don't even split it.
 
-    staffs_to_split = set()
+    staffs_to_split: Set[int] = set()
     for staff in staffs:
-        staff_id = int(staff.get("id"))
+        staff_id: int = int(staff.get("id", "0"))
         logging.debug(f"Processing staff with id {staff_id}")
         # Check each measure in the staff
         # If any has two voices, we need to split it
@@ -968,83 +1105,94 @@ def main(input_path, output_path):
     # 3 -> 5
     # 4 -> 6,7
     # 5 -> 8
-    new_staff_id = 1
-    new_staffs_to_split = set()
+    new_staff_id: int = 1
+    new_staffs_to_split: Set[int] = set()
     for staff in staffs:
-        staff_id = int(staff.get("id"))
-        if staff_id == 1:
+        staff_id_orig: int = int(staff.get("id", "0"))
+        if staff_id_orig == 1:
             # Reset the new_staff_id to 1 for the first staff
             # since there are two lists of staffs in the xml
             new_staff_id = 1
 
         staff.set("id", str(new_staff_id))
-        logging.debug(f"Updated staff id from {staff_id} to {new_staff_id}")
-        if staff_id not in staffs_to_split:
+        logging.debug(f"Updated staff id from {staff_id_orig} to {new_staff_id}")
+        if staff_id_orig not in staffs_to_split:
             # If the staff does not need to be split, we can let the next id be next to it
             new_staff_id += 1
         else:
             new_staffs_to_split.add(new_staff_id)
             new_staff_id += 2
 
-    for staff in staffs:
-        staff_id = int(staff.get("id"))
-        if staff_id in new_staffs_to_split:
-            STAFF_MAPPING[staff_id] = int(str(staff_id + 1))
+    for staff_id_current in new_staffs_to_split:
+        STAFF_MAPPING[staff_id_current] = int(str(staff_id_current + 1))
 
     logging.debug("Staff mapping: %s", STAFF_MAPPING)
 
     # Find the Part elements
-    parts = root.findall(".//Part")
+    parts: List[etree._Element] = root.findall(".//Part")
     if not parts:
         raise ValueError("No Part elements found in the input XML.")
 
     for part in parts:
-        staff = part.find(".//Staff")
-        if staff is None:
+        staff_in_part: Optional[etree._Element] = part.find(".//Staff")
+        if staff_in_part is None:
             raise ValueError("No Staff element found in the Part element.")
-        staff_id = int(staff.get("id"))
-        if staff_id not in STAFF_MAPPING:
+        staff_id_in_part: int = int(staff_in_part.get("id", "0"))
+        if staff_id_in_part not in STAFF_MAPPING:
             continue
         # Split the part into two separate parts
-        new_part = split_part(part)
-        parent = part.getparent()
-        parent.insert(parent.index(part) + 1, new_part)
+        new_part: etree._Element = split_part(part)
+        parent_of_part: Optional[etree._Element] = part.getparent()
+        if parent_of_part is not None:
+            parent_of_part.insert(parent_of_part.index(part) + 1, new_part)
 
-    for staff_id, new_staff_id in STAFF_MAPPING.items():
+    for staff_id_orig_split, new_staff_id_split in STAFF_MAPPING.items():
         # Find <Staff> element with staff_id
         # Which is a direct child of <Score>
-        staff_element = root.find(f".//Score/Staff[@id='{staff_id}']")
-        find_reversed_voices_by_staff_measure(staff_element)
-        # Read lyrics from the staff
-        read_lyrics(staff_element)
-        new_staff_element = deepcopy(staff_element)
-        new_staff_element.set("id", str(new_staff_id))
-        # Insert the new Staff element into the Score next to the original
-        score_element = root.find(".//Score")
-        score_element.insert(score_element.index(staff_element) + 1, new_staff_element)
+        staff_element_up: Optional[etree._Element] = root.find(
+            f".//Score/Staff[@id='{staff_id_orig_split}']"
+        )
+        if staff_element_up is not None:
+            find_reversed_voices_by_staff_measure(staff_element_up)
+            # Read lyrics from the staff
+            read_lyrics(staff_element_up)
+            new_staff_element_down: etree._Element = deepcopy(staff_element_up)
+            new_staff_element_down.set("id", str(new_staff_id_split))
+            # Insert the new Staff element into the Score next to the original
+            score_element: Optional[etree._Element] = root.find(".//Score")
+            if score_element is not None:
+                score_element.insert(
+                    score_element.index(staff_element_up) + 1, new_staff_element_down
+                )
 
-    for staff_id, new_staff_id in STAFF_MAPPING.items():
-        up_staff_element = root.find(f".//Score/Staff[@id='{staff_id}']")
-        handle_staff(up_staff_element, "up")
-        down_staff_element = root.find(f".//Score/Staff[@id='{new_staff_id}']")
-        handle_staff(down_staff_element, "down")
+    for staff_id_orig_split, new_staff_id_split in STAFF_MAPPING.items():
+        up_staff_element: Optional[etree._Element] = root.find(
+            f".//Score/Staff[@id='{staff_id_orig_split}']"
+        )
+        if up_staff_element is not None:
+            handle_staff(up_staff_element, "up")
+        down_staff_element: Optional[etree._Element] = root.find(
+            f".//Score/Staff[@id='{new_staff_id_split}']"
+        )
+        if down_staff_element is not None:
+            handle_staff(down_staff_element, "down")
 
     # Handle rest of staffs to remove extra elements
     for staff in root.findall(".//Score/Staff"):
-        staff_id = int(staff.get("id"))
-        if staff_id in STAFF_MAPPING:
-            # This staff is already handled
+        staff_id_current: int = int(staff.get("id", "0"))
+        if staff_id_current in STAFF_MAPPING:
+            # This staff is already handled as 'up' voice
             continue
-        if staff_id in set(STAFF_MAPPING.values()):
-            # This staff is a new staff created by the split
+        if staff_id_current in set(STAFF_MAPPING.values()):
+            # This staff is a new staff created by the split (handled as 'down' voice)
             continue
-        # Handle the staff
+        # Handle the staff (for staffs that were not split)
         handle_staff(staff, None)
 
     # Serialize the output XML
-    output_content = etree.tostring(root, pretty_print=True, encoding="UTF-8").decode(
-        "UTF-8"
-    )
+    output_content: str = etree.tostring(
+        root, pretty_print=True, encoding="UTF-8"
+    ).decode("UTF-8")
 
     # Write the output XML to the specified file
     with open(output_path, "w", encoding="utf-8") as f:
@@ -1062,6 +1210,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     logging.info(f"Converting {args.input} to {args.output}")
-    main(args.input, args.output)
-    logging.info("Conversion completed successfully.")
-    logging.info(f"Output written to {args.output}")
+    try:
+        main(args.input, args.output)
+        logging.info("Conversion completed successfully.")
+        logging.info(f"Output written to {args.output}")
+    except Exception as e:
+        logging.error(f"An error occurred during conversion: {e}")
