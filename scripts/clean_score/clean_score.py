@@ -261,66 +261,67 @@ def handle_staff(staff, direction):
     original_staff_id = get_original_staff_id(staff_id)
 
     logging.debug(f"Handling staff {staff_id} for direction {direction}")
-    index = -1
-    for measure in staff.findall(".//Measure"):
-        index += 1
-        reversed_voices = REVERSED_VOICES_BY_STAFF_MEASURE.get(
-            original_staff_id, {}
-        ).get(index, False)
-        if reversed_voices:
-            voice_to_remove = 1 if direction == "down" else 0
-        else:
-            voice_to_remove = 1 if direction == "up" else 0
-        voice_index = -1
-        voices = list(measure.findall(".//voice"))
-        keysig = deepcopy(measure.find(".//KeySig"))
-        timesig = deepcopy(measure.find(".//TimeSig"))
-        clef = deepcopy(measure.find(".//Clef"))
-        logging.debug(
-            f"Processing measure {index} in staff {staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}"
-        )
+    if direction is not None:
+        index = -1
+        for measure in staff.findall(".//Measure"):
+            index += 1
+            reversed_voices = REVERSED_VOICES_BY_STAFF_MEASURE.get(
+                original_staff_id, {}
+            ).get(index, False)
+            if reversed_voices:
+                voice_to_remove = 1 if direction == "down" else 0
+            else:
+                voice_to_remove = 1 if direction == "up" else 0
+            voice_index = -1
+            voices = list(measure.findall(".//voice"))
+            keysig = deepcopy(measure.find(".//KeySig"))
+            timesig = deepcopy(measure.find(".//TimeSig"))
+            clef = deepcopy(measure.find(".//Clef"))
+            logging.debug(
+                f"Processing measure {index} in staff {staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}"
+            )
 
-        for voice in voices:
-            voice_index += 1
-            # First measure requires TimeSig and KeySig
-            if index == 0:
-                timesig = voice.find(".//TimeSig") if timesig is None else timesig
-                if timesig is None:
-                    timesig = default_timesig()
+            for voice in voices:
+                voice_index += 1
+                # First measure requires TimeSig and KeySig
+                if index == 0:
+                    timesig = voice.find(".//TimeSig") if timesig is None else timesig
+                    if timesig is None:
+                        timesig = default_timesig()
 
-                keysig = voice.find(".//KeySig") if keysig is None else keysig
-                if keysig is None:
-                    keysig = default_keysig()
+                    keysig = voice.find(".//KeySig") if keysig is None else keysig
+                    if keysig is None:
+                        keysig = default_keysig()
 
-            if timesig is not None:
-                delete_all_elements_by_selector(voice, ".//TimeSig")
-                voice.insert(0, deepcopy(timesig))
-            if keysig is not None:
-                delete_all_elements_by_selector(voice, ".//KeySig")
-                voice.insert(0, deepcopy(keysig))
-            if clef is not None:
-                delete_all_elements_by_selector(voice, ".//Clef")
-                voice.insert(0, deepcopy(clef))
-            if voice_index == voice_to_remove or len(voices) == 1:
-                # Remove the voice that does not match the direction
-                # Unless only one voice is present, then we keep it
-                if len(voices) > 1:
-                    measure.remove(voice)
-                else:
-                    # We must try to remove the upper/lower notes from each chord, if possible
-                    for chord in voice.findall(".//Chord"):
-                        notes = sorted(
-                            chord.findall(".//Note"),
-                            key=lambda n: int(n.find(".//pitch").text),
-                        )
-                        if voice_to_remove == 0:
-                            # Remove the upper note
-                            if len(notes) > 1:
-                                chord.remove(notes[-1])
-                        else:
-                            # Remove the lower note
-                            if len(notes) > 1:
-                                chord.remove(notes[0])
+                if timesig is not None:
+                    delete_all_elements_by_selector(voice, ".//TimeSig")
+                    voice.insert(0, deepcopy(timesig))
+                if keysig is not None:
+                    delete_all_elements_by_selector(voice, ".//KeySig")
+                    voice.insert(0, deepcopy(keysig))
+                if clef is not None:
+                    delete_all_elements_by_selector(voice, ".//Clef")
+                    voice.insert(0, deepcopy(clef))
+                if voice_index == voice_to_remove or len(voices) == 1:
+                    # Remove the voice that does not match the direction
+                    # Unless only one voice is present, then we keep it
+                    if len(voices) > 1:
+                        measure.remove(voice)
+                    else:
+                        # We must try to remove the upper/lower notes from each chord, if possible
+                        for chord in voice.findall(".//Chord"):
+                            notes = sorted(
+                                chord.findall(".//Note"),
+                                key=lambda n: int(n.find(".//pitch").text),
+                            )
+                            if voice_to_remove == 0:
+                                # Remove the upper note
+                                if len(notes) > 1:
+                                    chord.remove(notes[-1])
+                            else:
+                                # Remove the lower note
+                                if len(notes) > 1:
+                                    chord.remove(notes[0])
 
     # Finally, set StemDiretion up for all Chords in the staff
     for chord in staff.findall(".//Chord"):
@@ -432,16 +433,50 @@ def main(input_path, output_path):
     # id="1" becomes id="1" and
     # id="2" becomes id="3"
     # so 2n - 1
+    # ... unless the staff only has one voice, then we don't even split it.
+
+    staffs_to_split = set()
+    for staff in staffs:
+        staff_id = int(staff.get("id"))
+        logging.debug(f"Processing staff with id {staff_id}")
+        # Check each measure in the staff
+        # If any has two voices, we need to split it
+        for measure in staff.findall(".//Measure"):
+            if len(measure.findall(".//voice")) > 1:
+                staffs_to_split.add(staff_id)
+                break
+
+    logging.debug(f"Staffs to split: {staffs_to_split}")
+    # e.g.
+    # If we have staffs with ids 1, 2, 3, 4, 5
+    # and we need to split 1, 2 and 4, we will end up with
+    # 1 -> 1,2
+    # 2 -> 3,4
+    # 3 -> 5
+    # 4 -> 6,7
+    # 5 -> 8
+    new_staff_id = 1
+    new_staffs_to_split = set()
+    for staff in staffs:
+        staff_id = int(staff.get("id"))
+        if staff_id == 1:
+            # Reset the new_staff_id to 1 for the first staff
+            # since there are two lists of staffs in the xml
+            new_staff_id = 1
+
+        staff.set("id", str(new_staff_id))
+        logging.debug(f"Updated staff id from {staff_id} to {new_staff_id}")
+        if staff_id not in staffs_to_split:
+            # If the staff does not need to be split, we can let the next id be next to it
+            new_staff_id += 1
+        else:
+            new_staffs_to_split.add(new_staff_id)
+            new_staff_id += 2
 
     for staff in staffs:
         staff_id = int(staff.get("id"))
-        new_staff_id = (staff_id * 2) - 1
-        staff.set("id", str(new_staff_id))
-        logging.debug(f"Updated staff id from {staff_id} to {new_staff_id}")
-
-    for staff in staffs:
-        staff_id = staff.get("id")
-        STAFF_MAPPING[staff_id] = str(int(staff_id) + 1)
+        if staff_id in new_staffs_to_split:
+            STAFF_MAPPING[staff_id] = int(str(staff_id + 1))
 
     logging.debug("Staff mapping: %s", STAFF_MAPPING)
 
@@ -451,6 +486,12 @@ def main(input_path, output_path):
         raise ValueError("No Part elements found in the input XML.")
 
     for part in parts:
+        staff = part.find(".//Staff")
+        if staff is None:
+            raise ValueError("No Staff element found in the Part element.")
+        staff_id = int(staff.get("id"))
+        if staff_id not in STAFF_MAPPING:
+            continue
         # Split the part into two separate parts
         new_part = split_part(part)
         parent = part.getparent()
@@ -464,7 +505,7 @@ def main(input_path, output_path):
         # Read lyrics from the staff
         read_lyrics(staff_element)
         new_staff_element = deepcopy(staff_element)
-        new_staff_element.set("id", new_staff_id)
+        new_staff_element.set("id", str(new_staff_id))
         # Insert the new Staff element into the Score next to the original
         score_element = root.find(".//Score")
         score_element.insert(score_element.index(staff_element) + 1, new_staff_element)
@@ -474,6 +515,18 @@ def main(input_path, output_path):
         handle_staff(up_staff_element, "up")
         down_staff_element = root.find(f".//Score/Staff[@id='{new_staff_id}']")
         handle_staff(down_staff_element, "down")
+
+    # Handle rest of staffs to remove extra elements
+    for staff in root.findall(".//Score/Staff"):
+        staff_id = int(staff.get("id"))
+        if staff_id in STAFF_MAPPING:
+            # This staff is already handled
+            continue
+        if staff_id in set(STAFF_MAPPING.values()):
+            # This staff is a new staff created by the split
+            continue
+        # Handle the staff
+        handle_staff(staff, None)
 
     # Serialize the output XML
     output_content = etree.tostring(root, pretty_print=True, encoding="UTF-8").decode(
