@@ -4,15 +4,5 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "runItOn": {
-        "commands": [
-            {
-                "match": "\\.py$",
-                "isAsync": true,
-                "isShellCommand": false,
-                "cmd": "testing.runAll"
-            },
-        ],
-    },
     "editor.formatOnSave": true
 }
