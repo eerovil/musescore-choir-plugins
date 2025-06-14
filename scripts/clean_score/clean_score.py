@@ -147,7 +147,7 @@ def loop_staff(staff):
     Generator function to loop through the staff and yield elements
     with their time positions.
     """
-    staff_id = staff.get("id")
+    staff_id = int(staff.get("id"))
     measure_index = -1
     for measure in staff.findall(".//Measure"):
         measure_index += 1
@@ -186,10 +186,10 @@ def read_lyrics(staff):
     Read lyrics from the staff and store them in a dictionary.
     The dictionary is keyed by staff ID and time position.
     """
-    staff_id = staff.get("id")
+    staff_id = int(staff.get("id"))
     global LYRICS_BY_TIMEPOS, REVERSED_VOICES_BY_STAFF_MEASURE
     for el in loop_staff(staff):
-        staff_id = el["staff_id"]
+        staff_id = int(el["staff_id"])
         measure_index = el["measure_index"]
         voice_index = el["voice_index"]
         time_pos = el["time_pos"]
@@ -225,7 +225,7 @@ def find_reversed_voices_by_staff_measure(staff):
     Find reversed voices for a given staff ID.
     This function should return a list of reversed voices for the specified staff.
     """
-    REVERSED_VOICES_BY_STAFF_MEASURE[staff.get("id")] = {}
+    REVERSED_VOICES_BY_STAFF_MEASURE[int(staff.get("id"))] = {}
     index = -1
     for measure in staff.findall(".//Measure"):
         index += 1
@@ -241,7 +241,7 @@ def find_reversed_voices_by_staff_measure(staff):
                 stem_voice = 0 if stem_direction == "up" else 1
                 if stem_voice != voice_index:
                     # This voice is reversed (up stem but voice 2)
-                    REVERSED_VOICES_BY_STAFF_MEASURE[staff.get("id")][index] = True
+                    REVERSED_VOICES_BY_STAFF_MEASURE[int(staff.get("id"))][index] = True
 
 
 def get_original_staff_id(staff_id):
@@ -267,7 +267,7 @@ def handle_staff(staff, direction):
     """
     Delete notes not matching the specified direction
     """
-    staff_id = staff.get("id")
+    staff_id = int(staff.get("id"))
     original_staff_id = get_original_staff_id(staff_id)
 
     logging.debug(f"Handling staff {staff_id} for direction {direction}")
@@ -288,7 +288,7 @@ def handle_staff(staff, direction):
             timesig = deepcopy(measure.find(".//TimeSig"))
             clef = deepcopy(measure.find(".//Clef"))
             logging.debug(
-                f"Processing measure {index} in staff {staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}"
+                f"Processing measure {index} in staff {staff_id}, original_staff_id {original_staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}, reversed_voices: {reversed_voices}"
             )
 
             for voice in voices:
@@ -363,7 +363,7 @@ def handle_staff(staff, direction):
 
     # Try to find a lyric for each Chord in the staff
     for el in loop_staff(staff):
-        staff_id = el["staff_id"]
+        staff_id = int(el["staff_id"])
         measure_index = el["measure_index"]
         voice_index = el["voice_index"]
         time_pos = el["time_pos"]
@@ -409,8 +409,8 @@ def split_part(part):
     for from_staff, to_staff in STAFF_MAPPING.items():
         # Update the staff ID in the new part
         for staff in new_part.findall(".//Staff"):
-            if staff.get("id") == from_staff:
-                staff.set("id", to_staff)
+            if int(staff.get("id")) == from_staff:
+                staff.set("id", str(to_staff))
     return new_part
 
 
@@ -491,7 +491,7 @@ def preprocess_corrupted_measures(root):
     """
     problem_measures = defaultdict(list)
     for staff in root.findall(".//Score/Staff"):
-        staff_id = staff.get("id")
+        staff_id = int(staff.get("id"))
         measure_index = -1
         time_sig = None
         for measure in staff.findall(".//Measure"):
