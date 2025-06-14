@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from copy import deepcopy
+import json
 from lxml import etree
 
 import logging
@@ -341,6 +342,8 @@ def handle_staff(staff, direction):
     delete_all_elements_by_selector(staff, ".//Articulation")
     # Delete all Tempo elements
     delete_all_elements_by_selector(staff, ".//Tempo")
+    # Delete all Harmony
+    delete_all_elements_by_selector(staff, ".//Harmony")
 
     # Add <timeStretch>3</timeStretch>
     # to each <Fermata>
@@ -402,6 +405,298 @@ def split_part(part):
     return new_part
 
 
+def get_rest_length(rest, tick_diff):
+    """
+    Get the length of a Rest element in ticks.
+    """
+    duration_type = rest.find(".//durationType")
+    if duration_type is not None:
+        return resolve_duration(duration_type.text) - tick_diff
+    return 0
+
+
+def shorten_rest_to(rest, new_duration_in_ticks):
+    """
+    Shorten a Rest element to a new duration in ticks.
+    """
+    duration_type = rest.find(".//durationType")
+    if duration_type is not None:
+        # Convert the new duration to a fraction
+        if new_duration_in_ticks == 0:
+            # If the new duration is 0, remove the rest
+            parent = rest.getparent()
+            if parent is not None:
+                parent.remove(rest)
+        else:
+            # Set the new duration type
+            if new_duration_in_ticks == RESOLUTION:
+                duration_type.text = "whole"
+            elif new_duration_in_ticks * 2 == RESOLUTION:
+                duration_type.text = "half"
+            elif new_duration_in_ticks * 4 == RESOLUTION:
+                duration_type.text = "quarter"
+            elif new_duration_in_ticks * 8 == RESOLUTION:
+                duration_type.text = "eighth"
+            elif new_duration_in_ticks * 16 == RESOLUTION:
+                duration_type.text = "16th"
+            elif new_duration_in_ticks * 32 == RESOLUTION:
+                duration_type.text = "32nd"
+            elif new_duration_in_ticks * 64 == RESOLUTION:
+                duration_type.text = "64th"
+
+            logging.debug(
+                f"Shortened rest to {duration_type.text} in element {rest.tag}"
+            )
+
+
+def preprocess_corrupted_measures(root):
+    """
+    Try to find measures with len="17/16" or similar
+    and try to fix them.
+    """
+    problem_measures = defaultdict(list)
+    for staff in root.findall(".//Score/Staff"):
+        staff_id = staff.get("id")
+        measure_index = -1
+        time_sig = None
+        for measure in staff.findall(".//Measure"):
+            new_time_sig = measure.find(".//TimeSig")
+            if new_time_sig is not None:
+                time_sig = f"{new_time_sig.find('.//sigN').text}/{new_time_sig.find('.//sigD').text}"
+            measure_index += 1
+            voice_index = -1
+            problem_measure = measure.get("len") is not None and "/" in measure.get(
+                "len"
+            )
+            if problem_measure:
+
+                problem_measures[measure_index].append(
+                    {
+                        "staff_id": staff_id,
+                        "measure": measure,
+                        "len": measure.get("len"),
+                        "elements": {},
+                        "time_sig": time_sig,
+                    }
+                )
+
+            for voice in measure.findall(".//voice"):
+                voice_index += 1
+                time_pos = 0
+                if problem_measure:
+                    if (
+                        voice_index
+                        not in problem_measures[measure_index][-1]["elements"]
+                    ):
+                        problem_measures[measure_index][-1]["elements"][voice_index] = {
+                            "elements": {},
+                            "max_time_pos": 0,
+                        }
+                for el in voice:
+                    if problem_measure:
+                        problem_measures[measure_index][-1]["elements"][voice_index][
+                            "elements"
+                        ][time_pos] = el
+                    if el.tag in ["Chord", "Rest"]:
+                        duration_type = el.find(".//durationType")
+                        time_pos += resolve_duration(
+                            duration_type.text if duration_type is not None else "0"
+                        )
+                    if el.tag == "location":
+                        fractions = el.find(".//fractions")
+                        if fractions is not None:
+                            time_pos += resolve_duration(
+                                fractions.text if fractions is not None else "0"
+                            )
+
+                    if problem_measure:
+                        problem_measures[measure_index][-1]["elements"][voice_index][
+                            "max_time_pos"
+                        ] = max(
+                            problem_measures[measure_index][-1]["elements"][
+                                voice_index
+                            ]["max_time_pos"],
+                            time_pos,
+                        )
+
+                if problem_measure:
+                    problem_measures[measure_index][-1]["elements"][voice_index][
+                        "elements"
+                    ][time_pos] = None
+
+    # For each corrupted measure, try to fix it by adjusting the final rest in each voice
+    # If all voices don't have a final rest, we can't fix it
+    for measure_index, staff_list in problem_measures.items():
+        possible_to_fix = True
+        max_time_pos = 0
+        for staff_values in staff_list:
+            for voice_index, voice_values in staff_values["elements"].items():
+                max_time_pos = max(max_time_pos, voice_values["max_time_pos"])
+        for staff_values in staff_list:
+            for voice_index, voice_values in staff_values["elements"].items():
+                if voice_values["max_time_pos"] < max_time_pos:
+                    # Ignore this voice, it is not complete any way
+                    continue
+                # Check last element
+                last_element = list(voice_values["elements"].values())[-2]
+                if last_element.tag != "Rest":
+                    possible_to_fix = False
+                    break
+
+        logging.debug(
+            f"Measure {measure_index} is {'possible' if possible_to_fix else 'not possible'} to fix"
+        )
+        if possible_to_fix:
+            time_sig = staff_list[0]["time_sig"]
+            correct_measeure_len = 0
+            if "/" in time_sig:
+                sig_n, sig_d = map(int, time_sig.split("/"))
+                correct_measeure_len = RESOLUTION * (sig_n / sig_d)
+            else:
+                correct_measeure_len = int(time_sig) * RESOLUTION
+
+            to_remove = max_time_pos - correct_measeure_len
+            logging.debug(
+                f"Correct measure length for measure {measure_index} is {correct_measeure_len}. Must remove {to_remove} ticks."
+            )
+            cant_fix = False
+            to_remove = []
+            to_shorten = []
+            for staff_values in staff_list:
+                if cant_fix:
+                    break
+                for voice_index, voice_values in staff_values["elements"].items():
+                    prev_el = None
+                    prev_prev_el = None
+                    remove_rest_of_elements = False
+
+                    for time_pos, element in list(voice_values["elements"].items()):
+                        # logging.debug(
+                        #     f"Processing element at time position {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index}"
+                        # )
+                        element_tag = element.tag if element is not None else None
+                        if remove_rest_of_elements:
+                            if element_tag == "Chord":
+                                cant_fix = True
+                                logging.warning(
+                                    f"Measure {measure_index} in staff {staff_values['staff_id']} voice {voice_index} has a chord after prev deleted, cannot fix."
+                                )
+                                logging.debug(
+                                    f"element xml: {etree.tostring(element, pretty_print=True).decode('utf-8')}"
+                                )
+                                break
+                            # We have started removing elements, so we will remove all after it
+                            to_remove.append(element)
+                            continue
+
+                        if element is not None and time_pos == correct_measeure_len:
+                            # Nice, there is a rest at the end of the measure.
+                            # Just remove this element and all after it.
+                            if element_tag == "Chord":
+                                cant_fix = True
+                                logging.warning(
+                                    f"Measure {measure_index} in staff {staff_values['staff_id']} has a chord at the end, cannot fix."
+                                )
+                                break
+                            to_remove.append(element)
+                            remove_rest_of_elements = True
+                            continue
+
+                        if time_pos >= correct_measeure_len:
+                            # We have passed the correct measure length
+                            # We need to shorten the previous rest and remove all after it
+                            if prev_el is None:
+                                logging.warning(
+                                    f"Measure {measure_index} in staff {staff_values['staff_id']} has no previous element to shorten."
+                                )
+                                cant_fix = True
+                                break
+                            if prev_el.tag == "Chord":
+                                logging.warning(
+                                    f"Measure {measure_index} in staff {staff_values['staff_id']} has no previous rest to shorten."
+                                )
+                                cant_fix = True
+                                break
+                            # Shorten the previous rest
+                            if correct_measeure_len - time_pos <= 0:
+                                # Can't shorten it enough, we need to remove it
+                                to_remove.append(prev_el)
+                                if prev_prev_el is not None:
+                                    if prev_prev_el.tag != "Rest":
+                                        logging.warning(
+                                            f"Measure {measure_index} in staff {staff_values['staff_id']} has no prev previous rest to shorten."
+                                        )
+                                        cant_fix = True
+                                        break
+                                    # If there is a previous element, we can shorten it
+                                    # By a delta...
+                                    logging.debug(
+                                        f"Shortening prev_prev rest in time_pos {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index} to 0 ticks"
+                                    )
+                                    to_shorten.append(
+                                        (
+                                            prev_prev_el,
+                                            get_rest_length(
+                                                prev_prev_el,
+                                                correct_measeure_len - time_pos,
+                                            ),
+                                        )
+                                    )
+                            else:
+                                logging.debug(
+                                    f"Shortening rest in time_pos {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index} to {correct_measeure_len - time_pos} ticks"
+                                )
+                                to_shorten.append(
+                                    (prev_el, correct_measeure_len - time_pos)
+                                )
+                            if element_tag == "Chord":
+                                cant_fix = True
+                                logging.warning(
+                                    f"Measure {measure_index} in staff {staff_values['staff_id']} has a chord after the rest, cannot fix."
+                                )
+                                break
+                            to_remove.append(element)
+                            remove_rest_of_elements = True
+                            continue
+
+                        prev_prev_el = prev_el
+                        prev_el = element
+
+                    if cant_fix:
+                        logging.warning(
+                            f"Measure {measure_index} in staff {staff_values['staff_id']} cannot be fixed."
+                        )
+                        break
+
+            if cant_fix:
+                continue
+
+            if to_shorten:
+                for el, new_duration in to_shorten:
+                    logging.debug(
+                        f"Shortening rest {el.tag} in, measure {measure_index} to {new_duration} ticks"
+                    )
+                    shorten_rest_to(el, new_duration)
+            if to_remove:
+                logging.debug(
+                    f"Removing elements {to_remove} from, measure {measure_index}"
+                )
+                for element in to_remove:
+                    if element is not None:
+                        parent = element.getparent()
+                        if parent is not None:
+                            parent.remove(element)
+
+                # remove len attribute from the measure
+                for staff_values in staff_list:
+                    measure = staff_values["measure"]
+                    if measure is not None:
+                        measure.attrib.pop("len", None)
+                        logging.debug(
+                            f"Removed len attribute from measure {measure_index} in staff {staff_values['staff_id']}"
+                        )
+
+
 def main(input_path, output_path):
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
@@ -429,6 +724,7 @@ def main(input_path, output_path):
     if not staffs:
         raise ValueError("No Staff elements found in the input XML.")
 
+    preprocess_corrupted_measures(root)
     # Convert staff ids to make space after each staff
     # id="1" becomes id="1" and
     # id="2" becomes id="3"
