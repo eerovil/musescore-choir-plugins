@@ -16,7 +16,7 @@ LYRICS_BY_TIMEPOS = {}
 RESOLUTION = 128  # Default resolution for durations in MuseScore XML
 
 
-def resolve_duration(fraction_or_duration):
+def resolve_duration(fraction_or_duration, dots="0"):
     """
     Resolves a duration string (either a fraction like "1/4" or a MuseScore duration type like "quarter")
     into its equivalent duration in ticks.
@@ -47,7 +47,14 @@ def resolve_duration(fraction_or_duration):
             "128th": RESOLUTION // 128,
             # Add more as needed
         }
-        return duration_map.get(fraction_or_duration.lower(), 0)
+        ret = duration_map.get(fraction_or_duration.lower(), 0)
+        if dots == "1":
+            ret += ret // 2  # Add half of the duration for one dot
+        elif dots == "2":
+            ret += (ret // 2) + (ret // 4)
+        elif dots == "3":
+            ret += (ret // 2) + (ret // 4) + (ret // 8)
+        return ret
 
 
 def lyric_to_dict(lyric):
@@ -161,8 +168,10 @@ def loop_staff(staff):
                 }
                 if el.tag in ["Chord", "Rest"]:
                     duration_type = el.find(".//durationType")
+                    dots = el.find(".//dots")
                     time_pos += resolve_duration(
-                        duration_type.text if duration_type is not None else "0"
+                        duration_type.text if duration_type is not None else "0",
+                        dots.text if dots is not None else "0",
                     )
                 if el.tag == "location":
                     fractions = el.find(".//fractions")
@@ -410,8 +419,14 @@ def get_rest_length(rest, tick_diff):
     Get the length of a Rest element in ticks.
     """
     duration_type = rest.find(".//durationType")
+    dots = rest.find(".//dots")
     if duration_type is not None:
-        return resolve_duration(duration_type.text) - tick_diff
+        return (
+            resolve_duration(
+                duration_type.text, dots=dots.text if dots is not None else "0"
+            )
+            - tick_diff
+        )
     return 0
 
 
@@ -419,6 +434,27 @@ def shorten_rest_to(rest, new_duration_in_ticks):
     """
     Shorten a Rest element to a new duration in ticks.
     """
+    BASE_NOTE_VALUES = {
+        "whole": [
+            1.0,
+            1.5,
+            1.75,
+            1.875,
+        ],  # whole, dotted whole, double dotted whole, triple dotted whole
+        "half": [
+            0.5,
+            0.75,
+            0.875,
+            0.9375,
+        ],  # half, dotted half, double dotted half, triple dotted half
+        "quarter": [0.25, 0.375, 0.4375, 0.46875],  # quarter, dotted quarter, etc.
+        "eighth": [0.125, 0.1875, 0.21875, 0.234375],
+        "16th": [0.0625, 0.09375, 0.109375, 0.1171875],
+        "32nd": [0.03125, 0.046875, 0.0546875, 0.05859375],
+        "64th": [0.015625, 0.0234375, 0.02734375, 0.029296875],
+        # Add more if needed
+    }
+
     duration_type = rest.find(".//durationType")
     if duration_type is not None:
         # Convert the new duration to a fraction
@@ -428,22 +464,21 @@ def shorten_rest_to(rest, new_duration_in_ticks):
             if parent is not None:
                 parent.remove(rest)
         else:
-            # Set the new duration type
-            if new_duration_in_ticks == RESOLUTION:
-                duration_type.text = "whole"
-            elif new_duration_in_ticks * 2 == RESOLUTION:
-                duration_type.text = "half"
-            elif new_duration_in_ticks * 4 == RESOLUTION:
-                duration_type.text = "quarter"
-            elif new_duration_in_ticks * 8 == RESOLUTION:
-                duration_type.text = "eighth"
-            elif new_duration_in_ticks * 16 == RESOLUTION:
-                duration_type.text = "16th"
-            elif new_duration_in_ticks * 32 == RESOLUTION:
-                duration_type.text = "32nd"
-            elif new_duration_in_ticks * 64 == RESOLUTION:
-                duration_type.text = "64th"
-
+            # Find whick value in the map multiplied by RESOLUTION
+            # is the correct value
+            for note_type, values in BASE_NOTE_VALUES.items():
+                for i, value in enumerate(values):
+                    if int(value * RESOLUTION) == new_duration_in_ticks:
+                        # Found the correct value
+                        duration_type.text = note_type
+                        # If there are dots, we need to adjust them
+                        if i > 0:
+                            dots = rest.find(".//dots")
+                            if dots is None:
+                                dots = etree.Element("dots")
+                                rest.append(dots)
+                            # Set the number of dots based on the index
+                            dots.text = str(i)
             logging.debug(
                 f"Shortened rest to {duration_type.text} in element {rest.tag}"
             )
@@ -499,8 +534,10 @@ def preprocess_corrupted_measures(root):
                         ][time_pos] = el
                     if el.tag in ["Chord", "Rest"]:
                         duration_type = el.find(".//durationType")
+                        dots = el.find(".//dots")
                         time_pos += resolve_duration(
-                            duration_type.text if duration_type is not None else "0"
+                            duration_type.text if duration_type is not None else "0",
+                            dots.text if dots is not None else "0",
                         )
                     if el.tag == "location":
                         fractions = el.find(".//fractions")
