@@ -84,7 +84,7 @@ def find_lyric(staff_id=None, measure_index=None, voice_index=None, time_pos=Non
         # Sometimes there is verse 2 lyric in the staff above
         # That would mean the lyric is for the upper voice in the lower staff
         original_staff_id = get_original_staff_id(staff_id)
-        upper_staff_id = int(original_staff_id) - 2
+        upper_staff_id = original_staff_id - 2
         if voice_index == 0:
             for lyric in lyric_choices:
                 if lyric["staff_id"] == upper_staff_id and lyric["lyric"]["no"] == "1":
@@ -226,6 +226,58 @@ def find_reversed_voices_by_staff_measure(staff):
     This function should return a list of reversed voices for the specified staff.
     """
     REVERSED_VOICES_BY_STAFF_MEASURE[int(staff.get("id"))] = {}
+    # First pass: add stem directions to measures that do not have them
+    els_by_timepos = defaultdict(lambda: defaultdict(list))
+    measures_with_stem_direction = set()
+    for el in loop_staff(staff):
+        staff_id = int(el["staff_id"])
+        measure_index = el["measure_index"]
+        voice_index = el["voice_index"]
+        element = el["element"]
+        time_pos = el["time_pos"]
+
+        if element.tag == "Chord":
+            els_by_timepos[measure_index][time_pos].append(
+                {
+                    "voice_index": voice_index,
+                    "element": element,
+                }
+            )
+            if element.find(".//StemDirection") is not None:
+                measures_with_stem_direction.add(measure_index)
+
+    for measure_index, timepos_elements in els_by_timepos.items():
+        if measure_index in measures_with_stem_direction:
+            # If the measure already has stem directions, we don't need to process it
+            continue
+        for elements in timepos_elements.values():
+            if len(elements) < 2:
+                continue
+            # Find which voice has the higher pitch in the elements
+            highest_element_index = 0
+            highest_element = elements[0]
+            for i, el in enumerate(elements):
+                if el["element"].find(".//pitch") is not None:
+                    pitch = int(el["element"].find(".//pitch").text)
+                    if highest_element["element"].find(
+                        ".//pitch"
+                    ) is not None and pitch > int(
+                        highest_element["element"].find(".//pitch").text
+                    ):
+                        highest_element_index = i
+                        highest_element = el
+            # Add stem direction up to the highest element
+            stem_direction = etree.Element("StemDirection")
+            stem_direction.text = "up"
+            highest_element["element"].append(stem_direction)
+            # Add stem direction down to the other elements
+            for i, el in enumerate(elements):
+                if i == highest_element_index:
+                    continue
+                stem_direction = etree.Element("StemDirection")
+                stem_direction.text = "down"
+                el["element"].append(stem_direction)
+
     index = -1
     for measure in staff.findall(".//Measure"):
         index += 1
@@ -234,6 +286,9 @@ def find_reversed_voices_by_staff_measure(staff):
             voice_index += 1
             for chord in voice.findall(".//Chord"):
                 stem_direction = chord.find(".//StemDirection")
+                logging.debug(
+                    f"Processing chord in staff {staff.get('id')}, measure {index}, voice {voice_index}, stem direction: {stem_direction}"
+                )
                 if stem_direction is None:
                     continue  # No stem direction, skip this chord
                 else:
@@ -361,6 +416,24 @@ def handle_staff(staff, direction):
         time_stretch.text = "3"
         fermata.append(time_stretch)
 
+    def create_lyric_element(syllabic, text, no):
+        """
+        Create a new Lyrics element with the given syllabic, text, and no.
+        """
+        lyric = etree.Element("Lyrics")
+        syllabic_el = etree.Element("syllabic")
+        syllabic_el.text = syllabic
+        lyric.append(syllabic_el)
+        text_el = etree.Element("text")
+        text_el.text = text
+        lyric.append(text_el)
+        no_el = etree.Element("no")
+        no_el.text = no
+        lyric.append(no_el)
+        return lyric
+
+    found_lyrics = defaultdict(list)
+
     # Try to find a lyric for each Chord in the staff
     for el in loop_staff(staff):
         staff_id = int(el["staff_id"])
@@ -376,28 +449,135 @@ def handle_staff(staff, direction):
                 voice_index=voice_index,
                 time_pos=time_pos,
             )
-            # logging.debug(
-            #     f"Found lyric for staff {staff_id}, measure {measure_index}, voice {voice_index}, time position {time_pos}: {lyric}"
-            # )
             if lyric:
                 # Delete old lyrics
                 for old_lyric in element.findall(".//Lyrics"):
                     element.remove(old_lyric)
-                    # logging.debug(
-                    #     f"Removed old lyric from staff {staff_id}, measure {measure_index}, voice {voice_index}"
-                    # )
-                # Add the new lyric
-                new_lyric = etree.Element("Lyrics")
-                syllabic = etree.Element("syllabic")
-                syllabic.text = lyric["syllabic"]
-                new_lyric.append(syllabic)
-                text = etree.Element("text")
-                text.text = lyric["text"]
-                new_lyric.append(text)
-                no = etree.Element("no")
-                no.text = lyric["no"]
-                new_lyric.append(no)
-                element.append(new_lyric)
+                element.append(
+                    create_lyric_element(lyric["syllabic"], lyric["text"], lyric["no"])
+                )
+
+            found_lyrics[staff_id].append(
+                {
+                    "staff_id": staff_id,
+                    "measure_index": measure_index,
+                    "voice_index": voice_index,
+                    "lyric": lyric,
+                    "element": element,
+                    "time_pos": time_pos,
+                }
+            )
+
+    for staff_id, lyrics in found_lyrics.items():
+        index = -1
+        for lyric in lyrics:
+            index += 1
+            if lyric["lyric"] is not None:
+                continue
+            element = lyric["element"]
+            # If element has Spanner type="Tie" and a <prev> inside it, skip.
+            spanner = element.find(".//Spanner[@type='Tie']")
+            if spanner is not None:
+                prev_el = spanner.find(".//prev")
+                if prev_el is not None:
+                    continue
+            prev_lyric = lyrics[index - 1] if index > 0 else None
+            prev_lyric = prev_lyric["lyric"] if prev_lyric else None
+            next_lyric = lyrics[index + 1] if index < len(lyrics) - 1 else None
+            next_lyric = next_lyric["lyric"] if next_lyric else None
+            logging.debug(
+                f"Trying to find a lyric for staff {staff_id}, measure {lyric['measure_index']}, prev_lyric: {prev_lyric}, next_lyric: {next_lyric}"
+            )
+            # Go to previous time position in LYRICS_BY_TIMEPOS
+            lyric_time_positions = list(LYRICS_BY_TIMEPOS.keys())
+            lyric_time_positions.sort(
+                key=lambda x: (int(x.split("-")[0]), int(x.split("-")[1]))
+            )
+            time_pos_key = f"{lyric['measure_index']}-{lyric['time_pos']}"
+            prev_time_pos_key = None
+            next_time_pos_key = None
+
+            def cmp_keys(key1, key2):
+                """
+                Compare two keys based on measure index and time position.
+                """
+                measure1, time1 = map(int, key1.split("-"))
+                measure2, time2 = map(int, key2.split("-"))
+                if measure1 < measure2:
+                    return -1
+                elif measure1 > measure2:
+                    return 1
+                else:
+                    return time1 - time2
+
+            for i, key in enumerate(lyric_time_positions):
+                # compare key with time_pos_key
+                # if we went past, we found the next time position
+                if cmp_keys(key, time_pos_key) > 0:
+                    logging.debug(
+                        "key > time_pos_key, {key} > {time_pos_key}, breaking loop".format(
+                            key=key, time_pos_key=time_pos_key
+                        )
+                    )
+                    # Found the key, now try to find a lyric in the previous time positions
+                    prev_time_pos_key = lyric_time_positions[i - 1] if i > 0 else None
+                    next_time_pos_key = lyric_time_positions[i]
+                    break
+
+            prev_matching_lyric = (
+                find_lyric(
+                    staff_id=staff_id,
+                    measure_index=prev_time_pos_key.split("-")[0],
+                    voice_index=lyric["voice_index"],
+                    time_pos=prev_time_pos_key.split("-")[1],
+                )
+                if prev_time_pos_key
+                else None
+            )
+            logging.debug(
+                f"Previous matching lyric for staff {staff_id}, measure {lyric['measure_index']}, time_pos: {prev_time_pos_key.split('-')[1] if prev_time_pos_key else None}: {prev_matching_lyric}"
+            )
+            next_matching_lyric = (
+                find_lyric(
+                    staff_id=staff_id,
+                    measure_index=next_time_pos_key.split("-")[0],
+                    voice_index=lyric["voice_index"],
+                    time_pos=next_time_pos_key.split("-")[1],
+                )
+                if next_time_pos_key
+                else None
+            )
+            logging.debug(
+                f"Next matching lyric for staff {staff_id}, measure {lyric['measure_index']}, time_pos: {next_time_pos_key.split('-')[1] if next_time_pos_key else None}: {next_matching_lyric}"
+            )
+            if prev_matching_lyric is not None and prev_matching_lyric["text"] != (
+                prev_lyric["text"] if prev_lyric else None
+            ):
+                # This is good!
+                logging.debug(
+                    f"Found previous matching lyric for staff {staff_id}, measure {lyric['measure_index']}: {prev_matching_lyric}"
+                )
+                element.append(
+                    create_lyric_element(
+                        prev_matching_lyric["syllabic"],
+                        prev_matching_lyric["text"],
+                        prev_matching_lyric["no"],
+                    )
+                )
+            elif next_matching_lyric is not None and next_matching_lyric["text"] != (
+                next_lyric["text"] if next_lyric else None
+            ):
+                # This is good!
+                logging.debug(
+                    f"Found next matching lyric for staff {staff_id}, measure {lyric['measure_index']}: {next_matching_lyric}"
+                )
+                element.append(
+                    create_lyric_element(
+                        next_matching_lyric["syllabic"],
+                        next_matching_lyric["text"],
+                        next_matching_lyric["no"],
+                    )
+                )
 
 
 def split_part(part):
