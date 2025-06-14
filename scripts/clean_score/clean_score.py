@@ -84,7 +84,7 @@ def find_lyric(staff_id=None, measure_index=None, voice_index=None, time_pos=Non
         # Sometimes there is verse 2 lyric in the staff above
         # That would mean the lyric is for the upper voice in the lower staff
         original_staff_id = get_original_staff_id(staff_id)
-        upper_staff_id = str(int(original_staff_id) - 2)
+        upper_staff_id = int(original_staff_id) - 2
         if voice_index == 0:
             for lyric in lyric_choices:
                 if lyric["staff_id"] == upper_staff_id and lyric["lyric"]["no"] == "1":
