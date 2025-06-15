@@ -20,7 +20,9 @@ MUSESCORE_EXPORT_PATH = os.getenv("MUSESCORE_EXPORT_PATH")
 OBS_EXPORT_PATH = os.getenv("OBS_EXPORT_PATH")
 
 if not MUSESCORE_EXPORT_PATH or not OBS_EXPORT_PATH:
-    raise EnvironmentError("Both MUSESCORE_EXPORT_PATH and OBS_EXPORT_PATH must be set in the environment.")
+    raise EnvironmentError(
+        "Both MUSESCORE_EXPORT_PATH and OBS_EXPORT_PATH must be set in the environment."
+    )
 
 export_path = Path(MUSESCORE_EXPORT_PATH)
 obs_path = Path(OBS_EXPORT_PATH)
@@ -32,9 +34,18 @@ musescore_export_script = "export_musescore.scpt"
 
 def get_mp3_duration(mp3_path):
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(mp3_path)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(mp3_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe error: {result.stderr.decode().strip()}")
@@ -56,6 +67,7 @@ def get_latest_file(path: Path, pattern: str):
 
 def glob_unicode(path: Path, pattern: str):
     import fnmatch
+
     pattern_nfc = unicodedata.normalize("NFC", pattern)
     print(f"Searching for files in {path} matching pattern: {pattern_nfc}")
     ret = []
@@ -63,7 +75,7 @@ def glob_unicode(path: Path, pattern: str):
         name_nfc = unicodedata.normalize("NFC", name)
         if fnmatch.fnmatch(name_nfc, pattern_nfc):
             ret.append(path / name_nfc)
-    
+
     return ret
 
 
@@ -89,7 +101,7 @@ def record_video(mp3_file):
     subprocess.run(["open", "-a", "OBS"])
     time.sleep(1)
 
-    ws = obs.ReqClient(host='localhost', port=4455, password='', timeout=3)
+    ws = obs.ReqClient(host="localhost", port=4455, password="", timeout=3)
     subprocess.run(["osascript", musescore_show_script])
     time.sleep(1)
 
@@ -123,20 +135,27 @@ def merge_mp3_to_video(mp3_basename):
         output_path = output_dir / f"{mp3.stem}.mov"
         cmd = [
             "ffmpeg",
-            "-i", str(mov_file),
-            "-i", str(mp3),
-            "-c:v", "copy",
-            "-filter_complex", "[1:a]adelay=1000|1000[a]",
-            "-map", "0:v:0",
-            "-map", "[a]",
-            "-map", "1:a:0",
+            "-i",
+            str(mov_file),
+            "-i",
+            str(mp3),
+            "-c:v",
+            "copy",
+            "-filter_complex",
+            "[1:a]adelay=1000|1000[a]",
+            "-map",
+            "0:v:0",
+            "-map",
+            "[a]",
+            "-map",
+            "1:a:0",
             "-y",
             str(output_path),
         ]
         logging.info(f"Merging {mp3.name} → {output_path.name}")
         subprocess.run(cmd, check=True, capture_output=True)
         results.append(output_path)
-    
+
     logging.info(f"All videos merged: {', '.join(str(r) for r in results)}")
     return results
 
@@ -211,7 +230,7 @@ def export_mp3_from_musescore():
     script_path = Path(musescore_export_script)
     if not script_path.exists():
         raise FileNotFoundError(f"Script {script_path} does not exist.")
-    
+
     subprocess.run(["osascript", str(script_path)], check=True)
     time.sleep(5)
     wait_for_all_mp3(export_dir=MUSESCORE_EXPORT_PATH, timeout=120, check_interval=1)
@@ -220,12 +239,24 @@ def export_mp3_from_musescore():
 
 def main():
     parser = argparse.ArgumentParser(description="Generate MuseScore practice videos.")
-    parser.add_argument("--basename", default='', help="Filter MP3 files by base name (e.g. song name)")
-    parser.add_argument("--export-mp3", action="store_true", help="Export MP3 files from MuseScore")
+    parser.add_argument(
+        "--basename", default="", help="Filter MP3 files by base name (e.g. song name)"
+    )
+    parser.add_argument(
+        "--export-mp3", action="store_true", help="Export MP3 files from MuseScore"
+    )
     parser.add_argument("--record", action="store_true", help="Record video using OBS")
-    parser.add_argument("--merge", action="store_true", help="Merge MP3 files with video")
-    parser.add_argument("--youtube", action="store_true", help="Upload to YouTube after merging")
-    parser.add_argument("--full", action="store_true", help="Export, Record and merge and upload to YouTube")
+    parser.add_argument(
+        "--merge", action="store_true", help="Merge MP3 files with video"
+    )
+    parser.add_argument(
+        "--youtube", action="store_true", help="Upload to YouTube after merging"
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Export, Record and merge and upload to YouTube",
+    )
     args = parser.parse_args()
 
     if args.full:
@@ -243,7 +274,7 @@ def main():
 
     basename = args.basename.strip()
     mp3 = get_latest_file(export_path, f"{basename}*.mp3")
-    basename = ' '.join(mp3.stem.split(' ')[:-1])
+    basename = " ".join(mp3.stem.split(" ")[:-1])
     print("Basename:", basename)
 
     if args.record:

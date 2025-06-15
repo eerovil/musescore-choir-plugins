@@ -15,7 +15,7 @@ tell application "System Events"
 	keystroke " "
 end tell
 
-delay 0.2 -- Give time to activate
+delay 1.5 -- Give time to activate
 tell application "System Events"
 	-- Stop playback (spacebar)
 	keystroke " "

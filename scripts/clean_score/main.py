@@ -249,6 +249,25 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
     if not parts:
         raise ValueError("No Part elements found in the input XML.")
 
+    # Make sure each part only has one staff. If not, copy part and move staff there
+    for part in parts:
+        staffs_in_part: Optional[etree._Element] = part.findall(".//Staff")
+        if len(staffs_in_part) <= 1:
+            continue
+        for extra_staff in staffs_in_part[1:]:
+            # Split the part into two separate parts
+            new_part: etree._Element = deepcopy(part)
+            parent_of_part: Optional[etree._Element] = part.getparent()
+            if parent_of_part is not None:
+                parent_of_part.insert(parent_of_part.index(part) + 1, new_part)
+            # Delete all except extra_staff from new_part
+            for to_delete_staff in new_part.findall(".//Staff"):
+                if to_delete_staff.get("id") == extra_staff.get("id"):
+                    continue
+                new_part.remove(to_delete_staff)
+            part.remove(extra_staff)
+
+    parts: List[etree._Element] = root.findall(".//Part")
     for part in parts:
         staff_in_part: Optional[etree._Element] = part.find(".//Staff")
         if staff_in_part is None:
@@ -360,6 +379,10 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
         add_lyrics_to_staff(staff)
 
     remove_lyrics_from_chord_with_tie_prev(root)
+    # delete all bracket
+    delete_all_elements_by_selector(root, ".//bracket")
+    # delete all barLineSpan
+    delete_all_elements_by_selector(root, ".//barLineSpan")
 
     # Serialize the output XML
     output_content: str = etree.tostring(

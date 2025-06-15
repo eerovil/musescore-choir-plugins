@@ -56,7 +56,7 @@ def detect_part_types(root: etree._Element) -> None:
         if clef_type == "F":
             # lowest note < 43 == This is Bass
             # highest note > 65 == This is Tenor
-            if lowest_note is not None and lowest_note < 43:
+            if lowest_note is not None and lowest_note < 50:
                 part_name = "Bass"
             elif highest_note is not None and highest_note > 65:
                 part_name = "Tenor"
