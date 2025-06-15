@@ -6,7 +6,7 @@ from lxml import etree
 import logging
 from typing import List, Optional
 
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def detect_part_types(root: etree._Element) -> None:
@@ -26,7 +26,7 @@ def detect_part_types(root: etree._Element) -> None:
                 any_f_clef = True
                 break
 
-    logging.debug(f"Any F clef found: {any_f_clef}")
+    logger.debug(f"Any F clef found: {any_f_clef}")
     # F clefs are male voices, either T, "Men", or "Baritone" or "Bass"
 
     part_info = {}
@@ -97,5 +97,5 @@ def detect_part_types(root: etree._Element) -> None:
         index += 1
         prev_part_name = part_info[staff_id]["part_name"]
 
-    logging.debug(f"Part info: {json.dumps(part_info, indent=2)}")
+    logger.debug(f"Part info: {json.dumps(part_info, indent=2)}")
     return part_info

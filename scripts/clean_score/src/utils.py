@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Any
 
 from .globals import RESOLUTION, STAFF_MAPPING
 
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def resolve_duration(fraction_or_duration: str, dots: str = "0") -> int:
@@ -228,9 +228,9 @@ def shorten_rest_to(rest: etree._Element, new_duration_in_ticks: int) -> None:
                 if found_match:
                     break
             if not found_match:
-                logging.warning(
+                logger.warning(
                     f"Could not find a matching duration type for {new_duration_in_ticks} ticks."
                 )
-            logging.debug(
+            logger.debug(
                 f"Shortened rest to {duration_type_el.text if duration_type_el.text else 'unknown'} in element {rest.tag}"
             )

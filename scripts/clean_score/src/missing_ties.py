@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple
 
 from .utils import loop_staff, resolve_duration
 
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def add_missing_ties(root):
@@ -41,7 +41,7 @@ def add_missing_ties(root):
                             el["element"]
                         ]
 
-    logging.debug(
+    logger.debug(
         f"Found {tied_notes_by_measure_time_pos.keys()} tied notes by measure and time position"
     )
     for staff in root.findall(".//Score/Staff"):
@@ -69,7 +69,7 @@ def add_missing_ties(root):
                         (measure_index, time_pos)
                     )
                     if matching_tie_start:
-                        logging.debug(
+                        logger.debug(
                             f"Found matching tie start for staff {staff.get('id')}, measure {measure_index}, time position {time_pos}"
                         )
                         new_tied_notes.append(
@@ -83,7 +83,7 @@ def add_missing_ties(root):
                             ]
                         )
 
-        logging.debug(f"new_tied_notes for staff {staff.get('id')}: {new_tied_notes}")
+        logger.debug(f"new_tied_notes for staff {staff.get('id')}: {new_tied_notes}")
 
         # Check that each two notes match their parents in the tied_notes_by_measure_time_pos
         for note_pair in new_tied_notes:
@@ -95,7 +95,7 @@ def add_missing_ties(root):
                 (note1["measure_index"], note1["time_pos"]), []
             )
             if len(parent_pair) != 2:
-                logging.warning(
+                logger.warning(
                     f"Found a note pair with no matching parent pair: {note1}, {note2}"
                 )
                 continue
@@ -113,7 +113,7 @@ def add_missing_ties(root):
                 parent_pair[1].find(".//durationType").text
             )
             if note1_duration != parent1_duration or note2_duration != parent2_duration:
-                logging.warning(
+                logger.warning(
                     f"Note durations do not match parent pair: {note1_duration}, {note2_duration} != {parent1_duration}, {parent2_duration}"
                 )
                 continue
@@ -134,10 +134,10 @@ def add_missing_ties(root):
                 if note_e1 is not None and note_e2 is not None:
                     note_e1.append(new_spanner1)
                     note_e2.append(new_spanner2)
-                logging.debug(
+                logger.debug(
                     f"Added spanner to note pair for staff {staff.get('id')}, measure {note1['measure_index']}, time position {note1['time_pos']}"
                 )
             else:
-                logging.warning(
+                logger.warning(
                     f"Spanner not found in parent pair for staff {staff.get('id')}, measure {note1['measure_index']}, time position {note1['time_pos']}"
                 )

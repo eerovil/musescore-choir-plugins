@@ -14,7 +14,7 @@ from .globals import (
 
 from .utils import get_original_staff_id, loop_staff
 
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def lyric_to_dict(lyric: etree._Element) -> Dict[str, str]:
@@ -298,7 +298,7 @@ def add_lyrics_to_staff(staff: etree._Element) -> None:
                 prev_lyric_data["text"] if prev_lyric_data else None
             ):
                 # This is good!
-                logging.debug(
+                logger.debug(
                     f"Found previous matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}: {prev_matching_lyric}"
                 )
                 element_to_process.append(
@@ -312,7 +312,7 @@ def add_lyrics_to_staff(staff: etree._Element) -> None:
                 next_lyric_data["text"] if next_lyric_data else None
             ):
                 # This is good!
-                logging.debug(
+                logger.debug(
                     f"Found next matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}: {next_matching_lyric}"
                 )
                 element_to_process.append(
@@ -359,7 +359,7 @@ def save_lyrics(input_path: str) -> None:
                             "no": lyric_item["lyric"]["no"],
                         }
                     )
-        logging.info(f"Saved lyrics by time position to {lyrics_by_timepos_path}")
+        logger.info(f"Saved lyrics by time position to {lyrics_by_timepos_path}")
 
 
 def load_lyrics(input_path: str) -> None:
@@ -391,5 +391,5 @@ def load_lyrics(input_path: str) -> None:
 
         return True
     except FileNotFoundError:
-        logging.info(f"Fixed lyrics file not found: {lyrics_by_timepos_path}")
+        logger.info(f"Fixed lyrics file not found: {lyrics_by_timepos_path}")
         return False

@@ -27,7 +27,12 @@ from src.utils import (
     default_keysig,
 )
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
+logger = logging.getLogger(__name__)
 
 
 def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
@@ -41,7 +46,7 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
     staff_id: int = int(staff.get("id", "0"))
     original_staff_id: int = get_original_staff_id(staff_id)
 
-    logging.debug(f"Handling staff {staff_id} for direction {direction}")
+    logger.debug(f"Handling staff {staff_id} for direction {direction}")
     if direction is not None:
         index: int = -1
         for measure in staff.findall(".//Measure"):
@@ -58,7 +63,7 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
             keysig: Optional[etree._Element] = deepcopy(measure.find(".//KeySig"))
             timesig: Optional[etree._Element] = deepcopy(measure.find(".//TimeSig"))
             clef: Optional[etree._Element] = deepcopy(measure.find(".//Clef"))
-            logging.debug(
+            logger.debug(
                 f"Processing measure {index} in staff {staff_id}, original_staff_id {original_staff_id}, time signature: {timesig}, key signature: {keysig}, voice to remove: {voice_to_remove}, reversed_voices: {reversed_voices}"
             )
 
@@ -195,7 +200,7 @@ def main(input_path: str, output_path: str) -> None:
     staffs_to_split: Set[int] = set()
     for staff in staffs:
         staff_id: int = int(staff.get("id", "0"))
-        logging.debug(f"Processing staff with id {staff_id}")
+        logger.debug(f"Processing staff with id {staff_id}")
         # Check each measure in the staff
         # If any has two voices, we need to split it
         for measure in staff.findall(".//Measure"):
@@ -203,7 +208,7 @@ def main(input_path: str, output_path: str) -> None:
                 staffs_to_split.add(staff_id)
                 break
 
-    logging.debug(f"Staffs to split: {staffs_to_split}")
+    logger.debug(f"Staffs to split: {staffs_to_split}")
     # e.g.
     # If we have staffs with ids 1, 2, 3, 4, 5
     # and we need to split 1, 2 and 4, we will end up with
@@ -222,7 +227,7 @@ def main(input_path: str, output_path: str) -> None:
             new_staff_id = 1
 
         staff.set("id", str(new_staff_id))
-        logging.debug(f"Updated staff id from {staff_id_orig} to {new_staff_id}")
+        logger.debug(f"Updated staff id from {staff_id_orig} to {new_staff_id}")
         if staff_id_orig not in staffs_to_split:
             # If the staff does not need to be split, we can let the next id be next to it
             new_staff_id += 1
@@ -233,7 +238,7 @@ def main(input_path: str, output_path: str) -> None:
     for staff_id_current in new_staffs_to_split:
         STAFF_MAPPING[staff_id_current] = int(str(staff_id_current + 1))
 
-    logging.debug("Staff mapping: %s", STAFF_MAPPING)
+    logger.debug("Staff mapping: %s", STAFF_MAPPING)
 
     # Find the Part elements
     parts: List[etree._Element] = root.findall(".//Part")
@@ -326,7 +331,7 @@ def main(input_path: str, output_path: str) -> None:
                     concert_clef_type = clef.find(".//concertClefType")
                     if concert_clef_type is not None:
                         concert_clef_type.text = clef_type
-                        logging.debug(
+                        logger.debug(
                             f"Set concertClefType to {clef_type} for staff {staff_id}"
                         )
                     transposing_clef_type = clef.find(".//transposingClefType")
@@ -334,9 +339,9 @@ def main(input_path: str, output_path: str) -> None:
                         transposing_clef_type.text = clef_type
 
     if load_lyrics(input_path):
-        logging.info("Loaded lyrics from fixed lyrics file.")
+        logger.info("Loaded lyrics from fixed lyrics file.")
     else:
-        logging.info("No fixed lyrics file found, saving current lyrics.")
+        logger.info("No fixed lyrics file found, saving current lyrics.")
         save_lyrics(input_path)
 
     # add lyrics to the staff
@@ -363,11 +368,11 @@ if __name__ == "__main__":
     parser.add_argument("output", help="Path to save the converted MuseScore XML file.")
     args = parser.parse_args()
 
-    logging.info(f"Converting {args.input} to {args.output}")
+    logger.info(f"Converting {args.input} to {args.output}")
     try:
         main(args.input, args.output)
-        logging.info("Conversion completed successfully.")
-        logging.info(f"Output written to {args.output}")
+        logger.info("Conversion completed successfully.")
+        logger.info(f"Output written to {args.output}")
     except Exception as e:
-        logging.error(f"An error occurred during conversion: {e}")
+        logger.error(f"An error occurred during conversion: {e}")
         raise

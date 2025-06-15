@@ -13,7 +13,7 @@ from .utils import (
     shorten_rest_to,
 )
 
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def preprocess_corrupted_measures(root: etree._Element) -> None:
@@ -130,7 +130,7 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                     possible_to_fix = False
                     break
 
-        logging.debug(
+        logger.debug(
             f"Measure {measure_index} is {'possible' if possible_to_fix else 'not possible'} to fix"
         )
         if possible_to_fix:
@@ -165,10 +165,10 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                         if remove_rest_of_elements:
                             if element_tag == "Chord":
                                 cant_fix_current_measure = True
-                                logging.warning(
+                                logger.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} voice {voice_index} has a chord after prev deleted, cannot fix."
                                 )
-                                logging.debug(
+                                logger.debug(
                                     f"element xml: {etree.tostring(element, pretty_print=True).decode('utf-8')}"
                                 )
                                 break
@@ -182,7 +182,7 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                             # Just remove this element and all after it.
                             if element_tag == "Chord":
                                 cant_fix_current_measure = True
-                                logging.warning(
+                                logger.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has a chord at the end, cannot fix."
                                 )
                                 break
@@ -194,13 +194,13 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                             # We have passed the correct measure length
                             # We need to shorten the previous rest and remove all after it
                             if prev_el is None:
-                                logging.warning(
+                                logger.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has no previous element to shorten."
                                 )
                                 cant_fix_current_measure = True
                                 break
                             if prev_el.tag == "Chord":
-                                logging.warning(
+                                logger.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has no previous rest to shorten."
                                 )
                                 cant_fix_current_measure = True
@@ -211,14 +211,14 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                                 elements_to_remove.append(prev_el)
                                 if prev_prev_el is not None:
                                     if prev_prev_el.tag != "Rest":
-                                        logging.warning(
+                                        logger.warning(
                                             f"Measure {measure_index} in staff {staff_values['staff_id']} has no prev previous rest to shorten."
                                         )
                                         cant_fix_current_measure = True
                                         break
                                     # If there is a previous element, we can shorten it
                                     # By a delta...
-                                    logging.debug(
+                                    logger.debug(
                                         f"Shortening prev_prev rest in time_pos {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index} to 0 ticks"
                                     )
                                     rests_to_shorten.append(
@@ -231,7 +231,7 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                                         )
                                     )
                             else:
-                                logging.debug(
+                                logger.debug(
                                     f"Shortening rest in time_pos {time_pos} in staff {staff_values['staff_id']}, measure {measure_index}, voice {voice_index} to {int(correct_measure_len - time_pos)} ticks"
                                 )
                                 rests_to_shorten.append(
@@ -239,7 +239,7 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                                 )
                             if element_tag == "Chord":
                                 cant_fix_current_measure = True
-                                logging.warning(
+                                logger.warning(
                                     f"Measure {measure_index} in staff {staff_values['staff_id']} has a chord after the rest, cannot fix."
                                 )
                                 break
@@ -252,7 +252,7 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                         prev_el = element
 
                     if cant_fix_current_measure:
-                        logging.warning(
+                        logger.warning(
                             f"Measure {measure_index} in staff {staff_values['staff_id']} cannot be fixed."
                         )
                         break
@@ -262,12 +262,12 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
 
             if rests_to_shorten:
                 for el, new_duration in rests_to_shorten:
-                    logging.debug(
+                    logger.debug(
                         f"Shortening rest {el.tag} in, measure {measure_index} to {new_duration} ticks"
                     )
                     shorten_rest_to(el, new_duration)
             if elements_to_remove:
-                logging.debug(
+                logger.debug(
                     f"Removing elements {elements_to_remove} from, measure {measure_index}"
                 )
                 for element_to_remove in elements_to_remove:
@@ -282,6 +282,6 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                     if measure is not None:
                         if "len" in measure.attrib:
                             del measure.attrib["len"]
-                        logging.debug(
+                        logger.debug(
                             f"Removed len attribute from measure {measure_index} in staff {staff_values['staff_id']}"
                         )

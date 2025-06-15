@@ -9,7 +9,7 @@ from typing import Dict, List, Set, Optional, Any
 from .globals import REVERSED_VOICES_BY_STAFF_MEASURE
 from .utils import loop_staff
 
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def find_reversed_voices_by_staff_measure(staff: etree._Element) -> None:
@@ -91,7 +91,7 @@ def find_reversed_voices_by_staff_measure(staff: etree._Element) -> None:
                 stem_direction_el: Optional[etree._Element] = chord.find(
                     ".//StemDirection"
                 )
-                logging.debug(
+                logger.debug(
                     f"Processing chord in staff {staff.get('id')}, measure {index}, voice {voice_index_in_measure}, stem direction: {stem_direction_el.text if stem_direction_el is not None else 'None'}"
                 )
                 if stem_direction_el is None or stem_direction_el.text is None:
