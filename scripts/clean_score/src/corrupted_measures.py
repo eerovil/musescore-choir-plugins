@@ -6,12 +6,14 @@ from lxml import etree
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 
-from .globals import RESOLUTION
+from .globals import GLOBALS
 from .utils import (
     get_rest_length,
     resolve_duration,
     shorten_rest_to,
 )
+
+RESOLUTION = GLOBALS.RESOLUTION
 
 logger = logging.getLogger(__name__)
 

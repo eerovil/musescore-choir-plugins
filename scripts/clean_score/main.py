@@ -6,11 +6,14 @@ from lxml import etree
 import logging
 from typing import List, Set, Optional
 
+from src.globals import GLOBALS
+
 from src.gemini_api import fix_lyrics
 from src.lyrics import (
     add_lyrics_to_staff,
     load_lyrics,
     read_lyrics,
+    remove_lyrics_from_chord_with_tie_prev,
     save_lyrics,
 )
 from src.missing_ties import add_missing_ties
@@ -52,7 +55,7 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
         index: int = -1
         for measure in staff.findall(".//Measure"):
             index += 1
-            reversed_voices: bool = REVERSED_VOICES_BY_STAFF_MEASURE.get(
+            reversed_voices: bool = GLOBALS.REVERSED_VOICES_BY_STAFF_MEASURE.get(
                 original_staff_id, {}
             ).get(index, False)
             if reversed_voices:
@@ -156,7 +159,7 @@ def split_part(part: etree._Element) -> etree._Element:
     """
     new_part: etree._Element = deepcopy(part)
     # Modify the new_part as needed
-    for from_staff, to_staff in STAFF_MAPPING.items():
+    for from_staff, to_staff in GLOBALS.STAFF_MAPPING.items():
         # Update the staff ID in the new part
         for staff in new_part.findall(".//Staff"):
             if int(staff.get("id", "0")) == from_staff:
@@ -175,10 +178,9 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
         input_path (str): Path to the input MuseScore XML file.
         output_path (str): Path where the converted XML file will be saved.
     """
-    global STAFF_MAPPING, REVERSED_VOICES_BY_STAFF_MEASURE, LYRICS_BY_TIMEPOS
-    STAFF_MAPPING = {}
-    REVERSED_VOICES_BY_STAFF_MEASURE = {}
-    LYRICS_BY_TIMEPOS = {}
+    GLOBALS.STAFF_MAPPING = {}
+    GLOBALS.REVERSED_VOICES_BY_STAFF_MEASURE = {}
+    GLOBALS.LYRICS_BY_TIMEPOS = {}
 
     with open(input_path, "r", encoding="utf-8") as f:
         input_content: str = f.readlines()
@@ -237,9 +239,9 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
             new_staff_id += 2
 
     for staff_id_current in new_staffs_to_split:
-        STAFF_MAPPING[staff_id_current] = int(str(staff_id_current + 1))
+        GLOBALS.STAFF_MAPPING[staff_id_current] = int(str(staff_id_current + 1))
 
-    logger.debug("Staff mapping: %s", STAFF_MAPPING)
+    logger.debug("Staff mapping: %s", GLOBALS.STAFF_MAPPING)
 
     # Find the Part elements
     parts: List[etree._Element] = root.findall(".//Part")
@@ -251,7 +253,7 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
         if staff_in_part is None:
             raise ValueError("No Staff element found in the Part element.")
         staff_id_in_part: int = int(staff_in_part.get("id", "0"))
-        if staff_id_in_part not in STAFF_MAPPING:
+        if staff_id_in_part not in GLOBALS.STAFF_MAPPING:
             continue
         # Split the part into two separate parts
         new_part: etree._Element = split_part(part)
@@ -259,7 +261,7 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
         if parent_of_part is not None:
             parent_of_part.insert(parent_of_part.index(part) + 1, new_part)
 
-    for staff_id_orig_split, new_staff_id_split in STAFF_MAPPING.items():
+    for staff_id_orig_split, new_staff_id_split in GLOBALS.STAFF_MAPPING.items():
         # Find <Staff> element with staff_id
         # Which is a direct child of <Score>
         staff_element_up: Optional[etree._Element] = root.find(
@@ -278,7 +280,7 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
                     score_element.index(staff_element_up) + 1, new_staff_element_down
                 )
 
-    for staff_id_orig_split, new_staff_id_split in STAFF_MAPPING.items():
+    for staff_id_orig_split, new_staff_id_split in GLOBALS.STAFF_MAPPING.items():
         up_staff_element: Optional[etree._Element] = root.find(
             f".//Score/Staff[@id='{staff_id_orig_split}']"
         )
@@ -293,10 +295,10 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
     # Handle rest of staffs to remove extra elements
     for staff in root.findall(".//Score/Staff"):
         staff_id_current: int = int(staff.get("id", "0"))
-        if staff_id_current in STAFF_MAPPING:
+        if staff_id_current in GLOBALS.STAFF_MAPPING:
             # This staff is already handled as 'up' voice
             continue
-        if staff_id_current in set(STAFF_MAPPING.values()):
+        if staff_id_current in set(GLOBALS.STAFF_MAPPING.values()):
             # This staff is a new staff created by the split (handled as 'down' voice)
             continue
         # Handle the staff (for staffs that were not split)
@@ -352,6 +354,8 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
     # add lyrics to the staff
     for staff in root.findall(".//Score/Staff"):
         add_lyrics_to_staff(staff)
+
+    remove_lyrics_from_chord_with_tie_prev(root)
 
     # Serialize the output XML
     output_content: str = etree.tostring(

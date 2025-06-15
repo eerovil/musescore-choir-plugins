@@ -49,7 +49,16 @@ def fix_lyrics(input_path, pdf_path):
 
     with open(tsv_path, "r", encoding="utf-8") as f:
         tsv_lines = f.readlines()
+
+    tsv_line_count = len(
+        [line for line in tsv_lines if line.strip()]
+    )  # Count non-empty lines
+    prompt_lines.insert(
+        len(prompt_lines) - 1,
+        f"Make sure result TSV line count is {tsv_line_count} (including header line)\n",
+    )
     prompt_lines.append("\n\n")
+
     prompt_lines.extend(tsv_lines)
     prompt_lines.append("```\n")
 

@@ -6,7 +6,7 @@ from lxml import etree
 import logging
 from typing import Dict, List, Set, Optional, Any
 
-from .globals import REVERSED_VOICES_BY_STAFF_MEASURE
+from .globals import GLOBALS
 from .utils import loop_staff
 
 logger = logging.getLogger(__name__)
@@ -20,9 +20,9 @@ def find_reversed_voices_by_staff_measure(staff: etree._Element) -> None:
     Args:
         staff (etree._Element): The staff XML element.
     """
-    global REVERSED_VOICES_BY_STAFF_MEASURE
+
     staff_id: int = int(staff.get("id", "0"))
-    REVERSED_VOICES_BY_STAFF_MEASURE[staff_id] = {}
+    GLOBALS.REVERSED_VOICES_BY_STAFF_MEASURE[staff_id] = {}
     # First pass: add stem directions to measures that do not have them
     els_by_timepos: Dict[int, Dict[int, List[Dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(list)
@@ -101,4 +101,4 @@ def find_reversed_voices_by_staff_measure(staff: etree._Element) -> None:
                 stem_voice: int = 0 if stem_direction_text == "up" else 1
                 if stem_voice != voice_index_in_measure:
                     # This voice is reversed (up stem but voice 2)
-                    REVERSED_VOICES_BY_STAFF_MEASURE[staff_id][index] = True
+                    GLOBALS.REVERSED_VOICES_BY_STAFF_MEASURE[staff_id][index] = True

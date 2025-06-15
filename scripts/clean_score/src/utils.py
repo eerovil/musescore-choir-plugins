@@ -5,7 +5,9 @@ from lxml import etree
 import logging
 from typing import Dict, List, Optional, Any
 
-from .globals import RESOLUTION, STAFF_MAPPING
+from .globals import GLOBALS
+
+RESOLUTION = GLOBALS.RESOLUTION
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +135,7 @@ def get_original_staff_id(staff_id: int) -> int:
         int: The original staff ID.
     """
     original_staff_id: int = staff_id
-    for parent_staff_id, child_staff_id in STAFF_MAPPING.items():
+    for parent_staff_id, child_staff_id in GLOBALS.STAFF_MAPPING.items():
         if child_staff_id == staff_id:
             original_staff_id = parent_staff_id
             break

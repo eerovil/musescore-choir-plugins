@@ -7,10 +7,7 @@ from lxml import etree
 import logging
 from typing import Dict, List, Optional, Any
 
-from .globals import (
-    LYRICS_BY_TIMEPOS,
-    REVERSED_VOICES_BY_STAFF_MEASURE,
-)
+from .globals import GLOBALS
 
 from .utils import get_original_staff_id, loop_staff
 
@@ -59,12 +56,11 @@ def find_lyric(
     Returns:
         Optional[Dict[str, str]]: The lyric dictionary if found, otherwise None.
     """
-    global LYRICS_BY_TIMEPOS
     if measure_index is None or time_pos is None:
         return None
     key: str = f"{measure_index}-{time_pos}"
-    if key in LYRICS_BY_TIMEPOS:
-        lyric_choices: List[Dict[str, Any]] = LYRICS_BY_TIMEPOS[key]
+    if key in GLOBALS.LYRICS_BY_TIMEPOS:
+        lyric_choices: List[Dict[str, Any]] = GLOBALS.LYRICS_BY_TIMEPOS[key]
         # Try to find the most correct lyric.
         # Sometimes there is verse 2 lyric in the staff above
         # That would mean the lyric is for the upper voice in the lower staff
@@ -114,7 +110,7 @@ def read_lyrics(staff: etree._Element) -> None:
         staff (etree._Element): The staff XML element.
     """
     staff_id: int = int(staff.get("id", "0"))
-    global LYRICS_BY_TIMEPOS, REVERSED_VOICES_BY_STAFF_MEASURE
+
     for el in loop_staff(staff):
         staff_id_loop: int = int(el["staff_id"])
         measure_index: int = el["measure_index"]
@@ -122,7 +118,7 @@ def read_lyrics(staff: etree._Element) -> None:
         time_pos: int = el["time_pos"]
         element: etree._Element = el["element"]
 
-        reversed_voices: bool = REVERSED_VOICES_BY_STAFF_MEASURE.get(
+        reversed_voices: bool = GLOBALS.REVERSED_VOICES_BY_STAFF_MEASURE.get(
             staff_id_loop, {}
         ).get(measure_index, False)
         if reversed_voices:
@@ -131,11 +127,14 @@ def read_lyrics(staff: etree._Element) -> None:
 
         if element.tag == "Chord":
             for lyric in element.findall(".//Lyrics"):
-                LYRICS_BY_TIMEPOS.setdefault(f"{measure_index}-{time_pos}", []).append(
+                GLOBALS.LYRICS_BY_TIMEPOS.setdefault(
+                    f"{measure_index}-{time_pos}", []
+                ).append(
                     {
                         "staff_id": staff_id_loop,
                         "measure_index": measure_index,
                         "voice_index": voice_index,
+                        "time_pos": time_pos,
                         "lyric": lyric_to_dict(lyric),
                     }
                 )
@@ -206,6 +205,8 @@ def add_lyrics_to_staff(staff: etree._Element) -> None:
             spanner: Optional[etree._Element] = element_to_process.find(
                 ".//Spanner[@type='Tie']"
             )
+            if spanner is None:
+                spanner = element_to_process.find(".//Spanner[@type='Slur']")
             if spanner is not None:
                 prev_el_spanner: Optional[etree._Element] = spanner.find(".//prev")
                 if prev_el_spanner is not None:
@@ -222,8 +223,8 @@ def add_lyrics_to_staff(staff: etree._Element) -> None:
             next_lyric_data: Optional[Dict[str, str]] = (
                 next_lyric_item["lyric"] if next_lyric_item else None
             )
-            # Go to previous time position in LYRICS_BY_TIMEPOS
-            lyric_time_positions: List[str] = list(LYRICS_BY_TIMEPOS.keys())
+            # Go to previous time position in GLOBALS.LYRICS_BY_TIMEPOS
+            lyric_time_positions: List[str] = list(GLOBALS.LYRICS_BY_TIMEPOS.keys())
             lyric_time_positions.sort(
                 key=lambda x: (int(x.split("-")[0]), int(x.split("-")[1]))
             )
@@ -326,7 +327,7 @@ def add_lyrics_to_staff(staff: etree._Element) -> None:
 
 def save_lyrics(input_path: str) -> None:
     # save lyrics by time position tsv file
-    if LYRICS_BY_TIMEPOS:
+    if GLOBALS.LYRICS_BY_TIMEPOS:
         keys = [
             "staff_id",
             "measure_index",
@@ -337,28 +338,36 @@ def save_lyrics(input_path: str) -> None:
             "no",
         ]
         lyrics_by_timepos_path: str = input_path.replace(".mscx", "_lyrics.tsv")
+        all_lyrics = []
+        for measure_time_pos, lyrics_list in GLOBALS.LYRICS_BY_TIMEPOS.items():
+            lyrics_list: List[Dict[str, Any]] = GLOBALS.LYRICS_BY_TIMEPOS[
+                measure_time_pos
+            ]
+            all_lyrics.extend(lyrics_list)
+
+        # Sort by staff_id, measure_index, time_pos
+        all_lyrics.sort(
+            key=lambda x: (
+                x["staff_id"],
+                x["measure_index"],
+                x["time_pos"],
+            )
+        )
         with open(lyrics_by_timepos_path, "w", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=keys, delimiter="\t")
             writer.writeheader()
-            sorted_lyrics_by_timepos: List[str] = sorted(
-                LYRICS_BY_TIMEPOS.keys(),
-                key=lambda x: (int(x.split("-")[0]), int(x.split("-")[1])),
-            )
-            for measure_time_pos in sorted_lyrics_by_timepos:
-                lyrics_list: List[Dict[str, Any]] = LYRICS_BY_TIMEPOS[measure_time_pos]
-                time_pos = measure_time_pos.split("-")[1]
-                for lyric_item in lyrics_list:
-                    writer.writerow(
-                        {
-                            "staff_id": lyric_item["staff_id"],
-                            "measure_index": lyric_item["measure_index"],
-                            "voice_index": lyric_item["voice_index"],
-                            "time_pos": time_pos,
-                            "text": lyric_item["lyric"]["text"],
-                            "syllabic": lyric_item["lyric"]["syllabic"],
-                            "no": lyric_item["lyric"]["no"],
-                        }
-                    )
+            for lyric_item in all_lyrics:
+                writer.writerow(
+                    {
+                        "staff_id": lyric_item["staff_id"],
+                        "measure_index": lyric_item["measure_index"],
+                        "voice_index": lyric_item["voice_index"],
+                        "time_pos": lyric_item["time_pos"],
+                        "text": lyric_item["lyric"]["text"],
+                        "syllabic": lyric_item["lyric"]["syllabic"],
+                        "no": lyric_item["lyric"]["no"],
+                    }
+                )
         logger.info(f"Saved lyrics by time position to {lyrics_by_timepos_path}")
 
 
@@ -366,21 +375,22 @@ def load_lyrics(input_path: str) -> None:
     """
     Try to open fixed lyrics file
     """
-    global LYRICS_BY_TIMEPOS
+
     lyrics_by_timepos_path: str = input_path.replace(".mscx", "_lyrics_fixed.tsv")
     try:
         with open(lyrics_by_timepos_path, "r", encoding="utf-8") as f:
-            LYRICS_BY_TIMEPOS.clear()
+            GLOBALS.LYRICS_BY_TIMEPOS.clear()
             reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
                 measure_time_pos = f"{row['measure_index']}-{row['time_pos']}"
-                if measure_time_pos not in LYRICS_BY_TIMEPOS:
-                    LYRICS_BY_TIMEPOS[measure_time_pos] = []
-                LYRICS_BY_TIMEPOS[measure_time_pos].append(
+                if measure_time_pos not in GLOBALS.LYRICS_BY_TIMEPOS:
+                    GLOBALS.LYRICS_BY_TIMEPOS[measure_time_pos] = []
+                GLOBALS.LYRICS_BY_TIMEPOS[measure_time_pos].append(
                     {
                         "staff_id": int(row["staff_id"]),
                         "measure_index": int(row["measure_index"]),
                         "voice_index": int(row["voice_index"]),
+                        "time_pos": int(row["time_pos"]),
                         "lyric": {
                             "text": row["text"],
                             "syllabic": row["syllabic"],
@@ -393,3 +403,24 @@ def load_lyrics(input_path: str) -> None:
     except FileNotFoundError:
         logger.info(f"Fixed lyrics file not found: {lyrics_by_timepos_path}")
         return False
+
+
+def remove_lyrics_from_chord_with_tie_prev(root):
+    """
+    Remove lyrics from chords that have a tie with a previous chord.
+    """
+    for chord in root.findall(".//Chord"):
+        spanner: Optional[etree._Element] = chord.find(".//Spanner[@type='Tie']")
+        if spanner is None:
+            spanner = chord.find(".//Spanner[@type='Slur']")
+        if spanner is not None:
+            prev_el_spanner: Optional[etree._Element] = spanner.find(".//prev")
+            if prev_el_spanner is not None:
+                # Remove all Lyrics elements from the chord
+                for lyric in chord.findall(".//Lyrics"):
+                    parent: Optional[etree._Element] = lyric.getparent()
+                    if parent is not None:
+                        parent.remove(lyric)
+                        logger.debug(
+                            f"Removed lyrics from chord with tie to previous chord"
+                        )
