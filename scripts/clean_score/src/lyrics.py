@@ -275,6 +275,22 @@ def add_lyrics_to_staff(staff: etree._Element) -> None:
                         # This case is tricky, might need more specific logic depending on expected behavior
                         pass
 
+            # If the pos keys are too far away, set null
+            if prev_time_pos_key:
+                if (
+                    int(prev_time_pos_key.split("-")[0]) - lyric_item["measure_index"]
+                    < 0
+                ):
+                    prev_time_pos_key = None
+
+            # If the pos keys are too far away, set null
+            if next_time_pos_key:
+                if (
+                    int(next_time_pos_key.split("-")[0]) - lyric_item["measure_index"]
+                    > 0
+                ):
+                    next_time_pos_key = None
+
             prev_matching_lyric: Optional[Dict[str, str]] = (
                 find_lyric(
                     staff_id=staff_id_found,
