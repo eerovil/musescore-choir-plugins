@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from copy import deepcopy
+import csv
 import json
 from lxml import etree
 
@@ -706,22 +707,25 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
         time_stretch.text = "3"
         fermata.append(time_stretch)
 
-    def create_lyric_element(syllabic: str, text: str, no: str) -> etree._Element:
-        """
-        Create a new Lyrics element with the given syllabic, text, and no.
-        """
-        lyric_el: etree._Element = etree.Element("Lyrics")
-        syllabic_el: etree._Element = etree.Element("syllabic")
-        syllabic_el.text = syllabic
-        lyric_el.append(syllabic_el)
-        text_el: etree._Element = etree.Element("text")
-        text_el.text = text
-        lyric_el.append(text_el)
-        no_el: etree._Element = etree.Element("no")
-        no_el.text = no
-        lyric_el.append(no_el)
-        return lyric_el
 
+def create_lyric_element(syllabic: str, text: str, no: str) -> etree._Element:
+    """
+    Create a new Lyrics element with the given syllabic, text, and no.
+    """
+    lyric_el: etree._Element = etree.Element("Lyrics")
+    syllabic_el: etree._Element = etree.Element("syllabic")
+    syllabic_el.text = syllabic
+    lyric_el.append(syllabic_el)
+    text_el: etree._Element = etree.Element("text")
+    text_el.text = text
+    lyric_el.append(text_el)
+    no_el: etree._Element = etree.Element("no")
+    no_el.text = no
+    lyric_el.append(no_el)
+    return lyric_el
+
+
+def add_lyrics_to_staff(staff: etree._Element) -> None:
     found_lyrics: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
 
     # Try to find a lyric for each Chord in the staff
@@ -785,9 +789,6 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
             next_lyric_data: Optional[Dict[str, str]] = (
                 next_lyric_item["lyric"] if next_lyric_item else None
             )
-            logging.debug(
-                f"Trying to find a lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}, prev_lyric: {prev_lyric_data}, next_lyric: {next_lyric_data}"
-            )
             # Go to previous time position in LYRICS_BY_TIMEPOS
             lyric_time_positions: List[str] = list(LYRICS_BY_TIMEPOS.keys())
             lyric_time_positions.sort(
@@ -816,11 +817,6 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
                 # compare key with time_pos_key
                 # if we went past, we found the next time position
                 if cmp_keys(key, time_pos_key) > 0:
-                    logging.debug(
-                        "key > time_pos_key, {key} > {time_pos_key}, breaking loop".format(
-                            key=key, time_pos_key=time_pos_key
-                        )
-                    )
                     # Found the key, now try to find a lyric in the previous time positions
                     prev_time_pos_key = lyric_time_positions[i - 1] if i > 0 else None
                     next_time_pos_key = lyric_time_positions[i]
@@ -855,9 +851,6 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
                 if prev_time_pos_key
                 else None
             )
-            logging.debug(
-                f"Previous matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}, time_pos: {int(prev_time_pos_key.split('-')[1]) if prev_time_pos_key else None}: {prev_matching_lyric}"
-            )
             next_matching_lyric: Optional[Dict[str, str]] = (
                 find_lyric(
                     staff_id=staff_id_found,
@@ -867,9 +860,6 @@ def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
                 )
                 if next_time_pos_key
                 else None
-            )
-            logging.debug(
-                f"Next matching lyric for staff {staff_id_found}, measure {lyric_item['measure_index']}, time_pos: {int(next_time_pos_key.split('-')[1]) if next_time_pos_key else None}: {next_matching_lyric}"
             )
             if prev_matching_lyric is not None and prev_matching_lyric["text"] != (
                 prev_lyric_data["text"] if prev_lyric_data else None
@@ -1274,6 +1264,77 @@ def preprocess_corrupted_measures(root: etree._Element) -> None:
                         )
 
 
+def save_lyrics(input_path: str) -> None:
+    # save lyrics by time position tsv file
+    if LYRICS_BY_TIMEPOS:
+        keys = [
+            "staff_id",
+            "measure_index",
+            "voice_index",
+            "time_pos",
+            "text",
+            "syllabic",
+            "no",
+        ]
+        lyrics_by_timepos_path: str = input_path.replace(".mscx", "_lyrics.tsv")
+        with open(lyrics_by_timepos_path, "w", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=keys, delimiter="\t")
+            writer.writeheader()
+            sorted_lyrics_by_timepos: List[str] = sorted(
+                LYRICS_BY_TIMEPOS.keys(),
+                key=lambda x: (int(x.split("-")[0]), int(x.split("-")[1])),
+            )
+            for measure_time_pos in sorted_lyrics_by_timepos:
+                lyrics_list: List[Dict[str, Any]] = LYRICS_BY_TIMEPOS[measure_time_pos]
+                time_pos = measure_time_pos.split("-")[1]
+                for lyric_item in lyrics_list:
+                    writer.writerow(
+                        {
+                            "staff_id": lyric_item["staff_id"],
+                            "measure_index": lyric_item["measure_index"],
+                            "voice_index": lyric_item["voice_index"],
+                            "time_pos": time_pos,
+                            "text": lyric_item["lyric"]["text"],
+                            "syllabic": lyric_item["lyric"]["syllabic"],
+                            "no": lyric_item["lyric"]["no"],
+                        }
+                    )
+        logging.info(f"Saved lyrics by time position to {lyrics_by_timepos_path}")
+
+
+def load_lyrics(input_path: str) -> None:
+    """
+    Try to open fixed lyrics file
+    """
+    lyrics_by_timepos_path: str = input_path.replace(".mscx", "_lyrics_fixed.tsv")
+    try:
+        with open(lyrics_by_timepos_path, "r", encoding="utf-8") as f:
+            LYRICS_BY_TIMEPOS.clear()
+            reader = csv.DictReader(f, delimiter="\t")
+            for row in reader:
+                measure_time_pos = f"{row['measure_index']}-{row['time_pos']}"
+                if measure_time_pos not in LYRICS_BY_TIMEPOS:
+                    LYRICS_BY_TIMEPOS[measure_time_pos] = []
+                LYRICS_BY_TIMEPOS[measure_time_pos].append(
+                    {
+                        "staff_id": int(row["staff_id"]),
+                        "measure_index": int(row["measure_index"]),
+                        "voice_index": int(row["voice_index"]),
+                        "lyric": {
+                            "text": row["text"],
+                            "syllabic": row["syllabic"],
+                            "no": row["no"],
+                        },
+                    }
+                )
+
+        logging.info(f"Loaded fixed lyrics: {LYRICS_BY_TIMEPOS}")
+        return True
+    except FileNotFoundError:
+        logging.info(f"Fixed lyrics file not found: {lyrics_by_timepos_path}")
+        return False
+
+
 def main(input_path: str, output_path: str) -> None:
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
@@ -1448,6 +1509,16 @@ def main(input_path: str, output_path: str) -> None:
                     transposing_clef_type = clef.find(".//transposingClefType")
                     if transposing_clef_type is not None:
                         transposing_clef_type.text = clef_type
+
+    if load_lyrics(input_path):
+        logging.info("Loaded lyrics from fixed lyrics file.")
+    else:
+        logging.info("No fixed lyrics file found, saving current lyrics.")
+        save_lyrics(input_path)
+
+    # add lyrics to the staff
+    for staff in root.findall(".//Score/Staff"):
+        add_lyrics_to_staff(staff)
 
     # Serialize the output XML
     output_content: str = etree.tostring(
