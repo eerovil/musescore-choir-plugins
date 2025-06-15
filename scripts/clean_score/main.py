@@ -6,6 +6,7 @@ from lxml import etree
 import logging
 from typing import List, Set, Optional
 
+from src.gemini_api import fix_lyrics
 from src.lyrics import (
     add_lyrics_to_staff,
     load_lyrics,
@@ -163,7 +164,7 @@ def split_part(part: etree._Element) -> etree._Element:
     return new_part
 
 
-def main(input_path: str, output_path: str) -> None:
+def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
     to a two-staff, single-voice-per-staff structure, and duplicates the Part
@@ -343,6 +344,10 @@ def main(input_path: str, output_path: str) -> None:
     else:
         logger.info("No fixed lyrics file found, saving current lyrics.")
         save_lyrics(input_path)
+        # Try using gemini API to fix lyrics
+        if pdf_path:
+            fix_lyrics(input_path, pdf_path)
+            load_lyrics(input_path)
 
     # add lyrics to the staff
     for staff in root.findall(".//Score/Staff"):
@@ -366,11 +371,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("input", help="Path to the input MuseScore XML file.")
     parser.add_argument("output", help="Path to save the converted MuseScore XML file.")
+    parser.add_argument(
+        "--pdf",
+        help="Path to the PDF file for lyrics extraction (optional).",
+        default=None,
+    )
     args = parser.parse_args()
 
     logger.info(f"Converting {args.input} to {args.output}")
     try:
-        main(args.input, args.output)
+        main(args.input, args.output, args.pdf)
         logger.info("Conversion completed successfully.")
         logger.info(f"Output written to {args.output}")
     except Exception as e:
