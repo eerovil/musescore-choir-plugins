@@ -327,7 +327,9 @@ def add_lyrics_to_staff(staff: etree._Element) -> None:
 
 def save_lyrics(input_path: str) -> None:
     # save lyrics by time position tsv file
-    if GLOBALS.LYRICS_BY_TIMEPOS:
+    if not GLOBALS.LYRICS_BY_TIMEPOS:
+        logger.info("No lyrics found to save.")
+    else:
         keys = [
             "staff_id",
             "measure_index",
@@ -338,6 +340,7 @@ def save_lyrics(input_path: str) -> None:
             "no",
         ]
         lyrics_by_timepos_path: str = input_path.replace(".mscx", "_lyrics.tsv")
+        logger.info(f"Saving lyrics by time position to {lyrics_by_timepos_path}")
         all_lyrics = []
         for measure_time_pos, lyrics_list in GLOBALS.LYRICS_BY_TIMEPOS.items():
             lyrics_list: List[Dict[str, Any]] = GLOBALS.LYRICS_BY_TIMEPOS[

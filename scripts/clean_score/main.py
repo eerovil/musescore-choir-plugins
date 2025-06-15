@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from copy import deepcopy
+import os
 from lxml import etree
 
 import logging
@@ -270,7 +271,6 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
         if staff_element_up is not None:
             find_reversed_voices_by_staff_measure(staff_element_up)
             # Read lyrics from the staff
-            read_lyrics(staff_element_up)
             new_staff_element_down: etree._Element = deepcopy(staff_element_up)
             new_staff_element_down.set("id", str(new_staff_id_split))
             # Insert the new Staff element into the Score next to the original
@@ -279,6 +279,10 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
                 score_element.insert(
                     score_element.index(staff_element_up) + 1, new_staff_element_down
                 )
+
+    # Read lyrics from all staffs
+    for staff in root.findall(".//Score/Staff"):
+        read_lyrics(staff)
 
     for staff_id_orig_split, new_staff_id_split in GLOBALS.STAFF_MAPPING.items():
         up_staff_element: Optional[etree._Element] = root.find(
@@ -374,13 +378,39 @@ if __name__ == "__main__":
         description="Convert MuseScore XML from single-staff, two-voice to two-staff, single-voice-per-staff."
     )
     parser.add_argument("input", help="Path to the input MuseScore XML file.")
-    parser.add_argument("output", help="Path to save the converted MuseScore XML file.")
+    parser.add_argument(
+        "--output", help="Path to save the converted MuseScore XML file."
+    )
     parser.add_argument(
         "--pdf",
         help="Path to the PDF file for lyrics extraction (optional).",
         default=None,
     )
     args = parser.parse_args()
+
+    # Input can be a dir, in that case we use any input file that is a *.mscx file and does not end with _split.mscx
+    if os.path.isdir(args.input):
+        input_dir = os.path.abspath(args.input)
+        input_files = [
+            f
+            for f in os.listdir(input_dir)
+            if f.endswith(".mscx") and not f.endswith("_split.mscx")
+        ]
+        if not input_files:
+            raise ValueError(
+                "No valid MuseScore XML files found in the specified directory."
+            )
+        args.input = os.path.join(input_dir, input_files[0])
+        if not args.output:
+            args.output = args.input.replace(".mscx", "_split.mscx")
+        if not args.pdf:
+            # Find the PDF file in the same directory
+            pdf_files = [f for f in os.listdir(input_dir) if f.endswith(".pdf")]
+            if pdf_files:
+                args.pdf = os.path.join(input_dir, pdf_files[0])
+            else:
+                args.pdf = None
+        logger.info(f"Using input file: {args.input}")
 
     logger.info(f"Converting {args.input} to {args.output}")
     try:

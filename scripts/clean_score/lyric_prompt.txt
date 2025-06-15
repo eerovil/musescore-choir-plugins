@@ -10,7 +10,7 @@ Rules:
 
 - Only correct the `text` and `syllabic` fields if needed.
 
-- Preserve or fix hyphenation by using appropriate syllabic values: `begin`, `middle`, `end`, `single`.
+- Preserve or fix hyphenation by using appropriate syllabic values: `begin`, `middle`, `end`, (empty == single).
 
 - Do not add or remove lines — just edit typos for what's already there. Never replace text with empty string.
 
