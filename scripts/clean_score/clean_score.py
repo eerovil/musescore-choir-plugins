@@ -1328,7 +1328,6 @@ def load_lyrics(input_path: str) -> None:
                     }
                 )
 
-        logging.info(f"Loaded fixed lyrics: {LYRICS_BY_TIMEPOS}")
         return True
     except FileNotFoundError:
         logging.info(f"Fixed lyrics file not found: {lyrics_by_timepos_path}")
