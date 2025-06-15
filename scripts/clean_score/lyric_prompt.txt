@@ -1,0 +1,23 @@
+You are given lyrics exported from a music score as TSV data. Each line contains:
+
+staff_id<TAB>measure_index<TAB>voice_index<TAB>time_pos<TAB>text<TAB>syllabic<TAB>no (verse)
+
+The lyrics may contain typos, missing syllables, or syllabic errors. Your job is to correct the lyrics by comparing them to the original score PDF (provided separately) and output corrected TSV in the exact same format.
+
+Rules:
+
+- Keep the tick, staff, voice, and verse exactly as-is.
+
+- Only correct the `text` and `syllabic` fields if needed.
+
+- Preserve hyphenation by using appropriate syllabic values: `begin`, `middle`, `end`, `single`.
+
+- Do not add or remove lines — just edit what's already there.
+
+- Keep the result strictly in TSV format.
+
+# Do NOT change the values in the first four fields per line:
+# staff_id<TAB>measure_index<TAB>voice_index<TAB>time_pos
+
+Now here is the TSV data (followed by the score in PDF form for reference):
+```
