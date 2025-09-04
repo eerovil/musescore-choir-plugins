@@ -79,7 +79,7 @@ def fix_lyrics(input_path, pdf_path):
         else:
             logger.info("Generating content using Gemini API...")
             response = client.models.generate_content(
-                model="gemini-2.5-flash-preview-05-20",
+                model="gemini-2.5-flash",
                 contents=[
                     types.Part.from_text(text=prompt),
                     types.Part.from_bytes(

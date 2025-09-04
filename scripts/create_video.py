@@ -30,6 +30,8 @@ obs_path = Path(OBS_EXPORT_PATH)
 musescore_show_script = "show_musescore.scpt"
 musescore_play_script = "play_musescore.scpt"
 musescore_export_script = "export_musescore.scpt"
+start_recording_script = "start_recording.scpt"
+stop_recording_script = "stop_recording.scpt"
 
 
 def get_mp3_duration(mp3_path):
@@ -57,7 +59,7 @@ def get_latest_file(path: Path, pattern: str):
     if not files:
         raise FileNotFoundError(f"No files matching {pattern} in {path}")
     # if path is mov, ignore files less than 5MB
-    if pattern.endswith(".mov"):
+    if pattern.endswith(".mp4"):
         logging.info(f"Filtering MOV files larger than 5MB in {path}")
         files = [f for f in files if f.stat().st_size >= 5 * 1024 * 1024]  # 5MB
         if not files:
@@ -98,14 +100,13 @@ def get_filtered_mp3_files(mp3_basename):
 
 def record_video(mp3_file):
     duration = get_mp3_duration(mp3_file)
-    subprocess.run(["open", "-a", "OBS"])
+    subprocess.run(["open", "-a", "QuickRecorder"])
     time.sleep(1)
 
-    ws = obs.ReqClient(host="localhost", port=4455, password="", timeout=3)
     subprocess.run(["osascript", musescore_show_script])
     time.sleep(1)
 
-    ws.start_record()
+    subprocess.run(["osascript", start_recording_script])
     logging.info("Recording started.")
     time.sleep(1)
     subprocess.run(["osascript", musescore_play_script])
@@ -114,29 +115,27 @@ def record_video(mp3_file):
         time.sleep(duration + 1)
     except KeyboardInterrupt:
         logging.info("Recording interrupted by user.")
-        ws.stop_record()
+        subprocess.run(["osascript", stop_recording_script])
         logging.info("Recording stopped.")
-        ws.disconnect()
         raise
 
-    ws.stop_record()
+    subprocess.run(["osascript", stop_recording_script])
     logging.info("Recording stopped.")
-    ws.disconnect()
 
 
 def merge_mp3_to_video(mp3_basename):
     mp3_files = get_filtered_mp3_files(mp3_basename)
-    mov_file = get_latest_file(obs_path, "*.mov")
+    input_video_file = get_latest_file(obs_path, "*.mp4")
     output_dir = Path("output") / mp3_basename
     output_dir.mkdir(parents=True, exist_ok=True)
     results = []
 
     for mp3 in mp3_files:
-        output_path = output_dir / f"{mp3.stem}.mov"
+        output_path = output_dir / f"{mp3.stem}.mp4"
         cmd = [
             "ffmpeg",
             "-i",
-            str(mov_file),
+            str(input_video_file),
             "-i",
             str(mp3),
             "-c:v",
@@ -238,6 +237,13 @@ def export_mp3_from_musescore():
 
 
 def main():
+    """
+    Install QuickRecorder.
+    Set up QuickRecorder: Add keyboard shortcuts to start record and stop
+    Setup musescore 3 to export with keyboard shortcut.
+    Open wanted sheet music in musescore, and match --basename with the basename of it
+
+    """
     parser = argparse.ArgumentParser(description="Generate MuseScore practice videos.")
     parser.add_argument(
         "--basename", default="", help="Filter MP3 files by base name (e.g. song name)"
@@ -288,10 +294,10 @@ def main():
         if not basename:
             raise ValueError("Base name must be provided when skipping recording.")
         results = []
-        # Find output/basename/*.mov files
+        # Find output/basename/*.mp4 files
         output_dir = Path("output") / basename
         if output_dir.exists():
-            results = list(output_dir.glob("*.mov"))
+            results = list(output_dir.glob("*.mp4"))
             if not results:
                 raise FileNotFoundError(f"No video files found in {output_dir}")
         else:
