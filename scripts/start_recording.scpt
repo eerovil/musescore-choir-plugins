@@ -8,6 +8,6 @@ delay 0.2 -- Give time to activate
 
 # Click at 70% X and 70% Y of the main screen
 
-do shell script "cliclick c:1080,790"
+do shell script "cliclick c:1080,800"
 
 

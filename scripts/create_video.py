@@ -59,7 +59,7 @@ def get_latest_file(path: Path, pattern: str):
     if not files:
         raise FileNotFoundError(f"No files matching {pattern} in {path}")
     # if path is mov, ignore files less than 5MB
-    if pattern.endswith(".mp4"):
+    if pattern.endswith(".mov"):
         logging.info(f"Filtering MOV files larger than 5MB in {path}")
         files = [f for f in files if f.stat().st_size >= 5 * 1024 * 1024]  # 5MB
         if not files:
@@ -125,13 +125,13 @@ def record_video(mp3_file):
 
 def merge_mp3_to_video(mp3_basename):
     mp3_files = get_filtered_mp3_files(mp3_basename)
-    input_video_file = get_latest_file(obs_path, "*.mp4")
+    input_video_file = get_latest_file(obs_path, "*.mov")
     output_dir = Path("output") / mp3_basename
     output_dir.mkdir(parents=True, exist_ok=True)
     results = []
 
     for mp3 in mp3_files:
-        output_path = output_dir / f"{mp3.stem}.mp4"
+        output_path = output_dir / f"{mp3.stem}.mov"
         cmd = [
             "ffmpeg",
             "-i",
@@ -294,10 +294,10 @@ def main():
         if not basename:
             raise ValueError("Base name must be provided when skipping recording.")
         results = []
-        # Find output/basename/*.mp4 files
+        # Find output/basename/*.mov files
         output_dir = Path("output") / basename
         if output_dir.exists():
-            results = list(output_dir.glob("*.mp4"))
+            results = list(output_dir.glob("*.mov"))
             if not results:
                 raise FileNotFoundError(f"No video files found in {output_dir}")
         else:

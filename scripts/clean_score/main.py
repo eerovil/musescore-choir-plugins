@@ -395,6 +395,17 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
 
 
 if __name__ == "__main__":
+    """
+    How to use
+    Create new folder here called "Your song"
+    Insert into it a uncompressed MuseScore file (mscx) (NOT a mscz file)
+    Also add the original PDF file if you want to fix the lyrics using Gemini API
+    Run ./main.py "Your song"
+    The output will be saved as "Your song/Your song_split.mscx"
+
+    For gemini api, set .env variable GEMINI_API_KEY to your API key
+
+    """
     import argparse
 
     parser = argparse.ArgumentParser(
