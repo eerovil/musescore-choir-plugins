@@ -8,6 +8,8 @@ delay 0.2 -- Give time to activate
 
 # Click at 70% X and 70% Y of the main screen
 
-do shell script "cliclick c:1080,800"
+# Find red color on screen
+
+do shell script "python3 find_red_and_click.py"
 
 
