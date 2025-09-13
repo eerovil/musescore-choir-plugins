@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""
+HELP_TEXT = """
 How to use
 
 * Get a musescore file or musicxml file.
@@ -21,7 +21,7 @@ import argparse
 import dotenv
 
 parser = argparse.ArgumentParser(
-    description="Convert MuseScore/MusicXML from single-staff, two-voice to two-staff, single-voice-per-staff."
+    description="Convert MuseScore/MusicXML from single-staff, two-voice to two-staff, single-voice-per-staff." + "\n" + HELP_TEXT
 )
 # Allow passing multiple files
 parser.add_argument("input_files", nargs="+", help="Input MuseScore or MusicXML file, and possibly original PDF")
