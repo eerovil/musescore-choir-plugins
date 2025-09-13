@@ -1,4 +1,0 @@
-
-lxml
-pytest
-google-genai

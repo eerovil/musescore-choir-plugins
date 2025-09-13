@@ -1,0 +1,8 @@
+lxml
+pytest
+google-genai
+dotenv
+google-api-python-client
+google-auth-oauthlib
+pillow
+pyautogui

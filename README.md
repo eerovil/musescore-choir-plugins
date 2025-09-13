@@ -20,7 +20,7 @@ How to use
 
 * Get a musescore file or musicxml file.
 
-* Drag that on this script or run from command line
+* Run from command line
     ./clean_score.py "path/to/your/file.mscz"
 
 * Also pass the original PDF file if you want to fix the lyrics using Gemini API
@@ -51,3 +51,5 @@ Test quickrecorder that the recording area is correct
 Run this script with the same basename as the directory in songs/
 i.e. if your song is in songs/MySong, run
     ./record_stemmanauha.py MySong
+
+media files should appear in song folder. To re-record, delete files

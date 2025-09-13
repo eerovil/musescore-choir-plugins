@@ -33,6 +33,7 @@ parser = argparse.ArgumentParser(
 )
 # Pass song name
 parser.add_argument("basename", help="Basename of the song, i.e. directory name in songs/")
+parser.add_argument("--no-youtube", action="store_true", help="Disable YouTube upload even if configured")
 args = parser.parse_args()
 
 # Create output directory if it doesn't exist
@@ -59,8 +60,9 @@ if not os.path.exists(song_dir):
 YOUTUBE_CLIENT_SECRETS_PATH = os.path.join(SCRIPT_DIR, os.getenv("YOUTUBE_CLIENT_SECRETS_PATH", ""))
 youtube = False
 if YOUTUBE_CLIENT_SECRETS_PATH and os.path.exists(YOUTUBE_CLIENT_SECRETS_PATH):
-    youtube = True
-    print("YouTube upload enabled.")
+    if not args.no_youtube:
+        youtube = True
+        print("YouTube upload enabled.")
 
 from src.stemmanauha.create_video import run
 run(
