@@ -9,6 +9,4 @@ songs
 client_secrets.json
 
 .DS_Store
-
-.pickle
-.pickle*
+token.pickle
