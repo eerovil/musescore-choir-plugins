@@ -14,7 +14,13 @@ i.e. install plugins and run plugin export.qml with keyboard shortcut
 	-- Send Command-Option-E
 
 Open wanted sheet music in musescore
-Test quickrecorder 
+Test quickrecorder that the recording area is correct
+
+Run this script with the same basename as the directory in songs/
+i.e. if your song is in songs/MySong, run
+    ./record_stemmanauha.py MySong
+
+    
 """
 
 
@@ -26,7 +32,7 @@ parser = argparse.ArgumentParser(
     description="Record practice video from MuseScore using QuickRecorder." + "\n" + HELP_TEXT
 )
 # Pass song name
-parser.add_argument("basename", help="Name of the song to record: MUST MATCH the MuseScore file name")
+parser.add_argument("basename", help="Basename of the song, i.e. directory name in songs/")
 args = parser.parse_args()
 
 # Create output directory if it doesn't exist

@@ -84,13 +84,56 @@ input_file = os.path.join(song_dir, os.path.basename(musescore_file))
 if pdf_file:
     pdf_file = os.path.join(song_dir, os.path.basename(pdf_file))
 
-output_file = input_file.replace(".mscz", "_cleaned.mscz").replace(".mscx", "_cleaned.mscx").replace(".musicxml", "_cleaned.musicxml").replace(".xml", "_cleaned.xml")
+output_file = input_file.replace(".mscx", "_cleaned.mscx").replace(".mscz", "_cleaned.mscx").replace(".musicxml", "_cleaned.mscx").replace(".xml", "_cleaned.mscx")
 
 # Load environment variables from .env or .env.default file
 dotenv_path = os.path.join(SCRIPT_DIR, ".env")
 if not os.path.exists(dotenv_path):
     dotenv_path = os.path.join(SCRIPT_DIR, ".env.default")
 dotenv.load_dotenv(dotenv_path)
+
+# Convert any input file to .mscx
+if not input_file.lower().endswith(".mscx"):
+    print(f"Converting {input_file} to .mscx format")
+    if input_file.lower().endswith(".mscz"):
+        # unzip the mscz file
+        import zipfile
+        os.mkdir(song_dir + "/temp_extracted")
+        with zipfile.ZipFile(input_file, 'r') as zip_ref:
+            zip_ref.extractall(song_dir + "/temp_extracted")
+        # Find the .mscx file
+        mscx_file = None
+        for entry in os.listdir(song_dir + "/temp_extracted"):
+            if entry.lower().endswith(".mscx"):
+                mscx_file = os.path.join(song_dir + "/temp_extracted", entry)
+                break
+        else:
+            print("Failed to extract .mscx from .mscz file")
+            sys.exit(1)
+    elif input_file.lower().endswith((".musicxml", ".xml")):
+        # Convert musicxml to mscx using musescore command line
+        import subprocess
+        mscx_file = input_file.rsplit(".", 1)[0] + ".mscx"
+        musescore_cmd = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+        result = subprocess.run([musescore_cmd, input_file, "-o", mscx_file], capture_output=True, text=True)
+        if result.returncode != 0:
+            print("Failed to convert musicxml to mscx")
+            print("Command output:", result.stdout)
+            print("Command error:", result.stderr)
+            sys.exit(1)
+
+    if not mscx_file:
+        print("Failed to convert to .mscx format")
+        sys.exit(1)
+    # Move the converted file to the song directory
+    new_input_file = os.path.join(song_dir, os.path.basename(mscx_file))
+    shutil.move(mscx_file, new_input_file)
+    input_file = new_input_file
+    print(f"Converted to {input_file}")
+
+    # If temp_extracted directory exists, remove it
+    if os.path.exists(song_dir + "/temp_extracted"):
+        shutil.rmtree(song_dir + "/temp_extracted")
 
 # Run the cleaning script
 from src.clean_score.main import main
