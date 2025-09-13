@@ -30,13 +30,6 @@ def fix_lyrics(input_path, pdf_path):
         logger.info(f"Output file already exists: {output_path}")
         return
 
-    try:
-        client = genai.Client(api_key=get_gemini_api_key())
-    except Exception as e:
-        # Catch any errors related to the API client initialization
-        logger.error(f"Failed to initialize Gemini API client: {e}")
-        return
-
     # prompt is "prompt" and append the tsv file to it
     # And then also add the pdf file to the prompt
     prompt_lines = []
@@ -59,6 +52,19 @@ def fix_lyrics(input_path, pdf_path):
     prompt_lines.append("```\n")
 
     prompt = "".join(prompt_lines)
+
+    # Save prompt to a file for debugging
+    prompt_debug_path = input_path.replace(".mscx", "_prompt.txt")
+    with open(prompt_debug_path, "w", encoding="utf-8") as f:
+        f.write(prompt)
+    logger.info(f"Saved prompt to {prompt_debug_path}")
+
+    try:
+        client = genai.Client(api_key=get_gemini_api_key())
+    except Exception as e:
+        # Catch any errors related to the API client initialization
+        logger.error(f"Failed to initialize Gemini API client: {e}")
+        return
 
     try:
         # debug: pickle response and save it to a file

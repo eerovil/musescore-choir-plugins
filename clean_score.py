@@ -11,6 +11,9 @@ How to use
 * Also pass the original PDF file if you want to fix the lyrics using Gemini API
     For gemini api, set .env variable GEMINI_API_KEY to your API key
 
+    e.g.
+    ./clean_score.py "Sortunut ääni.pdf" "Sortunut-a-a-ni-pdf.xml" 
+
 * Output file will be saved to songs/
 
 """
