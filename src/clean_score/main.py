@@ -7,25 +7,25 @@ from lxml import etree
 import logging
 from typing import List, Set, Optional
 
-from src.globals import GLOBALS
+from utils.globals import GLOBALS
 
-from src.gemini_api import fix_lyrics
-from src.lyrics import (
+from utils.gemini_api import fix_lyrics
+from utils.lyrics import (
     add_lyrics_to_staff,
     load_lyrics,
     read_lyrics,
     remove_lyrics_from_chord_with_tie_prev,
     save_lyrics,
 )
-from src.missing_ties import add_missing_ties
-from src.part_types import detect_part_types
-from src.reversed_voices import (
+from utils.missing_ties import add_missing_ties
+from utils.part_types import detect_part_types
+from utils.reversed_voices import (
     find_reversed_voices_by_staff_measure,
 )
 
-from src.corrupted_measures import preprocess_corrupted_measures
+from utils.corrupted_measures import preprocess_corrupted_measures
 
-from src.utils import (
+from utils.utils import (
     delete_all_elements_by_selector,
     get_original_staff_id,
     default_timesig,

@@ -1,17 +1,14 @@
-scripts/output
-
-.DS_Store
-scripts/.env
-scripts/client_secrets.json
-
-*.pyc
-scripts/token.pickle
-scripts/clean_score/test_output.txt
-scripts/clean_score/test_output2.txt
-
 pip-src
 
-Ankarata*
+songs
 
-*.mscx
-scripts/clean_score/Kevät*
+*.pyc
+
+.env
+
+client_secrets.json
+
+.DS_Store
+
+.pickle
+.pickle*
