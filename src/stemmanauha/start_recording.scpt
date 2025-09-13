@@ -10,6 +10,6 @@ delay 0.2 -- Give time to activate
 
 # Find red color on screen
 
-do shell script "python3 find_red_and_click.py"
+do shell script "python3 src/stemmanauha/find_red_and_click.py"
 
 

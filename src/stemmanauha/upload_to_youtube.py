@@ -92,7 +92,9 @@ def add_video_to_playlist(youtube, playlist_id, video_id):
     request.execute()
 
 
-def upload_to_youtube(video_paths, basename):
+def upload_to_youtube(song_dir, video_paths):
+    basename = os.path.basename(song_dir)
+
     logging.info("Authenticating with YouTube...")
     youtube = get_authenticated_service()
 

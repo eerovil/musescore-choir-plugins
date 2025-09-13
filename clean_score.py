@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+
+"""
+How to use
+
+* Get a musescore file or musicxml file.
+
+* Drag that on this script or run from command line
+    ./clean_score.py "path/to/your/file.mscz"
+
+* Also pass the original PDF file if you want to fix the lyrics using Gemini API
+    For gemini api, set .env variable GEMINI_API_KEY to your API key
+
+* Output file will be saved to songs/
+
+"""
+import argparse
+import dotenv
+
+parser = argparse.ArgumentParser(
+    description="Convert MuseScore/MusicXML from single-staff, two-voice to two-staff, single-voice-per-staff."
+)
+# Allow passing multiple files
+parser.add_argument("input_files", nargs="+", help="Input MuseScore or MusicXML file, and possibly original PDF")
+
+args = parser.parse_args()
+
+import os
+import sys
+# Find a possible musescore file from the arguments
+musescore_file = None
+pdf_file = None
+for f in args.input_files:
+    if f.lower().endswith((".mscz", ".mscx", ".musicxml", ".xml")):
+        musescore_file = f
+    elif f.lower().endswith(".pdf"):
+        pdf_file = f
+
+song_dir = None
+
+# input may be also a directory, in which case find the first musescore file
+if not musescore_file and len(args.input_files) == 1 and os.path.isdir(args.input_files[0]):
+    song_dir = args.input_files[0]
+    for entry in os.listdir(song_dir):
+        if entry.lower().endswith((".mscz", ".mscx", ".musicxml", ".xml")):
+            if '_cleaned' in entry.lower():
+                continue  # skip already split files
+            musescore_file = os.path.join(song_dir, entry)
+        elif entry.lower().endswith(".pdf"):
+            pdf_file = os.path.join(song_dir, entry)
+            # continue searching for musescore file
+
+if not musescore_file:
+    print("No MuseScore or MusicXML file provided.")
+    sys.exit(1)
+if not os.path.exists(musescore_file):
+    print(f"MuseScore file {musescore_file} does not exist.")
+    sys.exit(1)
+if pdf_file and not os.path.exists(pdf_file):
+    print(f"PDF file {pdf_file} does not exist.")
+    sys.exit(1)
+
+# Create output directory if it doesn't exist
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+songs_dir = os.path.join(SCRIPT_DIR, "songs")
+if not os.path.exists(songs_dir):
+    os.makedirs(songs_dir)
+
+if not song_dir:
+    # Get or create a directory for this song
+    # Using the base name of the musescore file
+    base_name = os.path.splitext(os.path.basename(musescore_file))[0]
+    song_dir = os.path.join(songs_dir, base_name)
+    if not os.path.exists(song_dir):
+        os.makedirs(song_dir)
+
+# Copy original musescore file and possibly pdf file to the song directory
+import shutil
+shutil.copy2(musescore_file, song_dir)
+if pdf_file:
+    shutil.copy2(pdf_file, song_dir)
+
+input_file = os.path.join(song_dir, os.path.basename(musescore_file))
+if pdf_file:
+    pdf_file = os.path.join(song_dir, os.path.basename(pdf_file))
+
+output_file = input_file.replace(".mscz", "_cleaned.mscz").replace(".mscx", "_cleaned.mscx").replace(".musicxml", "_cleaned.musicxml").replace(".xml", "_cleaned.xml")
+
+# Load environment variables from .env or .env.default file
+dotenv_path = os.path.join(SCRIPT_DIR, ".env")
+if not os.path.exists(dotenv_path):
+    dotenv_path = os.path.join(SCRIPT_DIR, ".env.default")
+dotenv.load_dotenv(dotenv_path)
+
+# Run the cleaning script
+from src.clean_score.main import main
+main(input_file, output_file, pdf_file)

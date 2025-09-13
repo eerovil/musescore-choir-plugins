@@ -1,4 +1,3 @@
-import dotenv
 import os
 from google import genai
 from google.genai import types
@@ -11,9 +10,6 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def get_gemini_api_key():
-    # Load environment variables from .env file
-    dotenv_path = os.path.join(CURRENT_DIR, "../../.env")
-    dotenv.load_dotenv(dotenv_path)
     # Ensure GEMINI_API_KEY is set in the environment
     if "GEMINI_API_KEY" not in os.environ:
         raise ValueError("GEMINI_API_KEY is not set in the environment variables.")
