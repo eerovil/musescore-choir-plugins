@@ -19,6 +19,10 @@ load_dotenv()
 MUSESCORE_EXPORT_PATH = os.getenv("MUSESCORE_EXPORT_PATH")
 VIDEO_EXPORT_PATH = os.getenv("VIDEO_EXPORT_PATH")
 
+HOME_DIR = str(Path.home())
+MUSESCORE_EXPORT_PATH = MUSESCORE_EXPORT_PATH.replace("~", HOME_DIR) if MUSESCORE_EXPORT_PATH else None
+VIDEO_EXPORT_PATH = VIDEO_EXPORT_PATH.replace("~", HOME_DIR) if VIDEO_EXPORT_PATH else None
+
 if not MUSESCORE_EXPORT_PATH or not VIDEO_EXPORT_PATH:
     raise EnvironmentError(
         "Both MUSESCORE_EXPORT_PATH and VIDEO_EXPORT_PATH must be set in the environment."
@@ -171,7 +175,10 @@ def merge_mp3_to_video(song_dir):
     results = []
 
     for mp3 in mp3_files:
-        output_path = video_dir / f"{mp3.stem}.mov"
+        mp3_stem = mp3.stem
+        part_name = mp3_stem.split(" ")[-1]  # Get the part after the last space
+
+        output_path = video_dir / f"{song_dir} {part_name}.mov"
         if output_path.exists():
             logging.info(f"Output video {output_path} already exists, skipping merge.")
             results.append(output_path)
