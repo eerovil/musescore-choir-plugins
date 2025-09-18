@@ -79,6 +79,9 @@ def detect_part_types(root: etree._Element) -> None:
                     part_name = "Alto"
                     clef_type = "G"
 
+        if not part_name and clef_type == "G8vb":
+            part_name = "Tenor"
+
         part_info[int(staff.get("id"))] = {
             "clef_type": clef_type,
             "highest_note": highest_note,
