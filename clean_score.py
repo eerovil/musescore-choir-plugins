@@ -18,6 +18,7 @@ How to use
 
 """
 import argparse
+from shutil import SameFileError
 import dotenv
 
 parser = argparse.ArgumentParser(
@@ -78,10 +79,13 @@ if not song_dir:
         os.makedirs(song_dir)
 
 # Copy original musescore file and possibly pdf file to the song directory
-import shutil
-shutil.copy2(musescore_file, song_dir)
-if pdf_file:
-    shutil.copy2(pdf_file, song_dir)
+try:
+    import shutil
+    shutil.copy2(musescore_file, song_dir)
+    if pdf_file:
+        shutil.copy2(pdf_file, song_dir)
+except SameFileError:
+    pass  # ignore if source and destination are the same
 
 input_file = os.path.join(song_dir, os.path.basename(musescore_file))
 if pdf_file:
