@@ -327,7 +327,7 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
         # Handle the staff (for staffs that were not split)
         handle_staff(staff, None)
 
-    # add_missing_ties(root)
+    add_missing_ties(root)
 
     part_types = detect_part_types(root)
     # Apply part name

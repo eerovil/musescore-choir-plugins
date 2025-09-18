@@ -33,7 +33,7 @@ def add_missing_ties(root):
 
                 spanner: Optional[etree._Element] = el["element"].find(
                     ".//Spanner[@type='Tie']"
-                ) or el["element"].find(".//Spanner[@type='Slur']")
+                )
                 if spanner is not None:
                     if spanner.find(".//next") is not None:
                         span_index = (measure_index, time_pos)
@@ -54,7 +54,7 @@ def add_missing_ties(root):
 
                 spanner: Optional[etree._Element] = el["element"].find(
                     ".//Spanner[@type='Tie']"
-                ) or el["element"].find(".//Spanner[@type='Slur']")
+                )
                 if spanner is None:
                     if new_tied_notes and len(new_tied_notes[-1]) == 1:
                         new_tied_notes[-1].append(
@@ -118,13 +118,30 @@ def add_missing_ties(root):
                 )
                 continue
 
+            # If notes are not same pitch, skip
+            pitch1_el: Optional[etree._Element] = note1["element"].find(".//pitch")
+            pitch2_el: Optional[etree._Element] = note2["element"].find(".//pitch")
+            if (
+                pitch1_el is not None
+                and pitch1_el.text is not None
+                and pitch2_el is not None
+                and pitch2_el.text is not None
+            ):
+                pitch1 = int(pitch1_el.text)
+                pitch2 = int(pitch2_el.text)
+                if pitch1 != pitch2:
+                    logger.warning(
+                        f"Note pitches do not match: {pitch1} != {pitch2}, skipping adding tie"
+                    )
+                    continue
+
             # Clone the spanner from the parent pair to the note pair
             spanner1: Optional[etree._Element] = parent_pair[0].find(
                 ".//Spanner[@type='Tie']"
-            ) or parent_pair[0].find(".//Spanner[@type='Slur']")
+            )
             spanner2: Optional[etree._Element] = parent_pair[1].find(
                 ".//Spanner[@type='Tie']"
-            ) or parent_pair[1].find(".//Spanner[@type='Slur']")
+            )
             if spanner1 is not None and spanner2 is not None:
                 new_spanner1: etree._Element = deepcopy(spanner1)
                 new_spanner2: etree._Element = deepcopy(spanner2)
@@ -134,34 +151,6 @@ def add_missing_ties(root):
                 if note_e1 is not None and note_e2 is not None:
                     note_e1.append(new_spanner1)
                     note_e2.append(new_spanner2)
-
-                # If notes are not same pitch, set the spanner type to "Slur"
-                pitch1_el: Optional[etree._Element] = note_e1.find(".//pitch")
-                pitch2_el: Optional[etree._Element] = note_e2.find(".//pitch")
-                if (
-                    pitch1_el is not None
-                    and pitch1_el.text is not None
-                    and pitch2_el is not None
-                    and pitch2_el.text is not None
-                ):
-                    pitch1 = int(pitch1_el.text)
-                    pitch2 = int(pitch2_el.text)
-                    if pitch1 != pitch2:
-                        new_spanner1.set("type", "Slur")
-                        new_spanner2.set("type", "Slur")
-                        # If any <Tie> element exists in spanner, convert to <Slur>
-                        for tie_el in new_spanner1.findall(".//Tie"):
-                            tie_el.tag = "Slur"
-                        for tie_el in new_spanner2.findall(".//Tie"):
-                            tie_el.tag = "Slur"
-                    else:
-                        new_spanner1.set("type", "Tie")
-                        new_spanner2.set("type", "Tie")
-                        # If any <Slur> element exists in spanner, convert to <Tie>
-                        for slur_el in new_spanner1.findall(".//Slur"):
-                            slur_el.tag = "Tie"
-                        for slur_el in new_spanner2.findall(".//Slur"):
-                            slur_el.tag = "Tie"
 
                 logger.debug(
                     f"Added spanner to note pair for staff {staff.get('id')}, measure {note1['measure_index']}, time position {note1['time_pos']}"
