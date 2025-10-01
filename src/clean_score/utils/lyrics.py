@@ -428,18 +428,31 @@ def remove_lyrics_from_chord_with_tie_prev(root):
     """
     Remove lyrics from chords that have a tie with a previous chord.
     """
+    previous_spanner = None
     for chord in root.findall(".//Chord"):
+        # Check if it ends here
         spanner: Optional[etree._Element] = chord.find(".//Spanner[@type='Tie']")
         if spanner is None:
             spanner = chord.find(".//Spanner[@type='Slur']")
-        if spanner is not None:
-            prev_el_spanner: Optional[etree._Element] = spanner.find(".//prev")
-            if prev_el_spanner is not None:
-                # Remove all Lyrics elements from the chord
-                for lyric in chord.findall(".//Lyrics"):
-                    parent: Optional[etree._Element] = lyric.getparent()
-                    if parent is not None:
-                        parent.remove(lyric)
-                        logger.debug(
-                            f"Removed lyrics from chord with tie to previous chord"
-                        )
+
+        if previous_spanner is not None:
+            # We are in a spanner, 
+            # Remove all Lyrics elements from the chord
+            for lyric in chord.findall(".//Lyrics"):
+                parent: Optional[etree._Element] = lyric.getparent()
+                if parent is not None:
+                    parent.remove(lyric)
+                    logger.debug(
+                        f"Removed lyrics from chord with tie to previous chord"
+                    )
+
+            if spanner is not None:
+                prev_el_spanner: Optional[etree._Element] = spanner.find(".//prev")
+                if prev_el_spanner is not None:
+                    # previous spanner has ended
+                    previous_spanner = None
+
+        else:
+            # Does this chord start a spanner?
+            if spanner is not None:
+                previous_spanner = spanner
