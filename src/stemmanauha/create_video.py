@@ -161,11 +161,13 @@ def merge_mp3_to_video(song_dir):
 
     # Find all mp3 files in song_dir/media
     media_dir = Path(song_dir) / "media"
+    song_name = os.path.basename(song_dir)
     if not media_dir.exists():
         raise FileNotFoundError(f"Media directory {media_dir} does not exist.")
 
     mp3_files = list(media_dir.glob("*.mp3"))
     video_dir = media_dir / "video"
+
     if not video_dir.exists():
         raise FileNotFoundError(f"Video directory {video_dir} does not exist.")
     input_video_file = next(video_dir.glob("*.mov"), None)
@@ -178,7 +180,7 @@ def merge_mp3_to_video(song_dir):
         mp3_stem = mp3.stem
         part_name = mp3_stem.split(" ")[-1]  # Get the part after the last space
 
-        output_path = video_dir / f"{song_dir} {part_name}.mov"
+        output_path = video_dir / f"{song_name} {part_name}.mov"
         if output_path.exists():
             logging.info(f"Output video {output_path} already exists, skipping merge.")
             results.append(output_path)
