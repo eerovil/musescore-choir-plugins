@@ -26,7 +26,7 @@ parser = argparse.ArgumentParser(
 )
 # Allow passing multiple files
 parser.add_argument("input_files", nargs="+", help="Input MuseScore or MusicXML file, and possibly original PDF")
-
+parser.add_argument("--name", help="Optional name for the (new) song directory")
 args = parser.parse_args()
 
 import os
@@ -75,6 +75,8 @@ if not song_dir:
     # Using the base name of the musescore file
     base_name = os.path.splitext(os.path.basename(musescore_file))[0]
     song_dir = os.path.join(songs_dir, base_name)
+    if args.name:
+        song_dir = os.path.join(songs_dir, args.name)
     if not os.path.exists(song_dir):
         os.makedirs(song_dir)
 

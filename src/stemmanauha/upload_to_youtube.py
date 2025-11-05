@@ -92,7 +92,7 @@ def add_video_to_playlist(youtube, playlist_id, video_id):
     request.execute()
 
 
-def upload_to_youtube(song_dir, video_paths):
+def upload_to_youtube(song_dir, video_paths, extra_playlist_id=None):
     basename = os.path.basename(song_dir)
 
     logging.info("Authenticating with YouTube...")
@@ -111,5 +111,8 @@ def upload_to_youtube(song_dir, video_paths):
         if playlist_id:
             add_video_to_playlist(youtube, playlist_id, video_id)
             logging.info(f"Added to playlist.")
+        if extra_playlist_id:
+            add_video_to_playlist(youtube, extra_playlist_id, video_id)
+            logging.info(f"Added to extra playlist.")
 
     logging.info(f"All videos uploaded and added to playlist.")

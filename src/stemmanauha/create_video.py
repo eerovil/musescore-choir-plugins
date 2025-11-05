@@ -312,7 +312,7 @@ def export_mp3_from_musescore(song_dir):
     return all_mp3
 
 
-def run(song_dir=None, youtube=False):
+def run(song_dir=None, youtube=False, extra_playlist_id=None):
     if not song_dir or not os.path.exists(song_dir):
         raise ValueError("A valid song_dir must be provided.")
 
@@ -328,5 +328,5 @@ def run(song_dir=None, youtube=False):
     logging.info("MP3 files merged to video: " + ", ".join(str(r) for r in results))
 
     if youtube:
-        upload_to_youtube(song_dir, results)
+        upload_to_youtube(song_dir, results, extra_playlist_id=extra_playlist_id)
         logging.info("Videos uploaded to YouTube.")

@@ -428,6 +428,13 @@ def remove_lyrics_from_chord_with_tie_prev(root):
     """
     Remove lyrics from chords that have a tie with a previous chord.
     """
+    for rest in root.findall(".//Rest"):
+        for lyric in rest.findall(".//Lyrics"):
+            parent: Optional[etree._Element] = lyric.getparent()
+            if parent is not None:
+                parent.remove(lyric)
+                logger.debug(f"Removed lyrics from rest")
+
     previous_spanner = None
     for chord in root.findall(".//Chord"):
         # Check if it ends here
