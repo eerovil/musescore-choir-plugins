@@ -8,7 +8,7 @@ import QtQuick.Dialogs 1.1
 import MuseScore 3.0
 
 MuseScore {
-    version: "1.0"
+    version: "1.2"
     description: "Search and replace lyrics in hyphenated syllables."
     menuPath: "Plugins.Search and Replace Lyrics"
     pluginType: "dialog"
@@ -24,102 +24,147 @@ MuseScore {
         ctrlMessageDialog.visible = true;
     }
 
+    // MuseScore stores hyphenated syllables with leading/trailing hyphens (e.g. "-ti").
+    // Normalize for comparison and trim whitespace.
+    function normalizeSyllableText(s) {
+        if (typeof s !== "string") return "";
+        return s.replace(/^-|-$/g, "").trim();
+    }
+
     function searchAndReplaceLyrics() {
-        console.log("Starting search and replace lyrics");
+        console.log("=== Search and Replace Lyrics: start ===");
 
         if (searchPattern.trim() === "" || replacePattern.trim() === "") {
+            console.log("Abort: search or replace field empty.");
             showError("Search and Replace fields must not be empty.");
             return;
         }
 
         var searchSyllables = searchPattern.split("-");
         var replaceSyllables = replacePattern.split("-");
+        console.log("Input  search: '" + searchPattern + "' -> syllables: [" + searchSyllables.join(", ") + "]");
+        console.log("Input replace: '" + replacePattern + "' -> syllables: [" + replaceSyllables.join(", ") + "]");
+        console.log("Score: nstaves=" + curScore.nstaves);
+
+        curScore.startCmd();
+        var totalReplacements = 0;
 
         for (var staff = 0; staff < curScore.nstaves; staff++) {
-
             var cursor = curScore.newCursor();
             cursor.rewind(0);
             cursor.staffIdx = staff;
 
-            curScore.startCmd();
-
-            console.log("Searching for lyrics matching: " + searchSyllables.join(", "));
+            console.log("--- Staff " + staff + " (of " + curScore.nstaves + ") ---");
             if (!cursor.segment) {
-                showError("You must select a region of notes on a single staff.");
+                curScore.endCmd();
+                console.log("Abort: no segment on staff " + staff);
+                showError("No score content found.");
                 return;
             }
+            var staffReplacements = 0;
             while (cursor.segment) {
-                console.log("Current tick: " + cursor.tick + ", staff: " + cursor.staffIdx);
-                var buffer = [];
-                var tickBuffer = [];
-                var chordBuffer = [];
                 var startTick = cursor.tick;
+                var tempCursor0 = curScore.newCursor();
+                tempCursor0.rewind(0);
+                tempCursor0.voice = cursor.voice;
+                tempCursor0.staffIdx = cursor.staffIdx;
+                while (tempCursor0.segment && tempCursor0.tick < startTick)
+                    tempCursor0.next();
+                var chordAtStart = (tempCursor0.element && tempCursor0.element.type === Element.CHORD) ? tempCursor0.element : null;
+                var maxVerses = (chordAtStart && chordAtStart.lyrics) ? chordAtStart.lyrics.length : 0;
 
-                var tempCursor = curScore.newCursor();
-                tempCursor.rewind(0);
-                tempCursor.voice = cursor.voice;
-                tempCursor.staffIdx = cursor.staffIdx;
-                while (tempCursor.segment && tempCursor.tick < cursor.tick)
-                    tempCursor.next();
+                var matched = false;
+                var matchBuffer = [];
+                var matchTickBuffer = [];
+                var matchNewReplaceSyllables = [];
 
-                // Try to match a sequence
-                var i = 0;
-                var newReplaceSyllables = replaceSyllables.slice(0);
-                while (tempCursor.segment && i < searchSyllables.length) {
-                    if (tempCursor.element && tempCursor.element.type === Element.CHORD && tempCursor.element.lyrics.length > 0) {
-                        var text = tempCursor.element.lyrics[0].text;
-                        var replaceSyllable = replaceSyllables[i] || "";
-                        if (text !== searchSyllables[i]) {
-                            console.log("Wrong syllable at tick " + tempCursor.tick + ": expected '" + searchSyllables[i] + "', found '" + text + "'");
-                            // Check if there is a match lowecased
-                            if (text.toLowerCase() == searchSyllables[i].toLowerCase()) {
-                                console.log("lowercase match at tick " + tempCursor.tick);
-                                // Convert replace syllable to match case of original
-                                // i.e. just check the first letter
-                                if (text.length > 0 && replaceSyllable.length > 0) {
-                                    if (text[0] === text[0].toUpperCase()) {
-                                        replaceSyllable = replaceSyllable[0].toUpperCase() + replaceSyllable.slice(1);
-                                    } else {
-                                        replaceSyllable = replaceSyllable[0].toLowerCase() + replaceSyllable.slice(1);
-                                    }
-                                }
-                            } else {
-                                console.log("No match at tick " + tempCursor.tick);
+                for (var verse = 0; verse < maxVerses && !matched; verse++) {
+                    var tempCursor = curScore.newCursor();
+                    tempCursor.rewind(0);
+                    tempCursor.voice = cursor.voice;
+                    tempCursor.staffIdx = cursor.staffIdx;
+                    while (tempCursor.segment && tempCursor.tick < startTick)
+                        tempCursor.next();
+
+                    console.log("Try from tick " + startTick + " (staff " + staff + ", voice " + cursor.voice + ", verse " + verse + ")");
+
+                    var buffer = [];
+                    var tickBuffer = [];
+                    var newReplaceSyllables = replaceSyllables.slice(0);
+                    var i = 0;
+                    while (tempCursor.segment && i < searchSyllables.length) {
+                        if (tempCursor.element && tempCursor.element.type === Element.CHORD && tempCursor.element.lyrics.length > verse) {
+                            var lyric = tempCursor.element.lyrics[verse];
+                            var rawText = lyric.text;
+                            var text = normalizeSyllableText(rawText);
+                            var searchSyl = normalizeSyllableText(searchSyllables[i]);
+                            var replaceSyl = normalizeSyllableText(replaceSyllables[i] || "");
+                            var replaceSyllable = replaceSyllables[i] || "";
+                            // Match if score syllable equals search OR replace (so we find both "mi-ti" and already "mi-tä")
+                            var matchSearch = (text === searchSyl) || (text.toLowerCase() === searchSyl.toLowerCase());
+                            var matchReplace = (text === replaceSyl) || (text.toLowerCase() === replaceSyl.toLowerCase());
+                            var match = matchSearch || matchReplace;
+                            console.log("  tick " + tempCursor.tick + " syl[" + i + "] verse=" + verse + ": raw='" + rawText + "' norm='" + text + "' search='" + searchSyl + "' replaceSyl='" + replaceSyl + "' match=" + match + " (search=" + matchSearch + " replace=" + matchReplace + ")");
+                            if (!match) {
+                                console.log("  -> no match, break (need " + searchSyllables.length + " syllables, got " + i + ")");
                                 break;
                             }
-                        }
+                            // Apply case from score to replacement when possible
+                            if (text.length > 0 && replaceSyllable.length > 0) {
+                                if (text[0] === text[0].toUpperCase()) {
+                                    replaceSyllable = replaceSyllable[0].toUpperCase() + replaceSyllable.slice(1);
+                                } else {
+                                    replaceSyllable = replaceSyllable[0].toLowerCase() + replaceSyllable.slice(1);
+                                }
+                            }
 
-                        newReplaceSyllables[i] = replaceSyllable;
-                        buffer.push(tempCursor.element.lyrics[0]);
-                        tickBuffer.push(tempCursor.tick);
-                        chordBuffer.push(tempCursor.element);
-                        i++;
-                    } else {
-                        break;
+                            newReplaceSyllables[i] = replaceSyllable;
+                            buffer.push(lyric);
+                            tickBuffer.push(tempCursor.tick);
+                            i++;
+                        } else {
+                            var reason;
+                            if (!tempCursor.element) reason = "no element";
+                            else if (tempCursor.element.type !== Element.CHORD) reason = "not chord (type=" + tempCursor.element.type + ")";
+                            else reason = "no lyrics verse " + verse + " (length=" + (tempCursor.element.lyrics ? tempCursor.element.lyrics.length : 0) + ")";
+                            console.log("  tick " + tempCursor.tick + ": skip - " + reason + ", break");
+                            break;
+                        }
+                        tempCursor.next();
                     }
-                    tempCursor.next();
+
+                    if (i === searchSyllables.length) {
+                        console.log("MATCH at tick " + startTick + " verse " + verse + ": replacing " + buffer.length + " syllables with [" + newReplaceSyllables.join(", ") + "]");
+                        matchBuffer = buffer;
+                        matchTickBuffer = tickBuffer;
+                        matchNewReplaceSyllables = newReplaceSyllables;
+                        matched = true;
+                    }
                 }
 
-                if (i === searchSyllables.length) {
-                    console.log("Match found at tick " + startTick);
-                    for (var j = 0; j < buffer.length; j++) {
-                        buffer[j].text = newReplaceSyllables[j] || "";
+                if (matched) {
+                    for (var j = 0; j < matchBuffer.length; j++) {
+                        matchBuffer[j].text = matchNewReplaceSyllables[j] || "";
                     }
+                    staffReplacements++;
+                    totalReplacements++;
                     cursor.rewind(0);
-                    while (cursor.tick < tickBuffer[tickBuffer.length - 1])
+                    while (cursor.tick < matchTickBuffer[matchTickBuffer.length - 1])
                         cursor.next();
+                    cursor.next();
                 } else {
                     cursor.next();
                 }
             }
+            console.log("Staff " + staff + ": " + staffReplacements + " replacement(s)");
         }
 
         curScore.endCmd();
-        console.log("Search and replace done.");
+        console.log("=== Done. Total replacements: " + totalReplacements + " ===");
     }
 
     onRun: {
-        console.log("Plugin started");
+        console.log("Search and Replace Lyrics plugin v1.2 started");
         pluginUI.visible = true;
     }
 
