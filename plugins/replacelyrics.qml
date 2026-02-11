@@ -109,15 +109,7 @@ MuseScore {
                                 console.log("  -> no match, break (need " + searchSyllables.length + " syllables, got " + i + ")");
                                 break;
                             }
-                            // Apply case from score to replacement when possible
-                            if (text.length > 0 && replaceSyllable.length > 0) {
-                                if (text[0] === text[0].toUpperCase()) {
-                                    replaceSyllable = replaceSyllable[0].toUpperCase() + replaceSyllable.slice(1);
-                                } else {
-                                    replaceSyllable = replaceSyllable[0].toLowerCase() + replaceSyllable.slice(1);
-                                }
-                            }
-
+                            // Use replace input exactly as given (same case as user typed)
                             newReplaceSyllables[i] = replaceSyllable;
                             buffer.push(lyric);
                             tickBuffer.push(tempCursor.tick);
