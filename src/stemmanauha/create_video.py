@@ -194,7 +194,7 @@ def merge_mp3_to_video(song_dir):
             "-c:v",
             "copy",
             "-filter_complex",
-            "[1:a]adelay=1100|1100[a]",
+            "[1:a]adelay=1300|1300[a]",
             "-map",
             "0:v:0",
             "-map",
