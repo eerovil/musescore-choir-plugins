@@ -18,6 +18,7 @@ MuseScore {
 
     function exportLyrics() {
         var result = "";
+        result += "tick\tstaff\tvoice\tverse\tsyllabic\ttext\n";
         for (var staff = 0; staff < curScore.nstaves; staff++) {
             for (var voice = 0; voice < 4; voice++) {
                 var cursor = curScore.newCursor();
@@ -36,7 +37,7 @@ MuseScore {
                                         cursor.voice + "\t" +
                                         (v + 1) + "\t" +  // 1-based verse
                                         (lyric.syllabic || "single") + "\t" +
-                                        lyric.text + "\n";
+                                        (lyric.text || "").trim() + "\n";
                             }
                         }
                     }
@@ -98,7 +99,7 @@ function parseSyllabic(s) {
         var lyric = chord.lyrics[verse];
         var syllabicValue = parseSyllabic(syllabic);
 
-        if (lyric.text != text || lyric.syllabic != syllabicValue) {
+        if ((lyric.text || "").trim() != text || lyric.syllabic != syllabicValue) {
             console.log("Updating lyric at tick " + tick + ", staff " + staff + ", voice " + voice + ", verse " + (verse + 1));
             console.log("Old text: " + lyric.text + ", syllabic: " + lyric.syllabic);
             console.log("New text: " + text + ", syllabic: " + syllabicValue);

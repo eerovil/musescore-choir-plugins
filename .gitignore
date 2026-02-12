@@ -12,3 +12,5 @@ client_secrets.json
 token.pickle
 
 backup
+src/clean_score/tests/lyric_2/.mscbackup/.spanner.mscx,
+playlists.txt

@@ -27,7 +27,11 @@ parser = argparse.ArgumentParser(
 # Allow passing multiple files
 parser.add_argument("input_files", nargs="+", help="Input MuseScore or MusicXML file, and possibly original PDF")
 parser.add_argument("--name", help="Optional name for the (new) song directory")
+# Add option to force add new staffs, give param e.g. SSAA
+parser.add_argument("--add", help="Force add new staffs, give param e.g. SSAA")
 args = parser.parse_args()
+
+add_staffs = (args.add or "").upper().strip()
 
 import os
 import sys
@@ -146,4 +150,4 @@ if not input_file.lower().endswith(".mscx"):
 
 # Run the cleaning script
 from src.clean_score.main import main
-main(input_file, output_file, pdf_file)
+main(input_file, output_file, pdf_file, add_staffs=add_staffs)

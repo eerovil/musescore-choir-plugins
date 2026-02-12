@@ -4,6 +4,8 @@ from copy import deepcopy
 import os
 from lxml import etree
 
+from collections import defaultdict
+
 import logging
 from typing import List, Set, Optional
 
@@ -168,7 +170,7 @@ def split_part(part: etree._Element) -> etree._Element:
     return new_part
 
 
-def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
+def main(input_path: str, output_path: str, pdf_path: str = None, add_staffs: Optional[str] = None) -> None:
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
     to a two-staff, single-voice-per-staff structure, and duplicates the Part
@@ -299,9 +301,9 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
                     score_element.index(staff_element_up) + 1, new_staff_element_down
                 )
 
-    # Read lyrics from all staffs
-    for staff in root.findall(".//Score/Staff"):
-        read_lyrics(staff)
+    # # Read lyrics from all staffs
+    # for staff in root.findall(".//Score/Staff"):
+    #     read_lyrics(staff)
 
     for staff_id_orig_split, new_staff_id_split in GLOBALS.STAFF_MAPPING.items():
         up_staff_element: Optional[etree._Element] = root.find(
@@ -364,25 +366,93 @@ def main(input_path: str, output_path: str, pdf_path: str = None) -> None:
                     if transposing_clef_type is not None:
                         transposing_clef_type.text = clef_type
 
-    if load_lyrics(input_path):
-        logger.info("Loaded lyrics from fixed lyrics file.")
-    else:
-        logger.info("No fixed lyrics file found, saving current lyrics.")
-        save_lyrics(input_path)
-        # Try using gemini API to fix lyrics
-        if pdf_path:
-            fix_lyrics(input_path, pdf_path)
-            load_lyrics(input_path)
+    # if load_lyrics(input_path):
+    #     logger.info("Loaded lyrics from fixed lyrics file.")
+    # else:
+    #     logger.info("No fixed lyrics file found, saving current lyrics.")
+    #     save_lyrics(input_path)
+    #     # Try using gemini API to fix lyrics
+    #     if pdf_path:
+    #         fix_lyrics(input_path, pdf_path)
+    #         load_lyrics(input_path)
 
-    # add lyrics to the staff
-    for staff in root.findall(".//Score/Staff"):
-        add_lyrics_to_staff(staff)
+    # # add lyrics to the staff
+    # for staff in root.findall(".//Score/Staff"):
+    #     add_lyrics_to_staff(staff)
 
-    remove_lyrics_from_chord_with_tie_prev(root)
+    # remove_lyrics_from_chord_with_tie_prev(root)
     # delete all bracket
     delete_all_elements_by_selector(root, ".//bracket")
     # delete all barLineSpan
     delete_all_elements_by_selector(root, ".//barLineSpan")
+
+    if add_staffs:
+        score_element: Optional[etree._Element] = root.find(".//Score")
+        if score_element is None:
+            raise ValueError("Score element not found.")
+        # Get next staff id from max of existing staffs
+        existing_staff_ids = [
+            int(s.get("id", "0"))
+            for s in score_element.findall(".//Staff")
+        ]
+        next_staff_id: int = max(existing_staff_ids, default=0) + 1
+        # Get template Part and Staff to copy structure from
+        template_part: Optional[etree._Element] = root.find(".//Part")
+        template_staff: Optional[etree._Element] = root.find(".//Score/Staff")
+        if template_part is None or template_staff is None:
+            raise ValueError("Cannot add staffs: no Part or Staff template found.")
+        part_name_map = {"S": "Soprano", "A": "Alto", "T": "Tenor", "B": "Bass"}
+        clef_map = {"S": "G", "A": "G", "T": "G8vb", "B": "F"}
+        char_counter = defaultdict(int)
+        for char in add_staffs:
+            char_counter[char] += 1
+            staff_name = f"{char}{char_counter[char]}"
+            part_name = part_name_map.get(char.upper(), char)
+            # Create Part
+            new_part: etree._Element = deepcopy(template_part)
+            part_staff = new_part.find(".//Staff")
+            if part_staff is not None:
+                part_staff.set("id", str(next_staff_id))
+            track_name = new_part.find(".//trackName")
+            if track_name is not None:
+                track_name.text = staff_name
+            long_name = new_part.find(".//Instrument/longName")
+            if long_name is not None:
+                long_name.text = f"{part_name} {char_counter[char]}"
+            # Insert Part after last Part (Parts come before Staffs in Score)
+            parts_in_score = score_element.findall("Part")
+            if parts_in_score:
+                last_part = parts_in_score[-1]
+                score_element.insert(score_element.index(last_part) + 1, new_part)
+            else:
+                score_element.insert(0, new_part)
+            # Create Staff with empty measures (copy template, replace chords with rests)
+            new_staff: etree._Element = deepcopy(template_staff)
+            new_staff.set("id", str(next_staff_id))
+            # Remove VBox (title) from non-first staffs
+            vbox = new_staff.find("VBox")
+            if vbox is not None:
+                new_staff.remove(vbox)
+            for chord in new_staff.findall(".//Chord"):
+                voice = chord.getparent()
+                if voice is not None:
+                    duration_type = chord.find("durationType")
+                    dur_type = duration_type.text if duration_type is not None else "quarter"
+                    rest = etree.Element("Rest")
+                    dt = etree.SubElement(rest, "durationType")
+                    dt.text = dur_type
+                    voice.insert(voice.index(chord), rest)
+                    voice.remove(chord)
+            delete_all_elements_by_selector(new_staff, ".//Lyrics")
+            # Set clef based on part type
+            clef_type = clef_map.get(char.upper())
+            if clef_type is not None:
+                for clef in new_staff.findall(".//Clef"):
+                    for child in clef:
+                        if child.tag in ("concertClefType", "transposingClefType"):
+                            child.text = clef_type
+            score_element.append(new_staff)
+            next_staff_id += 1
 
     # Serialize the output XML
     output_content: str = etree.tostring(
@@ -420,6 +490,11 @@ if __name__ == "__main__":
         help="Path to the PDF file for lyrics extraction (optional).",
         default=None,
     )
+    parser.add_argument(
+        "--add",
+        help="Add new staffs, e.g. SSAA for Soprano1, Soprano2, Alto1, Alto2.",
+        default=None,
+    )
     args = parser.parse_args()
 
     # Input can be a dir, in that case we use any input file that is a *.mscx file and does not end with _split.mscx
@@ -448,7 +523,8 @@ if __name__ == "__main__":
 
     logger.info(f"Converting {args.input} to {args.output}")
     try:
-        main(args.input, args.output, args.pdf)
+        add_staffs = (args.add or "").upper().strip() or None
+        main(args.input, args.output, args.pdf, add_staffs=add_staffs)
         logger.info("Conversion completed successfully.")
         logger.info(f"Output written to {args.output}")
     except Exception as e:
