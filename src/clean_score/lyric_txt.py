@@ -342,7 +342,11 @@ def _tokens_to_syllables(
                 elif i == 0:
                     out.append(("begin", p))
                 elif i == len(parts) - 1:
-                    out.append(("end", p))
+                    # Last part: "end" unless token had trailing hyphen (word continues to next measure)
+                    if raw_trailing_hyphen:
+                        out.append(("begin", p))
+                    else:
+                        out.append(("end", p))
                 else:
                     out.append(("middle", p))
     return out
@@ -386,10 +390,11 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
     staffs = score.findall(".//Staff")
     if not staffs:
         staffs = score_root.findall(".//Staff")
+    # Only process Staff elements that contain measures (skip Part/Staff layout stubs)
+    staffs = [s for s in staffs if s.find(".//Measure") is not None]
 
     for staff in staffs:
         staff_id = int(staff.get("id", "0"))
-        prev_ended_with_hyphen: bool = False
         measure_index = -1
         for measure in staff.findall(".//Measure"):
             measure_index += 1
@@ -397,8 +402,10 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
             staff_tokens = (by_measure.get(one_based) or {}).get(staff_id)
             if staff_tokens is None:
                 staff_tokens = []
-            syllables = _tokens_to_syllables(staff_tokens, first_syllabic_continuation=prev_ended_with_hyphen)
-            prev_ended_with_hyphen = _last_token_ends_with_hyphen(staff_tokens)
+            # Derive from TXT: did the previous measure's last token end with hyphen?
+            prev_measure_tokens = (by_measure.get(one_based - 1) or {}).get(staff_id) or []
+            first_syllabic_continuation = _last_token_ends_with_hyphen(prev_measure_tokens)
+            syllables = _tokens_to_syllables(staff_tokens, first_syllabic_continuation=first_syllabic_continuation)
             syl_index = [0]
             slur_active = False
             tie_active = False
