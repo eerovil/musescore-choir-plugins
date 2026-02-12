@@ -1,0 +1,9 @@
+Here is a PDF and auto-generated lyrics.
+Fix the lyrics.
+Keep same formatting, new lines, etc.
+Treat underscore as an empty syllable.
+Syllable count number must not change for each voice in each measure.
+Syllables are separated by either space or dash.
+
+Give result as .txt file Do not use pandoc or any formatting conversion.
+Write the .txt file directly as raw text.

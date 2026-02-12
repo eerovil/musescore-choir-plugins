@@ -549,21 +549,21 @@
             <sigN>4</sigN>
             <sigD>4</sigD>
             </TimeSig>
-          <Rest>
-            <durationType>half</durationType>
-            </Rest>
           <Chord>
+            <durationType>half</durationType>
+            <Note>
+              <pitch>69</pitch>
+              <tpc>17</tpc>
+              </Note>
+            </Chord>
+          <Rest>
             <durationType>quarter</durationType>
             <Lyrics>
               <no>1</no>
               <syllabic>begin</syllabic>
               <text>his</text>
               </Lyrics>
-            <Note>
-              <pitch>69</pitch>
-              <tpc>17</tpc>
-              </Note>
-            </Chord>
+            </Rest>
           <Beam>
             </Beam>
           <Chord>
