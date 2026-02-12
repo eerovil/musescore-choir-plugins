@@ -2,8 +2,9 @@ Here is a PDF and auto-generated lyrics.
 Fix the lyrics.
 Keep same formatting, new lines, etc.
 Treat underscore as an empty syllable.
-Syllable count number must not change for each voice in each measure.
-Syllables are separated by either space or dash.
+Each line has the form: staffNum [syllable_count]: tokens
+The number in brackets is the required syllable count for that voice in that measure. You must keep exactly that many syllables (tokens) when fixing the text; do not change the bracket number.
+Syllables are separated by space or dash (hyphen joins multi-syllable words).
 
-Give result as .txt file Do not use pandoc or any formatting conversion.
-Write the .txt file directly as raw text.
+Give result as .txt file. Do not use pandoc or any formatting conversion.
+Write the .txt file directly as raw text. Empty response, only file.

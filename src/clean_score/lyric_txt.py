@@ -5,9 +5,11 @@ slur-continuation notes get no token (no syllable, no underscore).
 
 Format:
   # Measure N
-  staffNum: token1 token2 ...
+  staffNum [syllable_count]: token1 token2 ...
 Tokens are space-separated; hyphen merges syllables (e.g. il-man). Underscore _
-means lyric-eligible note with no lyric. Verse 1 only, voice 0. Rests get no token.
+means lyric-eligible note with no lyric. The number in brackets is the syllable count
+for that voice in that measure (helps LLMs keep count when fixing text). Verse 1 only, voice 0.
+Rests get no token.
 """
 
 from __future__ import annotations
@@ -241,8 +243,10 @@ def export_mscx_to_txt(score_root: etree._Element) -> str:
         lines.append(f"# Measure {mi + 1}")
         staff_ids = sorted(by_measure_staff[mi].keys())
         for sid in staff_ids:
-            merged = _merge_tokens(by_measure_staff[mi][sid])
-            lines.append(f"{sid}: {merged}")
+            tokens = by_measure_staff[mi][sid]
+            merged = _merge_tokens(tokens)
+            n_syllables = len(tokens)
+            lines.append(f"{sid} [{n_syllables}]: {merged}")
     return "\n".join(lines) if lines else ""
 
 
@@ -269,8 +273,13 @@ def parse_txt(txt: str) -> List[Dict[str, Any]]:
         colon = line.find(":")
         if colon < 0:
             continue
+        left = line[:colon].strip()
+        # Optional syllable count: "1 [2]" or "1"
+        m_staff = re.match(r"^(\d+)(?:\s*\[\d+\])?$", left)
+        if not m_staff:
+            continue
         try:
-            staff_id = int(line[:colon].strip())
+            staff_id = int(m_staff.group(1))
         except ValueError:
             continue
         rest = line[colon + 1 :].strip()

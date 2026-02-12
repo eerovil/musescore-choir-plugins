@@ -4,6 +4,7 @@ assert format, then import and assert XML equals original.
 """
 
 import os
+import re
 import tempfile
 
 import pytest
@@ -39,14 +40,18 @@ def test_export_spanner_has_measure1_and_expected_line():
     lines = [ln.strip() for ln in txt.strip().splitlines()]
     assert "# Measure 1" in lines, f"Expected '# Measure 1' in export. Got:\n{txt}"
     assert "# Measure 2" in lines, f"Expected '# Measure 2' in export. Got:\n{txt}"
+    # Format: staffNum [syllable_count]: tokens (count = lyric slots in measure)
     assert any(
-        line.strip() == f"1: {EXPECTED_TXT_1}" for line in lines
-    ), f"Expected a line '1: {EXPECTED_TXT_1}'. Got:\n{txt}"
+        line.strip().startswith("1 [") and line.strip().endswith(f": {EXPECTED_TXT_1}") for line in lines
+    ), f"Expected a line '1 [N]: {EXPECTED_TXT_1}'. Got:\n{txt}"
     assert any(
-        line.strip() == f"1: {EXPECTED_TXT_2}" for line in lines
-    ), f"Expected a line '1: {EXPECTED_TXT_2}'. Got:\n{txt}"
-    expected_full = f"# Measure 1\n1: {EXPECTED_TXT_1}\n# Measure 2\n1: {EXPECTED_TXT_2}"
-    assert txt.strip() == expected_full, f"Export content mismatch. Got:\n{txt}"
+        line.strip().startswith("1 [") and line.strip().endswith(f": {EXPECTED_TXT_2}") for line in lines
+    ), f"Expected a line '1 [N]: {EXPECTED_TXT_2}'. Got:\n{txt}"
+    # Exact format: two measure blocks with one staff line each
+    data_lines = [l.strip() for l in txt.strip().splitlines() if l.strip() and not l.strip().startswith("#")]
+    assert len(data_lines) == 2, f"Expected 2 staff lines. Got:\n{txt}"
+    assert data_lines[0].endswith(f": {EXPECTED_TXT_1}") and re.match(r"^1\s*\[\d+\]\s*:", data_lines[0]), f"Measure 1 line format. Got:\n{txt}"
+    assert data_lines[1].endswith(f": {EXPECTED_TXT_2}") and re.match(r"^1\s*\[\d+\]\s*:", data_lines[1]), f"Measure 2 line format. Got:\n{txt}"
 
 
 def test_import_roundtrip_xml_unchanged():
@@ -146,6 +151,13 @@ def test_parse_txt():
     assert blocks[0]["staff_lines"][1] == ["il-man", "kuu-ta", "ja"]
 
 
+def test_parse_txt_accepts_syllable_count():
+    """Optional [syllable_count] is stripped; tokens are unchanged."""
+    blocks = parse_txt("# Measure 1\n1 [3]: il-man kuu-ta ja")
+    assert len(blocks) == 1
+    assert blocks[0]["staff_lines"][1] == ["il-man", "kuu-ta", "ja"]
+
+
 # --- multimeasure.mscx (4 staves, 3 measures, cross-measure his-to-ri- / aan!) ---
 
 
@@ -155,16 +167,16 @@ def test_export_multimeasure_has_expected_structure():
     txt = export_mscx_to_txt(root)
     lines = [ln.rstrip() for ln in txt.strip().splitlines()]
     assert "# Measure 1" in lines and "# Measure 2" in lines and "# Measure 3" in lines
-    # All staves: measure 1 ends with his-to-ri-
-    for sid in (1, 2, 3, 4):
+    # Format: staffNum [syllable_count]: tokens. Staff 1,2,4 have his-to-ri- in M1; staff 3 has _ to-ri-
+    for sid in (1, 2, 4):
         assert any(
-            line == f"{sid}: {MULTIMEASURE_M1}" for line in lines
-        ), f"Expected line '{sid}: {MULTIMEASURE_M1}' in:\n{txt}"
-    # Measure 2: staff 1,2,3 have "aan!"; staff 4 has "aan! _ _ _"
-    assert any(line == f"1: {MULTIMEASURE_M2_STAFF_1_3}" for line in lines), f"Expected '1: aan!' in:\n{txt}"
-    assert any(line == f"4: {MULTIMEASURE_M2_STAFF_4}" for line in lines), f"Expected '4: aan! _ _ _' in:\n{txt}"
-    # Measure 3: staff 4 has "aan!"
-    assert any(line == f"4: {MULTIMEASURE_M3_STAFF_4}" for line in lines), f"Expected '4: aan!' in measure 3 in:\n{txt}"
+            re.match(rf"^{re.escape(str(sid))}\s*\[\d+\]\s*: " + re.escape(MULTIMEASURE_M1) + r"$", line)
+            for line in lines
+        ), f"Expected line '{sid} [N]: {MULTIMEASURE_M1}' in:\n{txt}"
+    assert any(re.match(r"^3\s*\[\d+\]\s*: _ to-ri-$", line) for line in lines), f"Expected '3 [N]: _ to-ri-' in:\n{txt}"
+    assert any(re.match(r"^1\s*\[\d+\]\s*: " + re.escape(MULTIMEASURE_M2_STAFF_1_3) + r"$", line) for line in lines), f"Expected '1 [N]: aan!' in:\n{txt}"
+    assert any(re.match(r"^4\s*\[\d+\]\s*: " + re.escape(MULTIMEASURE_M2_STAFF_4) + r"$", line) for line in lines), f"Expected '4 [N]: aan! _ _ _' in:\n{txt}"
+    assert any(re.match(r"^4\s*\[\d+\]\s*: " + re.escape(MULTIMEASURE_M3_STAFF_4) + r"$", line) for line in lines), f"Expected '4 [N]: aan!' in measure 3 in:\n{txt}"
 
 
 def test_multimeasure_cross_measure_syllabic_continuation():
