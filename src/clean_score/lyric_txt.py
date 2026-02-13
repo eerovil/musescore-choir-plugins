@@ -95,8 +95,15 @@ def _has_tie_start(chord: etree._Element) -> bool:
     return spanner is not None and spanner.find(".//next") is not None
 
 
+def _is_verse1(no_el: Optional[etree._Element]) -> bool:
+    """Verse 1 = omit <no> (no element or empty). <no>1</no> = verse 2."""
+    if no_el is None:
+        return True
+    return ((no_el.text or "").strip() == "") if no_el.text is not None else True
+
+
 def _get_verse1_lyric(chord: etree._Element) -> Optional[Tuple[str, str]]:
-    """Returns (syllabic, text) for verse 1, or verse 2 if verse 1 is missing. None if no lyrics."""
+    """Returns (syllabic, text) for verse 1 (omit no), or verse 2 (no=1) if verse 1 is missing. None if no lyrics."""
     verse1: Optional[Tuple[str, str]] = None
     verse2: Optional[Tuple[str, str]] = None
     for lyrics in chord.findall(".//Lyrics"):
@@ -107,9 +114,9 @@ def _get_verse1_lyric(chord: etree._Element) -> Optional[Tuple[str, str]]:
         syllabic = (syllabic_el.text or "").strip() if syllabic_el is not None else "single"
         text = (text_el.text or "").strip() if text_el is not None else ""
         pair = (syllabic, text)
-        if (no == "1" or not no) and verse1 is None:
+        if _is_verse1(no_el) and verse1 is None:
             verse1 = pair
-        elif no == "2":
+        elif no == "1":
             verse2 = pair
     if verse1 is not None and (verse1[1] or verse1[0]):
         return verse1
@@ -190,6 +197,7 @@ def export_mscx_to_txt(score_root: etree._Element) -> str:
     Export lyrics from a MuseScore score element (root of parsed .mscx) to TXT format.
     Only voice 0, verse 1. Slur-continuation notes get no token.
     """
+    add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
         return ""
@@ -300,28 +308,23 @@ def parse_txt(txt: str) -> List[Dict[str, Any]]:
 
 
 def _clear_verse1_lyrics(chord: etree._Element) -> None:
-    """Remove all verse 1 Lyrics from chord (used for ineligible positions: inside spanner, etc.)."""
+    """Remove all verse 1 Lyrics from chord (verse 1 = omit <no>)."""
     for lyrics in list(chord.findall(".//Lyrics")):
-        no_el = lyrics.find("no")
-        n = (no_el.text or "").strip() if no_el is not None else ""
-        if n in ("", "1"):
+        if _is_verse1(lyrics.find("no")):
             chord.remove(lyrics)
 
 
 def _set_lyric(chord: etree._Element, syllabic: str, text: str, no: str = "1") -> None:
-    """Set or replace verse 1 lyric on chord. Removes all existing verse 1 lyrics first."""
+    """Set or replace verse 1 lyric on chord. Verse 1 = omit <no>. Removes all existing verse 1 lyrics first."""
     for lyrics in list(chord.findall(".//Lyrics")):
-        no_el = lyrics.find("no")
-        n = (no_el.text or "").strip() if no_el is not None else ""
-        if n == no or (not n and no == "1"):
+        if _is_verse1(lyrics.find("no")):
             chord.remove(lyrics)
     lyric_el = etree.Element("Lyrics")
     s_el = etree.SubElement(lyric_el, "syllabic")
     s_el.text = syllabic
     t_el = etree.SubElement(lyric_el, "text")
     t_el.text = text
-    no_el = etree.SubElement(lyric_el, "no")
-    no_el.text = no
+    # Verse 1: omit <no>. Do not add <no>1</no> (that would be verse 2).
     chord.append(lyric_el)
 
 
@@ -379,14 +382,12 @@ def _last_token_ends_with_hyphen(tokens: List[str]) -> bool:
 
 
 def _remove_verse2_plus(score_root: etree._Element) -> None:
-    """Remove all Lyrics with no=2, no=3, etc. so only verse 1 remains."""
+    """Remove all Lyrics with <no> (verse 2 = no=1, verse 3 = no=2, ...) so only verse 1 (omit no) remains."""
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
         return
-    for lyrics in score.findall(".//Lyrics"):
-        no_el = lyrics.find("no")
-        no = (no_el.text or "").strip() if no_el is not None else ""
-        if no and no != "1":
+    for lyrics in list(score.findall(".//Lyrics")):
+        if not _is_verse1(lyrics.find("no")):
             parent = lyrics.getparent()
             if parent is not None:
                 parent.remove(lyrics)
@@ -399,6 +400,7 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
     If the previous measure's last syllable was begin/middle (trailing hyphen), the next measure's
     first syllable is set as "end". Verse 2 and higher are removed.
     """
+    add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
         return
@@ -451,7 +453,7 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
                 if syl_index[0] >= len(syllables):
                     for lyrics in list(el.findall(".//Lyrics")):
                         no_el = lyrics.find("no")
-                        if (no_el is None or (no_el.text or "").strip() in ("", "1")):
+                        if _is_verse1(no_el):
                             el.remove(lyrics)
                     continue
                 syllabic, text = syllables[syl_index[0]]
@@ -459,7 +461,7 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
                 if syllabic == "_":
                     for lyrics in list(el.findall(".//Lyrics")):
                         no_el = lyrics.find("no")
-                        if (no_el is None or (no_el.text or "").strip() in ("", "1")):
+                        if _is_verse1(no_el):
                             el.remove(lyrics)
                 else:
                     _set_lyric(el, syllabic, text, "1")
@@ -475,6 +477,52 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
         for chord in score.findall(".//Chord"):
             if _is_continuation_no_lyric(chord):
                 _clear_verse1_lyrics(chord)
+
+
+def add_rests_to_empty_measures(score_root: etree._Element) -> None:
+    """
+    Add a full-measure rest to any voice that has no Chord and no Rest in that measure.
+    Modifies the score in place. Uses the measure's time signature (or 4/4 if none).
+    """
+    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
+    if score is None:
+        return
+    staffs = score.findall(".//Staff")
+    if not staffs:
+        staffs = score_root.findall(".//Staff")
+    for staff in staffs:
+        time_sig_n = 4
+        time_sig_d = 4
+        for measure in staff.findall(".//Measure"):
+            time_sig_el = measure.find(".//TimeSig")
+            if time_sig_el is not None:
+                sn = time_sig_el.find("sigN")
+                sd = time_sig_el.find("sigD")
+                if sn is not None and sn.text and sd is not None and sd.text:
+                    try:
+                        time_sig_n = int(sn.text.strip())
+                        time_sig_d = int(sd.text.strip())
+                    except ValueError:
+                        pass
+            duration_type = f"{time_sig_n}/{time_sig_d}"
+            voices = measure.findall("voice")
+            for voice in voices:
+                has_chord_or_rest = any(
+                    el.tag in ("Chord", "Rest") for el in voice
+                )
+                if has_chord_or_rest:
+                    continue
+                rest = etree.Element("Rest")
+                dt = etree.SubElement(rest, "durationType")
+                dt.text = duration_type
+                voice.append(rest)
+            if not voices:
+                voice = etree.Element("voice")
+                rest = etree.Element("Rest")
+                dt = etree.SubElement(rest, "durationType")
+                dt.text = duration_type
+                voice.append(rest)
+                measure.append(voice)
 
 
 def load_mscx(path: str) -> etree._Element:

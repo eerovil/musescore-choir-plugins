@@ -440,9 +440,6 @@
     <Staff id="2">
       <Measure>
         <voice>
-          <KeySig>
-            <accidental>0</accidental>
-            </KeySig>
           <TimeSig>
             <sigN>4</sigN>
             <sigD>4</sigD>
@@ -505,15 +502,6 @@
               <Accidental>
                 <subtype>accidentalSharp</subtype>
                 </Accidental>
-              <Spanner type="Tie">
-                <Tie>
-                  </Tie>
-                <next>
-                  <location>
-                    <measures>1</measures>
-                    </location>
-                  </next>
-                </Spanner>
               <pitch>78</pitch>
               <tpc>20</tpc>
               </Note>
@@ -521,30 +509,11 @@
           </voice>
         </Measure>
       <Measure>
-        <voice>
-          <Chord>
-            <durationType>whole</durationType>
-            <Note>
-              <Spanner type="Tie">
-                <prev>
-                  <location>
-                    <measures>-1</measures>
-                    </location>
-                  </prev>
-                </Spanner>
-              <pitch>78</pitch>
-              <tpc>20</tpc>
-              </Note>
-            </Chord>
-          </voice>
         </Measure>
       </Staff>
     <Staff id="3">
       <Measure>
         <voice>
-          <KeySig>
-            <accidental>0</accidental>
-            </KeySig>
           <TimeSig>
             <sigN>4</sigN>
             <sigD>4</sigD>
@@ -673,9 +642,6 @@
     <Staff id="4">
       <Measure>
         <voice>
-          <KeySig>
-            <accidental>0</accidental>
-            </KeySig>
           <TimeSig>
             <sigN>4</sigN>
             <sigD>4</sigD>

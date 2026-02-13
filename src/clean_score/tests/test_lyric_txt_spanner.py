@@ -11,6 +11,7 @@ import pytest
 from lxml import etree
 
 from src.clean_score.lyric_txt import (
+    add_rests_to_empty_measures,
     export_mscx_to_txt,
     import_txt_into_mscx,
     load_mscx,
@@ -227,3 +228,36 @@ def test_multimeasure_cross_measure_syllabic_continuation():
         f"First syllable of measure 2 must be 'end' (cross-measure from his-to-ri-), got syllabic={syllabic!r} text={text!r}"
     )
     assert text == "aan!", f"Expected text 'aan!', got {text!r}"
+
+
+def test_add_rests_to_empty_measure_multimeasure():
+    """
+    multimeasure.mscx has one measure with no voice (fully empty).
+    add_rests_to_empty_measures must add a voice with a full-measure rest so export/import work.
+    """
+    root = load_mscx(MULTIMEASURE_MSCX)
+    score = root if root.tag == "Score" else root.find(".//Score")
+    assert score is not None
+    empty_measure = None
+    for staff in score.findall(".//Staff"):
+        for measure in staff.findall(".//Measure"):
+            if len(measure.findall("voice")) == 0:
+                empty_measure = measure
+                break
+        if empty_measure is not None:
+            break
+    assert empty_measure is not None, "multimeasure.mscx must contain one measure with no voice"
+
+    add_rests_to_empty_measures(root)
+
+    voices = empty_measure.findall("voice")
+    assert len(voices) == 1, "Empty measure must get exactly one voice"
+    voice = voices[0]
+    rest_el = voice.find("Rest")
+    assert rest_el is not None, "Voice must contain a Rest"
+    dt = rest_el.find("durationType")
+    assert dt is not None and (dt.text or "").strip() in ("4/4", "3/4", "2/4"), (
+        f"Rest must have durationType for full measure, got {dt.text!r}"
+    )
+    chords = voice.findall("Chord")
+    assert len(chords) == 0, "Voice must contain only the rest, no chords"
