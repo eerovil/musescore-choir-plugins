@@ -82,6 +82,19 @@ def test_import_roundtrip_ineligible_cleared():
                 )
 
 
+def test_roundtrip_no_hups_in_result():
+    """Export spanner.mscx -> TXT -> import into copy; result must contain no lyric text 'hups'."""
+    txt = export_mscx_to_txt(load_mscx(SPANNER_MSCX))
+    root = load_mscx(SPANNER_MSCX)
+    import_txt_into_mscx(root, txt)
+    score = root if root.tag == "Score" else root.find(".//Score")
+    assert score is not None
+    for lyrics in score.findall(".//Lyrics"):
+        t_el = lyrics.find("text")
+        t = (t_el.text or "").strip() if t_el is not None else ""
+        assert t != "hups", f"Round-trip result must not contain 'hups'; found in Lyrics (no={lyrics.find('no').text if lyrics.find('no') is not None else '?'})"
+
+
 def test_cross_measure_syllabic_continuation():
     """
     When measure N ends with a trailing hyphen (e.g. 'lau-'), the first syllable

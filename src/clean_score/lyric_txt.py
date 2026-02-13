@@ -309,13 +309,12 @@ def _clear_verse1_lyrics(chord: etree._Element) -> None:
 
 
 def _set_lyric(chord: etree._Element, syllabic: str, text: str, no: str = "1") -> None:
-    """Set or replace verse 1 lyric on chord."""
-    for lyrics in chord.findall(".//Lyrics"):
+    """Set or replace verse 1 lyric on chord. Removes all existing verse 1 lyrics first."""
+    for lyrics in list(chord.findall(".//Lyrics")):
         no_el = lyrics.find("no")
         n = (no_el.text or "").strip() if no_el is not None else ""
         if n == no or (not n and no == "1"):
             chord.remove(lyrics)
-            break
     lyric_el = etree.Element("Lyrics")
     s_el = etree.SubElement(lyric_el, "syllabic")
     s_el.text = syllabic
