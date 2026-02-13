@@ -1,5 +1,5 @@
 Here is a PDF and auto-generated lyrics.
-Fix the lyrics.
+Fix incorrect spelling using PDF as the authoritative source.
 Keep same formatting, new lines, etc.
 Treat underscore as an empty syllable.
 Each line has the form: staffNum [syllable_count]: tokens
@@ -7,4 +7,4 @@ The number in brackets is the required syllable count for that voice in that mea
 Syllables are separated by space or dash (hyphen joins multi-syllable words).
 
 Give result as .txt file. Do not use pandoc or any formatting conversion.
-Write the .txt file directly as raw text. Empty response, only file.
+Write the .txt file only. Save as "lyrics_fixed.txt".

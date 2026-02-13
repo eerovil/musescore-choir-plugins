@@ -8,8 +8,9 @@ Format:
   staffNum [syllable_count]: token1 token2 ...
 Tokens are space-separated; hyphen merges syllables (e.g. il-man). Underscore _
 means lyric-eligible note with no lyric. The number in brackets is the syllable count
-for that voice in that measure (helps LLMs keep count when fixing text). Verse 1 only, voice 0.
-Rests get no token.
+for that voice in that measure (helps LLMs keep count when fixing text). Lyrics are ineligible for export when inside a spanner (slur/tie continuation) or in a verse other than 1;
+those positions get no token on export and verse 1 lyrics are cleared from them on import.
+Verse 1 only, voice 0. Rests get no token.
 """
 
 from __future__ import annotations
@@ -106,7 +107,7 @@ def _get_verse1_lyric(chord: etree._Element) -> Optional[Tuple[str, str]]:
         syllabic = (syllabic_el.text or "").strip() if syllabic_el is not None else "single"
         text = (text_el.text or "").strip() if text_el is not None else ""
         pair = (syllabic, text)
-        if no == "1" or (not no and verse1 is None):
+        if (no == "1" or not no) and verse1 is None:
             verse1 = pair
         elif no == "2":
             verse2 = pair
@@ -118,12 +119,12 @@ def _get_verse1_lyric(chord: etree._Element) -> Optional[Tuple[str, str]]:
 
 
 def _token_from_lyric(syllabic: str, text: str) -> str:
-    """One token string: may end with '-' for begin/middle, or start with '-' for end/middle (we use suffix only for merge)."""
+    """One token string; may end with '-' for begin/middle. Ineligibility (spanner, verse != 1) is handled by caller."""
+    t = (text or "").strip()
     suffix = ""
     if syllabic in ("begin", "middle"):
         suffix = "-"
-    # We don't add leading hyphen here; merge step joins with previous when prev ends with -
-    return (text or "").strip() + suffix
+    return t + suffix
 
 
 def _merge_tokens(tokens: List[str]) -> str:
@@ -218,10 +219,10 @@ def export_mscx_to_txt(score_root: etree._Element) -> str:
                         if _is_tie_continuation(el):
                             tie_active = False
                         continue
-                    if slur_active and _get_verse1_lyric(el) is None:
-                        continue  # middle of slur, no token
-                    if tie_active and _get_verse1_lyric(el) is None:
-                        continue  # middle of tie, no token
+                    if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
+                        continue  # middle of slur: ineligible, no token
+                    if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
+                        continue  # middle of tie: ineligible, no token
                     lyric = _get_verse1_lyric(el)
                     if lyric is not None:
                         syllabic, text = lyric
@@ -296,6 +297,15 @@ def parse_txt(txt: str) -> List[Dict[str, Any]]:
     if current_measure is not None and staff_lines:
         blocks.append({"measure": current_measure, "staff_lines": staff_lines})
     return blocks
+
+
+def _clear_verse1_lyrics(chord: etree._Element) -> None:
+    """Remove all verse 1 Lyrics from chord (used for ineligible positions: inside spanner, etc.)."""
+    for lyrics in list(chord.findall(".//Lyrics")):
+        no_el = lyrics.find("no")
+        n = (no_el.text or "").strip() if no_el is not None else ""
+        if n in ("", "1"):
+            chord.remove(lyrics)
 
 
 def _set_lyric(chord: etree._Element, syllabic: str, text: str, no: str = "1") -> None:
@@ -427,14 +437,17 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
                 if el.tag != "Chord":
                     continue
                 if _is_continuation_no_lyric(el):
+                    _clear_verse1_lyrics(el)
                     if _is_slur_continuation(el):
                         slur_active = False
                     if _is_tie_continuation(el):
                         tie_active = False
                     continue
                 if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
+                    _clear_verse1_lyrics(el)
                     continue  # middle of slur
                 if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
+                    _clear_verse1_lyrics(el)
                     continue  # middle of tie
                 if syl_index[0] >= len(syllables):
                     for lyrics in list(el.findall(".//Lyrics")):
@@ -457,6 +470,12 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
                     tie_active = True
 
     _remove_verse2_plus(score_root)
+    # Clear verse 1 lyrics from any chord that is inside spanner (ineligible)
+    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
+    if score is not None:
+        for chord in score.findall(".//Chord"):
+            if _is_continuation_no_lyric(chord):
+                _clear_verse1_lyrics(chord)
 
 
 def load_mscx(path: str) -> etree._Element:

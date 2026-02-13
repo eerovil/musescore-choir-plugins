@@ -23,7 +23,9 @@ from src.clean_score.lyric_txt import _is_continuation_no_lyric  # for test_cros
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 LYRIC_2_DIR = os.path.join(CURRENT_DIR, "lyric_2")
 SPANNER_MSCX = os.path.join(LYRIC_2_DIR, "spanner.mscx")
+SPANNER_RESULT_TXT = os.path.join(LYRIC_2_DIR, "spanner_result.txt")
 MULTIMEASURE_MSCX = os.path.join(LYRIC_2_DIR, "multimeasure.mscx")
+
 EXPECTED_TXT_1 = "tä-mä tes-ti lau-"
 EXPECTED_TXT_2 = "lu on! O-ma-ni!"
 
@@ -34,75 +36,50 @@ MULTIMEASURE_M2_STAFF_4 = "aan! _ _ _"
 MULTIMEASURE_M3_STAFF_4 = "aan!"
 
 
+def test_export_spanner_matches_result_file():
+    """spanner.mscx must export exactly to spanner_result.txt."""
+    with open(SPANNER_RESULT_TXT, "r", encoding="utf-8") as f:
+        expected = f.read().strip()
+    root = load_mscx(SPANNER_MSCX)
+    txt = export_mscx_to_txt(root).strip()
+    assert txt == expected, f"Export must match {SPANNER_RESULT_TXT}. Got:\n{txt}"
+
+
 def test_export_spanner_has_measure1_and_expected_line():
     root = load_mscx(SPANNER_MSCX)
     txt = export_mscx_to_txt(root)
     lines = [ln.strip() for ln in txt.strip().splitlines()]
     assert "# Measure 1" in lines, f"Expected '# Measure 1' in export. Got:\n{txt}"
     assert "# Measure 2" in lines, f"Expected '# Measure 2' in export. Got:\n{txt}"
-    # Format: staffNum [syllable_count]: tokens (count = lyric slots in measure)
-    assert any(
-        line.strip().startswith("1 [") and line.strip().endswith(f": {EXPECTED_TXT_1}") for line in lines
-    ), f"Expected a line '1 [N]: {EXPECTED_TXT_1}'. Got:\n{txt}"
-    assert any(
-        line.strip().startswith("1 [") and line.strip().endswith(f": {EXPECTED_TXT_2}") for line in lines
-    ), f"Expected a line '1 [N]: {EXPECTED_TXT_2}'. Got:\n{txt}"
-    # Exact format: two measure blocks with one staff line each
     data_lines = [l.strip() for l in txt.strip().splitlines() if l.strip() and not l.strip().startswith("#")]
     assert len(data_lines) == 2, f"Expected 2 staff lines. Got:\n{txt}"
-    assert data_lines[0].endswith(f": {EXPECTED_TXT_1}") and re.match(r"^1\s*\[\d+\]\s*:", data_lines[0]), f"Measure 1 line format. Got:\n{txt}"
-    assert data_lines[1].endswith(f": {EXPECTED_TXT_2}") and re.match(r"^1\s*\[\d+\]\s*:", data_lines[1]), f"Measure 2 line format. Got:\n{txt}"
+    for i, line in enumerate(data_lines):
+        assert re.match(r"^1\s*\[\d+\]\s*:", line), f"Staff line format. Got: {line}"
+    blocks = parse_txt(txt)
+    assert len(blocks) == 2 and blocks[0]["measure"] == 1 and blocks[1]["measure"] == 2
 
 
-def test_import_roundtrip_xml_unchanged():
+def test_import_roundtrip_ineligible_cleared():
+    """Export -> import: verse 1 lyrics on ineligible chords (inside spanner) are cleared."""
     root_orig = load_mscx(SPANNER_MSCX)
     txt = export_mscx_to_txt(root_orig)
-    assert "# Measure 1" in txt and EXPECTED_TXT_1 in txt
-    assert "# Measure 2" in txt and EXPECTED_TXT_2 in txt
+    assert "# Measure 1" in txt and "# Measure 2" in txt
 
-    # Import into a copy
     root_copy = load_mscx(SPANNER_MSCX)
     import_txt_into_mscx(root_copy, txt)
 
-    # Compare semantics: lyrics (verse 1) and slur presence per chord, in order
-    def chord_semantics(root: etree._Element) -> list:
-        score = root if root.tag == "Score" else root.find(".//Score")
-        if score is None:
-            return []
-        out = []
-        for staff in score.findall(".//Staff"):
-            for measure in staff.findall(".//Measure"):
-                voices = measure.findall("voice")
-                if not voices:
-                    continue
-                for el in voices[0]:
-                    if el.tag != "Chord":
-                        continue
-                    slur_prev = el.find(".//Spanner[@type='Slur']//prev") is not None
-                    lyric_el = None
-                    for ly in el.findall(".//Lyrics"):
-                        no_el = ly.find("no")
-                        if (no_el is None or (no_el.text or "").strip() in ("", "1")):
-                            lyric_el = ly
-                            break
-                    if lyric_el is not None:
-                        s_el = lyric_el.find("syllabic")
-                        t_el = lyric_el.find("text")
-                        s = (s_el.text or "").strip() if s_el is not None else ""
-                        if s == "":
-                            s = "single"  # normalize: MuseScore may omit for single syllable
-                        t = (t_el.text or "").strip() if t_el is not None else ""
-                        out.append(("lyric", s, t, slur_prev))
-                    else:
-                        out.append(("no_lyric", None, None, slur_prev))
-        return out
-
-    orig_sem = chord_semantics(root_orig)
-    copy_sem = chord_semantics(root_copy)
-    assert orig_sem == copy_sem, (
-        f"Lyrics and slur structure should match after import. "
-        f"Orig: {orig_sem}, Copy: {copy_sem}"
-    )
+    # No chord that is inside spanner (continuation) may have verse 1 lyrics after import
+    score = root_copy if root_copy.tag == "Score" else root_copy.find(".//Score")
+    assert score is not None
+    for chord in score.findall(".//Chord"):
+        if not _is_continuation_no_lyric(chord):
+            continue
+        for lyrics in chord.findall(".//Lyrics"):
+            no_el = lyrics.find("no")
+            if (no_el is None or (no_el.text or "").strip() in ("", "1")):
+                raise AssertionError(
+                    "Chord that is inside spanner (continuation) must not have verse 1 lyrics after import"
+                )
 
 
 def test_cross_measure_syllabic_continuation():

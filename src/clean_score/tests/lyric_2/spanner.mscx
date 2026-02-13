@@ -236,6 +236,9 @@
             </Chord>
           <Chord>
             <durationType>eighth</durationType>
+            <Lyrics>
+              <text>hups</text>
+              </Lyrics>
             <Note>
               <pitch>62</pitch>
               <tpc>16</tpc>
@@ -307,6 +310,10 @@
             <Lyrics>
               <text>on!</text>
               </Lyrics>
+            <Lyrics>
+              <no>1</no>
+              <text>hups</text>
+              </Lyrics>
             <Note>
               <Spanner type="Tie">
                 <Tie>
@@ -370,6 +377,10 @@
             </Chord>
           <Chord>
             <durationType>eighth</durationType>
+            <Lyrics>
+              <no>2</no>
+              <text>hups</text>
+              </Lyrics>
             <Note>
               <pitch>62</pitch>
               <tpc>16</tpc>
