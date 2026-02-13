@@ -13,6 +13,7 @@ from lxml import etree
 from src.clean_score.lyric_txt import (
     add_rests_to_empty_measures,
     export_mscx_to_txt,
+    import_json_txt_into_mscx,
     import_txt_into_mscx,
     load_mscx,
     parse_txt,
@@ -25,6 +26,8 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 LYRIC_2_DIR = os.path.join(CURRENT_DIR, "lyric_2")
 SPANNER_MSCX = os.path.join(LYRIC_2_DIR, "spanner.mscx")
 SPANNER_RESULT_TXT = os.path.join(LYRIC_2_DIR, "spanner_result.txt")
+SPANNER_JSON = os.path.join(LYRIC_2_DIR, "spanner.json")
+SPANNER_PARTIAL_JSON = os.path.join(LYRIC_2_DIR, "spanner_partial.json")
 MULTIMEASURE_MSCX = os.path.join(LYRIC_2_DIR, "multimeasure.mscx")
 
 EXPECTED_TXT_1 = "tä-mä tes-ti lau-"
@@ -44,6 +47,39 @@ def test_export_spanner_matches_result_file():
     root = load_mscx(SPANNER_MSCX)
     txt = export_mscx_to_txt(root).strip()
     assert txt == expected, f"Export must match {SPANNER_RESULT_TXT}. Got:\n{txt}"
+
+
+def test_spanner_json_import_matches_original_export():
+    """Import spanner.json into spanner.mscx then export: must match spanner_result.txt (same as original)."""
+    with open(SPANNER_RESULT_TXT, "r", encoding="utf-8") as f:
+        expected = f.read().strip()
+    with open(SPANNER_JSON, "r", encoding="utf-8") as f:
+        json_content = f.read()
+    root = load_mscx(SPANNER_MSCX)
+    import_json_txt_into_mscx(root, json_content)
+    txt = export_mscx_to_txt(root).strip()
+    assert txt == expected, f"Import spanner.json then export must match {SPANNER_RESULT_TXT}. Got:\n{txt}"
+
+
+def test_spanner_partial_json_only_edits_from_first_measure():
+    """Partial JSON (measure_start=2 only): measure 1 must be unchanged, only measure 2 updated."""
+    with open(SPANNER_PARTIAL_JSON, "r", encoding="utf-8") as f:
+        json_content = f.read()
+    root = load_mscx(SPANNER_MSCX)
+    import_json_txt_into_mscx(root, json_content)
+    txt = export_mscx_to_txt(root)
+    lines = [ln.strip() for ln in txt.strip().splitlines()]
+    assert "# Measure 1" in lines and "# Measure 2" in lines
+    m1_line = m2_line = None
+    for i in range(1, len(lines)):
+        if lines[i].startswith("1 [") and lines[i - 1] == "# Measure 1":
+            m1_line = lines[i]
+        if lines[i].startswith("1 [") and lines[i - 1] == "# Measure 2":
+            m2_line = lines[i]
+    assert m1_line is not None, "Export should have staff line for measure 1"
+    assert m2_line is not None, "Export should have staff line for measure 2"
+    assert "tä-mä tes-ti lau-" in m1_line, f"Measure 1 must be unchanged (tä-mä tes-ti lau-). Got: {m1_line}"
+    assert "lu on! O-ma-ni!" in m2_line, f"Measure 2 must have partial JSON text. Got: {m2_line}"
 
 
 def test_export_spanner_has_measure1_and_expected_line():

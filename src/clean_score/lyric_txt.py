@@ -11,14 +11,20 @@ means lyric-eligible note with no lyric. The number in brackets is the syllable 
 for that voice in that measure (helps LLMs keep count when fixing text). Lyrics are ineligible for export when inside a spanner (slur/tie continuation) or in a verse other than 1;
 those positions get no token on export and verse 1 lyrics are cleared from them on import.
 Verse 1 only, voice 0. Rests get no token.
+
+JSON format (line-by-line): array of objects with "measure_start" (int) and part keys (e.g. S1, S2, A1, A2) whose values are lyric lines. Tokens are distributed across measures using the score. Use a .json path with import_file to import this format.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
+
+# Default mapping from JSON part keys (e.g. S1, A2) to staff id. Overridable.
+DEFAULT_PART_TO_STAFF: Dict[str, int] = {"S1": 1, "S2": 2, "A1": 3, "A2": 4}
 
 
 # Duration type to ticks (fraction of whole). Division from score multiplies this.
@@ -151,6 +157,129 @@ def _merge_tokens(tokens: List[str]) -> str:
             cur = nxt
     result.append(cur)
     return " ".join(result)
+
+
+def _tokenize_line(line: str) -> List[str]:
+    """Split a line into tokens (space-separated, hyphen-merged). Same logic as parse_txt."""
+    tokens: List[str] = []
+    for part in line.split():
+        part = part.strip()
+        if not part:
+            continue
+        if part == "_":
+            tokens.append("_")
+        elif tokens and tokens[-1].endswith("-"):
+            tokens[-1] = tokens[-1].rstrip("-") + "-" + part
+        else:
+            tokens.append(part)
+    return tokens
+
+
+def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, int]]:
+    """
+    Return by_staff[staff_id][measure_1based] = number of lyric-eligible chords (voice 0).
+    Same eligibility as export: no chord for Rest; skip slur/tie continuation and middle.
+    """
+    out: Dict[int, Dict[int, int]] = {}
+    staffs = score.findall(".//Staff")
+    for staff in staffs:
+        staff_id = int(staff.get("id", "0"))
+        measure_index = -1
+        for measure in staff.findall(".//Measure"):
+            measure_index += 1
+            voices = measure.findall("voice")
+            if not voices:
+                continue
+            voice = voices[0]
+            count = 0
+            slur_active = False
+            tie_active = False
+            for el in voice:
+                if el.tag == "Chord":
+                    if _is_continuation_no_lyric(el):
+                        if _is_slur_continuation(el):
+                            slur_active = False
+                        if _is_tie_continuation(el):
+                            tie_active = False
+                        continue
+                    if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
+                        continue
+                    if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
+                        continue
+                    count += 1
+                    if _has_slur_start(el):
+                        slur_active = True
+                    if _has_tie_start(el):
+                        tie_active = True
+                elif el.tag in ("Rest", "location"):
+                    continue
+            out.setdefault(staff_id, {})[measure_index + 1] = count
+    return out
+
+
+def parse_json_txt(json_str: str) -> List[Dict[str, Any]]:
+    """
+    Parse JSON format: array of objects with 'measure_start' (int) and part keys (e.g. S1, S2, A1, A2).
+    Returns list of {"measure_start": N, "S1": "text", ...}.
+    """
+    data = json.loads(json_str)
+    if not isinstance(data, list) or len(data) == 0:
+        return []
+    first = data[0]
+    if not isinstance(first, dict) or "measure_start" not in first:
+        return []
+    return data
+
+
+def json_lines_to_by_measure(
+    json_data: List[Dict[str, Any]],
+    chord_counts: Dict[int, Dict[int, int]],
+    part_to_staff: Optional[Dict[str, int]] = None,
+) -> Dict[int, Dict[int, List[str]]]:
+    """
+    Convert line-by-line JSON (measure_start + part text per line) into by_measure[measure][staff_id] = tokens.
+    Expands each line to syllables, distributes syllables across measures by chord count, then converts
+    each measure's syllable chunk back to tokens so result matches measure-by-measure TXT.
+    """
+    if part_to_staff is None:
+        part_to_staff = DEFAULT_PART_TO_STAFF
+    by_measure: Dict[int, Dict[int, List[str]]] = {}
+    part_keys = [k for k in json_data[0].keys() if k != "measure_start"]
+    for part_key in part_keys:
+        staff_id = part_to_staff.get(part_key)
+        if staff_id is None:
+            continue
+        counts = chord_counts.get(staff_id, {})
+        lines: List[Tuple[int, List[str]]] = []
+        for row in json_data:
+            m_start = row.get("measure_start")
+            if m_start is None:
+                continue
+            text = row.get(part_key)
+            if text is None or not isinstance(text, str):
+                text = ""
+            tokens = _tokenize_line(text.strip())
+            lines.append((int(m_start), tokens))
+        lines.sort(key=lambda x: x[0])
+        prev_trailing_hyphen = False
+        for line_idx, (m_start, tokens) in enumerate(lines):
+            next_start = lines[line_idx + 1][0] if line_idx + 1 < len(lines) else None
+            syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
+            prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
+            m_end = next_start if next_start is not None else (max(counts.keys()) + 1 if counts else m_start + 1)
+            syl_offset = 0
+            for m in range(m_start, m_end):
+                if syl_offset >= len(syllables):
+                    break
+                n_slots = counts.get(m, 0)
+                if n_slots <= 0:
+                    continue
+                chunk = syllables[syl_offset : syl_offset + n_slots]
+                syl_offset += len(chunk)
+                if chunk:
+                    measure_tokens = _syllables_to_tokens(chunk)
+                    by_measure.setdefault(m, {})[staff_id] = measure_tokens
+    return by_measure
 
 
 def _iter_voice0_chords(staff: etree._Element, division: int):
@@ -381,6 +510,48 @@ def _last_token_ends_with_hyphen(tokens: List[str]) -> bool:
     return last != "_" and last.endswith("-")
 
 
+def _syllables_to_tokens(syllables: List[Tuple[str, str]]) -> List[str]:
+    """
+    Convert (syllabic, text) pairs back to tokens (e.g. begin+end -> "a-b", single -> "a", begin-only -> "a-").
+    """
+    tokens: List[str] = []
+    i = 0
+    while i < len(syllables):
+        syllabic, text = syllables[i]
+        if syllabic == "_":
+            tokens.append("_")
+            i += 1
+        elif syllabic == "single":
+            tokens.append(text)
+            i += 1
+        elif syllabic == "begin":
+            parts = [text]
+            i += 1
+            while i < len(syllables):
+                s2, t2 = syllables[i]
+                if s2 == "middle":
+                    parts.append(t2)
+                    i += 1
+                elif s2 == "end":
+                    parts.append(t2)
+                    i += 1
+                    tokens.append("-".join(parts))
+                    break
+                else:
+                    break
+            else:
+                tokens.append("-".join(parts) + "-")
+        elif syllabic == "end":
+            tokens.append(text)
+            i += 1
+        elif syllabic == "middle":
+            tokens.append(text)
+            i += 1
+        else:
+            i += 1
+    return tokens
+
+
 def _remove_verse2_plus(score_root: etree._Element) -> None:
     """Remove all Lyrics with <no> (verse 2 = no=1, verse 3 = no=2, ...) so only verse 1 (omit no) remains."""
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
@@ -393,19 +564,29 @@ def _remove_verse2_plus(score_root: etree._Element) -> None:
                 parent.remove(lyrics)
 
 
-def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
+def import_txt_into_mscx(
+    score_root: etree._Element,
+    txt: Optional[str] = None,
+    by_measure: Optional[Dict[int, Dict[int, List[str]]]] = None,
+) -> None:
     """
     Import TXT lyrics into the score (in-place). Verse 1, voice 0. Slur-continuation chords are skipped (no lyric).
     Hyphenated tokens (e.g. il-man) are expanded to begin/end syllables on consecutive chords.
     If the previous measure's last syllable was begin/middle (trailing hyphen), the next measure's
     first syllable is set as "end". Verse 2 and higher are removed.
+
+    Provide either txt (plain # Measure N / staff: tokens format) or by_measure (precomputed
+    {measure_1based: {staff_id: [tokens]}}). If both are None, nothing is applied.
     """
     add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
         return
-    blocks = parse_txt(txt)
-    by_measure = {b["measure"]: b["staff_lines"] for b in blocks}
+    if by_measure is None:
+        if txt is None:
+            return
+        blocks = parse_txt(txt)
+        by_measure = {b["measure"]: b["staff_lines"] for b in blocks}
 
     staffs = score.findall(".//Staff")
     if not staffs:
@@ -419,9 +600,10 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
         for measure in staff.findall(".//Measure"):
             measure_index += 1
             one_based = measure_index + 1
-            staff_tokens = (by_measure.get(one_based) or {}).get(staff_id)
-            if staff_tokens is None:
-                staff_tokens = []
+            # Only edit measures that are present in by_measure (partial JSON may omit earlier measures)
+            if one_based not in by_measure or staff_id not in by_measure[one_based]:
+                continue
+            staff_tokens = by_measure[one_based][staff_id]
             # Derive from TXT: did the previous measure's last token end with hyphen?
             prev_measure_tokens = (by_measure.get(one_based - 1) or {}).get(staff_id) or []
             first_syllabic_continuation = _last_token_ends_with_hyphen(prev_measure_tokens)
@@ -477,6 +659,29 @@ def import_txt_into_mscx(score_root: etree._Element, txt: str) -> None:
         for chord in score.findall(".//Chord"):
             if _is_continuation_no_lyric(chord):
                 _clear_verse1_lyrics(chord)
+
+
+def import_json_txt_into_mscx(
+    score_root: etree._Element,
+    json_str: str,
+    part_to_staff: Optional[Dict[str, int]] = None,
+) -> None:
+    """
+    Import line-by-line JSON lyrics into the score. JSON format: array of objects with
+    'measure_start' (measure number where the line starts) and part keys (e.g. S1, S2, A1, A2)
+    whose values are lyric lines. Tokens are distributed across measures using chord counts
+    from the score. part_to_staff maps part key -> staff id (default S1->1, S2->2, A1->3, A2->4).
+    """
+    add_rests_to_empty_measures(score_root)
+    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
+    if score is None:
+        return
+    json_data = parse_json_txt(json_str)
+    if not json_data:
+        return
+    chord_counts = _get_chord_counts_per_measure(score)
+    by_measure = json_lines_to_by_measure(json_data, chord_counts, part_to_staff)
+    import_txt_into_mscx(score_root, by_measure=by_measure)
 
 
 def add_rests_to_empty_measures(score_root: etree._Element) -> None:
@@ -546,9 +751,12 @@ def export_file(mscx_path: str, txt_path: str) -> None:
 
 
 def import_file(txt_path: str, mscx_path_in: str, mscx_path_out: str) -> None:
-    """Import lyrics from .txt into a copy of the .mscx file."""
+    """Import lyrics from .txt or .json into a copy of the .mscx file."""
     with open(txt_path, "r", encoding="utf-8") as f:
-        txt = f.read()
+        content = f.read()
     root = load_mscx(mscx_path_in)
-    import_txt_into_mscx(root, txt)
+    if txt_path.lower().endswith(".json"):
+        import_json_txt_into_mscx(root, content)
+    else:
+        import_txt_into_mscx(root, txt=content)
     save_mscx(root, mscx_path_out)

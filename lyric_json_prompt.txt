@@ -1,0 +1,11 @@
+Read this pdf and for each line in the score, give following in JSON format:
+-Measure number, where the line starts
+-Lyrics for each staff, keep dashes.
+-try to align the strings similarly as in the pdf: e.g. Add empty space if the lyrics start at halfway through the line
+[
+    {
+        "measure_start": 1,
+        "1": "Ex-amp-le-ly-ric",
+        "2": "Ex-amp-le-ly-ric"
+    }
+]
