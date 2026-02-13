@@ -55,6 +55,11 @@ def main() -> None:
         metavar="MSCX",
         help="Output .mscx file (default: overwrite input MSCX)",
     )
+    import_parser.add_argument(
+        "--split",
+        metavar="N,M,...",
+        help="JSON only: split listed parts into two staves each (e.g. --split 3,4 => parts 3,4 become 3+4, 5+6)",
+    )
 
     args = parser.parse_args()
 
@@ -76,7 +81,13 @@ def main() -> None:
         if not os.path.exists(mscx_in):
             sys.exit(f"File not found: {mscx_in}")
         out = args.output or mscx_in
-        import_file(txt_path, mscx_in, out)
+        split = None
+        if getattr(args, "split", None):
+            try:
+                split = [int(x.strip()) for x in args.split.split(",") if x.strip()]
+            except ValueError:
+                sys.exit("--split must be comma-separated part numbers (e.g. 3,4)")
+        import_file(txt_path, mscx_in, out, split=split)
         print(f"Imported to {out}")
 
 

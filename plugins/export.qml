@@ -100,6 +100,9 @@ FileIO {
             if (part.partName === "Drumset") {
                 continue;
             }
+            if (part.partName === "Click") {
+                continue;
+            }
             currentPartNames.push(part.partName)
         }
         return currentPartNames

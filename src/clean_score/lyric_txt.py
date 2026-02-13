@@ -238,15 +238,19 @@ def json_lines_to_by_measure(
 ) -> Dict[int, Dict[int, List[str]]]:
     """
     Convert line-by-line JSON (measure_start + part text per line) into by_measure[measure][staff_id] = tokens.
-    Expands each line to syllables, distributes syllables across measures by chord count, then converts
-    each measure's syllable chunk back to tokens so result matches measure-by-measure TXT.
+    Part keys can be "1", "2" (staff id) or names mapped via part_to_staff. Expands each line to syllables,
+    distributes by chord count, then converts each measure's chunk back to tokens.
     """
     if part_to_staff is None:
         part_to_staff = DEFAULT_PART_TO_STAFF
     by_measure: Dict[int, Dict[int, List[str]]] = {}
     part_keys = [k for k in json_data[0].keys() if k != "measure_start"]
     for part_key in part_keys:
-        staff_id = part_to_staff.get(part_key)
+        # Allow numeric part names: "1", "2" etc. map directly to staff id
+        if isinstance(part_key, str) and part_key.isdigit():
+            staff_id = int(part_key)
+        else:
+            staff_id = part_to_staff.get(part_key)
         if staff_id is None:
             continue
         counts = chord_counts.get(staff_id, {})
@@ -661,16 +665,43 @@ def import_txt_into_mscx(
                 _clear_verse1_lyrics(chord)
 
 
+def _apply_split_to_by_measure(
+    by_measure: Dict[int, Dict[int, List[str]]],
+    split: List[int],
+) -> Dict[int, Dict[int, List[str]]]:
+    """
+    Expand by_measure so that each split part is duplicated to two consecutive staff ids.
+    E.g. split [3, 4]: input part 3 -> output staffs 3 and 4 (same content), input part 4 -> staffs 5 and 6.
+    """
+    if not split:
+        return by_measure
+    new_by_measure: Dict[int, Dict[int, List[str]]] = {}
+    for measure, staff_lines in by_measure.items():
+        new_by_measure[measure] = {}
+        for staff_id, tokens in staff_lines.items():
+            if staff_id in split:
+                i = split.index(staff_id)
+                output_ids = [staff_id + i, staff_id + i + 1]
+            else:
+                output_ids = [staff_id]
+            for out_id in output_ids:
+                new_by_measure[measure][out_id] = list(tokens)
+    return new_by_measure
+
+
 def import_json_txt_into_mscx(
     score_root: etree._Element,
     json_str: str,
     part_to_staff: Optional[Dict[str, int]] = None,
+    split: Optional[List[int]] = None,
 ) -> None:
     """
     Import line-by-line JSON lyrics into the score. JSON format: array of objects with
-    'measure_start' (measure number where the line starts) and part keys (e.g. S1, S2, A1, A2)
-    whose values are lyric lines. Tokens are distributed across measures using chord counts
-    from the score. part_to_staff maps part key -> staff id (default S1->1, S2->2, A1->3, A2->4).
+    'measure_start' (measure number where the line starts) and part keys whose values are lyric lines.
+    Part keys can be numeric ("1", "2", ...) for staff id directly, or names (e.g. S1, A1) mapped
+    via part_to_staff (default S1->1, S2->2, A1->3, A2->4).
+    If split is given (e.g. [3, 4]), those input parts are each duplicated to two staves:
+    part 3 -> staffs 3 and 4, part 4 -> staffs 5 and 6.
     """
     add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
@@ -681,6 +712,8 @@ def import_json_txt_into_mscx(
         return
     chord_counts = _get_chord_counts_per_measure(score)
     by_measure = json_lines_to_by_measure(json_data, chord_counts, part_to_staff)
+    if split:
+        by_measure = _apply_split_to_by_measure(by_measure, split)
     import_txt_into_mscx(score_root, by_measure=by_measure)
 
 
@@ -750,13 +783,18 @@ def export_file(mscx_path: str, txt_path: str) -> None:
         f.write(txt)
 
 
-def import_file(txt_path: str, mscx_path_in: str, mscx_path_out: str) -> None:
-    """Import lyrics from .txt or .json into a copy of the .mscx file."""
+def import_file(
+    txt_path: str,
+    mscx_path_in: str,
+    mscx_path_out: str,
+    split: Optional[List[int]] = None,
+) -> None:
+    """Import lyrics from .txt or .json into a copy of the .mscx file. split only applies to .json (e.g. [3, 4])."""
     with open(txt_path, "r", encoding="utf-8") as f:
         content = f.read()
     root = load_mscx(mscx_path_in)
     if txt_path.lower().endswith(".json"):
-        import_json_txt_into_mscx(root, content)
+        import_json_txt_into_mscx(root, content, split=split)
     else:
         import_txt_into_mscx(root, txt=content)
     save_mscx(root, mscx_path_out)
