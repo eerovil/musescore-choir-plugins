@@ -66,7 +66,6 @@ def part_names_for_run(letter: str, run_length: int) -> List[Tuple[str, str]]:
     - 3+ parts: pairs with -1, -2 (S1-1, S1-2, S2-1, S2-2, ...); last can be single (S2).
     """
     prefix = PART_SHORT_PREFIX[letter]
-    full_base = PART_FULL_NAMES[letter]
     result: List[Tuple[str, str]] = []
     use_pairs = run_length >= 3
     for k in range(run_length):
@@ -74,18 +73,14 @@ def part_names_for_run(letter: str, run_length: int) -> List[Tuple[str, str]]:
             group = k // 2 + 1
             if k % 2 == 1:
                 short_name = f"{prefix}{group}-2"
-                full_name = f"{full_base} {group}-2"
             elif k + 1 < run_length:
                 short_name = f"{prefix}{group}-1"
-                full_name = f"{full_base} {group}-1"
             else:
                 short_name = f"{prefix}{group}"
-                full_name = f"{full_base} {group}"
         else:
             num = k + 1
             short_name = f"{prefix}{num}"
-            full_name = f"{full_base} {num}"
-        result.append((short_name, full_name))
+        result.append((short_name, short_name))
     return result
 
 
