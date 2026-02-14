@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
@@ -70,18 +71,18 @@ def _resolve_duration_ticks(
 
 def _is_slur_continuation(chord: etree._Element) -> bool:
     """True if this chord is under a slur but not the first note of the slur (has prev, no lyric slot)."""
-    spanner = chord.find(".//Spanner[@type='Slur']")
-    if spanner is None:
-        return False
-    return spanner.find(".//prev") is not None
+    for spanner in chord.findall(".//Spanner[@type='Slur']"):
+        if spanner.find(".//prev") is not None:
+            return True
+    return False
 
 
 def _is_tie_continuation(chord: etree._Element) -> bool:
     """True if this chord is the continuation of a tie (Tie spanner with prev; often on Note)."""
-    spanner = chord.find(".//Spanner[@type='Tie']")
-    if spanner is None:
-        return False
-    return spanner.find(".//prev") is not None
+    for spanner in chord.findall(".//Spanner[@type='Tie']"):
+        if spanner.find(".//prev") is not None:
+            return True
+    return False
 
 
 def _is_continuation_no_lyric(chord: etree._Element) -> bool:
@@ -91,14 +92,18 @@ def _is_continuation_no_lyric(chord: etree._Element) -> bool:
 
 def _has_slur_start(chord: etree._Element) -> bool:
     """True if this chord starts a slur (has Slur spanner with next)."""
-    spanner = chord.find(".//Spanner[@type='Slur']")
-    return spanner is not None and spanner.find(".//next") is not None
+    for spanner in chord.findall(".//Spanner[@type='Slur']"):
+        if spanner.find(".//next") is not None:
+            return True
+    return False
 
 
 def _has_tie_start(chord: etree._Element) -> bool:
     """True if this chord starts a tie (has Tie spanner with next; often on Note)."""
-    spanner = chord.find(".//Spanner[@type='Tie']")
-    return spanner is not None and spanner.find(".//next") is not None
+    for spanner in chord.findall(".//Spanner[@type='Tie']"):
+        if spanner.find(".//next") is not None:
+            return True
+    return False
 
 
 def _is_verse1(no_el: Optional[etree._Element]) -> bool:
@@ -187,6 +192,8 @@ def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, 
     for staff in staffs:
         staff_id = int(staff.get("id", "0"))
         measure_index = -1
+        slur_active = False
+        tie_active = False
         for measure in staff.findall(".//Measure"):
             measure_index += 1
             voices = measure.findall("voice")
@@ -194,8 +201,6 @@ def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, 
                 continue
             voice = voices[0]
             count = 0
-            slur_active = False
-            tie_active = False
             for el in voice:
                 if el.tag == "Chord":
                     if _is_continuation_no_lyric(el):
@@ -287,6 +292,7 @@ def json_lines_to_by_measure(
     if part_to_staff is None:
         part_to_staff = DEFAULT_PART_TO_STAFF
     by_measure: Dict[int, Dict[int, List[str]]] = {}
+    token_mismatches: List[Tuple[int, int, int, str, int, int]] = []  # (m_start, m_end, staff_id, kind, n_syl, slots)
     # Collect part keys from all rows so a part that appears only in later measures (e.g. "4") is not ignored
     all_part_keys = {k for row in json_data for k in row.keys() if k != "measure_start"}
     part_keys = sorted(
@@ -360,6 +366,34 @@ def json_lines_to_by_measure(
                 if chunk:
                     measure_tokens = _syllables_to_tokens(chunk)
                     by_measure.setdefault(m, {})[staff_id] = measure_tokens
+            # Record mismatch when syllable count doesn't match chord slots in this line's range
+            if tokens:
+                total_slots = sum(counts.get(m, 0) for m in range(m_start, m_end))
+                n_syllables = len(syllables)
+                if n_syllables > total_slots:
+                    token_mismatches.append((m_start, m_end, staff_id, "too_many", n_syllables, total_slots))
+                elif n_syllables < total_slots:
+                    token_mismatches.append((m_start, m_end, staff_id, "too_few", n_syllables, total_slots))
+    # Emit one summary warning per distinct (range, kind) with staffs listed
+    if token_mismatches:
+        key_to_staffs: Dict[Tuple[int, int, str, int, int], List[int]] = {}
+        for m_start, m_end, staff_id, kind, n_syl, slots in token_mismatches:
+            key = (m_start, m_end, kind, n_syl, slots)
+            key_to_staffs.setdefault(key, []).append(staff_id)
+        for (m_start, m_end, kind, n_syl, slots), staff_ids in sorted(key_to_staffs.items()):
+            staffs_str = ", ".join(str(s) for s in sorted(set(staff_ids)))
+            if kind == "too_many":
+                print(
+                    f"Warning: Measures {m_start}-{m_end - 1} (staffs {staffs_str}): too many tokens "
+                    f"({n_syl} syllables, {slots} slots); some lyrics will be dropped.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"Warning: Measures {m_start}-{m_end - 1} (staffs {staffs_str}): too few tokens "
+                    f"({n_syl} syllables, {slots} slots); some slots will be empty.",
+                    file=sys.stderr,
+                )
     return by_measure
 
 
@@ -420,6 +454,8 @@ def export_mscx_to_txt(score_root: etree._Element) -> str:
     for staff in staffs:
         staff_id = int(staff.get("id", "0"))
         measure_index = -1
+        slur_active = False
+        tie_active = False
         for measure in staff.findall(".//Measure"):
             measure_index += 1
             voices = measure.findall("voice")
@@ -427,8 +463,6 @@ def export_mscx_to_txt(score_root: etree._Element) -> str:
                 continue
             voice = voices[0]
             measure_tokens: List[str] = []
-            slur_active = False
-            tie_active = False
             for el in voice:
                 if el.tag == "Chord":
                     if _is_continuation_no_lyric(el):
@@ -651,6 +685,37 @@ def _remove_verse2_plus(score_root: etree._Element) -> None:
                 parent.remove(lyrics)
 
 
+def _count_remaining_eligible_chords(
+    voice_children: List[etree._Element],
+    from_index: int,
+    slur_active: bool,
+    tie_active: bool,
+) -> int:
+    """Count how many chords in voice_children[from_index:] will receive a lyric (same rules as import loop)."""
+    count = 0
+    sa, ta = slur_active, tie_active
+    for i in range(from_index, len(voice_children)):
+        el = voice_children[i]
+        if el.tag != "Chord":
+            continue
+        if _is_continuation_no_lyric(el):
+            if _is_slur_continuation(el):
+                sa = False
+            if _is_tie_continuation(el):
+                ta = False
+            continue
+        if sa and not _has_slur_start(el) and not _is_slur_continuation(el):
+            continue
+        if ta and not _has_tie_start(el) and not _is_tie_continuation(el):
+            continue
+        count += 1
+        if _has_slur_start(el):
+            sa = True
+        if _has_tie_start(el):
+            ta = True
+    return count
+
+
 def import_txt_into_mscx(
     score_root: etree._Element,
     txt: Optional[str] = None,
@@ -684,56 +749,87 @@ def import_txt_into_mscx(
     for staff in staffs:
         staff_id = int(staff.get("id", "0"))
         measure_index = -1
+        slur_active = False
+        tie_active = False
         for measure in staff.findall(".//Measure"):
             measure_index += 1
             one_based = measure_index + 1
-            # Only edit measures that are present in by_measure (partial JSON may omit earlier measures)
-            if one_based not in by_measure or staff_id not in by_measure[one_based]:
-                continue
-            staff_tokens = by_measure[one_based][staff_id]
-            # Derive from TXT: did the previous measure's last token end with hyphen?
-            prev_measure_tokens = (by_measure.get(one_based - 1) or {}).get(staff_id) or []
-            first_syllabic_continuation = _last_token_ends_with_hyphen(prev_measure_tokens)
-            syllables = _tokens_to_syllables(staff_tokens, first_syllabic_continuation=first_syllabic_continuation)
-            syl_index = [0]
-            slur_active = False
-            tie_active = False
-
             voices = measure.findall("voice")
             if not voices:
                 continue
             voice = voices[0]
-            for el in voice:
+            voice_children = list(voice)
+            # Whether we will place lyrics in this measure (partial JSON may omit measures)
+            place_lyrics = (
+                one_based in by_measure and staff_id in by_measure[one_based]
+            )
+            if place_lyrics:
+                staff_tokens = by_measure[one_based][staff_id]
+                prev_measure_tokens = (by_measure.get(one_based - 1) or {}).get(staff_id) or []
+                first_syllabic_continuation = _last_token_ends_with_hyphen(prev_measure_tokens)
+                syllables = _tokens_to_syllables(staff_tokens, first_syllabic_continuation=first_syllabic_continuation)
+                syl_index = [0]
+            else:
+                syllables = []
+                syl_index = [0]
+
+            for el_idx, el in enumerate(voice_children):
                 if el.tag != "Chord":
                     continue
                 if _is_continuation_no_lyric(el):
-                    _clear_verse1_lyrics(el)
+                    if place_lyrics:
+                        _clear_verse1_lyrics(el)
                     if _is_slur_continuation(el):
                         slur_active = False
                     if _is_tie_continuation(el):
                         tie_active = False
                     continue
                 if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
-                    _clear_verse1_lyrics(el)
+                    if place_lyrics:
+                        _clear_verse1_lyrics(el)
                     continue  # middle of slur
                 if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
-                    _clear_verse1_lyrics(el)
+                    if place_lyrics:
+                        _clear_verse1_lyrics(el)
                     continue  # middle of tie
+                if not place_lyrics:
+                    if _has_slur_start(el):
+                        slur_active = True
+                    if _has_tie_start(el):
+                        tie_active = True
+                    continue
                 if syl_index[0] >= len(syllables):
                     for lyrics in list(el.findall(".//Lyrics")):
                         no_el = lyrics.find("no")
                         if _is_verse1(no_el):
                             el.remove(lyrics)
+                    if _has_slur_start(el):
+                        slur_active = True
+                    if _has_tie_start(el):
+                        tie_active = True
                     continue
-                syllabic, text = syllables[syl_index[0]]
-                syl_index[0] += 1
-                if syllabic == "_":
-                    for lyrics in list(el.findall(".//Lyrics")):
-                        no_el = lyrics.find("no")
-                        if _is_verse1(no_el):
-                            el.remove(lyrics)
+                syllables_left = len(syllables) - syl_index[0]
+                eligible_remaining = _count_remaining_eligible_chords(
+                    voice_children, el_idx, slur_active, tie_active
+                )
+                if syllables_left > eligible_remaining and eligible_remaining > 0:
+                    # Cram remaining syllables onto this chord so JSON can "force" text (e.g. öt-tä. in one slot)
+                    chunk = syllables[syl_index[0] : syl_index[0] + syllables_left]
+                    merged_tokens = _syllables_to_tokens(chunk)
+                    merged_text = " ".join(merged_tokens).strip() if merged_tokens else ""
+                    if merged_text:
+                        _set_lyric(el, "single", merged_text, "1")
+                    syl_index[0] += syllables_left
                 else:
-                    _set_lyric(el, syllabic, text, "1")
+                    syllabic, text = syllables[syl_index[0]]
+                    syl_index[0] += 1
+                    if syllabic == "_":
+                        for lyrics in list(el.findall(".//Lyrics")):
+                            no_el = lyrics.find("no")
+                            if _is_verse1(no_el):
+                                el.remove(lyrics)
+                    else:
+                        _set_lyric(el, syllabic, text, "1")
                 if _has_slur_start(el):
                     slur_active = True
                 if _has_tie_start(el):

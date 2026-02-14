@@ -41,6 +41,7 @@ MULTIMEASURE_MSCX = os.path.join(LYRIC_2_DIR, "multimeasure.mscx")
 
 EXPECTED_TXT_1 = "tä-mä tes-ti lau-"
 EXPECTED_TXT_2 = "lu on! O-ma-ni!"
+EXPECTED_TXT_3 = "laa"
 
 # Multimeasure: 4 staves, measure 1 ends with his-to-ri-, measure 2 starts with aan!
 MULTIMEASURE_M1 = "his-to-ri-"
@@ -225,12 +226,13 @@ def test_export_spanner_has_measure1_and_expected_line():
     lines = [ln.strip() for ln in txt.strip().splitlines()]
     assert "# Measure 1" in lines, f"Expected '# Measure 1' in export. Got:\n{txt}"
     assert "# Measure 2" in lines, f"Expected '# Measure 2' in export. Got:\n{txt}"
+    assert "# Measure 3" in lines, f"Expected '# Measure 3' in export. Got:\n{txt}"
     data_lines = [l.strip() for l in txt.strip().splitlines() if l.strip() and not l.strip().startswith("#")]
-    assert len(data_lines) == 2, f"Expected 2 staff lines. Got:\n{txt}"
+    assert len(data_lines) >= 3, f"Expected at least 3 staff lines. Got:\n{txt}"
     for i, line in enumerate(data_lines):
         assert re.match(r"^1\s*\[\d+\]\s*:", line), f"Staff line format. Got: {line}"
     blocks = parse_txt(txt)
-    assert len(blocks) == 2 and blocks[0]["measure"] == 1 and blocks[1]["measure"] == 2
+    assert len(blocks) >= 3 and blocks[0]["measure"] == 1 and blocks[1]["measure"] == 2 and blocks[2]["measure"] == 3
 
 
 def test_import_roundtrip_ineligible_cleared():
@@ -274,7 +276,7 @@ def test_cross_measure_syllabic_continuation():
     When measure N ends with a trailing hyphen (e.g. 'lau-'), the first syllable
     of measure N+1 must be imported as syllabic 'end' (e.g. 'lu').
     """
-    txt = f"# Measure 1\n1: {EXPECTED_TXT_1}\n# Measure 2\n1: {EXPECTED_TXT_2}"
+    txt = f"# Measure 1\n1: {EXPECTED_TXT_1}\n# Measure 2\n1: {EXPECTED_TXT_2}\n# Measure 3\n1: {EXPECTED_TXT_3}"
     root = load_mscx(SPANNER_MSCX)
     import_txt_into_mscx(root, txt)
     score = root if root.tag == "Score" else root.find(".//Score")

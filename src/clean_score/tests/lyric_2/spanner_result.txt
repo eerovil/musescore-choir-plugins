@@ -2,3 +2,7 @@
 1 [5]: tä-mä tes-ti lau-
 # Measure 2
 1 [5]: lu on! O-ma-ni!
+# Measure 3
+1 [1]: laa
+# Measure 4
+1 [0]:
