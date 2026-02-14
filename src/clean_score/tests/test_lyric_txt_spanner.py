@@ -3,6 +3,7 @@ Unit test: export spanner.mscx to TXT (slur rule: only first note of slur gets a
 assert format, then import and assert XML equals original.
 """
 
+import json
 import os
 import re
 import tempfile
@@ -16,10 +17,14 @@ from src.clean_score.lyric_txt import (
     import_json_txt_into_mscx,
     import_txt_into_mscx,
     load_mscx,
+    parse_json_txt,
     parse_txt,
     save_mscx,
 )
-from src.clean_score.lyric_txt import _is_continuation_no_lyric  # for test_cross_measure_*
+from src.clean_score.lyric_txt import (
+    _is_continuation_no_lyric,  # for test_cross_measure_*
+    _merge_tokens,
+)
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +33,10 @@ SPANNER_MSCX = os.path.join(LYRIC_2_DIR, "spanner.mscx")
 SPANNER_RESULT_TXT = os.path.join(LYRIC_2_DIR, "spanner_result.txt")
 SPANNER_JSON = os.path.join(LYRIC_2_DIR, "spanner.json")
 SPANNER_PARTIAL_JSON = os.path.join(LYRIC_2_DIR, "spanner_partial.json")
+NEW_JSON = os.path.join(LYRIC_2_DIR, "new_json.json")
+NEW_JSON_CONVERTED = os.path.join(LYRIC_2_DIR, "new_json_converted.json")
+NEW_JSON_MSCX = os.path.join(LYRIC_2_DIR, "new_json.mscx")
+NEW_JSON_TXT = os.path.join(LYRIC_2_DIR, "new_json.txt")
 MULTIMEASURE_MSCX = os.path.join(LYRIC_2_DIR, "multimeasure.mscx")
 
 EXPECTED_TXT_1 = "tä-mä tes-ti lau-"
@@ -47,6 +56,134 @@ def test_export_spanner_matches_result_file():
     root = load_mscx(SPANNER_MSCX)
     txt = export_mscx_to_txt(root).strip()
     assert txt == expected, f"Export must match {SPANNER_RESULT_TXT}. Got:\n{txt}"
+
+
+def test_new_json_converts_to_legacy_format():
+    """new_json.json (measure_start + lyrics with parts) must convert to new_json_converted.json (measure_start + part keys)."""
+    with open(NEW_JSON, "r", encoding="utf-8") as f:
+        new_content = f.read()
+    with open(NEW_JSON_CONVERTED, "r", encoding="utf-8") as f:
+        expected = json.load(f)
+    converted = parse_json_txt(new_content)
+    assert converted == expected, (
+        f"Conversion of new_json.json must match new_json_converted.json. Got: {converted}"
+    )
+
+
+def _mscx_has_end_man_followed_by_begin_vi(root: etree._Element) -> bool:
+    """
+    Return True if the score XML contains the wrong pattern: a Chord with Lyrics
+    (syllabic=end, text=man) immediately followed by a Chord with Lyrics (syllabic=begin, text=vi).
+    That indicates the distribution bug (il-man-vi- in one measure).
+    """
+    for chord in root.iter("Chord"):
+        lyrics = chord.find("Lyrics")
+        if lyrics is None:
+            continue
+        no_el = lyrics.find("no")
+        if no_el is not None and (no_el.text or "").strip() == "1":
+            continue  # verse 2
+        syllabic = lyrics.find("syllabic")
+        text_el = lyrics.find("text")
+        if syllabic is None or text_el is None:
+            continue
+        if (syllabic.text or "").strip() != "end" or (text_el.text or "").strip() != "man":
+            continue
+        # This chord has (end, man). Find next Chord in same voice.
+        parent = chord.getparent()
+        if parent is None or parent.tag != "voice":
+            continue
+        siblings = list(parent)
+        try:
+            idx = siblings.index(chord)
+        except ValueError:
+            continue
+        for i in range(idx + 1, len(siblings)):
+            el = siblings[i]
+            if el.tag != "Chord":
+                continue
+            next_lyrics = el.find("Lyrics")
+            if next_lyrics is None:
+                continue
+            s2 = next_lyrics.find("syllabic")
+            t2 = next_lyrics.find("text")
+            if s2 is not None and t2 is not None:
+                if (s2.text or "").strip() == "begin" and (t2.text or "").strip() == "vi":
+                    return True
+            break
+    return False
+
+
+def test_new_json_import_export_measure_14_matches_expected():
+    """
+    Import new_json.json into new_json.mscx then export: # Measure 14 must match new_json.txt
+    (all four staves with "il-man il-ki-rii-vi-").
+    """
+    with open(NEW_JSON, "r", encoding="utf-8") as f:
+        json_content = f.read()
+    with open(NEW_JSON_TXT, "r", encoding="utf-8") as f:
+        expected_full = f.read()
+    expected_lines = expected_full.strip().splitlines()
+    # Extract "# Measure 14" block from expected (up to next # Measure or end)
+    m14_start = next((i for i, ln in enumerate(expected_lines) if ln.strip() == "# Measure 14"), None)
+    assert m14_start is not None, f"Expected {NEW_JSON_TXT} to contain '# Measure 14'"
+    m14_end = next(
+        (i for i in range(m14_start + 1, len(expected_lines)) if expected_lines[i].strip().startswith("# Measure")),
+        len(expected_lines),
+    )
+    expected_m14 = "\n".join(expected_lines[m14_start:m14_end])
+
+    root = load_mscx(NEW_JSON_MSCX)
+    import_json_txt_into_mscx(root, json_content)
+    txt = export_mscx_to_txt(root)
+    got_lines = txt.strip().splitlines()
+    got_start = next((i for i, ln in enumerate(got_lines) if ln.strip() == "# Measure 14"), None)
+    assert got_start is not None, f"Export should contain '# Measure 14'. Got export (first 30 lines):\n" + "\n".join(got_lines[:30])
+    got_end = next(
+        (i for i in range(got_start + 1, len(got_lines)) if got_lines[i].strip().startswith("# Measure")),
+        len(got_lines),
+    )
+    got_m14 = "\n".join(got_lines[got_start:got_end]).strip()
+    expected_m14 = expected_m14.strip()
+
+    assert got_m14 == expected_m14, (
+        f"Measure 14 after import+export must match {NEW_JSON_TXT}. Expected:\n{expected_m14}\n\nGot:\n{got_m14}"
+    )
+
+
+def test_new_json_import_measure_14_not_wrong_syllables():
+    """
+    Import new_json.json into new_json.mscx: measure 14 must not show 'il-man-vi-' for staff 1/2/3.
+    (Regression: line 'si il-man tuot-ta ... il-man il-ki-rii-vi-' was wrongly crammed into m14 as 'il-man-vi-'.)
+    The score must not contain the XML pattern: Lyrics (end, man) immediately followed by Lyrics (begin, vi).
+    Measure 15 must show 'öt-tä.' for staff 1.
+    """
+    with open(NEW_JSON, "r", encoding="utf-8") as f:
+        json_content = f.read()
+    root = load_mscx(NEW_JSON_MSCX)
+    import_json_txt_into_mscx(root, json_content)
+    # Must not have (end, man) followed by (begin, vi) in the XML
+    assert not _mscx_has_end_man_followed_by_begin_vi(root), (
+        "Score must not contain Lyrics (end, man) followed by Lyrics (begin, vi) (distribution bug)."
+    )
+    txt = export_mscx_to_txt(root)
+    blocks = parse_txt(txt)
+    by_measure = {b["measure"]: b["staff_lines"] for b in blocks}
+    # Measure 14 must not show the wrong chunk 'il-man-vi-' (syllables from wrong offset)
+    wrong_m14 = "il-man-vi-"
+    for staff_id in (1, 2, 3):
+        if 14 in by_measure and staff_id in by_measure[14]:
+            merged = _merge_tokens(by_measure[14][staff_id])
+            assert merged != wrong_m14, (
+                f"Measure 14 staff {staff_id} must not be '{wrong_m14}' (distribution bug). Got: {merged!r}"
+            )
+    # Measure 15 must have 'öt-tä.' (or export form 'öt tä.') for staff 1
+    assert 15 in by_measure, "Export should have measure 15"
+    assert 1 in by_measure[15], "Export should have staff 1 in measure 15"
+    merged_15 = _merge_tokens(by_measure[15][1])
+    assert "öt" in merged_15 and "tä" in merged_15, (
+        f"Measure 15 staff 1 should contain öt-tä. Got: {merged_15!r}"
+    )
 
 
 def test_spanner_json_import_matches_original_export():

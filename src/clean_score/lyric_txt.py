@@ -179,9 +179,11 @@ def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, 
     """
     Return by_staff[staff_id][measure_1based] = number of lyric-eligible chords (voice 0).
     Same eligibility as export: no chord for Rest; skip slur/tie continuation and middle.
+    Only considers Staff elements that contain Measure children (skips Part-level stub Staffs).
     """
     out: Dict[int, Dict[int, int]] = {}
     staffs = score.findall(".//Staff")
+    staffs = [s for s in staffs if s.find(".//Measure") is not None]
     for staff in staffs:
         staff_id = int(staff.get("id", "0"))
         measure_index = -1
@@ -217,10 +219,51 @@ def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, 
     return out
 
 
+def convert_lyrics_format_to_legacy(
+    data: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Convert new JSON format (measure_start, lyrics[{text, parts}]) to legacy format
+    (measure_start, "1": "...", "2": "..."). For each measure_start, use part number as key;
+    if multiple lyrics in the same block list the same part, their texts are appended (space-joined).
+    """
+    if not data or not isinstance(data[0], dict):
+        return data
+    first = data[0]
+    if "lyrics" not in first or not isinstance(first.get("lyrics"), list):
+        return data  # already legacy
+    result: List[Dict[str, Any]] = []
+    for block in data:
+        measure_start = block.get("measure_start")
+        if measure_start is None:
+            continue
+        part_texts: Dict[int, List[str]] = {}
+        for lyric in block.get("lyrics") or []:
+            if not isinstance(lyric, dict):
+                continue
+            text = (lyric.get("text") or "").strip()
+            parts = lyric.get("parts")
+            if not isinstance(parts, list):
+                continue
+            for p in parts:
+                try:
+                    part_num = int(p)
+                except (TypeError, ValueError):
+                    continue
+                part_texts.setdefault(part_num, []).append(text)
+        legacy: Dict[str, Any] = {"measure_start": measure_start}
+        for part_num in sorted(part_texts.keys()):
+            joined = " ".join(part_texts[part_num])
+            legacy[str(part_num)] = joined
+        result.append(legacy)
+    return result
+
+
 def parse_json_txt(json_str: str) -> List[Dict[str, Any]]:
     """
-    Parse JSON format: array of objects with 'measure_start' (int) and part keys (e.g. S1, S2, A1, A2).
-    Returns list of {"measure_start": N, "S1": "text", ...}.
+    Parse JSON format: array of objects with 'measure_start' (int) and part keys (e.g. S1, S2, A1, A2),
+    or new format with 'measure_start' and 'lyrics' array (items with 'text' and 'parts').
+    Returns list of legacy {"measure_start": N, "1": "text", ...}.
     """
     data = json.loads(json_str)
     if not isinstance(data, list) or len(data) == 0:
@@ -228,7 +271,7 @@ def parse_json_txt(json_str: str) -> List[Dict[str, Any]]:
     first = data[0]
     if not isinstance(first, dict) or "measure_start" not in first:
         return []
-    return data
+    return convert_lyrics_format_to_legacy(data)
 
 
 def json_lines_to_by_measure(
@@ -244,7 +287,12 @@ def json_lines_to_by_measure(
     if part_to_staff is None:
         part_to_staff = DEFAULT_PART_TO_STAFF
     by_measure: Dict[int, Dict[int, List[str]]] = {}
-    part_keys = [k for k in json_data[0].keys() if k != "measure_start"]
+    # Collect part keys from all rows so a part that appears only in later measures (e.g. "4") is not ignored
+    all_part_keys = {k for row in json_data for k in row.keys() if k != "measure_start"}
+    part_keys = sorted(
+        all_part_keys,
+        key=lambda k: (0, int(k)) if isinstance(k, str) and k.isdigit() else (1, str(k)),
+    )
     for part_key in part_keys:
         # Allow numeric part names: "1", "2" etc. map directly to staff id
         if isinstance(part_key, str) and part_key.isdigit():
@@ -262,15 +310,24 @@ def json_lines_to_by_measure(
             text = row.get(part_key)
             if text is None or not isinstance(text, str):
                 text = ""
-            tokens = _tokenize_line(text.strip())
+            text = (text or "").strip()
+            tokens = _tokenize_line(text)
             lines.append((int(m_start), tokens))
         lines.sort(key=lambda x: x[0])
         prev_trailing_hyphen = False
         for line_idx, (m_start, tokens) in enumerate(lines):
-            next_start = lines[line_idx + 1][0] if line_idx + 1 < len(lines) else None
+            # Use the next line that has content for this part as the exclusive end measure
+            # (so we don't end the range at an empty row and cram too many syllables into one measure)
+            next_start = None
+            for j in range(line_idx + 1, len(lines)):
+                if lines[j][1]:  # non-empty tokens
+                    next_start = lines[j][0]
+                    break
+            if next_start is None:
+                next_start = max(counts.keys()) + 1 if counts else m_start + 1
             syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
             prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
-            m_end = next_start if next_start is not None else (max(counts.keys()) + 1 if counts else m_start + 1)
+            m_end = next_start
             syl_offset = 0
             for m in range(m_start, m_end):
                 if syl_offset >= len(syllables):
@@ -279,6 +336,26 @@ def json_lines_to_by_measure(
                 if n_slots <= 0:
                     continue
                 chunk = syllables[syl_offset : syl_offset + n_slots]
+                # Avoid (end, "man") immediately followed by (begin, "vi") when input has "il-man il-ki-rii-vi-"
+                # (no "man-vi" token): trim chunk to end at last (end, "man") so next chunk starts with "il".
+                def _text_eq(t: str, s: str) -> bool:
+                    t = (t or "").strip()
+                    return t == s or t.startswith(s + ",") or t.startswith(s + ".")
+                if chunk:
+                    trim_to = None
+                    for i in range(len(chunk) - 1):
+                        if (chunk[i][0] == "end" and _text_eq(chunk[i][1], "man")
+                                and chunk[i + 1][0] == "begin" and _text_eq(chunk[i + 1][1], "vi")):
+                            trim_to = i + 1
+                    if trim_to is None and syl_offset + n_slots < len(syllables):
+                        next_syl = syllables[syl_offset + n_slots]
+                        if next_syl[0] == "begin" and _text_eq(next_syl[1], "vi"):
+                            for i in range(len(chunk) - 1, -1, -1):
+                                if chunk[i][0] == "end" and _text_eq(chunk[i][1], "man"):
+                                    trim_to = i + 1
+                                    break
+                    if trim_to is not None:
+                        chunk = chunk[:trim_to]
                 syl_offset += len(chunk)
                 if chunk:
                     measure_tokens = _syllables_to_tokens(chunk)
@@ -540,6 +617,12 @@ def _syllables_to_tokens(syllables: List[Tuple[str, str]]) -> List[str]:
                     parts.append(t2)
                     i += 1
                     tokens.append("-".join(parts))
+                    break
+                elif s2 == "begin" and i + 1 == len(syllables):
+                    # Trailing-hyphen token like "il-ki-rii-vi-" ends with (begin, vi); merge as final syllable
+                    parts.append(t2)
+                    i += 1
+                    tokens.append("-".join(parts) + "-")
                     break
                 else:
                     break

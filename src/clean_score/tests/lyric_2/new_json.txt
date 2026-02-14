@@ -1,0 +1,80 @@
+# Measure 1
+1 [0]: 
+2 [3]: O-li-si,
+3 [3]: O-li-si,
+4 [0]: 
+# Measure 2
+1 [0]: 
+2 [3]: o-li-si,
+3 [3]: o-li-si,
+4 [0]: 
+# Measure 3
+1 [5]: O-li-si tä-mä
+2 [3]: o-li-si,
+3 [3]: o-li-si,
+4 [0]: 
+# Measure 4
+1 [3]: o-tet-tu
+2 [3]: o-li-si,
+3 [2]: o-li-
+4 [0]: 
+# Measure 5
+1 [5]: pai-koil-le pa-rem-
+2 [1]: _
+3 [1]: si,
+4 [0]: 
+# Measure 6
+1 [3]: mi len ki
+2 [1]: O-
+3 [0]: 
+4 [0]: 
+# Measure 7
+1 [3]: O-li-si,
+2 [3]: li si, o-
+3 [3]: O-li-si,
+4 [0]: 
+# Measure 8
+1 [5]: o-li-si, o-li-
+2 [5]: li si, o-li-si,
+3 [5]: o-li-si, o-li-
+4 [0]: 
+# Measure 9
+1 [1]: si,
+2 [1]: o-
+3 [1]: si,
+4 [4]: tä-mä muo-to
+# Measure 10
+1 [2]: o-li
+2 [2]: li _
+3 [2]: o-li
+4 [4]: muu-an-ne-ki,
+# Measure 11
+1 [1]: si
+2 [1]: si
+3 [1]: si
+4 [6]: tä-mä kas-vo kai-kin
+# Measure 12
+1 [0]: 
+2 [0]: 
+3 [0]: 
+4 [2]: pai-koin,
+# Measure 13
+1 [8]: il-man tuot-ta tur-mi-ot-ta,
+2 [8]: il-man tuot-ta tur-mi-ot-ta,
+3 [8]: il-man tuot-ta tur-mi-ot-ta,
+4 [8]: il-man tuot-ta tur-mi-ot-ta,
+# Measure 14
+1 [6]: il-man il-ki-rii-vi-
+2 [6]: il-man il-ki-rii-vi-
+3 [6]: il-man il-ki-rii-vi-
+4 [6]: il-man il-ki-rii-vi-
+# Measure 15
+1 [2]: öt tä.
+2 [2]: öt tä.
+3 [2]: öt tä.
+4 [2]: öt tä.
+# Measure 16
+1 [0]: 
+2 [0]: 
+3 [0]: 
+4 [0]: 

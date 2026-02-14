@@ -1,0 +1,97 @@
+[
+    {
+        "measure_start": 1,
+        "stave_count": 2,
+        "lyrics": [
+            {
+                "staff_number": 1,
+                "position": "above",
+                "text": "O-li-si tä-mä o-tet-tu pai-koil-le pa-rem-",
+                "parts": [
+                    1
+                ]
+            },
+            {
+                "staff_number": 1,
+                "position": "below",
+                "text": "O-li-si, o-li-si, o-li-si, o-li-si,",
+                "parts": [
+                    2,
+                    3
+                ]
+            }
+        ]
+    },
+    {
+        "measure_start": 6,
+        "stave_count": 2,
+        "lyrics": [
+            {
+                "staff_number": 1,
+                "position": "above",
+                "text": "mi-len-ki O-li-si, o-li-si, o-li-si, o-li",
+                "parts": [
+                    1
+                ]
+            },
+            {
+                "staff_number": 1,
+                "position": "below",
+                "text": "O-li-si, o-li-si, o-li-si, o-li",
+                "parts": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "staff_number": 2,
+                "position": "below",
+                "text": "tä-mä muo-to muu-an-ne-ki,",
+                "parts": [
+                    4
+                ]
+            }
+        ]
+    },
+    {
+        "measure_start": 11,
+        "stave_count": 2,
+        "lyrics": [
+            {
+                "staff_number": 1,
+                "position": "below",
+                "text": "si il-man tuot-ta tur-mi-ot-ta, il-man il-ki-rii-vi-",
+                "parts": [
+                    1,
+                    2,
+                    3
+                ]
+            },
+            {
+                "staff_number": 2,
+                "position": "below",
+                "text": "tä-mä kas-vo kai-kin pai-koin, il-man tuot-ta tur-mi-ot-ta, il-man il-ki-rii-vi-",
+                "parts": [
+                    4
+                ]
+            }
+        ]
+    },
+    {
+        "measure_start": 15,
+        "stave_count": 2,
+        "lyrics": [
+            {
+                "staff_number": 2,
+                "position": "above",
+                "text": "öt-tä.",
+                "parts": [
+                    1,
+                    2,
+                    3,
+                    4
+                ]
+            }
+        ]
+    }
+]
