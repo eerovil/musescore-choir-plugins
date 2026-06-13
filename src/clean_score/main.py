@@ -11,14 +11,6 @@ from typing import List, Set, Optional
 
 from .utils.globals import GLOBALS
 
-from .utils.gemini_api import fix_lyrics
-from .utils.lyrics import (
-    add_lyrics_to_staff,
-    load_lyrics,
-    read_lyrics,
-    remove_lyrics_from_chord_with_tie_prev,
-    save_lyrics,
-)
 from .utils.missing_ties import add_missing_ties
 from .utils.part_types import detect_part_types
 from .utils.reversed_voices import (
@@ -170,7 +162,7 @@ def split_part(part: etree._Element) -> etree._Element:
     return new_part
 
 
-def main(input_path: str, output_path: str, pdf_path: str = None, add_staffs: Optional[str] = None) -> None:
+def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) -> None:
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
     to a two-staff, single-voice-per-staff structure, and duplicates the Part
@@ -183,7 +175,6 @@ def main(input_path: str, output_path: str, pdf_path: str = None, add_staffs: Op
     """
     GLOBALS.STAFF_MAPPING = {}
     GLOBALS.REVERSED_VOICES_BY_STAFF_MEASURE = {}
-    GLOBALS.LYRICS_BY_TIMEPOS = {}
 
     with open(input_path, "r", encoding="utf-8") as f:
         input_content: str = f.readlines()
@@ -301,10 +292,6 @@ def main(input_path: str, output_path: str, pdf_path: str = None, add_staffs: Op
                     score_element.index(staff_element_up) + 1, new_staff_element_down
                 )
 
-    # # Read lyrics from all staffs
-    # for staff in root.findall(".//Score/Staff"):
-    #     read_lyrics(staff)
-
     for staff_id_orig_split, new_staff_id_split in GLOBALS.STAFF_MAPPING.items():
         up_staff_element: Optional[etree._Element] = root.find(
             f".//Score/Staff[@id='{staff_id_orig_split}']"
@@ -366,21 +353,6 @@ def main(input_path: str, output_path: str, pdf_path: str = None, add_staffs: Op
                     if transposing_clef_type is not None:
                         transposing_clef_type.text = clef_type
 
-    # if load_lyrics(input_path):
-    #     logger.info("Loaded lyrics from fixed lyrics file.")
-    # else:
-    #     logger.info("No fixed lyrics file found, saving current lyrics.")
-    #     save_lyrics(input_path)
-    #     # Try using gemini API to fix lyrics
-    #     if pdf_path:
-    #         fix_lyrics(input_path, pdf_path)
-    #         load_lyrics(input_path)
-
-    # # add lyrics to the staff
-    # for staff in root.findall(".//Score/Staff"):
-    #     add_lyrics_to_staff(staff)
-
-    # remove_lyrics_from_chord_with_tie_prev(root)
     # delete all bracket
     delete_all_elements_by_selector(root, ".//bracket")
     # delete all barLineSpan
@@ -469,12 +441,8 @@ if __name__ == "__main__":
     How to use
     Create new folder here called "Your song"
     Insert into it a uncompressed MuseScore file (mscx) (NOT a mscz file)
-    Also add the original PDF file if you want to fix the lyrics using Gemini API
     Run ./main.py "Your song"
     The output will be saved as "Your song/Your song_split.mscx"
-
-    For gemini api, set .env variable GEMINI_API_KEY to your API key
-
     """
     import argparse
 
@@ -484,11 +452,6 @@ if __name__ == "__main__":
     parser.add_argument("input", help="Path to the input MuseScore XML file.")
     parser.add_argument(
         "--output", help="Path to save the converted MuseScore XML file."
-    )
-    parser.add_argument(
-        "--pdf",
-        help="Path to the PDF file for lyrics extraction (optional).",
-        default=None,
     )
     parser.add_argument(
         "--add",
@@ -512,19 +475,12 @@ if __name__ == "__main__":
         args.input = os.path.join(input_dir, input_files[0])
         if not args.output:
             args.output = args.input.replace(".mscx", "_split.mscx")
-        if not args.pdf:
-            # Find the PDF file in the same directory
-            pdf_files = [f for f in os.listdir(input_dir) if f.endswith(".pdf")]
-            if pdf_files:
-                args.pdf = os.path.join(input_dir, pdf_files[0])
-            else:
-                args.pdf = None
         logger.info(f"Using input file: {args.input}")
 
     logger.info(f"Converting {args.input} to {args.output}")
     try:
         add_staffs = (args.add or "").upper().strip() or None
-        main(args.input, args.output, args.pdf, add_staffs=add_staffs)
+        main(args.input, args.output, add_staffs=add_staffs)
         logger.info("Conversion completed successfully.")
         logger.info(f"Output written to {args.output}")
     except Exception as e:

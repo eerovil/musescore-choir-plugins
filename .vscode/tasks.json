@@ -1,19 +1,18 @@
 {
     // See https://go.microsoft.com/fwlink/?LinkId=733558
     // for the documentation about the tasks.json format
-    // cwd scripts/clean_score
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Test: Run Pytest to File",
+            "label": "Test: Run Pytest",
             "type": "shell",
-            "command": "rm tests/test_files/*test_output.mscx; rm test_outpu*.txt; pytest . -k test_simple1_split --log-cli-level=DEBUG 2>&1 | tee test_output.txt; tail -50 test_output.txt > test_output2.txt",
+            "command": ".venv/bin/python -m pytest src/clean_score/tests/ --log-cli-level=DEBUG",
             "problemMatcher": [],
             "presentation": {
                 "reveal": "always"
             },
             "options": {
-                "cwd": "${workspaceFolder}/scripts/clean_score"
+                "cwd": "${workspaceFolder}"
             }
         }
     ]

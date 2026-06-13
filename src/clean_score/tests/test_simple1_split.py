@@ -3,7 +3,7 @@
 import pytest
 import os
 from lxml import etree
-from scripts.clean_score.clean_score import main
+from src.clean_score.main import main
 
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -43,7 +43,7 @@ def test_split(base_filename):
         output_parent = elem_output.getparent()
         expected_snippet = None
         output_snippet = None
-        if expected_parent and output_parent:
+        if expected_parent is not None and output_parent is not None:
             expected_snippet = ET.tostring(expected_parent, encoding="unicode")
             output_snippet = ET.tostring(output_parent, encoding="unicode")
         assert (

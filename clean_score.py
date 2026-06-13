@@ -8,12 +8,6 @@ How to use
 * Drag that on this script or run from command line
     ./clean_score.py "path/to/your/file.mscz"
 
-* Also pass the original PDF file if you want to fix the lyrics using Gemini API
-    For gemini api, set .env variable GEMINI_API_KEY to your API key
-
-    e.g.
-    ./clean_score.py "Sortunut ääni.pdf" "Sortunut-a-a-ni-pdf.xml" 
-
 * Output file will be saved to songs/
 
 """
@@ -25,7 +19,7 @@ parser = argparse.ArgumentParser(
     description="Convert MuseScore/MusicXML from single-staff, two-voice to two-staff, single-voice-per-staff." + "\n" + HELP_TEXT
 )
 # Allow passing multiple files
-parser.add_argument("input_files", nargs="+", help="Input MuseScore or MusicXML file, and possibly original PDF")
+parser.add_argument("input_files", nargs="+", help="Input MuseScore or MusicXML file")
 parser.add_argument("--name", help="Optional name for the (new) song directory")
 # Add option to force add new staffs, give param e.g. SSAA
 parser.add_argument("--add", help="Force add new staffs, give param e.g. SSAA")
@@ -37,12 +31,9 @@ import os
 import sys
 # Find a possible musescore file from the arguments
 musescore_file = None
-pdf_file = None
 for f in args.input_files:
     if f.lower().endswith((".mscz", ".mscx", ".musicxml", ".xml")):
         musescore_file = f
-    elif f.lower().endswith(".pdf"):
-        pdf_file = f
 
 song_dir = None
 
@@ -54,18 +45,12 @@ if not musescore_file and len(args.input_files) == 1 and os.path.isdir(args.inpu
             if '_cleaned' in entry.lower():
                 continue  # skip already split files
             musescore_file = os.path.join(song_dir, entry)
-        elif entry.lower().endswith(".pdf"):
-            pdf_file = os.path.join(song_dir, entry)
-            # continue searching for musescore file
 
 if not musescore_file:
     print("No MuseScore or MusicXML file provided.")
     sys.exit(1)
 if not os.path.exists(musescore_file):
     print(f"MuseScore file {musescore_file} does not exist.")
-    sys.exit(1)
-if pdf_file and not os.path.exists(pdf_file):
-    print(f"PDF file {pdf_file} does not exist.")
     sys.exit(1)
 
 # Create output directory if it doesn't exist
@@ -84,18 +69,14 @@ if not song_dir:
     if not os.path.exists(song_dir):
         os.makedirs(song_dir)
 
-# Copy original musescore file and possibly pdf file to the song directory
+# Copy original musescore file to the song directory
 try:
     import shutil
     shutil.copy2(musescore_file, song_dir)
-    if pdf_file:
-        shutil.copy2(pdf_file, song_dir)
 except SameFileError:
     pass  # ignore if source and destination are the same
 
 input_file = os.path.join(song_dir, os.path.basename(musescore_file))
-if pdf_file:
-    pdf_file = os.path.join(song_dir, os.path.basename(pdf_file))
 
 output_file = input_file.replace(".mscx", "_cleaned.mscx").replace(".mscz", "_cleaned.mscx").replace(".musicxml", "_cleaned.mscx").replace(".xml", "_cleaned.mscx")
 
@@ -150,4 +131,4 @@ if not input_file.lower().endswith(".mscx"):
 
 # Run the cleaning script
 from src.clean_score.main import main
-main(input_file, output_file, pdf_file, add_staffs=add_staffs)
+main(input_file, output_file, add_staffs=add_staffs)
