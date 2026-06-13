@@ -60,6 +60,11 @@ def main() -> None:
         metavar="N,M,...",
         help="JSON only: split listed parts into two staves each (e.g. --split 3,4 => parts 3,4 become 3+4, 5+6)",
     )
+    import_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Clear all existing verse 1 lyrics before importing (full replace; use when the score already has OCR'd lyrics from MusicXML).",
+    )
 
     args = parser.parse_args()
 
@@ -87,7 +92,7 @@ def main() -> None:
                 split = [int(x.strip()) for x in args.split.split(",") if x.strip()]
             except ValueError:
                 sys.exit("--split must be comma-separated part numbers (e.g. 3,4)")
-        import_file(txt_path, mscx_in, out, split=split)
+        import_file(txt_path, mscx_in, out, split=split, replace=args.replace)
         print(f"Imported to {out}")
 
 

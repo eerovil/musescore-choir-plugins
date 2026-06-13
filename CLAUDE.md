@@ -119,6 +119,34 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
    parts S/A/T/B and set clefs), apply names/clefs, strip brackets/barLineSpan.
 7. `--add SSAA` appends new empty staves (rests) with the right clef per letter.
 
+Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
+(which makes an upper/lower pair) and is either an OCR glitch or a real multi-way
+split. Default (TTY) path = interactive **re-voicing** (`utils/revoice.py`):
+`establish_baseline` asks the user to name the normal voices once (e.g. T1,T2,B,
+mapping each name to a source staff); `capture_revoice_plan` then prompts per
+anomalous measure for a per-voice name list, keeps the voices named for that staff
+(reordered to baseline order so the split sees a clean pair), and captures the rest;
+after the split, `apply_revoice_plan` routes captured voices — a **new** name gets a
+new staff (rests elsewhere), a name belonging to **another** part is **moved** into
+that part's output staff (resolved via `printed_to_output`), blank = dropped.
+`--no-interactive` (or non-TTY) instead calls `resolve_voice_anomalies`
+(`utils/interactive.py`), which reduces to the modal voice count and warns.
+Note: which kept voice becomes upper/lower is still decided by the split's
+stem/pitch logic, not strictly by the typed order. `≤2`-voice divisi is left alone.
+
+`--per-system` (`utils/per_system.py`) is a separate opt-in mode for scores where the
+physical staves change role per printed system (the Laulun aika fixture). It bypasses
+the normal split entirely: `find_systems` cuts at line breaks, `prompt_system_decls`
+asks the user to name each staff's voices per system, and `build_parts` rebuilds the
+score as one staff per named part (sorted S<A<T<B, then by number), pulling each
+part's notes from the declared `(staff, voice)` per system and filling measure-rests
+where absent. Old Parts/Staves are removed (that's how part deletion happens). Same
+name on two staves in a system → first wins; blank → skip. Each staff prompt offers
+the previous system's answer as a `[default]` (Enter reuses, `-` clears), and the
+original line breaks are re-added on the top staff so the system layout survives.
+main() handles this in an early branch and writes an identity `lyricsStaffMap`. Tested
+against `tests/test_files/laulun_aika.mscx` (a real converted score kept as a fixture).
+
 State is passed between passes through the module-level `GLOBALS` singleton
 (`utils/globals.py`) — `STAFF_MAPPING`, `REVERSED_VOICES_BY_STAFF_MEASURE`,
 etc. `main()` resets these at the start of every run. **Be careful**: this is
@@ -146,12 +174,23 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
   trailing hyphen = word continues into next measure; `_` = eligible note with
   no lyric. Syllabic state (begin/middle/end/single) is reconstructed from
   hyphenation on import.
-- **JSON format**: line-by-line per part; tokens are *distributed across measures*
-  using actual chord counts from the score (`_get_chord_counts_per_measure`).
-  Supports numeric part keys (= staff id) or names via `DEFAULT_PART_TO_STAFF`
-  (`S1->1, S2->2, A1->3, A2->4`). `--split` duplicates a part into two staves.
+- **JSON format**: line-by-line; tokens are *distributed across measures* using
+  actual chord counts from the score (`_get_chord_counts_per_measure`). The
+  PDF-derived format has a `lyrics` array of `{text, staff_number, position,
+  verse, parts}`. `staff_number` is the printed staff (top=1); `position` is
+  `above`/`below`. These are mapped to **output staff ids** via the
+  `lyricsStaffMap` metaTag that `clean_score` writes (`read_lyrics_staff_map`):
+  a printed staff that split into two voices gets the line on both voices when
+  only one position appears *in that block* (unison), or split upper/lower when
+  both positions appear (divisi is decided **per block**, not globally). An
+  explicit `parts: [ids]` on a lyric overrides the mapping (manual fix for the
+  ~inevitable LLM errors). Legacy numeric/`DEFAULT_PART_TO_STAFF` part keys still
+  work. `--split` duplicates a part into two staves.
 - Import is in-place on the tree, removes verse 2+, and clears lyrics from
-  ineligible (spanner-continuation) chords.
+  ineligible (spanner-continuation) chords. `--replace` / `clear_existing=True`
+  wipes all verse-1 lyrics first (needed because MusicXML imports arrive with
+  garbled OCR lyrics); without it, only measures/staves named in the input are
+  touched (partial edit).
 
 When editing this file, the export and import paths must stay symmetric — the
 test `test_lyric_txt_spanner.py` asserts export→import round-trips back to the

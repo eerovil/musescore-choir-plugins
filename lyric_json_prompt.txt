@@ -1,14 +1,14 @@
 Read this pdf and for each LINE in the score, give following in JSON format:
 [
     {
-        "measure_start": 1,  # If visible. If not, set null.
-        "stave_count": 2,
+        "measure_start": 1,  # First measure of this line. If visible. If not, set null.
+        "stave_count": 2,    # How many printed staves in this system.
         "lyrics": [
             {
-                "staff_number": 1,
-                "position": "above", # or "below"
+                "staff_number": 1,        # Which printed staff, counted top (1) to bottom.
+                "position": "above",      # "above" or "below" the staff (for divisi staves).
                 "text": "I am a high ly-ric for ver-se two",
-                "verse": 2,  # Omit, if verse 1
+                "verse": 2                # Omit if verse 1. Only verse 1 is imported.
             },
             {
                 "staff_number": 1,
@@ -23,3 +23,14 @@ Read this pdf and for each LINE in the score, give following in JSON format:
         ]
     }
 ]
+
+Notes:
+- Split each word into syllables with hyphens, e.g. "ly-ric". The importer aligns
+  one syllable per note, so syllable count matters.
+- staff_number + position are mapped to the score's output voices automatically.
+  When a printed staff is sung in unison by two voices, give a single line (one
+  position) and it goes to both voices; when the two voices have different words,
+  give both an "above" and a "below" line.
+- OPTIONAL override: add "parts": [4, 5] (output staff/voice ids, top to bottom) to a
+  lyric to force exactly which voices get that text. This wins over staff_number/position.
+  Use it where the automatic mapping is wrong.

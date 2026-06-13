@@ -23,6 +23,8 @@ parser.add_argument("input_files", nargs="+", help="Input MuseScore or MusicXML 
 parser.add_argument("--name", help="Optional name for the (new) song directory")
 # Add option to force add new staffs, give param e.g. SSAA
 parser.add_argument("--add", help="Force add new staffs, give param e.g. SSAA")
+parser.add_argument("--no-interactive", action="store_true", help="Don't prompt for measures with more than two voices; reduce them automatically")
+parser.add_argument("--per-system", action="store_true", help="Rebuild from per-system part declarations (staves change role per system)")
 args = parser.parse_args()
 
 add_staffs = (args.add or "").upper().strip()
@@ -131,4 +133,4 @@ if not input_file.lower().endswith(".mscx"):
 
 # Run the cleaning script
 from src.clean_score.main import main
-main(input_file, output_file, add_staffs=add_staffs)
+main(input_file, output_file, add_staffs=add_staffs, interactive=not args.no_interactive, per_system=args.per_system)

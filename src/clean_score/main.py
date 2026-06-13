@@ -2,12 +2,13 @@
 
 from copy import deepcopy
 import os
+import sys
 from lxml import etree
 
 from collections import defaultdict
 
 import logging
-from typing import List, Set, Optional
+from typing import Dict, List, Set, Optional
 
 from .utils.globals import GLOBALS
 
@@ -18,6 +19,13 @@ from .utils.reversed_voices import (
 )
 
 from .utils.corrupted_measures import preprocess_corrupted_measures
+from .utils.interactive import resolve_voice_anomalies
+from .utils.revoice import (
+    apply_revoice_plan,
+    capture_revoice_plan,
+    establish_baseline,
+)
+from .utils.per_system import revoice_by_system
 
 from .utils.utils import (
     delete_all_elements_by_selector,
@@ -162,7 +170,13 @@ def split_part(part: etree._Element) -> etree._Element:
     return new_part
 
 
-def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) -> None:
+def main(
+    input_path: str,
+    output_path: str,
+    add_staffs: Optional[str] = None,
+    interactive: bool = True,
+    per_system: bool = False,
+) -> None:
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
     to a two-staff, single-voice-per-staff structure, and duplicates the Part
@@ -172,6 +186,11 @@ def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) ->
     Args:
         input_path (str): Path to the input MuseScore XML file.
         output_path (str): Path where the converted XML file will be saved.
+        add_staffs (Optional[str]): Part string (e.g. "SSAA") of empty staves to append.
+        interactive (bool): If True (default), prompt the user to resolve voice-count
+            anomalies (measures with more than two voices) when stdin is a terminal.
+            When False, or when not running in a terminal, such measures are reduced
+            automatically with a logged warning.
     """
     GLOBALS.STAFF_MAPPING = {}
     GLOBALS.REVERSED_VOICES_BY_STAFF_MEASURE = {}
@@ -186,6 +205,52 @@ def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) ->
     staffs: List[etree._Element] = root.findall(".//Staff")
     if not staffs:
         raise ValueError("No Staff elements found in the input XML.")
+
+    # Per-system mode: rebuild the score from per-system part declarations instead of
+    # the normal split. For badly-parsed scores where staves change role per system.
+    if per_system:
+        input_key = os.path.splitext(os.path.basename(input_path))[0]
+        can_prompt = interactive and sys.stdin.isatty()
+        parts = revoice_by_system(root, input_key=input_key, can_prompt=can_prompt)
+        if not parts:
+            logger.warning("Per-system re-voicing produced no parts; nothing written.")
+            return
+        add_missing_ties(root)
+        # Note: LayoutBreaks are intentionally kept (per_system re-adds system breaks).
+        for sel in (
+            ".//Lyrics", ".//offset", ".//Dynamic",
+            ".//Spanner[@type='HairPin']", ".//Articulation", ".//Tempo",
+            ".//Harmony", ".//bracket", ".//barLineSpan",
+        ):
+            delete_all_elements_by_selector(root, sel)
+        score_element = root.find(".//Score")
+        meta = etree.Element("metaTag", name="lyricsStaffMap")
+        meta.text = ";".join(f"{i}:{i}" for i in range(1, len(parts) + 1))
+        existing_meta = score_element.findall("metaTag")
+        if existing_meta:
+            score_element.insert(score_element.index(existing_meta[-1]) + 1, meta)
+        else:
+            score_element.append(meta)
+        output_content = etree.tostring(
+            root, pretty_print=True, encoding="UTF-8"
+        ).decode("UTF-8")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(output_content)
+        logger.info("Per-system re-voicing complete. Parts: %s", parts)
+        return
+
+    # Resolve OCR voice-count anomalies (measures with >2 voices) before splitting.
+    # Interactive (in a terminal): name the baseline voices, then re-voice each
+    # anomalous measure; captured extra voices are routed after the split.
+    # Otherwise: reduce such measures to the staff's normal voice count.
+    revoice_plan: List[Dict] = []
+    revoice_baseline: Optional[Dict] = None
+    if interactive and sys.stdin.isatty():
+        revoice_baseline = establish_baseline(root)
+        if revoice_baseline is not None:
+            revoice_plan = capture_revoice_plan(root, revoice_baseline)
+    else:
+        resolve_voice_anomalies(root, interactive=False)
 
     preprocess_corrupted_measures(root)
     # Convert staff ids to make space after each staff
@@ -216,6 +281,10 @@ def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) ->
     # 5 -> 8
     new_staff_id: int = 1
     new_staffs_to_split: Set[int] = set()
+    # Map each original (printed) staff number to the output staff ids it expands to.
+    # A split staff expands to two output ids (upper, lower); a single staff to one.
+    # This is persisted so the lyric importer can map a printed staff/position to output staves.
+    printed_to_output: Dict[int, List[int]] = {}
     for staff in staffs:
         staff_id_orig: int = int(staff.get("id", "0"))
         if staff_id_orig == 1:
@@ -227,9 +296,11 @@ def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) ->
         logger.debug(f"Updated staff id from {staff_id_orig} to {new_staff_id}")
         if staff_id_orig not in staffs_to_split:
             # If the staff does not need to be split, we can let the next id be next to it
+            printed_to_output[staff_id_orig] = [new_staff_id]
             new_staff_id += 1
         else:
             new_staffs_to_split.add(new_staff_id)
+            printed_to_output[staff_id_orig] = [new_staff_id, new_staff_id + 1]
             new_staff_id += 2
 
     for staff_id_current in new_staffs_to_split:
@@ -358,6 +429,25 @@ def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) ->
     # delete all barLineSpan
     delete_all_elements_by_selector(root, ".//barLineSpan")
 
+    # Persist the printed-staff -> output-staff map so the lyric importer can map a
+    # printed staff/position (from the PDF-derived JSON) to the right output staves.
+    # Format: "printed:out[,out];printed:out;..." e.g. "1:1,2;2:3;3:4,5;4:6"
+    score_element = root.find(".//Score")
+    if score_element is not None and printed_to_output:
+        map_str = ";".join(
+            f"{printed}:{','.join(str(o) for o in outs)}"
+            for printed, outs in sorted(printed_to_output.items())
+        )
+        meta = etree.Element("metaTag", name="lyricsStaffMap")
+        meta.text = map_str
+        # Insert alongside the other metaTag elements if present, else append to Score.
+        existing_meta = score_element.findall("metaTag")
+        if existing_meta:
+            last_meta = existing_meta[-1]
+            score_element.insert(score_element.index(last_meta) + 1, meta)
+        else:
+            score_element.append(meta)
+
     if add_staffs:
         score_element: Optional[etree._Element] = root.find(".//Score")
         if score_element is None:
@@ -426,6 +516,11 @@ def main(input_path: str, output_path: str, add_staffs: Optional[str] = None) ->
             score_element.append(new_staff)
             next_staff_id += 1
 
+    # Route the voices captured during interactive re-voicing onto the final staves
+    # (move into an existing part's staff, or place on a new staff).
+    if revoice_plan and revoice_baseline is not None:
+        apply_revoice_plan(root, revoice_plan, revoice_baseline, printed_to_output)
+
     # Serialize the output XML
     output_content: str = etree.tostring(
         root, pretty_print=True, encoding="UTF-8"
@@ -458,6 +553,16 @@ if __name__ == "__main__":
         help="Add new staffs, e.g. SSAA for Soprano1, Soprano2, Alto1, Alto2.",
         default=None,
     )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Don't prompt for measures with more than two voices; reduce them automatically.",
+    )
+    parser.add_argument(
+        "--per-system",
+        action="store_true",
+        help="Rebuild from per-system part declarations (for scores whose staves change role per system).",
+    )
     args = parser.parse_args()
 
     # Input can be a dir, in that case we use any input file that is a *.mscx file and does not end with _split.mscx
@@ -480,7 +585,10 @@ if __name__ == "__main__":
     logger.info(f"Converting {args.input} to {args.output}")
     try:
         add_staffs = (args.add or "").upper().strip() or None
-        main(args.input, args.output, add_staffs=add_staffs)
+        main(
+            args.input, args.output, add_staffs=add_staffs,
+            interactive=not args.no_interactive, per_system=args.per_system,
+        )
         logger.info("Conversion completed successfully.")
         logger.info(f"Output written to {args.output}")
     except Exception as e:

@@ -26,7 +26,7 @@
     <metaTag name="translator"/>
     <metaTag name="workNumber"/>
     <metaTag name="workTitle">Test</metaTag>
-    <Part>
+    <metaTag name="lyricsStaffMap">1:1,2</metaTag><Part>
       <Staff id="1">
         <StaffType group="pitched">
           <name>stdNormal</name>

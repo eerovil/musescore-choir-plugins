@@ -224,51 +224,133 @@ def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, 
     return out
 
 
+def read_lyrics_staff_map(score_root: etree._Element) -> Dict[int, List[int]]:
+    """
+    Read the printed-staff -> output-staff map persisted by clean_score in the
+    'lyricsStaffMap' metaTag (format "1:1,2;2:3;3:4,5;4:6"). Returns {} if absent.
+    """
+    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
+    if score is None:
+        return {}
+    meta = None
+    for m in score.findall("metaTag"):
+        if m.get("name") == "lyricsStaffMap":
+            meta = m
+            break
+    if meta is None or not (meta.text or "").strip():
+        return {}
+    result: Dict[int, List[int]] = {}
+    for entry in meta.text.strip().split(";"):
+        if ":" not in entry:
+            continue
+        printed_str, outs_str = entry.split(":", 1)
+        try:
+            printed = int(printed_str)
+        except ValueError:
+            continue
+        outs = [int(o) for o in outs_str.split(",") if o.strip().isdigit()]
+        if outs:
+            result[printed] = outs
+    return result
+
+
+def _derive_target_staves(
+    staff_number: Optional[int],
+    position: Optional[str],
+    staff_map: Dict[int, List[int]],
+    positions_in_block: set,
+) -> List[int]:
+    """
+    Map a printed (staff_number, position) to output staff ids using the persisted map.
+    Divisi is decided per block (a staff may sing unison in one passage and split in another):
+      - printed staff -> 1 output staff: any position maps to that staff.
+      - printed staff -> 2 output staves, both 'above' and 'below' present in this block:
+        'above' -> upper output, 'below' -> lower output (true divisi with separate text).
+      - printed staff -> 2 output staves, only one position in this block: map to BOTH
+        (the two voices sing the same words in unison for this passage).
+    Falls back to [staff_number] when there is no map entry (e.g. unsplit score, no metaTag).
+    """
+    if staff_number is None:
+        return []
+    outs = staff_map.get(staff_number)
+    if not outs:
+        return [staff_number]
+    if len(outs) == 1:
+        return [outs[0]]
+    if "above" in positions_in_block and "below" in positions_in_block:
+        return [outs[0]] if position == "above" else [outs[1]]
+    return list(outs)
+
+
 def convert_lyrics_format_to_legacy(
     data: List[Dict[str, Any]],
+    staff_map: Optional[Dict[int, List[int]]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Convert new JSON format (measure_start, lyrics[{text, parts}]) to legacy format
-    (measure_start, "1": "...", "2": "..."). For each measure_start, use part number as key;
-    if multiple lyrics in the same block list the same part, their texts are appended (space-joined).
+    Convert new JSON format (measure_start, lyrics[{text, staff_number, position, parts}])
+    to legacy format (measure_start, "1": "...", "2": "..."), keyed by output staff id.
+
+    Target output staves come from an explicit "parts" list when present (manual override,
+    always wins). Otherwise they are derived from (staff_number, position) via staff_map
+    (the clean_score 'lyricsStaffMap'). Lyrics for verses other than 1 are ignored.
+    If multiple lyrics in a block resolve to the same output staff, texts are space-joined.
     """
     if not data or not isinstance(data[0], dict):
         return data
     first = data[0]
     if "lyrics" not in first or not isinstance(first.get("lyrics"), list):
         return data  # already legacy
+    staff_map = staff_map or {}
     result: List[Dict[str, Any]] = []
     for block in data:
         measure_start = block.get("measure_start")
         if measure_start is None:
             continue
+        block_lyrics = [ly for ly in (block.get("lyrics") or []) if isinstance(ly, dict)]
+        # Positions used per printed staff in THIS block (decides divisi vs unison locally).
+        positions_by_staff: Dict[int, set] = {}
+        for lyric in block_lyrics:
+            sn = lyric.get("staff_number")
+            if isinstance(sn, int):
+                positions_by_staff.setdefault(sn, set()).add(lyric.get("position"))
         part_texts: Dict[int, List[str]] = {}
-        for lyric in block.get("lyrics") or []:
-            if not isinstance(lyric, dict):
-                continue
+        for lyric in block_lyrics:
+            verse = lyric.get("verse")
+            if verse not in (None, 1, "1"):
+                continue  # practice track: verse 1 only
             text = (lyric.get("text") or "").strip()
             parts = lyric.get("parts")
-            if not isinstance(parts, list):
-                continue
-            for p in parts:
-                try:
-                    part_num = int(p)
-                except (TypeError, ValueError):
-                    continue
+            if isinstance(parts, list) and parts:
+                targets = []
+                for p in parts:
+                    try:
+                        targets.append(int(p))
+                    except (TypeError, ValueError):
+                        continue
+            else:
+                targets = _derive_target_staves(
+                    lyric.get("staff_number"),
+                    lyric.get("position"),
+                    staff_map,
+                    positions_by_staff.get(lyric.get("staff_number"), set()),
+                )
+            for part_num in targets:
                 part_texts.setdefault(part_num, []).append(text)
         legacy: Dict[str, Any] = {"measure_start": measure_start}
         for part_num in sorted(part_texts.keys()):
-            joined = " ".join(part_texts[part_num])
-            legacy[str(part_num)] = joined
+            legacy[str(part_num)] = " ".join(part_texts[part_num])
         result.append(legacy)
     return result
 
 
-def parse_json_txt(json_str: str) -> List[Dict[str, Any]]:
+def parse_json_txt(
+    json_str: str, staff_map: Optional[Dict[int, List[int]]] = None
+) -> List[Dict[str, Any]]:
     """
     Parse JSON format: array of objects with 'measure_start' (int) and part keys (e.g. S1, S2, A1, A2),
-    or new format with 'measure_start' and 'lyrics' array (items with 'text' and 'parts').
-    Returns list of legacy {"measure_start": N, "1": "text", ...}.
+    or new format with 'measure_start' and 'lyrics' array (items with 'text', 'staff_number',
+    'position', and/or explicit 'parts'). staff_map maps printed staff -> output staves.
+    Returns list of legacy {"measure_start": N, "1": "text", ...} keyed by output staff id.
     """
     data = json.loads(json_str)
     if not isinstance(data, list) or len(data) == 0:
@@ -276,7 +358,7 @@ def parse_json_txt(json_str: str) -> List[Dict[str, Any]]:
     first = data[0]
     if not isinstance(first, dict) or "measure_start" not in first:
         return []
-    return convert_lyrics_format_to_legacy(data)
+    return convert_lyrics_format_to_legacy(data, staff_map=staff_map)
 
 
 def json_lines_to_by_measure(
@@ -696,10 +778,20 @@ def _count_remaining_eligible_chords(
     return count
 
 
+def _clear_all_verse1_lyrics(score_root: etree._Element) -> None:
+    """Remove every verse 1 Lyrics element from the whole score (full-replace import)."""
+    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
+    if score is None:
+        return
+    for chord in score.findall(".//Chord"):
+        _clear_verse1_lyrics(chord)
+
+
 def import_txt_into_mscx(
     score_root: etree._Element,
     txt: Optional[str] = None,
     by_measure: Optional[Dict[int, Dict[int, List[str]]]] = None,
+    clear_existing: bool = False,
 ) -> None:
     """
     Import TXT lyrics into the score (in-place). Verse 1, voice 0. Slur-continuation chords are skipped (no lyric).
@@ -709,11 +801,18 @@ def import_txt_into_mscx(
 
     Provide either txt (plain # Measure N / staff: tokens format) or by_measure (precomputed
     {measure_1based: {staff_id: [tokens]}}). If both are None, nothing is applied.
+
+    clear_existing: when True, remove all verse 1 lyrics from the whole score before applying
+    (full replace). Use when the score already has lyrics (e.g. OCR from MusicXML) that the
+    imported lyrics should fully supersede. When False, measures/staves not in the input keep
+    their existing lyrics (partial edit).
     """
     add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
         return
+    if clear_existing:
+        _clear_all_verse1_lyrics(score_root)
     if by_measure is None:
         if txt is None:
             return
@@ -853,27 +952,33 @@ def import_json_txt_into_mscx(
     json_str: str,
     part_to_staff: Optional[Dict[str, int]] = None,
     split: Optional[List[int]] = None,
+    clear_existing: bool = False,
 ) -> None:
     """
     Import line-by-line JSON lyrics into the score. JSON format: array of objects with
-    'measure_start' (measure number where the line starts) and part keys whose values are lyric lines.
+    'measure_start' (measure number where the line starts) and either part keys whose values are
+    lyric lines, or a 'lyrics' array of {text, staff_number, position, parts}. staff_number/position
+    are mapped to output staves via the score's 'lyricsStaffMap' (written by clean_score); an
+    explicit 'parts' list overrides that mapping.
     Part keys can be numeric ("1", "2", ...) for staff id directly, or names (e.g. S1, A1) mapped
     via part_to_staff (default S1->1, S2->2, A1->3, A2->4).
     If split is given (e.g. [3, 4]), those input parts are each duplicated to two staves:
     part 3 -> staffs 3 and 4, part 4 -> staffs 5 and 6.
+    clear_existing: remove all existing verse 1 lyrics first (full replace).
     """
     add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
         return
-    json_data = parse_json_txt(json_str)
+    staff_map = read_lyrics_staff_map(score_root)
+    json_data = parse_json_txt(json_str, staff_map=staff_map)
     if not json_data:
         return
     chord_counts = _get_chord_counts_per_measure(score)
     by_measure = json_lines_to_by_measure(json_data, chord_counts, part_to_staff)
     if split:
         by_measure = _apply_split_to_by_measure(by_measure, split)
-    import_txt_into_mscx(score_root, by_measure=by_measure)
+    import_txt_into_mscx(score_root, by_measure=by_measure, clear_existing=clear_existing)
 
 
 def add_rests_to_empty_measures(score_root: etree._Element) -> None:
@@ -947,13 +1052,15 @@ def import_file(
     mscx_path_in: str,
     mscx_path_out: str,
     split: Optional[List[int]] = None,
+    replace: bool = False,
 ) -> None:
-    """Import lyrics from .txt or .json into a copy of the .mscx file. split only applies to .json (e.g. [3, 4])."""
+    """Import lyrics from .txt or .json into a copy of the .mscx file. split only applies to .json (e.g. [3, 4]).
+    replace=True clears all existing verse 1 lyrics first (full replace)."""
     with open(txt_path, "r", encoding="utf-8") as f:
         content = f.read()
     root = load_mscx(mscx_path_in)
     if txt_path.lower().endswith(".json"):
-        import_json_txt_into_mscx(root, content, split=split)
+        import_json_txt_into_mscx(root, content, split=split, clear_existing=replace)
     else:
-        import_txt_into_mscx(root, txt=content)
+        import_txt_into_mscx(root, txt=content, clear_existing=replace)
     save_mscx(root, mscx_path_out)
