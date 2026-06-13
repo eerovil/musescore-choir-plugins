@@ -342,26 +342,6 @@ def json_lines_to_by_measure(
                 if n_slots <= 0:
                     continue
                 chunk = syllables[syl_offset : syl_offset + n_slots]
-                # Avoid (end, "man") immediately followed by (begin, "vi") when input has "il-man il-ki-rii-vi-"
-                # (no "man-vi" token): trim chunk to end at last (end, "man") so next chunk starts with "il".
-                def _text_eq(t: str, s: str) -> bool:
-                    t = (t or "").strip()
-                    return t == s or t.startswith(s + ",") or t.startswith(s + ".")
-                if chunk:
-                    trim_to = None
-                    for i in range(len(chunk) - 1):
-                        if (chunk[i][0] == "end" and _text_eq(chunk[i][1], "man")
-                                and chunk[i + 1][0] == "begin" and _text_eq(chunk[i + 1][1], "vi")):
-                            trim_to = i + 1
-                    if trim_to is None and syl_offset + n_slots < len(syllables):
-                        next_syl = syllables[syl_offset + n_slots]
-                        if next_syl[0] == "begin" and _text_eq(next_syl[1], "vi"):
-                            for i in range(len(chunk) - 1, -1, -1):
-                                if chunk[i][0] == "end" and _text_eq(chunk[i][1], "man"):
-                                    trim_to = i + 1
-                                    break
-                    if trim_to is not None:
-                        chunk = chunk[:trim_to]
                 syl_offset += len(chunk)
                 if chunk:
                     measure_tokens = _syllables_to_tokens(chunk)

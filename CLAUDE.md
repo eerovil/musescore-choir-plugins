@@ -155,8 +155,9 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
 
 When editing this file, the export and import paths must stay symmetric — the
 test `test_lyric_txt_spanner.py` asserts export→import round-trips back to the
-original XML. The `man`/`vi` special-casing in `json_lines_to_by_measure` is a
-hack for a specific Finnish lyric; don't generalize it without a reason.
+original XML. The `il-man il-ki-rii-vi-` case (where a word's syllables span a
+measure boundary) is covered by the two `measure_14` regression tests; the
+syllable distribution in `json_lines_to_by_measure` must keep them green.
 
 ## MuseScore plugins (`plugins/`)
 
