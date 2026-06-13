@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from copy import deepcopy
+import json
 import os
 import sys
 from lxml import etree
@@ -19,6 +20,7 @@ from .utils.reversed_voices import (
 )
 
 from .utils.corrupted_measures import preprocess_corrupted_measures
+from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.interactive import resolve_voice_anomalies
 from .utils.revoice import (
     apply_revoice_plan,
@@ -206,12 +208,19 @@ def main(
     if not staffs:
         raise ValueError("No Staff elements found in the input XML.")
 
+    # Repair OCR measures that dropped a tuplet bracket present on a parallel voice,
+    # before any split/rebuild copies the (broken) notes. Only malformed voices with a
+    # matching donor tuplet are touched.
+    fix_missing_tuplets(root)
+
     # Per-system mode: rebuild the score from per-system part declarations instead of
     # the normal split. For badly-parsed scores where staves change role per system.
     if per_system:
         input_key = os.path.splitext(os.path.basename(input_path))[0]
         can_prompt = interactive and sys.stdin.isatty()
-        parts = revoice_by_system(root, input_key=input_key, can_prompt=can_prompt)
+        parts, system_map = revoice_by_system(
+            root, input_key=input_key, can_prompt=can_prompt
+        )
         if not parts:
             logger.warning("Per-system re-voicing produced no parts; nothing written.")
             return
@@ -224,13 +233,18 @@ def main(
         ):
             delete_all_elements_by_selector(root, sel)
         score_element = root.find(".//Score")
+        existing_meta = score_element.findall("metaTag")
+        insert_at = (
+            score_element.index(existing_meta[-1]) + 1 if existing_meta else len(score_element)
+        )
+        # Per-system printed-staff -> output-staff map (the printed numbering shifts
+        # per system as parts are omitted), plus an identity lyricsStaffMap fallback.
+        sys_meta = etree.Element("metaTag", name="lyricsSystemMap")
+        sys_meta.text = json.dumps(system_map, separators=(",", ":"))
+        score_element.insert(insert_at, sys_meta)
         meta = etree.Element("metaTag", name="lyricsStaffMap")
         meta.text = ";".join(f"{i}:{i}" for i in range(1, len(parts) + 1))
-        existing_meta = score_element.findall("metaTag")
-        if existing_meta:
-            score_element.insert(score_element.index(existing_meta[-1]) + 1, meta)
-        else:
-            score_element.append(meta)
+        score_element.insert(insert_at, meta)
         output_content = etree.tostring(
             root, pretty_print=True, encoding="UTF-8"
         ).decode("UTF-8")

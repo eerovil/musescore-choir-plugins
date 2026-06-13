@@ -254,6 +254,50 @@ def read_lyrics_staff_map(score_root: etree._Element) -> Dict[int, List[int]]:
     return result
 
 
+def read_lyrics_system_map(
+    score_root: etree._Element,
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    Read the per-system printed-staff -> output-staff map written by clean_score
+    --per-system in the 'lyricsSystemMap' metaTag (JSON: a list of
+    {"start", "end", "map": {printed: [output_ids]}} with 1-based measure ranges).
+    Returns None if absent/unparseable (callers then fall back to lyricsStaffMap).
+    """
+    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
+    if score is None:
+        return None
+    for m in score.findall("metaTag"):
+        if m.get("name") == "lyricsSystemMap" and (m.text or "").strip():
+            try:
+                raw = json.loads(m.text)
+            except ValueError:
+                return None
+            result: List[Dict[str, Any]] = []
+            for entry in raw:
+                try:
+                    pmap = {
+                        int(k): [int(x) for x in v]
+                        for k, v in (entry.get("map") or {}).items()
+                    }
+                    result.append(
+                        {"start": int(entry["start"]), "end": int(entry["end"]), "map": pmap}
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+            return result or None
+    return None
+
+
+def _map_for_measure(
+    system_map: List[Dict[str, Any]], measure_start: int
+) -> Dict[int, List[int]]:
+    """Pick the per-system staff map whose measure range contains measure_start."""
+    for entry in system_map:
+        if entry["start"] <= measure_start <= entry["end"]:
+            return entry["map"]
+    return {}
+
+
 def _derive_target_staves(
     staff_number: Optional[int],
     position: Optional[str],
@@ -285,15 +329,19 @@ def _derive_target_staves(
 def convert_lyrics_format_to_legacy(
     data: List[Dict[str, Any]],
     staff_map: Optional[Dict[int, List[int]]] = None,
+    system_map: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Convert new JSON format (measure_start, lyrics[{text, staff_number, position, parts}])
     to legacy format (measure_start, "1": "...", "2": "..."), keyed by output staff id.
 
     Target output staves come from an explicit "parts" list when present (manual override,
-    always wins). Otherwise they are derived from (staff_number, position) via staff_map
-    (the clean_score 'lyricsStaffMap'). Lyrics for verses other than 1 are ignored.
-    If multiple lyrics in a block resolve to the same output staff, texts are space-joined.
+    always wins). Otherwise they are derived from (staff_number, position) via the staff
+    map. When `system_map` is given (clean_score --per-system), the printed numbering
+    shifts per system, so each block uses the map for the system covering its
+    measure_start; otherwise the single `staff_map` ('lyricsStaffMap') is used for all
+    blocks. Lyrics for verses other than 1 are ignored. If multiple lyrics in a block
+    resolve to the same output staff, texts are space-joined.
     """
     if not data or not isinstance(data[0], dict):
         return data
@@ -306,6 +354,11 @@ def convert_lyrics_format_to_legacy(
         measure_start = block.get("measure_start")
         if measure_start is None:
             continue
+        block_map = (
+            _map_for_measure(system_map, measure_start)
+            if system_map is not None
+            else staff_map
+        )
         block_lyrics = [ly for ly in (block.get("lyrics") or []) if isinstance(ly, dict)]
         # Positions used per printed staff in THIS block (decides divisi vs unison locally).
         positions_by_staff: Dict[int, set] = {}
@@ -331,7 +384,7 @@ def convert_lyrics_format_to_legacy(
                 targets = _derive_target_staves(
                     lyric.get("staff_number"),
                     lyric.get("position"),
-                    staff_map,
+                    block_map,
                     positions_by_staff.get(lyric.get("staff_number"), set()),
                 )
             for part_num in targets:
@@ -344,12 +397,15 @@ def convert_lyrics_format_to_legacy(
 
 
 def parse_json_txt(
-    json_str: str, staff_map: Optional[Dict[int, List[int]]] = None
+    json_str: str,
+    staff_map: Optional[Dict[int, List[int]]] = None,
+    system_map: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Parse JSON format: array of objects with 'measure_start' (int) and part keys (e.g. S1, S2, A1, A2),
     or new format with 'measure_start' and 'lyrics' array (items with 'text', 'staff_number',
-    'position', and/or explicit 'parts'). staff_map maps printed staff -> output staves.
+    'position', and/or explicit 'parts'). staff_map maps printed staff -> output staves;
+    system_map (per-system mode) overrides it per measure range.
     Returns list of legacy {"measure_start": N, "1": "text", ...} keyed by output staff id.
     """
     data = json.loads(json_str)
@@ -358,7 +414,7 @@ def parse_json_txt(
     first = data[0]
     if not isinstance(first, dict) or "measure_start" not in first:
         return []
-    return convert_lyrics_format_to_legacy(data, staff_map=staff_map)
+    return convert_lyrics_format_to_legacy(data, staff_map=staff_map, system_map=system_map)
 
 
 def json_lines_to_by_measure(
@@ -971,7 +1027,8 @@ def import_json_txt_into_mscx(
     if score is None:
         return
     staff_map = read_lyrics_staff_map(score_root)
-    json_data = parse_json_txt(json_str, staff_map=staff_map)
+    system_map = read_lyrics_system_map(score_root)
+    json_data = parse_json_txt(json_str, staff_map=staff_map, system_map=system_map)
     if not json_data:
         return
     chord_counts = _get_chord_counts_per_measure(score)

@@ -84,10 +84,10 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ -q     # 17 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ -q     # 57 tests, all passing
 ```
 
-`pyproject.toml` only sets `log_cli_level=DEBUG`. There are two test modules:
+`pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
 
 - `test_lyric_txt_spanner.py` — asserts lyric export→import round-trips back to
   the original XML (the real behavioral coverage).
@@ -97,12 +97,25 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
   output, regenerate the goldens by copying the freshly produced
   `<name>_test_output.mscx` over `<name>_output.mscx`. The comparison is
   shallow (tags only, not text/attributes).
+- `test_per_system.py` — drives the `--per-system` rebuild against the real
+  `laulun_aika.mscx` fixture (systems, part order, per-system pull, tuplet survival,
+  line breaks, prompt reuse, and the answer cache).
+- `test_missing_tuplets.py` — the dropped-tuplet auto-fix (mirror within/across
+  staves, well-formed and donor-less voices left untouched).
+- `test_revoice.py` / `test_interactive.py` / `test_json_staff_mapping.py` — the
+  re-voicing plan, non-interactive anomaly reduction, and JSON lyric staff mapping.
 
 ## How the voice-splitting pipeline works (`src/clean_score/main.py`)
 
 `main(input_path, output_path, add_staffs=None)` parses the
 `.mscx` XML and transforms it in passes:
 
+0. `fix_missing_tuplets` (`utils/missing_tuplets.py`) repairs OCR measures where a
+   tuplet bracket was dropped from one voice but a parallel voice (any staff, same
+   measure index) kept it. It only touches a voice whose ticks don't add up *and*
+   where a donor tuplet matches by tick position + base duration + note count, then
+   copies the tuplet onto the run and pads the leftover with a rest. Never guesses a
+   tuplet without a donor. Runs first (before any split/rebuild), all modes.
 1. `preprocess_corrupted_measures` fixes measures with bad tick totals.
 2. Decide which staves actually contain 2 voices; only those get split.
    Staff ids are renumbered to leave a gap after each split staff
@@ -144,8 +157,22 @@ where absent. Old Parts/Staves are removed (that's how part deletion happens). S
 name on two staves in a system → first wins; blank → skip. Each staff prompt offers
 the previous system's answer as a `[default]` (Enter reuses, `-` clears), and the
 original line breaks are re-added on the top staff so the system layout survives.
-main() handles this in an early branch and writes an identity `lyricsStaffMap`. Tested
-against `tests/test_files/laulun_aika.mscx` (a real converted score kept as a fixture).
+Answers are cached per input file (basename, no extension) in `.persystem_cache.json`
+at the repo root (gitignored): each interactive run loads the prior answers as the
+`[default]` per staff and saves the chosen answers back, so re-running needs almost no
+typing — and a complete cache lets `--per-system` run **non-interactively** (no TTY),
+which is how tests drive it (`revoice_by_system(..., can_prompt=False)`).
+main() handles this in an early branch. Because the PDF's printed staff numbering
+**shifts per system** as parts are omitted (e.g. with T3 absent, the bass becomes
+printed staff 3), it writes a per-system `lyricsSystemMap` metaTag (JSON: per
+measure-range, `printed_no -> [output staff ids]`) in addition to an identity
+`lyricsStaffMap` fallback. `build_system_lyric_map` builds it by grouping parts that
+share a source staff into one printed staff (divisi: voice 0 → 'above', voice 1 →
+'below') and ordering printed staves by **musical rank** (S<A<T<B, then number) — not
+by the OCR's source-staff order, which can be shuffled. `lyric_txt.py` import reads it
+(`read_lyrics_system_map`) and resolves each JSON block via the map for the system
+covering its `measure_start`. Tested against `tests/test_files/laulun_aika.mscx` (a
+real converted score kept as a fixture).
 
 State is passed between passes through the module-level `GLOBALS` singleton
 (`utils/globals.py`) — `STAFF_MAPPING`, `REVERSED_VOICES_BY_STAFF_MEASURE`,
@@ -185,7 +212,11 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
   both positions appear (divisi is decided **per block**, not globally). An
   explicit `parts: [ids]` on a lyric overrides the mapping (manual fix for the
   ~inevitable LLM errors). Legacy numeric/`DEFAULT_PART_TO_STAFF` part keys still
-  work. `--split` duplicates a part into two staves.
+  work. `--split` duplicates a part into two staves. For `--per-system` scores the
+  printed numbering shifts per system (omitted parts), so import prefers the
+  per-system `lyricsSystemMap` (`read_lyrics_system_map`) and resolves each block via
+  the map for the system covering its `measure_start`; it falls back to the single
+  `lyricsStaffMap` when no system map is present.
 - Import is in-place on the tree, removes verse 2+, and clears lyrics from
   ineligible (spanner-continuation) chords. `--replace` / `clear_existing=True`
   wipes all verse-1 lyrics first (needed because MusicXML imports arrive with

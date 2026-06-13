@@ -8,6 +8,7 @@ from lxml import etree
 from src.clean_score.lyric_txt import (
     convert_lyrics_format_to_legacy,
     read_lyrics_staff_map,
+    read_lyrics_system_map,
 )
 
 
@@ -116,3 +117,44 @@ def test_no_staff_map_falls_back_to_staff_number():
     data = [{"measure_start": 1, "lyrics": [{"staff_number": 2, "position": "below", "text": "z"}]}]
     legacy = convert_lyrics_format_to_legacy(data, staff_map={})
     assert legacy == [{"measure_start": 1, "2": "z"}]
+
+
+# Per-system map: printed staff numbering shifts per system as parts are omitted.
+SYSTEM_MAP = [
+    {"start": 1, "end": 6, "map": {1: [1, 2], 2: [4]}},
+    {"start": 26, "end": 29, "map": {1: [1], 2: [2], 3: [4]}},
+]
+
+
+def test_read_lyrics_system_map():
+    score = etree.fromstring(
+        b"<museScore><Score>"
+        b'<metaTag name="lyricsSystemMap">'
+        b'[{"start":1,"end":6,"map":{"1":[1,2],"2":[4]}},'
+        b'{"start":26,"end":29,"map":{"1":[1],"2":[2],"3":[4]}}]'
+        b"</metaTag></Score></museScore>"
+    )
+    assert read_lyrics_system_map(score) == SYSTEM_MAP
+
+
+def test_read_lyrics_system_map_absent():
+    score = etree.fromstring(b"<museScore><Score/></museScore>")
+    assert read_lyrics_system_map(score) is None
+
+
+def test_system_map_routes_block_by_measure_range():
+    """A lyric's block uses the map for the system covering its measure_start."""
+    data = [
+        # m1-6: printed 1 (divisi, unison) -> output 1,2 ; printed 2 -> output 4 (B).
+        {"measure_start": 1, "lyrics": [
+            {"staff_number": 1, "position": "below", "text": "ten"},
+            {"staff_number": 2, "position": "below", "text": "bass"},
+        ]},
+        # m26-29: T3 omitted, so printed 3 -> output 4 (B), NOT output 3 (T3).
+        {"measure_start": 26, "lyrics": [
+            {"staff_number": 3, "position": "below", "text": "lowvoice"},
+        ]},
+    ]
+    legacy = convert_lyrics_format_to_legacy(data, system_map=SYSTEM_MAP)
+    assert legacy[0] == {"measure_start": 1, "1": "ten", "2": "ten", "4": "bass"}
+    assert legacy[1] == {"measure_start": 26, "4": "lowvoice"}

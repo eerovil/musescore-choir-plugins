@@ -352,13 +352,53 @@ def build_parts(
     return parts
 
 
+def build_system_lyric_map(
+    systems: List[Tuple[int, int]],
+    decls: Dict[int, Dict[Tuple[int, int], str]],
+    parts: List[str],
+) -> List[Dict]:
+    """
+    Per-system printed-staff -> output-staff(s) map for lyric placement.
+
+    The JSON lyric format numbers printed staves top-to-bottom *within each system*,
+    skipping any part that is omitted there. Output staves, by contrast, are a fixed
+    T1<T2<...<B set. This bridges them per system:
+      - parts that share a source staff (divisi: two voices on one staff) become ONE
+        printed staff (voice 0 -> 'above', voice 1 -> 'below');
+      - printed staves are ordered by musical rank (S<A<T<B, then number), NOT by the
+        OCR's source-staff order, which can be shuffled;
+      - omitted/undeclared parts simply don't appear (so they're "missing").
+
+    Returns a list of {"start", "end", "map": {printed_no: [output_ids]}} with 1-based
+    inclusive measure ranges.
+    """
+    part_id = {name: i + 1 for i, name in enumerate(parts)}
+    out: List[Dict] = []
+    for sidx, (a, b) in enumerate(systems):
+        groups: Dict[int, List[Tuple[int, str]]] = {}
+        for (sid, vidx), name in decls.get(sidx, {}).items():
+            groups.setdefault(sid, []).append((vidx, name))
+        ordered = sorted(
+            groups.values(),
+            key=lambda items: min(_part_sort_key(n) for _, n in items),
+        )
+        pmap: Dict[int, List[int]] = {}
+        for printed_no, items in enumerate(ordered, start=1):
+            ids = [part_id[n] for _, n in sorted(items) if n in part_id]
+            if ids:
+                pmap[printed_no] = ids
+        out.append({"start": a + 1, "end": b + 1, "map": pmap})
+    return out
+
+
 def revoice_by_system(
     root: etree._Element,
     input_key: Optional[str] = None,
     can_prompt: bool = True,
-) -> List[str]:
+) -> Tuple[List[str], List[Dict]]:
     """
-    Run the full per-system flow (prompt + rebuild). Returns the ordered part names.
+    Run the full per-system flow (prompt + rebuild). Returns (ordered part names,
+    per-system lyric staff map).
 
     If `input_key` is given, cached answers for that input are loaded as prompt
     defaults and the chosen answers are saved back. When `can_prompt` is False
@@ -367,7 +407,7 @@ def revoice_by_system(
     """
     systems = find_systems(root)
     if not systems:
-        return []
+        return [], []
     cache = load_answer_cache(input_key) if input_key else None
     if can_prompt:
         decls, answers = prompt_system_decls(root, systems, cache=cache)
@@ -381,5 +421,7 @@ def revoice_by_system(
             "Per-system needs a terminal to prompt, or a cached answer set for '%s'.",
             input_key,
         )
-        return []
-    return build_parts(root, systems, decls)
+        return [], []
+    parts = build_parts(root, systems, decls)
+    system_map = build_system_lyric_map(systems, decls, parts)
+    return parts, system_map

@@ -12,6 +12,7 @@ from lxml import etree
 from src.clean_score.utils import per_system
 from src.clean_score.utils.per_system import (
     build_parts,
+    build_system_lyric_map,
     decls_from_answers,
     find_systems,
     load_answer_cache,
@@ -196,6 +197,26 @@ def test_decls_from_answers_matches_full_decls():
         6: {1: "T3", 2: "T1", 3: "T2", 4: "B"},
     }
     assert decls_from_answers(root, systems, answers) == DECLS
+
+
+def test_system_lyric_map_handles_omitted_and_reordered_staves():
+    """
+    Printed staff numbering shifts per system as parts are omitted; the map must order
+    by musical rank (not OCR source order) and merge divisi onto one printed staff.
+    """
+    root = _load()
+    systems = find_systems(root)
+    parts = build_parts(root, systems, DECLS)  # ["T1","T2","T3","B"] -> ids 1,2,3,4
+    smap = build_system_lyric_map(systems, DECLS, parts)
+    by_range = {(e["start"], e["end"]): e["map"] for e in smap}
+    # System 1 (m1-6): T1+T2 share source staff 1 (divisi) -> one printed staff; B -> staff 2.
+    assert by_range[(1, 6)] == {1: [1, 2], 2: [4]}
+    # System 5 (m20-25): T1,T2 divisi printed first, then T3, then B (rank order, not source order).
+    assert by_range[(20, 25)] == {1: [1, 2], 2: [3], 3: [4]}
+    # System 6 (m26-29): T3 omitted -> printed 3 is the BASS (output staff 4), not T3.
+    assert by_range[(26, 29)] == {1: [1], 2: [2], 3: [4]}
+    # System 7 (m30-35): all four present, one each.
+    assert by_range[(30, 35)] == {1: [1], 2: [2], 3: [3], 4: [4]}
 
 
 def test_cache_save_and_load_roundtrip(tmp_path, monkeypatch):

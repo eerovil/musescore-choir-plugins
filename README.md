@@ -53,7 +53,11 @@ How to use
   skips it; if two staves are given the same name in one system, the first wins.
   Each staff prompt shows the previous system's answer in [brackets] — press Enter
   to reuse it (type '-' to clear a staff), so unchanged systems need almost no
-  typing. The printed system layout (line breaks) is preserved in the result.
+  typing. Answers are cached per input file in .persystem_cache.json (repo root), so
+  re-running reuses them automatically (and lets the conversion run without a prompt).
+  The printed system layout (line breaks) is preserved in the result. For lyrics,
+  clean_score writes a per-system staff map so the JSON's printed staff numbers (which
+  shift as parts are omitted per system) land on the right output voices.
 
 # lyric_txt.py — fixing lyrics from a PDF
 
