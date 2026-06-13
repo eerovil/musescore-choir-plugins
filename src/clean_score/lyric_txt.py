@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
@@ -691,44 +690,6 @@ def _set_lyric(chord: etree._Element, syllabic: str, text: str, no: str = "1") -
     chord.append(lyric_el)
 
 
-# Duration type -> fraction of a whole note, for computing slur endpoint offsets.
-_WHOLE_NOTE = {
-    "whole": Fraction(1), "half": Fraction(1, 2), "quarter": Fraction(1, 4),
-    "eighth": Fraction(1, 8), "16th": Fraction(1, 16), "32nd": Fraction(1, 32),
-    "64th": Fraction(1, 64), "128th": Fraction(1, 128),
-}
-
-
-def _chord_distance(voice_children: List[etree._Element], a: int, b: int) -> Fraction:
-    """Whole-note time distance from voice_children[a] to [b] (notated durations)."""
-    total = Fraction(0)
-    for el in voice_children[a:b]:
-        if el.tag in ("Chord", "Rest"):
-            base = _WHOLE_NOTE.get(el.findtext("durationType"), Fraction(0))
-            dots = el.findtext("dots")
-            if dots and dots.isdigit():
-                add = base
-                for _ in range(int(dots)):
-                    add /= 2
-                    base += add
-            total += base
-    return total
-
-
-def _make_melisma_slur(kind: str, frac: Fraction) -> etree._Element:
-    """Build a Slur Spanner endpoint: kind 'next' (start, +frac) or 'prev' (end, -frac)."""
-    sp = etree.Element("Spanner", type="Slur")
-    if kind == "next":
-        etree.SubElement(etree.SubElement(sp, "Slur"), "up").text = "down"
-        loc = etree.SubElement(etree.SubElement(sp, "next"), "location")
-        etree.SubElement(loc, "fractions").text = f"{frac.numerator}/{frac.denominator}"
-    else:
-        loc = etree.SubElement(etree.SubElement(sp, "prev"), "location")
-        neg = -frac
-        etree.SubElement(loc, "fractions").text = f"{neg.numerator}/{neg.denominator}"
-    return sp
-
-
 def _tokens_to_syllables(
     tokens: List[str], first_syllabic_continuation: bool = False
 ) -> List[Tuple[str, str]]:
@@ -742,11 +703,6 @@ def _tokens_to_syllables(
     for idx, tok in enumerate(tokens):
         if tok == "_":
             out.append(("_", ""))
-            continue
-        if tok == "~":
-            # melisma: this note has no syllable; the previous syllable is sung over it
-            # (import draws a slur from the syllable's note across the ~ notes).
-            out.append(("melisma", ""))
             continue
         # Split on hyphen that joins syllables (not leading/trailing)
         raw_trailing_hyphen = tok.strip().endswith("-")
@@ -952,13 +908,6 @@ def import_txt_into_mscx(
                 syllables = []
                 syl_index = [0]
 
-            # Melisma state (reset per measure): the chord that owns the current syllable,
-            # and the slur endpoints we draw across its '~' (melisma) continuation notes.
-            melisma_anchor_idx: Optional[int] = None
-            melisma_start_sp: Optional[etree._Element] = None
-            melisma_end_sp: Optional[etree._Element] = None
-            melisma_end_chord: Optional[etree._Element] = None
-
             for el_idx, el in enumerate(voice_children):
                 if el.tag != "Chord":
                     continue
@@ -994,27 +943,6 @@ def import_txt_into_mscx(
                     if _has_tie_start(el):
                         tie_active = True
                     continue
-                if syllables[syl_index[0]][0] == "melisma":
-                    # This eligible note carries no syllable; the previous syllable is sung
-                    # over it. Draw/extend a slur from the anchor note across this note so
-                    # the score gets the (OCR-dropped) slur and alignment stays correct.
-                    _clear_verse1_lyrics(el)
-                    if melisma_anchor_idx is not None:
-                        dist = _chord_distance(voice_children, melisma_anchor_idx, el_idx)
-                        if dist > 0:
-                            frac_txt = f"{dist.numerator}/{dist.denominator}"
-                            if melisma_start_sp is None:
-                                melisma_start_sp = _make_melisma_slur("next", dist)
-                                voice_children[melisma_anchor_idx].append(melisma_start_sp)
-                            else:
-                                melisma_start_sp.find("next/location/fractions").text = frac_txt
-                                if melisma_end_chord is not None and melisma_end_sp is not None:
-                                    melisma_end_chord.remove(melisma_end_sp)
-                            melisma_end_sp = _make_melisma_slur("prev", dist)
-                            el.append(melisma_end_sp)
-                            melisma_end_chord = el
-                    syl_index[0] += 1
-                    continue
                 syllables_left = len(syllables) - syl_index[0]
                 eligible_remaining = _count_remaining_eligible_chords(
                     voice_children, el_idx, slur_active, tie_active
@@ -1027,8 +955,6 @@ def import_txt_into_mscx(
                     if merged_text:
                         _set_lyric(el, "single", merged_text, "1")
                     syl_index[0] += syllables_left
-                    melisma_anchor_idx, melisma_start_sp = el_idx, None
-                    melisma_end_sp = melisma_end_chord = None
                 else:
                     syllabic, text = syllables[syl_index[0]]
                     syl_index[0] += 1
@@ -1037,14 +963,8 @@ def import_txt_into_mscx(
                             no_el = lyrics.find("no")
                             if _is_verse1(no_el):
                                 el.remove(lyrics)
-                        # A blank eligible note ends any melisma (no syllable to sustain).
-                        melisma_anchor_idx, melisma_start_sp = None, None
-                        melisma_end_sp = melisma_end_chord = None
                     else:
                         _set_lyric(el, syllabic, text, "1")
-                        # New syllable becomes the anchor for any following '~' notes.
-                        melisma_anchor_idx, melisma_start_sp = el_idx, None
-                        melisma_end_sp = melisma_end_chord = None
                 if _has_slur_start(el):
                     slur_active = True
                 if _has_tie_start(el):

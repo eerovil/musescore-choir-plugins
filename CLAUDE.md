@@ -84,7 +84,7 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ -q     # 65 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ -q     # 62 tests, all passing
 ```
 
 `pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
@@ -103,8 +103,6 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 - `test_missing_tuplets.py` / `test_missing_slurs.py` — the dropped-tuplet and
   dropped-slur cross-voice auto-fixes (mirror within/across staves; well-formed and
   donor-less voices left untouched).
-- `test_melisma_import.py` — `~` melisma marks place the syllable + draw a slur and
-  keep following syllables aligned; `_` stays slur-free.
 - `test_revoice.py` / `test_interactive.py` / `test_json_staff_mapping.py` — the
   re-voicing plan, non-interactive anomaly reduction, and JSON lyric staff mapping.
 
@@ -206,11 +204,10 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
 - **TXT format**: `# Measure N` headers, then `staffId [syllableCount]: tok1 tok2 ...`
   Tokens are space-separated; hyphens join syllables of a word (`il-man`);
   trailing hyphen = word continues into next measure; `_` = eligible note with
-  no lyric; `~` = melisma note (the previous syllable is held over it). On import a
-  syllable followed by `~` tokens draws a slur from the syllable's note across them
-  (repairing an OCR-dropped slur) — distinct from `_`, which never adds a slur so the
-  export→import round-trip stays exact. Syllabic state (begin/middle/end/single) is
-  reconstructed from hyphenation on import.
+  no lyric. Syllabic state (begin/middle/end/single) is reconstructed from
+  hyphenation on import. (Alignment is per-measure — the token counter resets at each
+  barline — so a missing slur/tie only misaligns within its own measure, not the rest
+  of the line.)
 - **JSON format**: line-by-line; tokens are *distributed across measures* using
   actual chord counts from the score (`_get_chord_counts_per_measure`). The
   PDF-derived format has a `lyrics` array of `{text, staff_number, position,

@@ -82,10 +82,9 @@ read from the original PDF:
    * Without --replace, only the measures/staves named in the JSON are changed
      (partial edit); existing lyrics elsewhere are kept.
    * Slurs/ties dropped by OCR are recovered automatically by clean_score when a
-     parallel voice still has them. Where none does, mark a held syllable (melisma)
-     in the JSON with "~" per extra note (e.g. "lu ~ ~"): import places the syllable,
-     keeps the count right, and draws the missing slur into the score — so you no
-     longer have to hand-edit the .mscx and re-import.
+     parallel voice still has them. Any slur the mirror can't recover (none of the
+     voices kept it) is fixed by hand in the score. Lyric alignment is per-measure, so
+     a missing slur only affects its own measure, not the rest of the line.
 
 You can also export the current lyrics to a checkable text format:
     ./lyric_txt.py export "songs/Laulun aika/Laulun aika_cleaned.mscx" -o lyrics.txt
