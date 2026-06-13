@@ -27,6 +27,11 @@ Read this pdf and for each LINE in the score, give following in JSON format:
 Notes:
 - Split each word into syllables with hyphens, e.g. "ly-ric". The importer aligns
   one syllable per note, so syllable count matters.
+- MELISMA (one syllable held over several notes, shown in the score as a slur over a
+  syllable): write the syllable, then one "~" for each EXTRA note it covers. E.g. a
+  syllable "lu" sung over 3 notes -> "lu ~ ~". This keeps the count right and the
+  importer also draws the (often OCR-dropped) slur into the score. Use "~" only for a
+  held syllable; use "_" for a sung note that genuinely has no lyric.
 - staff_number + position are mapped to the score's output voices automatically.
   When a printed staff is sung in unison by two voices, give a single line (one
   position) and it goes to both voices; when the two voices have different words,

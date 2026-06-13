@@ -84,7 +84,7 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ -q     # 57 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ -q     # 65 tests, all passing
 ```
 
 `pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
@@ -100,8 +100,11 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 - `test_per_system.py` — drives the `--per-system` rebuild against the real
   `laulun_aika.mscx` fixture (systems, part order, per-system pull, tuplet survival,
   line breaks, prompt reuse, and the answer cache).
-- `test_missing_tuplets.py` — the dropped-tuplet auto-fix (mirror within/across
-  staves, well-formed and donor-less voices left untouched).
+- `test_missing_tuplets.py` / `test_missing_slurs.py` — the dropped-tuplet and
+  dropped-slur cross-voice auto-fixes (mirror within/across staves; well-formed and
+  donor-less voices left untouched).
+- `test_melisma_import.py` — `~` melisma marks place the syllable + draw a slur and
+  keep following syllables aligned; `_` stays slur-free.
 - `test_revoice.py` / `test_interactive.py` / `test_json_staff_mapping.py` — the
   re-voicing plan, non-interactive anomaly reduction, and JSON lyric staff mapping.
 
@@ -128,8 +131,12 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
    other, normalizes TimeSig/KeySig/Clef, forces stems up, strips dynamics,
    hairpins, articulations, tempo, harmony, layout breaks, and lengthens
    fermatas (`timeStretch=3`).
-6. `add_missing_ties`, `detect_part_types` (clef + pitch-range heuristics name
-   parts S/A/T/B and set clefs), apply names/clefs, strip brackets/barLineSpan.
+6. `add_missing_ties` then `add_missing_slurs` (`utils/missing_slurs.py`) recover
+   OCR-dropped ties/slurs by mirroring them from a parallel voice that kept the
+   spanner at the same tick span (ties: same pitch; slurs: same note count). This
+   also fixes lyric alignment, since slur/tie-continuation notes get no syllable.
+   Then `detect_part_types` (clef + pitch-range heuristics name parts S/A/T/B and set
+   clefs), apply names/clefs, strip brackets/barLineSpan.
 7. `--add SSAA` appends new empty staves (rests) with the right clef per letter.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
@@ -199,8 +206,11 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
 - **TXT format**: `# Measure N` headers, then `staffId [syllableCount]: tok1 tok2 ...`
   Tokens are space-separated; hyphens join syllables of a word (`il-man`);
   trailing hyphen = word continues into next measure; `_` = eligible note with
-  no lyric. Syllabic state (begin/middle/end/single) is reconstructed from
-  hyphenation on import.
+  no lyric; `~` = melisma note (the previous syllable is held over it). On import a
+  syllable followed by `~` tokens draws a slur from the syllable's note across them
+  (repairing an OCR-dropped slur) — distinct from `_`, which never adds a slur so the
+  export→import round-trip stays exact. Syllabic state (begin/middle/end/single) is
+  reconstructed from hyphenation on import.
 - **JSON format**: line-by-line; tokens are *distributed across measures* using
   actual chord counts from the score (`_get_chord_counts_per_measure`). The
   PDF-derived format has a `lyrics` array of `{text, staff_number, position,

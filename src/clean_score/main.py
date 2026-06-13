@@ -14,6 +14,7 @@ from typing import Dict, List, Set, Optional
 from .utils.globals import GLOBALS
 
 from .utils.missing_ties import add_missing_ties
+from .utils.missing_slurs import add_missing_slurs
 from .utils.part_types import detect_part_types
 from .utils.reversed_voices import (
     find_reversed_voices_by_staff_measure,
@@ -225,6 +226,7 @@ def main(
             logger.warning("Per-system re-voicing produced no parts; nothing written.")
             return
         add_missing_ties(root)
+        add_missing_slurs(root)
         # Note: LayoutBreaks are intentionally kept (per_system re-adds system breaks).
         for sel in (
             ".//Lyrics", ".//offset", ".//Dynamic",
@@ -402,6 +404,7 @@ def main(
         handle_staff(staff, None)
 
     add_missing_ties(root)
+    add_missing_slurs(root)
 
     part_types = detect_part_types(root)
     # Apply part name
