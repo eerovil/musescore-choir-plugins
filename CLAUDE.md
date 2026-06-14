@@ -312,14 +312,22 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
   explicit `parts` on a lyric overrides the staff_number/position mapping (manual fix
   for the ~inevitable LLM errors). `parts` accepts output staff **ids** *and/or part
   **names*** (`["T1","T2"]`, also a scalar `part`); names resolve via the score's
-  trackNames (`read_part_name_map`). **Names are the preferred/robust path** — they're
-  immune to printed-staff order (e.g. an ossia T3 printed on top), which staff_number
-  cannot handle. Legacy numeric/`DEFAULT_PART_TO_STAFF` part keys still work. `--split`
+  trackNames (`read_part_name_map`). Names are the robust override — immune to
+  printed-staff order (e.g. an ossia T3 printed on top), which staff_number cannot
+  handle. The current `lyric_json_prompt.txt` has the LLM emit `"parts": []` (empty)
+  in **every** lyric so manual overriding is just dropping ids/names into the existing
+  array; empty → auto-map by staff_number/position. (An empty list is falsy, so the
+  `if parts:` check falls through to the staff_number path — same as omitting it.) Legacy numeric/`DEFAULT_PART_TO_STAFF` part keys still work. `--split`
   duplicates a part into two staves. When a lyric has no `parts`, import falls back to
   staff_number/position: for `--per-system` scores the printed numbering shifts per
   system, so it uses the per-system `lyricsSystemMap` (`read_lyrics_system_map`) for the
   block's `measure_start`, else the single `lyricsStaffMap`. Resolution priority per
   lyric: explicit `parts` (ids/names) → staff_number+position via system/staff map.
+  A null `measure_start` (the LLM emits null when no measure number is printed at the
+  start of a line) is auto-filled by `_fill_missing_measure_starts`: blocks are one
+  per printed system in order, so each null block takes the start measure of the
+  system at its position (`find_systems`); explicit values are left alone, and a
+  block-count vs system-count mismatch is warned (so the user verifies alignment).
 - Import is in-place on the tree, removes verse 2+, and clears lyrics from
   ineligible (spanner-continuation) chords. `--replace` / `clear_existing=True`
   wipes all verse-1 lyrics first (needed because MusicXML imports arrive with

@@ -3,42 +3,50 @@ JSON format:
 [
     {
         "measure_start": 1,   # First measure of this line. If a measure number is
-                              # printed at the start of the system use it; else null.
+                              # printed at the start of the system use it; else null
+                              # (it will be inferred from the line's position).
         "lyrics": [
             {
-                "parts": ["T1", "T2"],   # Which voice part(s) sing this text. Use the
-                                         # part LABEL printed at the left of the staff
-                                         # (e.g. S, A, T1, T2, T3, B). List several
-                                         # when they share a staff and sing the SAME
-                                         # words; give separate entries when they differ.
-                "text": "this is the text the te-nors sing"
+                "staff_number": 1,        # Which printed staff, counted 1 = top of
+                                          # the system to bottom.
+                "position": "above",      # "above"/"below" when two divisi voices
+                                          # share one staff and sing DIFFERENT words;
+                                          # omit (or null) if the staff has one line.
+                "text": "this is the text the te-nors sing",
+                "parts": []               # LEAVE EMPTY. Only fill to override the
+                                          # mapping (see below).
             },
             {
-                "parts": ["B"],
-                "text": "ly-rics for the bass"
+                "staff_number": 2,
+                "text": "ly-rics for the bass",
+                "parts": []
             }
         ]
     }
 ]
 
 Notes:
-- Identify voices by the part label at the left of each staff. The output score has one
-  staff per part (T1, T2, T3, B, …) and matches these names exactly, so addressing parts
-  by name is reliable even when a part is omitted on some lines or printed in an unusual
-  order (e.g. an extra T3 placed on top).
-- Split each word into syllables with hyphens, e.g. "ly-ric". Give the syllables as they
-  are actually sung; don't worry about matching the exact note count (melismas/slurs are
-  handled separately in the score) and don't add padding or melisma markers.
+- ALWAYS include "parts": [] (empty) in every lyric. Leave it empty by default — the
+  text is then mapped automatically to the right voice(s) from "staff_number" and
+  "position". Only put something in "parts" to correct a wrong mapping (see below).
+- Give each line's text by "staff_number" (top staff = 1) and, for a staff shared by
+  two divisi voices that sing different words, a "position" ("above"/"below"). If the
+  two voices on a staff sing the SAME words, give one line and omit "position".
+- Split each word into syllables with hyphens, e.g. "ly-ric". Give the syllables as
+  they are actually sung; don't worry about matching the exact note count
+  (melismas/slurs are handled separately) and don't add padding or melisma markers.
 - A word that continues onto the next line ends with a trailing hyphen (e.g. "Su-ku-")
   and the next line starts with the rest of it ("pol-vis-ta …").
 - Only verse 1 is imported. Skip later verses and editorial/ossia notes.
-- IF THE STAVES HAVE NO PART LABELS: omit "parts" and instead give "staff_number"
-  (which printed staff, counted 1 = top to bottom of the system) and "position"
-  ("above"/"below", for a staff shared by two divisi voices — one line if they sing
-  the same words, an "above" and a "below" line if they differ), e.g.:
-      { "staff_number": 1, "position": "below", "text": "…" }
-  This is mapped to the output voices automatically (it assumes the printed staves run
-  in normal high-to-low order). Use "parts" by name whenever labels are present.
-- MANUAL OVERRIDE (human, after generation): add "parts" as output staff ids (integers,
-  the output staves sorted high-to-low: 1, 2, 3, …) to force exactly which voices get a
-  line. This wins over everything — use it where the automatic mapping is wrong.
+
+MANUAL OVERRIDE (when the automatic mapping is wrong — e.g. a part is omitted on some
+lines, or an extra voice like an ossia T3 is printed on top so the staff numbering
+doesn't match):
+- Fill the line's "parts" array to force exactly which voices get the text. It wins
+  over staff_number/position. You can use:
+    * part NAMES — "parts": ["T1", "T2"]  (matches the staff labels in the score;
+      robust even when staves are reordered) — PREFERRED for overrides.
+    * output staff IDs — "parts": [1, 2]   (the output staves sorted high-to-low:
+      1, 2, 3, …).
+- List several entries when staves differ; list several names/ids in one "parts" when
+  they share the SAME words.

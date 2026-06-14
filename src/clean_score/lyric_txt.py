@@ -1046,6 +1046,51 @@ def _apply_split_to_by_measure(
     return new_by_measure
 
 
+def _fill_missing_measure_starts(json_str: str, score_root: etree._Element) -> str:
+    """Infer null `measure_start` values from the score's printed systems.
+
+    The JSON has one block per printed line (system) in order. Blocks whose
+    `measure_start` is null (no measure number printed) are assigned the start
+    measure of the system at the same position. Explicit values are left alone.
+    Returns the (possibly rewritten) JSON string.
+    """
+    try:
+        data = json.loads(json_str)
+    except ValueError:
+        return json_str
+    if not isinstance(data, list):
+        return json_str
+    blocks = [b for b in data if isinstance(b, dict) and "measure_start" in b]
+    if not any(b.get("measure_start") is None for b in blocks):
+        return json_str  # nothing to infer
+
+    from .utils.per_system import find_systems
+    starts = [a + 1 for (a, _b) in find_systems(score_root)]
+    if not starts:
+        print("Warning: lyric lines have null measure_start but the score has no "
+              "system breaks to infer from; those lines were skipped.", file=sys.stderr)
+        return json_str
+
+    filled = []
+    for i, block in enumerate(blocks):
+        if block.get("measure_start") is None:
+            if i < len(starts):
+                block["measure_start"] = starts[i]
+                filled.append(starts[i])
+            else:
+                print(f"Warning: lyric line {i + 1} has null measure_start and there "
+                      f"is no system {i + 1} to infer from; it was skipped.", file=sys.stderr)
+    if filled:
+        if len(blocks) != len(starts):
+            print(f"Warning: auto-filled {len(filled)} null measure_start value(s), but the "
+                  f"number of lyric lines ({len(blocks)}) doesn't match the score's systems "
+                  f"({len(starts)}) — verify the alignment.", file=sys.stderr)
+        else:
+            print(f"Note: auto-filled {len(filled)} null measure_start value(s) from the "
+                  f"score's systems.", file=sys.stderr)
+    return json.dumps(data)
+
+
 def import_json_txt_into_mscx(
     score_root: etree._Element,
     json_str: str,
@@ -1072,6 +1117,7 @@ def import_json_txt_into_mscx(
     staff_map = read_lyrics_staff_map(score_root)
     system_map = read_lyrics_system_map(score_root)
     name_map = read_part_name_map(score_root)
+    json_str = _fill_missing_measure_starts(json_str, score_root)
     json_data = parse_json_txt(
         json_str, staff_map=staff_map, system_map=system_map, name_map=name_map
     )
