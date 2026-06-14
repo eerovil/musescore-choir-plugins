@@ -161,8 +161,14 @@ state model are in `DESIGN.md`.
   review. YouTube uploads report live percentage via a `progress` WS message,
   are recorded into `record.uploads` (title/id/url) for review + delete/re-upload
   (`/youtube-delete`), use the human song name for titles, and remember used
-  playlists globally in `.playlists.json` (`/api/playlists`). There is also a
-  **file watcher**
+  playlists globally in `.playlists.json` (`/api/playlists`). Legacy `songs/<name>/`
+  folders from the old CLI workflow are adopted by `import_legacy()` (run on
+  startup and via `POST /api/import` / the Library's "Import existing" button): it
+  infers a `.song.json` from the files present — input score, `*_cleaned.mscx`
+  (+ health scan), PDF, `lyrics.json`, merged `media/video/<name> *.mov` outputs,
+  and per-system mode from the answer cache — and sets the stage accordingly
+  (recorded→upload, cleaned→review, input→clean). It's idempotent and skips
+  folders that already have a state file. There is also a **file watcher**
   (`watchfiles.awatch` on `songs/`) that re-runs the health check when a
   `*_cleaned.mscx` is saved in MuseScore (guarded by fingerprint so our own writes
   don't loop). Static SPA is mounted at `/` (so `/api/*` wins).

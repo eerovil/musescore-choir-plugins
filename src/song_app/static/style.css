@@ -94,6 +94,7 @@ table.grid { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
 table.grid th, table.grid td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
 table.grid th { background: var(--panel2); color: var(--muted); font-weight: 600; }
 table.grid input { width: 100%; }
+table.grid input.unset { border-color: var(--warn); }
 .sysblock { margin-bottom: 18px; }
 .sysblock h4 { margin: 0 0 6px; }
 .stsum { color: var(--muted); font-size: 12px; }

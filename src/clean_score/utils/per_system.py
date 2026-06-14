@@ -154,6 +154,7 @@ def decls_from_answers(
     score = root if root.tag == "Score" else root.find(".//Score")
     staves = score.findall("Staff")
     decls: Dict[int, Dict[Tuple[int, int], str]] = {}
+    last_answer: Dict[int, str] = {}  # carry a staff's answer into later systems
     for sidx, (a, b) in enumerate(systems):
         sys_ans = answers.get(sidx, {})
         for staff in staves:
@@ -161,7 +162,12 @@ def decls_from_answers(
             nv = _max_voices_in_range(staff, a, b)
             if nv == 0:
                 continue
-            _apply_answer(decls, sidx, sid, nv, sys_ans.get(sid, ""))
+            raw = sys_ans.get(sid, "")
+            if raw == "":
+                raw = last_answer.get(sid, "")  # inherit previous system's answer
+            else:
+                last_answer[sid] = raw
+            _apply_answer(decls, sidx, sid, nv, raw)
     return decls
 
 

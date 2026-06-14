@@ -120,6 +120,8 @@ class Song:
             "lyric_warnings": len(self.data.get("lyrics", {}).get("warnings", [])),
             "recorded": bool(rec.get("outputs")),
             "uploaded": bool(rec.get("uploads")),
+            "created_at": self.data.get("created_at") or self.data.get("updated_at") or 0,
+            "updated_at": self.data.get("updated_at") or 0,
         }
 
 

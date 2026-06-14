@@ -5,7 +5,11 @@ const crumb = document.getElementById("crumb");
 
 // ---- tiny helpers --------------------------------------------------------
 const el = (tag, props = {}, ...kids) => {
-  const e = Object.assign(document.createElement(tag), props);
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k.includes("-")) e.setAttribute(k, v); // data-*/aria-* must be real attributes
+    else e[k] = v;
+  }
   for (const k of kids.flat()) e.append(k?.nodeType ? k : document.createTextNode(k ?? ""));
   return e;
 };
@@ -31,9 +35,17 @@ function route() {
 }
 
 // ---- library -------------------------------------------------------------
+const SORTS = {
+  updated: { label: "Last edited", fn: (a, b) => (b.updated_at || 0) - (a.updated_at || 0) },
+  created: { label: "Created", fn: (a, b) => (b.created_at || 0) - (a.created_at || 0) },
+  name: { label: "Name", fn: (a, b) => a.name.localeCompare(b.name) },
+};
+
 async function renderLibrary() {
   crumb.textContent = "";
   const songs = await getJSON("/api/songs");
+  const sortKey = SORTS[localStorage.getItem("songSort")] ? localStorage.getItem("songSort") : "updated";
+  songs.sort(SORTS[sortKey].fn);
   const cards = songs.map((s) => {
     const stageDone = (st, i) =>
       i < s.stage_index || (st === "record" && s.recorded) || (st === "upload" && s.uploaded);
@@ -50,11 +62,24 @@ async function renderLibrary() {
     return el("a", { className: "card", href: `#/song/${encodeURIComponent(s.slug)}` },
       el("h3", {}, s.name), rail, badge);
   });
+  const sortSel = el("select", {
+    onchange: () => { localStorage.setItem("songSort", sortSel.value); renderLibrary(); },
+  }, Object.entries(SORTS).map(([k, v]) =>
+    el("option", { value: k, selected: k === sortKey }, "Sort: " + v.label)));
+
   app.replaceChildren(
     el("div", { className: "lib" },
       el("div", { className: "lib-head" },
         el("h1", {}, "Songs"),
-        el("button", { className: "primary", onclick: newSongDialog }, "+ New song")),
+        el("div", { className: "row" },
+          sortSel,
+          el("button", { onclick: async (e) => {
+            const b = e.target; b.disabled = true; b.textContent = "Importing…";
+            try { const { imported } = await postJSON("/api/import"); renderLibrary();
+                  if (!imported) alert("No new folders to import."); }
+            catch (err) { b.disabled = false; b.textContent = "Import existing"; alert(err.message); }
+          } }, "Import existing"),
+          el("button", { className: "primary", onclick: newSongDialog }, "+ New song"))),
       cards.length ? el("div", { className: "cards" }, cards)
                    : el("p", { className: "hint" }, "No songs yet. Create one to begin.")));
 }
@@ -258,11 +283,17 @@ async function panelClean(panel, song, slug, P, refresh) {
       ? "Name each staff's voices per system, then build."
       : "Split the shared-staff voices into one staff per part."));
 
-  const runBtn = el("button", { className: "primary", onclick: async () => {
-    runBtn.disabled = true;
-    appendLog("Starting clean…");
-    await postJSON(`${P}/clean`, {});
-  }}, song.has_cleaned ? "Re-clean (discards manual edits)" : "Run clean");
+  // Mode toggle — switchable any time (e.g. a normal score turns out to need per-system).
+  const modeChk = el("input", { type: "checkbox", checked: song.mode === "per-system" });
+  modeChk.onchange = async () => {
+    modeChk.disabled = true;
+    try { await postJSON(`${P}/mode`, { mode: modeChk.checked ? "per-system" : "normal" }); refresh(); }
+    catch (e) { modeChk.disabled = false; appendLog(e.message, true); }
+  };
+  panel.append(el("div", { className: "row" }, modeChk,
+    el("span", {}, "Per-system mode (staves change parts between systems)")));
+
+  const cleanLabel = song.has_cleaned ? "Re-clean (discards manual edits)" : "Run clean";
 
   if (song.mode === "per-system") {
     const holder = el("div", {}, el("p", { className: "hint" }, "Loading systems…"));
@@ -270,21 +301,83 @@ async function panelClean(panel, song, slug, P, refresh) {
     try {
       const { grid } = await getJSON(`${P}/systems`);
       holder.replaceChildren(...grid.map((sys) => sysBlock(sys)));
-      const saveBtn = el("button", { onclick: async () => {
+
+      // Roll a staff's answer forward: an empty field shows the previous system's
+      // answer for the same staff as a faint placeholder (and inherits it at clean).
+      const inputs = [...holder.querySelectorAll("input[data-sys]")];
+      const byStaff = () => {
+        const m = {};
+        for (const inp of inputs) (m[inp.dataset.staff] ||= []).push(inp);
+        for (const sid in m) m[sid].sort((a, b) => a.dataset.sys - b.dataset.sys);
+        return m;
+      };
+      const cascade = () => {
+        for (const list of Object.values(byStaff())) {
+          let carry = "";
+          for (const inp of list) {
+            const v = inp.value.trim();
+            if (v) carry = v;
+            else inp.placeholder = carry || inp.dataset.hint;
+            // flag staves that will be dropped (no value and nothing to inherit)
+            inp.classList.toggle("unset", !v && !carry);
+          }
+        }
+      };
+      // staves left unnamed (would be dropped from the result)
+      const unnamed = () => {
+        const out = [];
+        for (const list of Object.values(byStaff())) {
+          let carry = "";
+          for (const inp of list) {
+            const v = inp.value.trim();
+            if (v) carry = v;
+            else if (!carry) out.push(`staff ${inp.dataset.staff} · system ${+inp.dataset.sys + 1}`);
+          }
+        }
+        return out;
+      };
+      inputs.forEach((inp) => (inp.oninput = cascade));
+      cascade();
+
+      const collect = () => {
         const answers = {};
         panel.querySelectorAll("input[data-sys]").forEach((inp) => {
           const si = inp.dataset.sys, sid = inp.dataset.staff;
           (answers[si] ||= {})[sid] = inp.value.trim();
         });
-        await api(`${P}/systems`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(answers) });
-        appendLog("Saved voice assignments.");
+        return answers;
+      };
+      const save = () => api(`${P}/systems`, {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify(collect()),
+      });
+
+      const saveBtn = el("button", { onclick: async () => {
+        try { await save(); saveBtn.textContent = "Saved ✓";
+              setTimeout(() => { saveBtn.textContent = "Save assignments"; }, 1500); }
+        catch (e) { appendLog(e.message, true); }
       }}, "Save assignments");
+      const runBtn = el("button", { className: "primary", onclick: async () => {
+        const miss = unnamed();
+        if (miss.length && !confirm(
+            `${miss.length} staff slot(s) have no voice names and will be DROPPED from the result:\n\n`
+            + miss.slice(0, 12).join("\n") + (miss.length > 12 ? `\n…and ${miss.length - 12} more` : "")
+            + "\n\nClean anyway?")) return;
+        runBtn.disabled = true;
+        appendLog("Saving assignments and cleaning…");
+        try { await save(); await postJSON(`${P}/clean`, {}); }
+        catch (e) { runBtn.disabled = false; appendLog(e.message, true); }
+      }}, cleanLabel);
       panel.append(el("div", { className: "row" }, saveBtn, runBtn));
     } catch (e) {
       holder.replaceChildren(el("p", { className: "err" }, "Could not read systems: " + e.message));
-      panel.append(el("div", { className: "row" }, runBtn));
     }
   } else {
+    const runBtn = el("button", { className: "primary", onclick: async () => {
+      runBtn.disabled = true;
+      appendLog("Starting clean…");
+      await postJSON(`${P}/clean`, {});
+    }}, cleanLabel);
     panel.append(el("div", { className: "row" }, runBtn));
   }
   panel.append(makeLog());
@@ -298,8 +391,9 @@ function sysBlock(sys) {
       el("td", {}, String(st.voices)),
       el("td", { className: "stsum" }, st.summary),
       el("td", {}, el("input", {
-        value: st.answer || "", placeholder: st.voices > 1 ? "T1,T2" : "T1",
+        value: st.answer || "", placeholder: st.voices > 1 ? "e.g. T1, T2 (type to set)" : "e.g. T1 (type to set)",
         "data-sys": sys.system, "data-staff": st.staff_id,
+        "data-hint": st.voices > 1 ? "e.g. T1, T2 (type to set)" : "e.g. T1 (type to set)",
       }))));
   return el("div", { className: "sysblock" },
     el("h4", {}, `System ${sys.system + 1} — measures ${sys.measure_start}–${sys.measure_end}`),

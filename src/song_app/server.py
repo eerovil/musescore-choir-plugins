@@ -131,9 +131,89 @@ def _derived(song: state.Song) -> Dict:
 # --------------------------------------------------------------------------
 # Library + create
 # --------------------------------------------------------------------------
+def _import_one(name: str) -> bool:
+    """Infer a .song.json for a legacy songs/<name>/ folder. Returns True if created."""
+    d = os.path.join(state.SONGS_DIR, name)
+    if not os.path.isdir(d) or os.path.exists(os.path.join(d, state.STATE_FILE)):
+        return False
+    files = os.listdir(d)
+
+    def is_score(f: str) -> bool:
+        lf = f.lower()
+        return (lf.endswith((".mscz", ".musicxml", ".xml", ".mscx"))
+                and "_cleaned" not in lf and not lf.endswith(".nolyrics.mscx"))
+
+    order = {".mscz": 0, ".musicxml": 1, ".xml": 2, ".mscx": 3}
+    inputs = sorted((f for f in files if is_score(f)),
+                    key=lambda f: order.get(os.path.splitext(f)[1].lower(), 9))
+    inp = inputs[0] if inputs else None
+    cleaned = next((f for f in files if f.lower().endswith("_cleaned.mscx")), None)
+    pdf = next((f for f in files if f.lower().endswith(".pdf") and not f.endswith(".render.pdf")), None)
+    lyrics = "lyrics.json" if "lyrics.json" in files else None
+
+    vdir = os.path.join(d, "media", "video")
+    outputs = []
+    if os.path.isdir(vdir):
+        outputs = [f for f in sorted(os.listdir(vdir))
+                   if f.lower().endswith((".mov", ".mp4")) and f.startswith(name + " ")]
+
+    if not (inp or cleaned or outputs):
+        return False  # not a recognisable song folder
+
+    # per-system if a cached answer set exists for this input basename
+    key = os.path.splitext(inp)[0] if inp else (cleaned[: -len("_cleaned.mscx")] if cleaned else "")
+    mode = "per-system" if pipeline.ps.load_answer_cache(key) else "normal"
+
+    try:
+        created = os.path.getmtime(d)
+    except OSError:
+        created = 0
+    data: Dict = {"name": name, "slug": name, "mode": mode, "sources": {}, "created_at": created}
+    if inp:
+        data["sources"]["xml"] = inp
+    if pdf:
+        data["sources"]["pdf"] = pdf
+    if cleaned:
+        cp = os.path.join(d, cleaned)
+        data["cleaned"] = cleaned
+        data["cleaned_fingerprint"] = state.file_fingerprint(cp)
+        found = health.scan(cp)
+        data["health"] = {
+            "checked_against": data["cleaned_fingerprint"],
+            "issues": [{**i, "status": "open"} for i in found],
+        }
+    if lyrics:
+        data["lyrics"] = {"json": lyrics, "warnings": []}
+    if outputs:
+        data["record"] = {"exported": True, "outputs": outputs, "audio_delay_ms": 1300}
+
+    data["stage"] = ("upload" if outputs else "review" if cleaned else "clean" if inp else "register")
+    state.Song(name, data).save()
+    return True
+
+
+def import_legacy() -> int:
+    """Create state files for any legacy folders that don't have one. Idempotent."""
+    if not os.path.isdir(state.SONGS_DIR):
+        return 0
+    count = 0
+    for name in sorted(os.listdir(state.SONGS_DIR)):
+        try:
+            if _import_one(name):
+                count += 1
+        except Exception:
+            traceback.print_exc()
+    return count
+
+
 @app.get("/api/songs")
 def api_songs() -> List[Dict]:
     return [s.to_summary() for s in state.list_songs()]
+
+
+@app.post("/api/import")
+def api_import() -> Dict:
+    return {"imported": import_legacy()}
 
 
 @app.post("/api/songs")
@@ -261,6 +341,18 @@ def api_dismiss(slug: str, issue_id: str) -> Dict:
     for i in song.data.get("health", {}).get("issues", []):
         if i["id"] == issue_id:
             i["status"] = "dismissed"
+    song.save()
+    return _derived(song)
+
+
+@app.post("/api/songs/{slug}/mode")
+def api_set_mode(slug: str, body: Dict) -> Dict:
+    """Switch a song between normal and per-system cleaning."""
+    song = _require(slug)
+    mode = (body or {}).get("mode")
+    if mode not in ("normal", "per-system"):
+        raise HTTPException(400, "mode must be 'normal' or 'per-system'")
+    song.data["mode"] = mode
     song.save()
     return _derived(song)
 
@@ -542,6 +634,12 @@ async def _watch_cleaned() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     hub.loop = asyncio.get_running_loop()
+    try:
+        n = import_legacy()
+        if n:
+            print(f"Imported {n} existing song folder(s).")
+    except Exception:
+        traceback.print_exc()
     if os.path.isdir(state.SONGS_DIR):
         asyncio.create_task(_watch_cleaned())
 
