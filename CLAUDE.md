@@ -84,7 +84,7 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ -q     # 65 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ -q     # 60 tests, all passing
 ```
 
 `pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
@@ -100,9 +100,8 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 - `test_per_system.py` — drives the `--per-system` rebuild against the real
   `laulun_aika.mscx` fixture (systems, part order, per-system pull, tuplet survival,
   line breaks, prompt reuse, and the answer cache).
-- `test_missing_tuplets.py` / `test_missing_slurs.py` — the dropped-tuplet and
-  dropped-slur cross-voice auto-fixes (mirror within/across staves; well-formed and
-  donor-less voices left untouched).
+- `test_missing_tuplets.py` — the dropped-tuplet cross-voice auto-fix (mirror
+  within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` / `test_json_staff_mapping.py` — the
   re-voicing plan, non-interactive anomaly reduction, and JSON lyric staff mapping.
 
@@ -129,12 +128,13 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
    other, normalizes TimeSig/KeySig/Clef, forces stems up, strips dynamics,
    hairpins, articulations, tempo, harmony, layout breaks, and lengthens
    fermatas (`timeStretch=3`).
-6. `add_missing_ties` then `add_missing_slurs` (`utils/missing_slurs.py`) recover
-   OCR-dropped ties/slurs by mirroring them from a parallel voice that kept the
-   spanner at the same tick span (ties: same pitch; slurs: same note count). This
-   also fixes lyric alignment, since slur/tie-continuation notes get no syllable.
-   Then `detect_part_types` (clef + pitch-range heuristics name parts S/A/T/B and set
-   clefs), apply names/clefs, strip brackets/barLineSpan.
+6. `add_missing_ties` recovers OCR-dropped ties by mirroring them from a parallel
+   voice that kept the tie at the same tick span (requires **same pitch**, so it's
+   safe). Slurs are **not** auto-mirrored: a slur connects different pitches, so it
+   can't be pitch-checked, and mirroring one voice's slur onto another produces false
+   positives (e.g. copying a bass melisma onto the tenors) — slurs are fixed by hand in
+   the score. Then `detect_part_types` (clef + pitch-range heuristics name parts
+   S/A/T/B and set clefs), apply names/clefs, strip brackets/barLineSpan.
 7. `--add SSAA` appends new empty staves (rests) with the right clef per letter.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
