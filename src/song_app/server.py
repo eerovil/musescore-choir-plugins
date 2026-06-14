@@ -65,6 +65,51 @@ def _require(slug: str) -> state.Song:
     return song
 
 
+def _lock_path(song: state.Song) -> str:
+    return song.path(".recording.lock")
+
+
+def is_recording(song: state.Song) -> bool:
+    """True if a recording is active in *this* server process.
+
+    A lock written by a previous (now-dead) server is treated as stale and cleared,
+    so a crash can't leave a song permanently locked.
+    """
+    path = _lock_path(song)
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path) as f:
+            pid = int((f.read().strip() or "0"))
+    except (OSError, ValueError):
+        pid = 0
+    if pid == os.getpid():
+        return True
+    os.remove(path)  # stale lock from a different/old process
+    return False
+
+
+def _media_list(song: state.Song) -> List[Dict]:
+    """Merged per-voice videos (and the raw recording) available for review."""
+    vdir = song.path("media", "video")
+    if not os.path.isdir(vdir):
+        return []
+    out = []
+    for name in sorted(os.listdir(vdir)):
+        if not name.lower().endswith((".mov", ".mp4")):
+            continue
+        prefix = song.slug + " "
+        is_merged = name.startswith(prefix)
+        out.append({
+            "name": name,
+            "label": name[len(prefix):].rsplit(".", 1)[0] if is_merged else "raw recording",
+            "merged": is_merged,
+            "url": f"/api/songs/{song.slug}/media/{name}",
+        })
+    out.sort(key=lambda m: (not m["merged"], m["label"]))
+    return out
+
+
 def _derived(song: state.Song) -> Dict:
     """State plus computed flags the frontend needs."""
     cleaned = song.cleaned_path()
@@ -78,6 +123,8 @@ def _derived(song: state.Song) -> Dict:
         "has_pdf": bool(pdf and os.path.exists(pdf)),
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
         "open_issues": [i for i in issues if i.get("status") == "open"],
+        "recording": is_recording(song),
+        "media": _media_list(song),
     }
 
 
@@ -232,6 +279,11 @@ def api_set_stage(slug: str, stage: str) -> Dict:
 # --------------------------------------------------------------------------
 # Lyrics stage
 # --------------------------------------------------------------------------
+@app.get("/api/playlists")
+def api_playlists() -> List[Dict]:
+    return state.load_playlists()
+
+
 @app.get("/api/prompt")
 def api_prompt() -> Dict:
     path = os.path.join(SCRIPT_DIR, "lyric_json_prompt.txt")
@@ -340,31 +392,118 @@ def api_reveal_pdf(slug: str) -> Dict:
 # --------------------------------------------------------------------------
 # Record stage
 # --------------------------------------------------------------------------
-def _run_record(slug: str, youtube: bool, playlist: Optional[str]) -> None:
+def _run_record(slug: str, opts: Dict) -> None:
     song = _require(slug)
     log = lambda m: hub.emit(slug, {"type": "log", "line": m})
+    progress = lambda m: hub.emit(slug, {"type": "progress", "line": m})
+
+    def on_uploaded(info: Dict) -> None:
+        rec = song.data.setdefault("record", {})
+        rec.setdefault("uploads", []).append(info)
+        rec["playlist_id"] = info.get("playlist_id")
+        if info.get("playlist_id"):
+            state.save_playlist(info["playlist_id"], info.get("playlist_title"))
+        song.save()
+        hub.emit(slug, {"type": "state"})
+
     try:
         from src.stemmanauha.create_video import run
-        log("Starting recording pipeline…")
-        run(song_dir=song.dir, youtube=youtube, extra_playlist_id=playlist)
-        song.data.setdefault("record", {})["exported"] = True
-        song.set_stage("record")
+        merge_only = bool(opts.get("merge_only"))
+        upload_only = bool(opts.get("upload_only"))
+        youtube = bool(opts.get("youtube")) or upload_only
+        if youtube:  # fresh upload run — clear any stale record of prior uploads
+            song.data.setdefault("record", {})["uploads"] = []
+            song.save()
+            if opts.get("playlist"):  # remember the chosen target playlist
+                state.save_playlist(opts["playlist"], opts.get("playlist_title"))
+        log("Uploading to YouTube…" if upload_only
+            else "Re-merging with new offset…" if merge_only
+            else "Starting recording pipeline…")
+        results = run(
+            song_dir=song.dir,
+            youtube=youtube,
+            extra_playlist_id=opts.get("playlist") or None,
+            audio_delay_ms=int(opts.get("audio_delay_ms", 1300)),
+            redo_mp3=bool(opts.get("redo_mp3")),
+            redo_video=bool(opts.get("redo_video")),
+            merge_only=merge_only,
+            upload_only=upload_only,
+            log=log, progress=progress,
+            display_name=song.name, on_uploaded=on_uploaded,
+        )
+        rec = song.data.setdefault("record", {})
+        if not upload_only:
+            rec["exported"] = True
+            rec["audio_delay_ms"] = int(opts.get("audio_delay_ms", 1300))
+            rec["outputs"] = [os.path.basename(str(r)) for r in (results or [])]
+        rec["error"] = None
+        # After recording, move on to the Upload stage; uploading stays there.
+        if not merge_only:
+            song.set_stage("upload")
         song.save()
-        log("Recording complete.")
-        hub.emit(slug, {"type": "state"})
+        log("Upload complete." if upload_only else f"Done. {len(results or [])} video(s) ready.")
     except Exception as exc:
         traceback.print_exc()
+        song.data.setdefault("record", {})["error"] = str(exc)
+        song.save()
         hub.emit(slug, {"type": "error", "line": str(exc)})
+    finally:
+        lock = _lock_path(song)
+        if os.path.exists(lock):
+            os.remove(lock)
+        hub.emit(slug, {"type": "state"})
 
 
 @app.post("/api/songs/{slug}/record")
 async def api_record(slug: str, body: Dict = None) -> Dict:
-    _require(slug)
-    body = body or {}
-    asyncio.get_running_loop().run_in_executor(
-        None, _run_record, slug, bool(body.get("youtube")), body.get("playlist")
-    )
+    song = _require(slug)
+    if is_recording(song):
+        raise HTTPException(409, "A recording is already running for this song.")
+    # Take the lock before launching so a second request (e.g. after a page
+    # refresh) is rejected rather than starting a clashing recording.
+    with open(_lock_path(song), "w") as f:
+        f.write(str(os.getpid()))
+    asyncio.get_running_loop().run_in_executor(None, _run_record, slug, body or {})
     return {"started": True}
+
+
+@app.get("/api/songs/{slug}/media/{name}")
+def api_media(slug: str, name: str):
+    song = _require(slug)
+    safe = os.path.basename(name)
+    path = song.path("media", "video", safe)
+    if not os.path.exists(path):
+        raise HTTPException(404, "No such media")
+    return FileResponse(path, media_type="video/quicktime")
+
+
+@app.post("/api/songs/{slug}/youtube-delete")
+def api_youtube_delete(slug: str) -> Dict:
+    """Delete this song's uploaded videos from YouTube so they can be re-uploaded."""
+    song = _require(slug)
+    uploads = song.data.get("record", {}).get("uploads", [])
+    ids = [u.get("video_id") for u in uploads if u.get("video_id")]
+    if not ids:
+        raise HTTPException(400, "Nothing uploaded to delete")
+    try:
+        from src.stemmanauha.upload_to_youtube import delete_videos
+        delete_videos(ids, log=lambda m: hub.emit(slug, {"type": "log", "line": m}))
+    except Exception as exc:
+        raise HTTPException(500, f"Delete failed: {exc}")
+    song.data["record"]["uploads"] = []
+    song.data["record"]["playlist_id"] = None
+    song.save()
+    return _derived(song)
+
+
+@app.post("/api/songs/{slug}/reveal-media")
+def api_reveal_media(slug: str) -> Dict:
+    song = _require(slug)
+    vdir = song.path("media", "video")
+    if not os.path.isdir(vdir):
+        raise HTTPException(404, "No media yet")
+    subprocess.Popen(["open", vdir])
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------

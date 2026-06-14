@@ -18,7 +18,7 @@ const getJSON = (p) => api(p);
 const postJSON = (p, body) =>
   api(p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
 
-const STAGE_LABEL = { register: "Start", clean: "Clean", fix: "Fix", lyrics: "Lyrics", review: "Review", record: "Record" };
+const STAGE_LABEL = { register: "Start", clean: "Clean", fix: "Fix", lyrics: "Lyrics", review: "Review", record: "Record", upload: "Upload" };
 
 // ---- router --------------------------------------------------------------
 window.addEventListener("hashchange", route);
@@ -35,10 +35,16 @@ async function renderLibrary() {
   crumb.textContent = "";
   const songs = await getJSON("/api/songs");
   const cards = songs.map((s) => {
+    const stageDone = (st, i) =>
+      i < s.stage_index || (st === "record" && s.recorded) || (st === "upload" && s.uploaded);
     const rail = el("div", { className: "rail" },
       s.stages.map((st, i) =>
-        el("span", { className: "dot " + (i < s.stage_index ? "done" : i === s.stage_index ? "now" : "") })));
-    const badge = s.open_issues
+        el("span", { className: "dot " + (stageDone(st, i) ? "done" : i === s.stage_index ? "now" : "") })));
+    const badge = s.uploaded
+      ? el("span", { className: "badge good" }, "✓ Recorded & uploaded")
+      : s.recorded
+      ? el("span", { className: "badge good" }, "✓ Recorded")
+      : s.open_issues
       ? el("span", { className: "badge warn" }, `${s.open_issues} issue(s) to fix`)
       : el("span", { className: "badge" }, STAGE_LABEL[s.stage] || s.stage);
     return el("a", { className: "card", href: `#/song/${encodeURIComponent(s.slug)}` },
@@ -92,39 +98,60 @@ async function renderWorkspace(slug) {
   const song = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
   crumb.textContent = "› " + song.name;
   let view = song.stage; // which panel is shown
-  let panes = [song.has_pdf ? "pdf" : "original"]; // 1 or 2 docs shown side by side
+  const panes = [song.has_pdf ? "pdf" : "original"]; // 1 or 2 docs shown side by side
+  let viewFp = song.cleaned_fingerprint; // viewer is only rebuilt when this changes
 
-  const draw = () => {
-    const stagebar = el("div", { className: "stagebar" },
-      song.stages.map((st, i) => el("div", {
-        className: "step " + (st === view ? "active " : "") + (i < song.stage_index ? "done" : ""),
-        onclick: () => { view = st; draw(); },
-      }, STAGE_LABEL[st] || st)));
+  // Build the shell once. The viewer (and its iframes) is NOT recreated on stage
+  // or panel changes, so the previews keep their loaded state and scroll position.
+  const stagebarEl = el("div", { className: "stagebar" });
+  const panelEl = el("div", { className: "panel" });
+  let viewerEl = viewer(song, slug, panes, rebuildViewer);
+  const wsGrid = el("div", { className: "ws" }, stagebarEl, panelEl, viewerEl);
+  app.replaceChildren(wsGrid);
 
-    app.replaceChildren(el("div", { className: "ws" }, stagebar, buildPanel(), viewer(song, slug, panes, (p) => { panes = p; draw(); })));
-  };
+  function drawStagebar() {
+    const rec = song.record || {};
+    const recorded = !!(rec.outputs && rec.outputs.length);
+    const uploaded = !!(rec.uploads && rec.uploads.length);
+    const done = (st, i) =>
+      i < song.stage_index || (st === "record" && recorded) || (st === "upload" && uploaded);
+    stagebarEl.replaceChildren(...song.stages.map((st, i) => el("div", {
+      className: "step " + (st === view ? "active " : "") + (done(st, i) ? "done" : ""),
+      onclick: () => { view = st; drawStagebar(); drawPanel(); },
+    }, STAGE_LABEL[st] || st)));
+  }
 
-  const buildPanel = () => {
-    const panel = el("div", { className: "panel" });
-    renderPanel(panel, view, song, slug, () => refresh());
-    return panel;
-  };
+  function drawPanel() {
+    panelEl.replaceChildren();
+    renderPanel(panelEl, view, song, slug, refresh);
+  }
+
+  function rebuildViewer() {
+    const next = viewer(song, slug, panes, rebuildViewer);
+    wsGrid.replaceChild(next, viewerEl);
+    viewerEl = next;
+  }
 
   async function refresh() {
     const fresh = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
     Object.assign(song, fresh);
-    draw();
+    drawStagebar();
+    drawPanel();
+    // Only reload the previews when the rendered docs actually changed.
+    if (song.cleaned_fingerprint !== viewFp) { viewFp = song.cleaned_fingerprint; rebuildViewer(); }
   }
 
-  draw();
+  drawStagebar();
+  drawPanel();
 
   // live updates: logs + state pings
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/${encodeURIComponent(slug)}`);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === "log" && logBox) appendLog(msg.line);
-    else if (msg.type === "error" && logBox) appendLog(msg.line, true);
+    if (msg.type === "log") appendLog(msg.line);
+    else if (msg.type === "error") appendLog(msg.line, true);
+    else if (msg.type === "progress") updateProgress(msg.line);
     else if (msg.type === "state") refresh();
   };
 }
@@ -147,35 +174,53 @@ function docSrc(slug, doc, fp) {
   return base + "#navpanes=0&view=FitH";
 }
 
-function viewer(song, slug, panes, setPanes) {
+// `panes` is a shared mutable array; `rebuild` re-creates the viewer (used only
+// for structural changes — split/close). Switching a pane's doc just swaps that
+// one iframe's src in place, so the other pane never reloads.
+function viewer(song, slug, panes, rebuild) {
   const tabs = viewerTabs(song);
   const keys = tabs.map(([k]) => k);
-  // normalize selections to valid docs
-  panes = panes.map((p) => (keys.includes(p) ? p : keys[0]));
+  for (let i = 0; i < panes.length; i++) if (!keys.includes(panes[i])) panes[i] = keys[0];
 
-  const slot = (doc, i) => {
-    const setHere = (d) => { const next = panes.slice(); next[i] = d; setPanes(next); };
-    const tabRow = tabs.map(([k, label]) => el("button", {
-      className: k === doc ? "vtab active" : "vtab", onclick: () => setHere(k),
-    }, label));
+  const slot = (i) => {
+    const iframe = el("iframe", { src: docSrc(slug, panes[i], song.cleaned_fingerprint) });
+    const btns = {};
+    const setHere = (d) => {
+      if (panes[i] === d) return;
+      panes[i] = d;
+      iframe.src = docSrc(slug, d, song.cleaned_fingerprint);
+      for (const k in btns) btns[k].className = k === d ? "vtab active" : "vtab";
+    };
+    const tabRow = tabs.map(([k, label]) => (btns[k] = el("button", {
+      className: k === panes[i] ? "vtab active" : "vtab", onclick: () => setHere(k),
+    }, label)));
 
     const ctrl = panes.length === 1
       ? el("button", { className: "vtab split", title: "Split view",
-          onclick: () => setPanes([doc, keys.find((k) => k !== doc) || doc]) }, "⇆ Split")
+          onclick: () => { panes.push(keys.find((k) => k !== panes[0]) || panes[0]); rebuild(); } }, "⇆ Split")
       : el("button", { className: "vtab close", title: "Close this pane",
-          onclick: () => setPanes(panes.filter((_, j) => j !== i)) }, "✕");
+          onclick: () => { panes.splice(i, 1); rebuild(); } }, "✕");
 
     const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), ctrl);
-    const iframe = el("iframe", { src: docSrc(slug, doc, song.cleaned_fingerprint) });
     return el("div", { className: "vslot" }, bar, iframe);
   };
 
-  return el("div", { className: "viewer" }, panes.map((doc, i) => slot(doc, i)));
+  return el("div", { className: "viewer" }, panes.map((_, i) => slot(i)));
 }
 
 function appendLog(line, isErr) {
   if (!logBox) return;
   logBox.append(el("div", { className: isErr ? "err" : "" }, line));
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+// Live-updating line for upload percentage: rewrite the last row if it's a
+// progress line, otherwise start a new one (so 0→100% doesn't spam the log).
+function updateProgress(line) {
+  if (!logBox) return;
+  const last = logBox.lastElementChild;
+  if (last && last.classList.contains("progress")) last.textContent = line;
+  else logBox.append(el("div", { className: "progress" }, line));
   logBox.scrollTop = logBox.scrollHeight;
 }
 
@@ -193,7 +238,8 @@ function renderPanel(panel, view, song, slug, refresh) {
   if (view === "fix") return panelFix(panel, song, P, refresh);
   if (view === "lyrics") return panelLyrics(panel, song, P, refresh);
   if (view === "review") return panelReview(panel, song, P, refresh);
-  if (view === "record") return panelRecord(panel, song, P);
+  if (view === "record") return panelRecord(panel, song, P, refresh);
+  if (view === "upload") return panelUpload(panel, song, P, refresh);
 }
 
 function panelRegister(panel, song) {
@@ -332,18 +378,128 @@ function panelReview(panel, song, P, refresh) {
       el("button", { onclick: async () => { await postJSON(`${P}/stage/record`); refresh(); } }, "Looks good → Record")));
 }
 
-function panelRecord(panel, song, P) {
+function panelRecord(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Record"),
-    el("p", { className: "sub" }, "Export per-voice audio and (optionally) record + upload the play-along video. macOS only."));
-  const yt = el("input", { type: "checkbox" });
-  const pl = el("input", { placeholder: "YouTube playlist id (optional)" });
-  const btn = el("button", { className: "primary", onclick: async () => {
-    btn.disabled = true; appendLog("Starting…");
-    await postJSON(`${P}/record`, { youtube: yt.checked, playlist: pl.value.trim() || null });
-  }}, "Run recording");
+    el("p", { className: "sub" }, "Export per-voice audio, record + merge the play-along video. macOS only."));
+
+  const rec = song.record || {};
+  const recording = song.recording;
+  const recorded = !!(rec.outputs && rec.outputs.length);
+
+  if (recording) {
+    panel.append(el("div", { className: "banner" }, "● Recording in progress… leave this running."));
+  } else if (recorded) {
+    panel.append(el("div", { className: "banner good" }, "✓ Recorded."));
+  }
+  if (rec.error) {
+    panel.append(el("div", { className: "banner err" }, "Last run failed: " + rec.error));
+  }
+
+  const delay = el("input", { type: "number", value: rec.audio_delay_ms ?? 1300, step: 50, style: "width:120px" });
+  const redoMp3 = el("input", { type: "checkbox" });
+  const redoVideo = el("input", { type: "checkbox" });
+
+  const post = async (extra, msg) => {
+    appendLog(msg);
+    try {
+      await postJSON(`${P}/record`, { audio_delay_ms: Number(delay.value) || 1300, ...extra });
+      refresh();
+    } catch (e) { appendLog(e.message, true); }
+  };
+
+  const runBtn = el("button", { className: "primary", disabled: recording,
+    onclick: () => post({ redo_mp3: redoMp3.checked, redo_video: redoVideo.checked }, "Starting…") },
+    "Run recording");
+  const remergeBtn = el("button", { disabled: recording,
+    onclick: () => post({ merge_only: true }, "Re-merging with new offset…") },
+    "Re-merge only (apply offset)");
+
   panel.append(
-    el("div", { className: "row" }, yt, el("span", {}, "Upload to YouTube")),
-    el("label", {}, "Playlist"), pl,
-    el("div", { className: "row" }, btn),
+    el("label", {}, "Audio sync offset (ms)"),
+    el("div", { className: "row" }, delay, el("span", { className: "hint" }, "shift audio vs. video; re-merge to apply")),
+    el("div", { className: "row" }, redoMp3, el("span", {}, "Re-export MP3")),
+    el("div", { className: "row" }, redoVideo, el("span", {}, "Re-record video")),
+    el("div", { className: "row" }, runBtn, remergeBtn),
     makeLog());
+
+  // --- results review ---
+  const merged = (song.media || []).filter((m) => m.merged);
+  if (song.media && song.media.length) {
+    panel.append(
+      el("h3", {}, "Results"),
+      el("div", { className: "row" },
+        el("button", { onclick: () => postJSON(`${P}/reveal-media`) }, "Reveal in Finder"),
+        recorded ? el("button", { onclick: async () => { await postJSON(`${P}/stage/upload`); refresh(); } }, "→ Upload to YouTube") : ""),
+      ...(merged.length ? merged : song.media).map((m) =>
+        el("div", { className: "result" },
+          el("div", { className: "rlabel" }, m.label),
+          el("video", { src: m.url, controls: true, preload: "metadata" }))));
+  }
+}
+
+function panelUpload(panel, song, P, refresh) {
+  panel.append(el("h2", {}, "Upload"),
+    el("p", { className: "sub" }, "Upload the recorded videos to YouTube and (optionally) add them to a playlist."));
+
+  const rec = song.record || {};
+  const recording = song.recording;
+  const recorded = !!(rec.outputs && rec.outputs.length);
+  const uploads = rec.uploads || [];
+
+  if (recording) {
+    panel.append(el("div", { className: "banner" }, "● Working… leave this running."));
+  } else if (uploads.length) {
+    panel.append(el("div", { className: "banner good" }, "✓ Uploaded to YouTube."));
+  }
+  if (rec.error) {
+    panel.append(el("div", { className: "banner err" }, "Last run failed: " + rec.error));
+  }
+  if (!recorded) {
+    panel.append(el("p", { className: "hint" }, "Nothing to upload yet — record the videos first."));
+  }
+
+  // playlist picker
+  const pl = el("input", { placeholder: "YouTube playlist id (optional)" });
+  const plPick = el("select", {}, el("option", { value: "" }, "— previous playlists —"));
+  let plTitle = "";
+  getJSON("/api/playlists").then((lists) => {
+    for (const l of lists) plPick.append(el("option", { value: l.id }, l.title || l.id));
+    plPick.onchange = () => {
+      if (!plPick.value) return;
+      pl.value = plPick.value;
+      plTitle = plPick.options[plPick.selectedIndex].textContent;
+    };
+  }).catch(() => {});
+
+  const uploadBtn = el("button", { className: "primary", disabled: recording || !recorded,
+    onclick: async () => {
+      appendLog("Uploading to YouTube…");
+      try {
+        await postJSON(`${P}/record`, {
+          upload_only: true, playlist: pl.value.trim() || null, playlist_title: plTitle || null,
+        });
+        refresh();
+      } catch (e) { appendLog(e.message, true); }
+    } }, uploads.length ? "Re-upload to YouTube" : "Upload to YouTube");
+
+  panel.append(
+    el("label", {}, "Playlist"),
+    el("div", { className: "row" }, plPick),
+    pl,
+    el("div", { className: "row" }, uploadBtn),
+    makeLog());
+
+  if (uploads.length) {
+    panel.append(
+      el("h3", {}, "Uploaded videos"),
+      el("ul", { className: "uploads" }, uploads.map((u) =>
+        el("li", {}, el("a", { href: u.url, target: "_blank", rel: "noopener" }, u.title || u.url)))),
+      el("div", { className: "row" },
+        el("button", { disabled: recording, onclick: async () => {
+          if (!confirm("Delete these videos from YouTube? You can then re-upload.")) return;
+          appendLog("Deleting from YouTube…");
+          try { await postJSON(`${P}/youtube-delete`); appendLog("Deleted."); refresh(); }
+          catch (e) { appendLog(e.message, true); }
+        }}, "Delete from YouTube")));
+  }
 }

@@ -14,6 +14,7 @@ token.pickle
 backup
 src/clean_score/tests/lyric_2/.mscbackup/.spanner.mscx,
 playlists.txt
+.playlists.json
 
 # per-system answer cache (local testing convenience)
 .persystem_cache.json

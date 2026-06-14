@@ -19,7 +19,7 @@ SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
 STATE_FILE = ".song.json"
 
 # Linear stages; `fix` and `lyrics` form a loop (lyric overflow can re-open fix).
-STAGES = ["register", "clean", "fix", "lyrics", "review", "record"]
+STAGES = ["register", "clean", "fix", "lyrics", "review", "record", "upload"]
 
 
 def slugify(name: str) -> str:
@@ -105,6 +105,7 @@ class Song:
 
     def to_summary(self) -> Dict:
         """Lightweight view for the library list."""
+        rec = self.data.get("record", {})
         return {
             "slug": self.slug,
             "name": self.name,
@@ -117,6 +118,8 @@ class Song:
                 if i.get("status") == "open"
             ),
             "lyric_warnings": len(self.data.get("lyrics", {}).get("warnings", [])),
+            "recorded": bool(rec.get("outputs")),
+            "uploaded": bool(rec.get("uploads")),
         }
 
 
@@ -137,6 +140,43 @@ def list_songs() -> List[Song]:
             if s:
                 songs.append(s)
     return songs
+
+
+# --- known YouTube playlists (account-wide, remembered across songs) ----------
+PLAYLISTS_FILE = os.path.join(SCRIPT_DIR, ".playlists.json")
+
+
+def load_playlists() -> List[Dict]:
+    """Return [{id, title}] of previously-seen playlists, newest first."""
+    if not os.path.exists(PLAYLISTS_FILE):
+        return []
+    try:
+        with open(PLAYLISTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [{"id": k, "title": v} for k, v in data.items()]
+
+
+def save_playlist(playlist_id: str, title: Optional[str] = None) -> None:
+    """Remember a playlist id (with an optional human title) for later selection."""
+    if not playlist_id:
+        return
+    data = {}
+    if os.path.exists(PLAYLISTS_FILE):
+        try:
+            with open(PLAYLISTS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+    # Keep the best label we have; don't overwrite a real title with the bare id.
+    if playlist_id not in data or (title and data[playlist_id] == playlist_id):
+        data[playlist_id] = title or data.get(playlist_id) or playlist_id
+    try:
+        with open(PLAYLISTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
 
 
 def create(name: str, per_system: bool) -> Song:

@@ -104,13 +104,18 @@ def get_filtered_mp3_files(mp3_basename):
     return filtered
 
 
-def record_video(song_dir, mp3_file):
+def record_video(song_dir, mp3_file, redo=False):
     if not mp3_file or not mp3_file.exists():
         raise ValueError("A valid mp3_file must be provided to record video.")
-    
+
     if song_dir:
-        # If video already exists in song_dir/media, skip recording
         video_dir = Path(song_dir) / "media" / "video"
+        if redo and video_dir.exists():
+            # Re-recording: clear the raw recording AND the stale merged outputs.
+            for mov in video_dir.glob("*.mov"):
+                logging.info(f"Removing {mov} for re-record.")
+                mov.unlink()
+        # If video already exists in song_dir/media, skip recording
         if video_dir.exists() and any(video_dir.glob("*.mov")):
             logging.info(f"Video files already exist in {video_dir}, skipping recording.")
             video_file = next(video_dir.glob("*.mov"))
@@ -155,7 +160,13 @@ def record_video(song_dir, mp3_file):
         return target_path
 
 
-def merge_mp3_to_video(song_dir):
+def merge_mp3_to_video(song_dir, audio_delay_ms=1300, force=False):
+    """Merge each per-voice mp3 onto the raw recording.
+
+    audio_delay_ms shifts the audio relative to the video (the play-along sync
+    offset). force re-merges even if an output already exists (use after changing
+    the offset or re-recording).
+    """
     if not song_dir:
         raise ValueError("song_dir must be set to merge MP3 to video.")
 
@@ -170,10 +181,16 @@ def merge_mp3_to_video(song_dir):
 
     if not video_dir.exists():
         raise FileNotFoundError(f"Video directory {video_dir} does not exist.")
-    input_video_file = next(video_dir.glob("*.mov"), None)
-    if not input_video_file:
-        raise FileNotFoundError(f"No .mov file found in {video_dir}")
 
+    # The merged outputs are named "<song_name> <part>.mov"; the raw recording is
+    # the .mov that is NOT one of those (so re-merging doesn't pick its own output).
+    expected_outputs = {f"{song_name} {mp3.stem.split(' ')[-1]}.mov" for mp3 in mp3_files}
+    movs = list(video_dir.glob("*.mov"))
+    input_video_file = next((m for m in movs if m.name not in expected_outputs), None)
+    if not input_video_file:
+        raise FileNotFoundError(f"No raw recording .mov found in {video_dir}")
+
+    delay = int(audio_delay_ms)
     results = []
 
     for mp3 in mp3_files:
@@ -181,7 +198,7 @@ def merge_mp3_to_video(song_dir):
         part_name = mp3_stem.split(" ")[-1]  # Get the part after the last space
 
         output_path = video_dir / f"{song_name} {part_name}.mov"
-        if output_path.exists():
+        if output_path.exists() and not force:
             logging.info(f"Output video {output_path} already exists, skipping merge.")
             results.append(output_path)
             continue
@@ -194,7 +211,7 @@ def merge_mp3_to_video(song_dir):
             "-c:v",
             "copy",
             "-filter_complex",
-            "[1:a]adelay=1300|1300[a]",
+            f"[1:a]adelay={delay}|{delay}[a]",
             "-map",
             "0:v:0",
             "-map",
@@ -204,7 +221,7 @@ def merge_mp3_to_video(song_dir):
             "-y",
             str(output_path),
         ]
-        logging.info(f"Merging {mp3.name} → {output_path.name}")
+        logging.info(f"Merging {mp3.name} → {output_path.name} (offset {delay}ms)")
         subprocess.run(cmd, check=True, capture_output=True)
         results.append(output_path)
 
@@ -275,13 +292,17 @@ def wait_for_all_mp3(export_dir, timeout=120, check_interval=1):
     raise TimeoutError("Timed out waiting for '*ALL.mp3' to appear or finish writing.")
 
 
-def export_mp3_from_musescore(song_dir):
+def export_mp3_from_musescore(song_dir, redo=False):
     """
     Export MP3 files from MuseScore using AppleScript.
     """
     # If mp3 already exists in song_dir/mp3, skip export
     if song_dir:
         media_dir = Path(song_dir) / "media"
+        if redo and media_dir.exists():
+            for mp3 in media_dir.glob("*.mp3"):
+                logging.info(f"Removing {mp3} for re-export.")
+                mp3.unlink()
         if media_dir.exists() and any(media_dir.glob("*.mp3")):
             logging.info(f"MP3 files already exist in {media_dir}, skipping export.")
             one_mp3 = next(media_dir.glob("*.mp3"))
@@ -312,21 +333,66 @@ def export_mp3_from_musescore(song_dir):
     return all_mp3
 
 
-def run(song_dir=None, youtube=False, extra_playlist_id=None):
+def find_merged_outputs(song_dir):
+    """Existing merged per-voice videos ("<song> <part>.mov"), for upload."""
+    media_dir = Path(song_dir) / "media"
+    song_name = os.path.basename(song_dir)
+    video_dir = media_dir / "video"
+    mp3_files = list(media_dir.glob("*.mp3")) if media_dir.exists() else []
+    expected = {f"{song_name} {mp3.stem.split(' ')[-1]}.mov" for mp3 in mp3_files}
+    if not video_dir.exists():
+        return []
+    # Prefer the named merge outputs; fall back to any "<song> *.mov".
+    out = [p for p in video_dir.glob("*.mov") if p.name in expected]
+    if not out:
+        out = [p for p in video_dir.glob(f"{song_name} *.mov")]
+    return sorted(out)
+
+
+def run(song_dir=None, youtube=False, extra_playlist_id=None,
+        audio_delay_ms=1300, redo_mp3=False, redo_video=False, merge_only=False,
+        upload_only=False, log=None, progress=None, display_name=None, on_uploaded=None):
+    """Record a practice video.
+
+    audio_delay_ms : play-along sync offset for the merge.
+    redo_mp3       : re-export the per-voice mp3s (else reuse existing).
+    redo_video     : re-record the play-along video (else reuse existing).
+    merge_only     : skip export/record; just re-merge existing media with the
+                     given offset (fast path for fixing the sync). Implies force.
+    Returns the list of merged output paths.
+    """
     if not song_dir or not os.path.exists(song_dir):
         raise ValueError("A valid song_dir must be provided.")
+
+    log = log or (lambda m: logging.info(m))
 
     if youtube:
         get_authenticated_service()
 
-    mp3 = export_mp3_from_musescore(song_dir)
-    logging.info("MP3 files exported from MuseScore.")
+    if upload_only:
+        results = find_merged_outputs(song_dir)
+        if not results:
+            raise FileNotFoundError("No merged videos found to upload — record first.")
+        log("Uploading existing videos…")
+    elif merge_only:
+        results = merge_mp3_to_video(song_dir, audio_delay_ms=audio_delay_ms, force=True)
+        logging.info("Re-merged with offset %sms: %s", audio_delay_ms,
+                     ", ".join(str(r) for r in results))
+    else:
+        mp3 = export_mp3_from_musescore(song_dir, redo=redo_mp3)
+        logging.info("MP3 files exported from MuseScore.")
 
-    record_video(song_dir, mp3)
+        record_video(song_dir, mp3, redo=redo_video)
 
-    results = merge_mp3_to_video(song_dir)
-    logging.info("MP3 files merged to video: " + ", ".join(str(r) for r in results))
+        # Re-merge from scratch when anything upstream was redone.
+        force = redo_mp3 or redo_video
+        results = merge_mp3_to_video(song_dir, audio_delay_ms=audio_delay_ms, force=force)
+        logging.info("MP3 files merged to video: " + ", ".join(str(r) for r in results))
 
     if youtube:
-        upload_to_youtube(song_dir, results, extra_playlist_id=extra_playlist_id)
+        upload_to_youtube(song_dir, results, extra_playlist_id=extra_playlist_id,
+                          log=log, progress=progress, display_name=display_name,
+                          on_uploaded=on_uploaded)
         logging.info("Videos uploaded to YouTube.")
+
+    return results

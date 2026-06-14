@@ -124,8 +124,10 @@ state model are in `DESIGN.md`.
 
 - **A Song** = a folder `songs/<slug>/` plus `.song.json` (the state file *is* the
   UX). `state.py` owns the slug, the human display name, the stage machine
-  (`register → clean → fix → lyrics → review → record`), and file fingerprints.
-  The folder is a slug; the display name lives in the JSON.
+  (`register → clean → fix → lyrics → review → record → upload`), and file
+  fingerprints. Recording produces the per-voice videos; **upload** (YouTube) is a
+  separate stage, so a song can be "recorded but not yet uploaded". The folder is
+  a slug; the display name lives in the JSON.
 - `pipeline.py` is the glue: `convert_to_mscx` (mscx as-is / mscz unzip / xml via
   MuseScore CLI), `run_clean` (calls `main(..., interactive=False)`; per-system
   reads `.persystem_cache.json`, which the **grid form** populates via
@@ -147,7 +149,20 @@ state model are in `DESIGN.md`.
   `malformed-m18-s2-v1`).
 - `server.py`: REST routes under `/api/songs/...`, a per-slug WebSocket (`/ws/{slug}`)
   for streamed progress logs + `state` pings, long tasks (clean/record) run in a
-  thread executor with a thread-safe `hub.emit`, and a **file watcher**
+  thread executor with a thread-safe `hub.emit`. Recording is guarded by a
+  **lock file** (`.recording.lock`, holding the server pid) so a second start
+  (e.g. after a page refresh) gets a 409 instead of clashing with the running
+  recording; a lock from a dead/old process is treated as stale and cleared.
+  The record endpoint takes `audio_delay_ms` (merge sync offset), `redo_mp3` /
+  `redo_video` (re-export / re-record selectively), `merge_only` (re-merge
+  existing media with a new offset, no recording), and `upload_only` (upload the
+  already-merged videos — the Upload stage, no recording); outputs are listed via
+  `/media` and streamed (range-capable) from `/media/{name}` for in-browser
+  review. YouTube uploads report live percentage via a `progress` WS message,
+  are recorded into `record.uploads` (title/id/url) for review + delete/re-upload
+  (`/youtube-delete`), use the human song name for titles, and remember used
+  playlists globally in `.playlists.json` (`/api/playlists`). There is also a
+  **file watcher**
   (`watchfiles.awatch` on `songs/`) that re-runs the health check when a
   `*_cleaned.mscx` is saved in MuseScore (guarded by fingerprint so our own writes
   don't loop). Static SPA is mounted at `/` (so `/api/*` wins).
@@ -332,14 +347,24 @@ Manager, or restart). They cannot be unit-tested from Python.
 `record_stemmanauha.py MySong` → `create_video.run()`:
 mp3 export (AppleScript drives MuseScore's `export.qml`) → record play-along
 video via QuickRecorder (AppleScript + OBS websocket) → `ffmpeg` merges each
-voice mp3 onto the video (with a 1300ms audio delay) → optional YouTube upload.
+voice mp3 onto the video (audio sync offset `audio_delay_ms`, default 1300ms) →
+optional YouTube upload.
+
+`run()` takes granular controls (used by the web app, see above): `audio_delay_ms`
+(the merge sync offset), `redo_mp3` / `redo_video` (selectively clear and redo a
+stage — each step otherwise skips if its output already exists), and `merge_only`
+(re-merge existing media with a new offset, no recording — the fast fix when the
+sync is just off). `merge_mp3_to_video(..., force=True)` overwrites existing
+merged outputs, and it identifies the **raw** recording as the `.mov` whose name
+is not one of the `"<song> <part>.mov"` merge outputs (so re-merging never feeds
+its own output back in).
 
 This is heavily environment-dependent: it relies on specific macOS apps, global
 keyboard shortcuts wired in QuickRecorder/MuseScore, `MUSESCORE_EXPORT_PATH`,
 `VIDEO_EXPORT_PATH`, and `ffmpeg`/`ffprobe`. It is not portable or testable in
 CI. The `.scpt` AppleScript files and the keyboard shortcuts described in
-`README.md`/`record_stemmanauha.py --help` must match. Re-recording requires
-deleting existing files in `songs/<name>/media/`.
+`README.md`/`record_stemmanauha.py --help` must match. The CLI still skips a
+stage when its output exists; the web app exposes the redo flags instead.
 
 ## Conventions & gotchas
 
