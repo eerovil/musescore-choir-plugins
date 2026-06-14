@@ -44,6 +44,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000,
                         help="Preferred port; an open one nearby is used if it's taken")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser")
+    parser.add_argument("--no-reload", action="store_true",
+                        help="Disable auto-reload on source changes")
     args = parser.parse_args()
 
     port = _find_free_port(args.host, args.port)
@@ -55,8 +57,18 @@ def main() -> None:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
     import uvicorn
-    print(f"song → {url}")
-    uvicorn.run("src.song_app.server:app", host=args.host, port=args.port, log_level="warning")
+    reload = not args.no_reload
+    print(f"song → {url}" + ("  (auto-reload on; watching src/)" if reload else ""))
+    src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+    uvicorn.run(
+        "src.song_app.server:app",
+        host=args.host,
+        port=args.port,
+        log_level="warning",
+        reload=reload,
+        # Watch only the source tree so writes in songs/ and .venv/ don't restart it.
+        reload_dirs=[src_dir] if reload else None,
+    )
 
 
 if __name__ == "__main__":

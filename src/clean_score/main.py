@@ -21,6 +21,7 @@ from .utils.reversed_voices import (
 
 from .utils.corrupted_measures import preprocess_corrupted_measures
 from .utils.missing_tuplets import fix_missing_tuplets
+from .utils.spurious_timesigs import fix_spurious_timesigs
 from .utils.interactive import resolve_voice_anomalies
 from .utils.revoice import (
     apply_revoice_plan,
@@ -212,6 +213,10 @@ def main(
     # before any split/rebuild copies the (broken) notes. Only malformed voices with a
     # matching donor tuplet are touched.
     fix_missing_tuplets(root)
+
+    # Drop OCR time-signature changes contradicted by the note content (e.g. a stray
+    # 2/4 marker over measures that actually contain 4/4), so they don't propagate.
+    fix_spurious_timesigs(root)
 
     # Per-system mode: rebuild the score from per-system part declarations instead of
     # the normal split. For badly-parsed scores where staves change role per system.

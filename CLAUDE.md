@@ -203,6 +203,13 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    where a donor tuplet matches by tick position + base duration + note count, then
    copies the tuplet onto the run and pads the leftover with a rest. Never guesses a
    tuplet without a donor. Runs first (before any split/rebuild), all modes.
+0b. `fix_spurious_timesigs` (`utils/spurious_timesigs.py`) removes OCR TimeSig changes
+   contradicted by the note content — a change to e.g. 2/4 whose measure actually
+   holds 4/4 (matching the *prevailing* meter) is dropped from every staff. It keeps
+   genuine changes (content matches the declared sig) and never touches the first
+   signature or a measure whose content matches neither. Exact-Fraction durations
+   (tuplet/dot-aware). Runs before any split/rebuild, all modes; fixes the per-system
+   case where a stray 2/4 made ~18 measures render over-full.
 1. `preprocess_corrupted_measures` fixes measures with bad tick totals.
 2. Decide which staves actually contain 2 voices; only those get split.
    Staff ids are renumbered to leave a gap after each split staff
