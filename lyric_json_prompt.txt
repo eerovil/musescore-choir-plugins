@@ -32,5 +32,13 @@ Notes:
 - A word that continues onto the next line ends with a trailing hyphen (e.g. "Su-ku-")
   and the next line starts with the rest of it ("pol-vis-ta …").
 - Only verse 1 is imported. Skip later verses and editorial/ossia notes.
-- If you are unsure of a part name, you may instead give "parts" as output staff ids
-  (integers, top to bottom: 1, 2, 3, …). Names are preferred.
+- IF THE STAVES HAVE NO PART LABELS: omit "parts" and instead give "staff_number"
+  (which printed staff, counted 1 = top to bottom of the system) and "position"
+  ("above"/"below", for a staff shared by two divisi voices — one line if they sing
+  the same words, an "above" and a "below" line if they differ), e.g.:
+      { "staff_number": 1, "position": "below", "text": "…" }
+  This is mapped to the output voices automatically (it assumes the printed staves run
+  in normal high-to-low order). Use "parts" by name whenever labels are present.
+- MANUAL OVERRIDE (human, after generation): add "parts" as output staff ids (integers,
+  the output staves sorted high-to-low: 1, 2, 3, …) to force exactly which voices get a
+  line. This wins over everything — use it where the automatic mapping is wrong.
