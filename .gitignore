@@ -17,3 +17,10 @@ playlists.txt
 
 # per-system answer cache (local testing convenience)
 .persystem_cache.json
+
+# Working input score files dropped at the repo root (PDFs, MusicXML, MuseScore)
+/*.pdf
+/*.xml
+/*.musicxml
+/*.mscx
+/*.mscz
