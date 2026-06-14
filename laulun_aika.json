@@ -1,0 +1,85 @@
+[
+    {
+        "measure_start": 1,
+        "lyrics": [
+            {
+                "parts": ["T1", "T2"],
+                "text": "Nyt u-kot nou-se-vat maas-ta, lau-lun ai-ka on tul-lut! I-lon ai-rui-na tai-va-has-ta me"
+            }
+        ]
+    },
+    {
+        "measure_start": 7,
+        "lyrics": [
+            {
+                "parts": ["T1", "T2"],
+                "text": "juh-lan huu-mas-ta hul-lut jaam-me sy-dän pul-lol-laan i-lo-sa-no-maa."
+            }
+        ]
+    },
+    {
+        "measure_start": 12,
+        "lyrics": [
+            {
+                "parts": ["T1", "T2"],
+                "text": "Ja kun meil-le mal-jo-ja kan-ne-taan,"
+            }
+        ]
+    },
+    {
+        "measure_start": 16,
+        "lyrics": [
+            {
+                "parts": ["T1", "T2"],
+                "text": "joi-hin kas-taa huu-le-ni vii-mein saan, niin"
+            },
+            {
+                "parts": ["B"],
+                "text": "huu-lein vii-mein, vii-mein saan,"
+            }
+        ]
+    },
+    {
+        "measure_start": 20,
+        "lyrics": [
+            {
+                "parts": ["T3"],
+                "text": "Kuol-leet-kin vir-koo-vat ur-ku-jen soit-toon ja saak-ka ain' vii-mei-sen kier-rok-sen koit-toon"
+            },
+            {
+                "parts": ["T1", "T2"],
+                "text": "kuol-leet-kin vir-koo-vat ur-ku-jen soit-toon ja saak-ka ain' vii-mei-sen kier-rok-sen koit-toon-me"
+            }
+        ]
+    },
+    {
+        "measure_start": 26,
+        "lyrics": [
+            {
+                "parts": ["T1"],
+                "text": "me kul-jem-me voi-tos-ta voit-toon. Su-ku-"
+            },
+            {
+                "parts": ["T2"],
+                "text": "kul-jem-me, me kul-jem-me, voi-tos-ta voit-toon me kul-jem-me. Su-ku-"
+            },
+            {
+                "parts": ["B"],
+                "text": "kul-jem-me, kul-jem-me, kul-jem-me voi-tos-ta voit-toon. Su-ku-"
+            }
+        ]
+    },
+    {
+        "measure_start": 30,
+        "lyrics": [
+            {
+                "parts": ["T3"],
+                "text": "Pol-vis-ta pol-viin ja hol-vis-ta hol-viin ää-nem-me kan-ta-koon!"
+            },
+            {
+                "parts": ["T1", "T2", "B"],
+                "text": "pol-vis-ta pol-viin ja ol-vis-ta ol-viin ää-nem-me kan-ta-koon! Lau-lun ai-ka on tul-lut!"
+            }
+        ]
+    }
+]

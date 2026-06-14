@@ -158,3 +158,42 @@ def test_system_map_routes_block_by_measure_range():
     legacy = convert_lyrics_format_to_legacy(data, system_map=SYSTEM_MAP)
     assert legacy[0] == {"measure_start": 1, "1": "ten", "2": "ten", "4": "bass"}
     assert legacy[1] == {"measure_start": 26, "4": "lowvoice"}
+
+
+# Part-name mapping: address voices by trackName (robust to printed-staff order).
+def _named_score():
+    parts = [("T1", 1), ("T2", 2), ("T3", 3), ("B", 4)]
+    xml = b"<museScore><Score>"
+    for name, sid in parts:
+        xml += (f'<Part><trackName>{name}</trackName><Staff id="{sid}"/></Part>').encode()
+    xml += b"</Score></museScore>"
+    return etree.fromstring(xml)
+
+
+def test_read_part_name_map():
+    from src.clean_score.lyric_txt import read_part_name_map
+    assert read_part_name_map(_named_score()) == {"T1": 1, "T2": 2, "T3": 3, "B": 4}
+
+
+def test_parts_by_name_resolve_to_output_staves():
+    name_map = {"T1": 1, "T2": 2, "T3": 3, "B": 4}
+    data = [
+        {"measure_start": 20, "lyrics": [
+            {"parts": ["T3"], "text": "kuol-leet-kin"},
+            {"parts": ["T1", "T2"], "text": "kuol-leet-kin-me"},
+        ]},
+    ]
+    legacy = convert_lyrics_format_to_legacy(data, name_map=name_map)
+    # T3 -> staff 3, T1/T2 -> staves 1 and 2 (no swap, regardless of printed order)
+    assert legacy[0] == {"measure_start": 20, "1": "kuol-leet-kin-me",
+                         "2": "kuol-leet-kin-me", "3": "kuol-leet-kin"}
+
+
+def test_parts_mixes_names_and_ids_and_singular_part():
+    name_map = {"T1": 1, "B": 4}
+    data = [{"measure_start": 1, "lyrics": [
+        {"part": "B", "text": "bass"},
+        {"parts": ["T1", 4], "text": "both"},
+    ]}]
+    legacy = convert_lyrics_format_to_legacy(data, name_map=name_map)
+    assert legacy[0] == {"measure_start": 1, "1": "both", "4": "bass both"}

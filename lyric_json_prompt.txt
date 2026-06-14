@@ -1,38 +1,36 @@
-Read this pdf and for each LINE in the score, give following in JSON format:
+Read this pdf and for each LINE (printed system) in the score, give the lyrics in
+JSON format:
 [
     {
-        "measure_start": 1,  # First measure of this line. If visible. If not, set null.
-        "stave_count": 2,    # How many printed staves in this system.
+        "measure_start": 1,   # First measure of this line. If a measure number is
+                              # printed at the start of the system use it; else null.
         "lyrics": [
             {
-                "staff_number": 1,        # Which printed staff, counted top (1) to bottom.
-                "position": "above",      # "above" or "below" the staff (for divisi staves).
-                "text": "I am a high ly-ric for ver-se two",
-                "verse": 2                # Omit if verse 1. Only verse 1 is imported.
+                "parts": ["T1", "T2"],   # Which voice part(s) sing this text. Use the
+                                         # part LABEL printed at the left of the staff
+                                         # (e.g. S, A, T1, T2, T3, B). List several
+                                         # when they share a staff and sing the SAME
+                                         # words; give separate entries when they differ.
+                "text": "this is the text the te-nors sing"
             },
             {
-                "staff_number": 1,
-                "position": "below",
-                "text": "this is be-low the staff"
-            },
-            {
-                "staff_number": 2,
-                "position": "below",
-                "text": "ly-rics for the lower staff"
+                "parts": ["B"],
+                "text": "ly-rics for the bass"
             }
         ]
     }
 ]
 
 Notes:
-- Split each word into syllables with hyphens, e.g. "ly-ric". The importer aligns
-  one syllable per note. Give the syllables as they are actually sung; don't worry
-  about matching the exact note count (melismas/slurs are handled in the score
-  separately), and don't add any padding or melisma markers.
-- staff_number + position are mapped to the score's output voices automatically.
-  When a printed staff is sung in unison by two voices, give a single line (one
-  position) and it goes to both voices; when the two voices have different words,
-  give both an "above" and a "below" line.
-- OPTIONAL override: add "parts": [4, 5] (output staff/voice ids, top to bottom) to a
-  lyric to force exactly which voices get that text. This wins over staff_number/position.
-  Use it where the automatic mapping is wrong.
+- Identify voices by the part label at the left of each staff. The output score has one
+  staff per part (T1, T2, T3, B, …) and matches these names exactly, so addressing parts
+  by name is reliable even when a part is omitted on some lines or printed in an unusual
+  order (e.g. an extra T3 placed on top).
+- Split each word into syllables with hyphens, e.g. "ly-ric". Give the syllables as they
+  are actually sung; don't worry about matching the exact note count (melismas/slurs are
+  handled separately in the score) and don't add padding or melisma markers.
+- A word that continues onto the next line ends with a trailing hyphen (e.g. "Su-ku-")
+  and the next line starts with the rest of it ("pol-vis-ta …").
+- Only verse 1 is imported. Skip later verses and editorial/ossia notes.
+- If you are unsure of a part name, you may instead give "parts" as output staff ids
+  (integers, top to bottom: 1, 2, 3, …). Names are preferred.

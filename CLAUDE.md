@@ -84,7 +84,7 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ -q     # 62 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ -q     # 65 tests, all passing
 ```
 
 `pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
@@ -178,6 +178,11 @@ by the OCR's source-staff order, which can be shuffled. `lyric_txt.py` import re
 (`read_lyrics_system_map`) and resolves each JSON block via the map for the system
 covering its `measure_start`. Tested against `tests/test_files/laulun_aika.mscx` (a
 real converted score kept as a fixture).
+Caveat: the musical-rank ordering is wrong when an ossia/extra voice is *printed on top*
+(e.g. T3 above T1/T2) — then the PDF's printed numbering doesn't match rank order, so a
+staff_number-based JSON maps to the wrong voice. The robust fix is to address voices in
+the lyric JSON **by part name** (`"parts": ["T3"]`), which bypasses the positional map
+entirely; the staff_number/`lyricsSystemMap` path is the fallback for unlabeled scores.
 
 State is passed between passes through the module-level `GLOBALS` singleton
 (`utils/globals.py`) — `STAFF_MAPPING`, `REVERSED_VOICES_BY_STAFF_MEASURE`,
@@ -217,13 +222,17 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
   a printed staff that split into two voices gets the line on both voices when
   only one position appears *in that block* (unison), or split upper/lower when
   both positions appear (divisi is decided **per block**, not globally). An
-  explicit `parts: [ids]` on a lyric overrides the mapping (manual fix for the
-  ~inevitable LLM errors). Legacy numeric/`DEFAULT_PART_TO_STAFF` part keys still
-  work. `--split` duplicates a part into two staves. For `--per-system` scores the
-  printed numbering shifts per system (omitted parts), so import prefers the
-  per-system `lyricsSystemMap` (`read_lyrics_system_map`) and resolves each block via
-  the map for the system covering its `measure_start`; it falls back to the single
-  `lyricsStaffMap` when no system map is present.
+  explicit `parts` on a lyric overrides the staff_number/position mapping (manual fix
+  for the ~inevitable LLM errors). `parts` accepts output staff **ids** *and/or part
+  **names*** (`["T1","T2"]`, also a scalar `part`); names resolve via the score's
+  trackNames (`read_part_name_map`). **Names are the preferred/robust path** — they're
+  immune to printed-staff order (e.g. an ossia T3 printed on top), which staff_number
+  cannot handle. Legacy numeric/`DEFAULT_PART_TO_STAFF` part keys still work. `--split`
+  duplicates a part into two staves. When a lyric has no `parts`, import falls back to
+  staff_number/position: for `--per-system` scores the printed numbering shifts per
+  system, so it uses the per-system `lyricsSystemMap` (`read_lyrics_system_map`) for the
+  block's `measure_start`, else the single `lyricsStaffMap`. Resolution priority per
+  lyric: explicit `parts` (ids/names) → staff_number+position via system/staff map.
 - Import is in-place on the tree, removes verse 2+, and clears lyrics from
   ineligible (spanner-continuation) chords. `--replace` / `clear_existing=True`
   wipes all verse-1 lyrics first (needed because MusicXML imports arrive with

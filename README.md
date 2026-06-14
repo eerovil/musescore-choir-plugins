@@ -67,18 +67,19 @@ read from the original PDF:
 1. Split the score first with clean_score.py (this writes the staff map needed below).
 
 2. Ask an LLM (e.g. ChatGPT) to read the PDF and output JSON in the format of
-   lyric_json_prompt.txt (one entry per printed line, with staff_number + above/below
-   position). The LLM output will not be 100% correct — fix it by hand as needed.
+   lyric_json_prompt.txt (one entry per printed line). Label each line with the voice
+   part(s) it belongs to by NAME ("parts": ["T1","T2"]), read from the staff label in
+   the score. The LLM output will not be 100% correct — fix it by hand as needed.
 
 3. Import the JSON, replacing the existing OCR lyrics:
        ./lyric_txt.py import laulun_aika.json "songs/Laulun aika/Laulun aika_cleaned.mscx" --replace
 
-   * staff_number + position are mapped to output staves automatically using the
-     lyricsStaffMap. A printed staff that split into two voices gets the line on
-     BOTH voices when only one position is given (unison), or split upper/lower when
-     both "above" and "below" are given in that block.
-   * For anything the mapping gets wrong, add an explicit "parts": [4, 5] (output
-     staff ids) to that lyric in the JSON — it overrides the automatic mapping.
+   * "parts" by name maps straight to the matching output staff (T1, T2, T3, B …),
+     so it works even when a part is omitted on some lines or printed out of order
+     (e.g. an ossia T3 on top). List several names for a unison line.
+   * If a line has no "parts", import falls back to staff_number + above/below position
+     mapped via the per-system staff map (less robust; names are preferred).
+   * "parts" also accepts output staff ids (integers) if you prefer.
    * Without --replace, only the measures/staves named in the JSON are changed
      (partial edit); existing lyrics elsewhere are kept.
    * Slurs/ties dropped by OCR are recovered automatically by clean_score when a

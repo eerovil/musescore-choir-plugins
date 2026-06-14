@@ -298,6 +298,42 @@ def _map_for_measure(
     return {}
 
 
+def read_part_name_map(score_root: etree._Element) -> Dict[str, int]:
+    """
+    Map a part NAME (trackName, e.g. "T1", "B") to its output staff id, read from the
+    score's Parts. Lets lyric JSON address voices by name — robust to printed-staff
+    order (e.g. an ossia T3 printed on top), which staff_number/position can't handle.
+    Keys are upper-cased for case-insensitive lookup.
+    """
+    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
+    if score is None:
+        return {}
+    result: Dict[str, int] = {}
+    for part in score.findall("Part"):
+        name = (part.findtext("trackName") or "").strip()
+        stub = part.find("Staff")
+        if name and stub is not None and stub.get("id"):
+            result[name.upper()] = int(stub.get("id"))
+    return result
+
+
+def _resolve_targets(values: List[Any], name_map: Dict[str, int]) -> List[int]:
+    """Turn a parts list of ints and/or part-name strings into output staff ids."""
+    targets: List[int] = []
+    for v in values:
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int):
+            targets.append(v)
+        elif isinstance(v, str):
+            s = v.strip()
+            if s.isdigit():
+                targets.append(int(s))
+            elif s.upper() in name_map:
+                targets.append(name_map[s.upper()])
+    return targets
+
+
 def _derive_target_staves(
     staff_number: Optional[int],
     position: Optional[str],
@@ -330,19 +366,24 @@ def convert_lyrics_format_to_legacy(
     data: List[Dict[str, Any]],
     staff_map: Optional[Dict[int, List[int]]] = None,
     system_map: Optional[List[Dict[str, Any]]] = None,
+    name_map: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Convert new JSON format (measure_start, lyrics[{text, staff_number, position, parts}])
+    Convert new JSON format (measure_start, lyrics[{text, part(s), staff_number, position}])
     to legacy format (measure_start, "1": "...", "2": "..."), keyed by output staff id.
 
-    Target output staves come from an explicit "parts" list when present (manual override,
-    always wins). Otherwise they are derived from (staff_number, position) via the staff
-    map. When `system_map` is given (clean_score --per-system), the printed numbering
-    shifts per system, so each block uses the map for the system covering its
-    measure_start; otherwise the single `staff_map` ('lyricsStaffMap') is used for all
-    blocks. Lyrics for verses other than 1 are ignored. If multiple lyrics in a block
-    resolve to the same output staff, texts are space-joined.
+    Target output staves are resolved in priority order:
+      1. explicit "part"/"parts" — a list (or scalar) of output staff ids and/or part
+         NAMES ("T1", "B"); names map via `name_map` (the score's trackNames). Robust to
+         printed-staff order, so this is preferred for per-system scores.
+      2. otherwise (staff_number, position) via the staff map. With `system_map`
+         (clean_score --per-system) the printed numbering shifts per system, so each
+         block uses the map for the system covering its measure_start; else the single
+         `staff_map` ('lyricsStaffMap') is used for all blocks.
+    Lyrics for verses other than 1 are ignored. If multiple lyrics in a block resolve to
+    the same output staff, texts are space-joined.
     """
+    name_map = name_map or {}
     if not data or not isinstance(data[0], dict):
         return data
     first = data[0]
@@ -373,13 +414,12 @@ def convert_lyrics_format_to_legacy(
                 continue  # practice track: verse 1 only
             text = (lyric.get("text") or "").strip()
             parts = lyric.get("parts")
-            if isinstance(parts, list) and parts:
-                targets = []
-                for p in parts:
-                    try:
-                        targets.append(int(p))
-                    except (TypeError, ValueError):
-                        continue
+            if parts is None and lyric.get("part") is not None:
+                parts = lyric.get("part")
+            if not isinstance(parts, list):
+                parts = [parts] if parts is not None else []
+            if parts:
+                targets = _resolve_targets(parts, name_map)
             else:
                 targets = _derive_target_staves(
                     lyric.get("staff_number"),
@@ -400,12 +440,13 @@ def parse_json_txt(
     json_str: str,
     staff_map: Optional[Dict[int, List[int]]] = None,
     system_map: Optional[List[Dict[str, Any]]] = None,
+    name_map: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Parse JSON format: array of objects with 'measure_start' (int) and part keys (e.g. S1, S2, A1, A2),
-    or new format with 'measure_start' and 'lyrics' array (items with 'text', 'staff_number',
-    'position', and/or explicit 'parts'). staff_map maps printed staff -> output staves;
-    system_map (per-system mode) overrides it per measure range.
+    or new format with 'measure_start' and 'lyrics' array (items with 'text', 'part'/'parts',
+    'staff_number', 'position'). staff_map maps printed staff -> output staves; system_map
+    (per-system mode) overrides it per measure range; name_map maps part names -> staff ids.
     Returns list of legacy {"measure_start": N, "1": "text", ...} keyed by output staff id.
     """
     data = json.loads(json_str)
@@ -414,7 +455,9 @@ def parse_json_txt(
     first = data[0]
     if not isinstance(first, dict) or "measure_start" not in first:
         return []
-    return convert_lyrics_format_to_legacy(data, staff_map=staff_map, system_map=system_map)
+    return convert_lyrics_format_to_legacy(
+        data, staff_map=staff_map, system_map=system_map, name_map=name_map
+    )
 
 
 def json_lines_to_by_measure(
@@ -1028,7 +1071,10 @@ def import_json_txt_into_mscx(
         return
     staff_map = read_lyrics_staff_map(score_root)
     system_map = read_lyrics_system_map(score_root)
-    json_data = parse_json_txt(json_str, staff_map=staff_map, system_map=system_map)
+    name_map = read_part_name_map(score_root)
+    json_data = parse_json_txt(
+        json_str, staff_map=staff_map, system_map=system_map, name_map=name_map
+    )
     if not json_data:
         return
     chord_counts = _get_chord_counts_per_measure(score)
