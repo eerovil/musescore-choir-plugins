@@ -14,6 +14,35 @@ copylyrics.qml copies topmost lyrics to bottom staves
 
 add_rest_track adds a new staff that contains 16th rests. This makes all measures about evenly spaced
 
+# song.py — the web app (start here)
+
+`song.py` is a local web app that ties the whole workflow together behind one
+state-aware door, so you don't have to remember which script to run next.
+
+```bash
+./song.py            # starts a local server and opens the browser
+```
+
+You start with a **PDF** and an OCR'd **score** (`.mscx`/`.mscz`/`.musicxml`/`.xml`).
+The app walks you through, one song at a time:
+
+1. **New song** — name it, drop in the score + PDF, tick *per-system mode* if the
+   staves change parts between systems. The PDF is copied into the song folder.
+2. **Clean** — builds one staff per part. In per-system mode you fill a grid
+   (one row per staff, per system) naming each staff's voices; answers are saved.
+3. **Fix** — a health check lists OCR damage it found (malformed measures, stray
+   extra voices) with measure numbers. Fix them in MuseScore (one click opens the
+   score); when you save, the app re-checks automatically. Dismiss false positives.
+4. **Lyrics** — copy the prompt, hand it + the PDF to ChatGPT/Claude yourself
+   (no API key needed), paste the JSON back; it imports and flags syllable
+   mismatches (which usually mean missing notes — back to Fix).
+5. **Review** — open the finished score for a final look.
+6. **Record** — export per-voice audio / record the play-along video / upload.
+
+The PDF stays on screen next to whatever you're working on. State lives in
+`songs/<slug>/.song.json`. Everything below is the underlying CLIs the app drives;
+you can still use them directly. See `DESIGN.md` for the design.
+
 # clean_score.py
 
 Splits a score where two voices share a staff into one-voice-per-staff, names the

@@ -25,10 +25,17 @@ manipulation. There is no database, server, or web frontend.
 
 ```
 plugins/                 QML plugins for MuseScore 3 (install separately, see below)
+song.py                  Launcher for the song web app (FastAPI; src/song_app/)
 clean_score.py           CLI wrapper → src/clean_score/main.py (split voices into staves)
 lyric_txt.py             CLI wrapper → src/clean_score/lyric_txt.py (lyrics <-> txt/json)
 rename_parts.py          Standalone CLI: rename Part/Instrument names + add click staff
 record_stemmanauha.py    CLI wrapper → src/stemmanauha (record practice video)
+src/song_app/            Local web app tying the workflow together (see DESIGN.md)
+  state.py               Song state machine (.song.json), slug, stages
+  health.py              Health check (malformed-tick / extra-voice scan; no mutation)
+  pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
+  server.py              FastAPI routes, WebSocket progress, file-watch re-check
+  static/                Vanilla-JS SPA (library + 3-pane workspace, PDF iframe)
 src/clean_score/         Score-cleaning package
   main.py                Voice-splitting pipeline (single-staff/2-voice -> 2-staff)
   lyric_txt.py           Lyric export/import (txt + json formats), slur/tie aware
@@ -49,8 +56,9 @@ backup/                  Gitignored .mscz backups (created by backup.sh)
 - Python 3.13, virtualenv at `.venv/`. Use `.venv/bin/python` directly.
 - Install deps: `.venv/bin/pip install -r pip-requirements.txt`
   (lxml, pytest, dotenv, google-api-python-client, google-auth-oauthlib, pillow,
-  pyautogui; recording also needs `obsws-python`, `ffmpeg`/`ffprobe` on PATH, and
-  macOS with MuseScore 3 + QuickRecorder).
+  pyautogui, fastapi, uvicorn, python-multipart; recording also needs
+  `obsws-python`, `ffmpeg`/`ffprobe` on PATH, and macOS with MuseScore 3 +
+  QuickRecorder).
 - Config is via `.env` (falls back to `.env.default`). Keys:
   `MUSESCORE_CLI_PATH`, `MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
   `YOUTUBE_CLIENT_SECRETS_PATH`. Never commit real secrets;
@@ -104,6 +112,64 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` / `test_json_staff_mapping.py` — the
   re-voicing plan, non-interactive anomaly reduction, and JSON lyric staff mapping.
+
+## The song web app (`src/song_app/`)
+
+A local **FastAPI** web app (launched by `./song.py`, served at `localhost:8000`)
+that unifies the workflow behind one state-aware door. It is a **thin frontend
+over the existing scripts** — it adds no musical logic; it shells out to
+`clean_score` (`main()`), `lyric_txt` (`import_file`), and `record_stemmanauha`
+(`create_video.run`), and drives MuseScore via `open -a`. Full rationale and the
+state model are in `DESIGN.md`.
+
+- **A Song** = a folder `songs/<slug>/` plus `.song.json` (the state file *is* the
+  UX). `state.py` owns the slug, the human display name, the stage machine
+  (`register → clean → fix → lyrics → review → record`), and file fingerprints.
+  The folder is a slug; the display name lives in the JSON.
+- `pipeline.py` is the glue: `convert_to_mscx` (mscx as-is / mscz unzip / xml via
+  MuseScore CLI), `run_clean` (calls `main(..., interactive=False)`; per-system
+  reads `.persystem_cache.json`, which the **grid form** populates via
+  `save_system_answers`), and `run_lyric_import` (calls `import_file`, capturing
+  the stderr `Warning:` lines as the syllable-mismatch list). `system_grid` builds
+  the per-system grid from `per_system.find_systems` + the staff voice summaries.
+  `render_score_pdf` exports a `.mscx` to PDF via the MuseScore CLI (cached by
+  mtime) so scores can be shown in-browser next to the original PDF;
+  `strip_lyrics_copy` writes a lyrics-removed copy (cached) so the "Cleaned MSCX"
+  (no-lyrics) view always reflects the live structure rather than a stale snapshot.
+- `health.py` is **validation only** (never mutates): per voice it sums note/rest
+  durations as exact whole-note `Fraction`s (so tuplets don't round-off) and flags
+  `malformed-measure` (voice doesn't fill the bar) and `extra-voices` (a staff
+  measure with >1 note-bearing voice). Missing notes that still fill the bar (a
+  half-rest standing in for lost notes, e.g. the m18 case) are **not**
+  tick-detectable — they surface as lyric syllable overflow at import. Missing
+  slurs are undetectable and stay manual. `merge_issues` carries over `dismissed`
+  status and marks vanished open issues `fixed` across re-scans (ids are stable:
+  `malformed-m18-s2-v1`).
+- `server.py`: REST routes under `/api/songs/...`, a per-slug WebSocket (`/ws/{slug}`)
+  for streamed progress logs + `state` pings, long tasks (clean/record) run in a
+  thread executor with a thread-safe `hub.emit`, and a **file watcher**
+  (`watchfiles.awatch` on `songs/`) that re-runs the health check when a
+  `*_cleaned.mscx` is saved in MuseScore (guarded by fingerprint so our own writes
+  don't loop). Static SPA is mounted at `/` (so `/api/*` wins).
+- `static/` is a dependency-free vanilla-JS SPA: a library view and a 3-pane
+  workspace (stage rail · per-stage panel · viewer `<iframe>`, controls clustered
+  left, previews right). The viewer tabs
+  between **Original PDF**, **Original XML** (the OCR input), **Cleaned MSCX**
+  (lyrics stripped) and **Cleaned MSCX with lyrics** — all but the first are
+  MuseScore-rendered PDFs served by `/render?doc=original|cleaned_nolyrics|cleaned`,
+  cache-busted by the cleaned fingerprint so they refresh after re-clean / lyric
+  import. The viewer can **split into two independent side-by-side panes** (the
+  ⇆ Split control), each picking any doc — e.g. Original PDF next to Original XML.
+  All are rendered natively by the browser. **PDF measure-locating is page-level
+  only** (no bounding boxes) — see DESIGN.md.
+- **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
+  button label changes once a cleaned file exists); lyric import uses `--replace`.
+  No automatic LLM (users have no API key) — the lyrics stage is a permanent
+  copy-paste round-trip (copy prompt → user's own AI + PDF → paste JSON back).
+
+There are not yet pytest tests for `song_app`; it was smoke-tested end-to-end
+(create → per-system grid → clean → health → lyric import overflow warnings)
+against the `laulun_aika.mscx` and `simple_1` fixtures.
 
 ## How the voice-splitting pipeline works (`src/clean_score/main.py`)
 
