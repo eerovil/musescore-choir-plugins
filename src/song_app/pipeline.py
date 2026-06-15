@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import zipfile
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -169,17 +170,59 @@ def strip_lyrics_copy(mscx_path: str) -> str:
     return out
 
 
+# Shrink the staff for the rendered previews so the score's own system breaks fit on
+# the page (otherwise MuseScore adds extra breaks). Tunable via .env.
+SPATIUM_SCALE = float(os.getenv("RENDER_SPATIUM_SCALE", "0.65"))
+
+
+def _scaled_staff_mscx(mscx_path: str) -> Optional[str]:
+    """Write a temp copy of the score with the staff size reduced by SPATIUM_SCALE.
+
+    Returns the temp path, or None if no scaling is needed/possible (caller then
+    renders the original). Caller must delete the temp file.
+    """
+    if SPATIUM_SCALE >= 1.0:
+        return None
+    with open(mscx_path, "r", encoding="utf-8") as f:
+        root = etree.fromstring(f.read().encode("utf-8"))
+    score = root if root.tag == "Score" else root.find(".//Score")
+    style = score.find("Style") if score is not None else None
+    if style is None:
+        return None
+    sp = style.find("Spatium")
+    if sp is None:
+        sp = etree.SubElement(style, "Spatium")
+        base = 1.74978  # MuseScore 3 default
+    else:
+        try:
+            base = float(sp.text)
+        except (TypeError, ValueError):
+            base = 1.74978
+    sp.text = f"{base * SPATIUM_SCALE:.5f}"
+    fd, tmp = tempfile.mkstemp(suffix=".mscx")
+    os.close(fd)
+    with open(tmp, "wb") as f:
+        f.write(etree.tostring(root, encoding="UTF-8"))
+    return tmp
+
+
 def render_score_pdf(mscx_path: str) -> str:
     """Render a .mscx to a PDF via the MuseScore CLI (cached; re-renders if stale).
 
     Returns the rendered PDF path. The render lives next to the score as
-    <base>.render.pdf and is regenerated whenever the source score is newer.
+    <base>.render.pdf and is regenerated whenever the source score is newer. The
+    staff is shrunk (SPATIUM_SCALE) so the score's own system breaks fit the page.
     """
     out = os.path.splitext(mscx_path)[0] + ".render.pdf"
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(mscx_path):
         return out
     cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
-    result = subprocess.run([cli, mscx_path, "-o", out], capture_output=True, text=True)
+    src = _scaled_staff_mscx(mscx_path) or mscx_path
+    try:
+        result = subprocess.run([cli, src, "-o", out], capture_output=True, text=True)
+    finally:
+        if src != mscx_path and os.path.exists(src):
+            os.remove(src)
     if result.returncode != 0 or not os.path.exists(out):
         raise RuntimeError(
             "MuseScore CLI render failed. Check MUSESCORE_CLI_PATH.\n"

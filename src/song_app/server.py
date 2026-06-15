@@ -345,6 +345,41 @@ def api_dismiss(slug: str, issue_id: str) -> Dict:
     return _derived(song)
 
 
+def _rename_uploads_task(slug: str, old_name: str, new_name: str) -> None:
+    song = _require(slug)
+    log = lambda m: hub.emit(slug, {"type": "log", "line": m})
+    try:
+        from src.stemmanauha.upload_to_youtube import rename_uploads
+        uploads = song.data.get("record", {}).get("uploads", [])
+        log("Updating YouTube titles…")
+        updated = rename_uploads(uploads, old_name, new_name, log=log)
+        song.data.setdefault("record", {})["uploads"] = updated
+        song.save()
+        log("YouTube titles updated.")
+    except Exception as exc:
+        traceback.print_exc()
+        hub.emit(slug, {"type": "error", "line": f"YouTube rename failed: {exc}"})
+    finally:
+        hub.emit(slug, {"type": "state"})
+
+
+@app.post("/api/songs/{slug}/rename")
+async def api_rename(slug: str, body: Dict) -> Dict:
+    """Change the song's display name; retitle uploaded YouTube videos if any."""
+    song = _require(slug)
+    new_name = (body or {}).get("name", "").strip()
+    if not new_name:
+        raise HTTPException(400, "Name is required")
+    old_name = song.name
+    song.data["name"] = new_name
+    song.save()
+    uploads = song.data.get("record", {}).get("uploads", [])
+    if uploads and new_name != old_name:
+        asyncio.get_running_loop().run_in_executor(
+            None, _rename_uploads_task, slug, old_name, new_name)
+    return _derived(song)
+
+
 @app.post("/api/songs/{slug}/mode")
 def api_set_mode(slug: str, body: Dict) -> Dict:
     """Switch a song between normal and per-system cleaning."""
@@ -381,6 +416,44 @@ def api_prompt() -> Dict:
     path = os.path.join(SCRIPT_DIR, "lyric_json_prompt.txt")
     with open(path, "r", encoding="utf-8") as f:
         return {"prompt": f.read()}
+
+
+@app.get("/api/songs/{slug}/lyric-grid")
+def api_lyric_grid(slug: str) -> Dict:
+    """Structure for the manual lyric editor: the parts and the printed systems."""
+    song = _require(slug)
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise HTTPException(400, "Clean the score first")
+    from lxml import etree
+    root = etree.parse(cleaned).getroot()
+    score = root.find(".//Score") if root.tag != "Score" else root
+    parts = []
+    for p in score.findall("Part"):
+        st = p.find("Staff")
+        sid = int(st.get("id")) if st is not None and st.get("id") else 0
+        name = (p.findtext("trackName") or p.findtext("Instrument/trackName") or "").strip()
+        # Skip spacer/click staves (add_rest_track) — they never carry lyrics.
+        if any(w in name.lower() for w in ("drum", "click", "rest")):
+            continue
+        parts.append({"name": name or f"staff {sid}", "id": sid})
+    parts.sort(key=lambda x: x["id"])
+    sys_ranges = pipeline.ps.find_systems(root)
+    systems = [{"index": i, "start": a + 1, "end": b + 1} for i, (a, b) in enumerate(sys_ranges)]
+
+    # Prefill: the lyrics already in the score, as hyphenated text per (system, part).
+    from src.clean_score.lyric_txt import lyrics_by_measure_staff, _merge_tokens
+    bms = lyrics_by_measure_staff(root)
+    prefill: Dict[str, Dict[str, str]] = {}
+    for i, (a, b) in enumerate(sys_ranges):
+        for part in parts:
+            toks = []
+            for mi in range(a, b + 1):
+                toks += [t for t in bms.get(mi, {}).get(part["id"], []) if t != "_"]
+            text = _merge_tokens(toks).strip()
+            if text:
+                prefill.setdefault(str(i), {})[part["name"]] = text
+    return {"parts": parts, "systems": systems, "prefill": prefill}
 
 
 @app.get("/api/songs/{slug}/lyrics-json")

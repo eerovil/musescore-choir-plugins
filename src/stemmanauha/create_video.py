@@ -160,6 +160,44 @@ def record_video(song_dir, mp3_file, redo=False):
         return target_path
 
 
+# Cap uploaded video height (Retina screen recordings come out 1440p+; YouTube then
+# serves 1440p). Tunable via .env; 0 disables the cap.
+MAX_VIDEO_HEIGHT = int(os.getenv("MAX_VIDEO_HEIGHT", "1080"))
+
+
+def _video_height(path):
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=height", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        return int(r.stdout.decode().strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _cap_video_height(path, max_h=MAX_VIDEO_HEIGHT):
+    """Re-encode the recording in place down to max_h tall (keeping aspect). No-op if
+    it's already small enough or max_h is 0. Done once so per-voice merges stay copy."""
+    if not max_h:
+        return
+    path = Path(path)
+    h = _video_height(path)
+    if h == 0 or h <= max_h:
+        return
+    logging.info(f"Downscaling recording {h}p → {max_h}p (for YouTube ≤1080p).")
+    tmp = path.parent / (path.stem + ".capped.mov")
+    cmd = [
+        "ffmpeg", "-y", "-i", str(path),
+        "-vf", f"scale=-2:{max_h}",
+        "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+        "-an", str(tmp),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    tmp.replace(path)  # atomically replace the raw with the capped version
+
+
 def merge_mp3_to_video(song_dir, audio_delay_ms=1300, force=False):
     """Merge each per-voice mp3 onto the raw recording.
 
@@ -189,6 +227,15 @@ def merge_mp3_to_video(song_dir, audio_delay_ms=1300, force=False):
     input_video_file = next((m for m in movs if m.name not in expected_outputs), None)
     if not input_video_file:
         raise FileNotFoundError(f"No raw recording .mov found in {video_dir}")
+
+    # Downscale the recording once (≤1080p) so YouTube doesn't serve 1440p — but only
+    # if we're actually going to (re)merge something.
+    will_merge = force or any(
+        not (video_dir / f"{song_name} {mp3.stem.split(' ')[-1]}.mov").exists()
+        for mp3 in mp3_files
+    )
+    if will_merge:
+        _cap_video_height(input_video_file)
 
     delay = int(audio_delay_ms)
     results = []

@@ -62,7 +62,10 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); }
 .viewer { display: flex; flex-direction: row; background: #0e0f13; min-width: 0; }
 .vslot { flex: 1; display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--line); }
 .vslot:first-child { border-left: 0; }
-.vslot iframe { width: 100%; flex: 1; border: 0; }
+.vbody { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.pdfview { flex: 1; overflow: auto; min-width: 0; padding: 6px; text-align: center; }
+.pdfview canvas.pdfpage { display: block; margin: 0 auto 8px; max-width: 100%; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.pdfview iframe.pdffallback { width: 100%; height: 100%; border: 0; }
 .nopdf { color: var(--muted); padding: 40px; text-align: center; }
 .viewtabs { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--line); background: var(--panel); align-items: center; flex-wrap: wrap; }
 .viewtabs .spacer { flex: 1; }
@@ -97,6 +100,14 @@ table.grid input { width: 100%; }
 table.grid input.unset { border-color: var(--warn); }
 .sysblock { margin-bottom: 18px; }
 .sysblock h4 { margin: 0 0 6px; }
+.lyrow { margin-bottom: 8px; }
+.lyrow label { display: inline-block; margin: 0 0 2px; color: var(--text); font-weight: 600; font-size: 13px; }
+.lyrow textarea { width: 100%; overflow: hidden; resize: none; }
+.lyerr { color: var(--warn); font-size: 12px; margin-top: 3px; }
+.floatbar {
+  position: sticky; bottom: 0; margin-top: 10px; padding: 10px 0;
+  background: linear-gradient(transparent, var(--panel) 30%);
+}
 .stsum { color: var(--muted); font-size: 12px; }
 
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }

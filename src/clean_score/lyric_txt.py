@@ -516,6 +516,7 @@ def json_lines_to_by_measure(
             prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
             m_end = next_start
             syl_offset = 0
+            last_m = None
             for m in range(m_start, m_end):
                 if syl_offset >= len(syllables):
                     break
@@ -525,8 +526,14 @@ def json_lines_to_by_measure(
                 chunk = syllables[syl_offset : syl_offset + n_slots]
                 syl_offset += len(chunk)
                 if chunk:
-                    measure_tokens = _syllables_to_tokens(chunk)
-                    by_measure.setdefault(m, {})[staff_id] = measure_tokens
+                    by_measure.setdefault(m, {})[staff_id] = _syllables_to_tokens(chunk)
+                    last_m = m
+            # Too many syllables: keep the excess instead of dropping it — append to the
+            # last filled measure so import crams it onto that measure's last note (the
+            # mismatch stays visible for the user to fix, rather than silently vanishing).
+            if syl_offset < len(syllables) and last_m is not None:
+                by_measure[last_m][staff_id].extend(_syllables_to_tokens(syllables[syl_offset:]))
+                syl_offset = len(syllables)
             # Record mismatch when syllable count doesn't match chord slots in this line's range
             if tokens:
                 total_slots = sum(counts.get(m, 0) for m in range(m_start, m_end))
@@ -546,7 +553,7 @@ def json_lines_to_by_measure(
             if kind == "too_many":
                 print(
                     f"Warning: Measures {m_start}-{m_end - 1} (staffs {staffs_str}): too many tokens "
-                    f"({n_syl} syllables, {slots} slots); some lyrics will be dropped.",
+                    f"({n_syl} syllables, {slots} slots); the extra are kept on the last note — fix the count.",
                     file=sys.stderr,
                 )
             else:
@@ -597,21 +604,19 @@ def _iter_voice0_chords(staff: etree._Element, division: int):
                     time_pos += _resolve_duration_ticks(frac_el.text, "0", division)
 
 
-def export_mscx_to_txt(score_root: etree._Element) -> str:
-    """
-    Export lyrics from a MuseScore score element (root of parsed .mscx) to TXT format.
-    Only voice 0, verse 1. Slur-continuation notes get no token.
+def lyrics_by_measure_staff(score_root: etree._Element) -> Dict[int, Dict[int, List[str]]]:
+    """Build by_measure_staff[measure_index][staff_id] = [tokens] from the score.
+
+    Tokens are the TXT-format syllable tokens (begin/middle end with '-', '_' for an
+    eligible chord with no lyric). Voice 0, verse 1; slur/tie-continuation notes are
+    skipped. Shared by the TXT export and the manual-editor prefill.
     """
     add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
-        return ""
-    division = _get_division(score_root)
-    staffs = score.findall(".//Staff")
-    if not staffs:
-        staffs = score_root.findall(".//Staff")
+        return {}
+    staffs = score.findall(".//Staff") or score_root.findall(".//Staff")
     by_measure_staff: Dict[int, Dict[int, List[str]]] = {}
-    lines: List[str] = []
     for staff in staffs:
         staff_id = int(staff.get("id", "0"))
         measure_index = -1
@@ -646,12 +651,17 @@ def export_mscx_to_txt(score_root: etree._Element) -> str:
                         slur_active = True
                     if _has_tie_start(el):
                         tie_active = True
-                elif el.tag == "Rest":
-                    continue
-                elif el.tag == "location":
-                    continue
             by_measure_staff.setdefault(measure_index, {})[staff_id] = measure_tokens
+    return by_measure_staff
 
+
+def export_mscx_to_txt(score_root: etree._Element) -> str:
+    """
+    Export lyrics from a MuseScore score element (root of parsed .mscx) to TXT format.
+    Only voice 0, verse 1. Slur-continuation notes get no token.
+    """
+    by_measure_staff = lyrics_by_measure_staff(score_root)
+    lines: List[str] = []
     measure_indices = sorted(by_measure_staff.keys())
     for mi in measure_indices:
         lines.append(f"# Measure {mi + 1}")

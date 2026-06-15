@@ -117,6 +117,7 @@ function newSongDialog() {
 // ---- workspace -----------------------------------------------------------
 let ws = null;
 let logBox = null;
+let lyricScroll = null; // carry the lyrics panel scroll across a re-import re-render
 
 async function renderWorkspace(slug) {
   if (ws) { ws.close(); ws = null; }
@@ -126,8 +127,8 @@ async function renderWorkspace(slug) {
   const panes = [song.has_pdf ? "pdf" : "original"]; // 1 or 2 docs shown side by side
   let viewFp = song.cleaned_fingerprint; // viewer is only rebuilt when this changes
 
-  // Build the shell once. The viewer (and its iframes) is NOT recreated on stage
-  // or panel changes, so the previews keep their loaded state and scroll position.
+  // Build the shell once. The viewer (and its rendered previews) is NOT recreated on
+  // stage or panel changes, so the previews keep their loaded state and scroll position.
   const stagebarEl = el("div", { className: "stagebar" });
   const panelEl = el("div", { className: "panel" });
   let viewerEl = viewer(song, slug, panes, rebuildViewer);
@@ -158,12 +159,20 @@ async function renderWorkspace(slug) {
   }
 
   async function refresh() {
+    const hadCleaned = song.has_cleaned;
     const fresh = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
     Object.assign(song, fresh);
     drawStagebar();
     drawPanel();
-    // Only reload the previews when the rendered docs actually changed.
-    if (song.cleaned_fingerprint !== viewFp) { viewFp = song.cleaned_fingerprint; rebuildViewer(); }
+    if (song.has_cleaned !== hadCleaned) {
+      // The tab set changed (cleaned docs appeared/vanished) → structural rebuild.
+      viewFp = song.cleaned_fingerprint;
+      rebuildViewer();
+    } else if (song.cleaned_fingerprint !== viewFp) {
+      // Score changed: reload only the cleaned renders, keep PDF/original scroll.
+      viewFp = song.cleaned_fingerprint;
+      viewerEl._refreshFp(viewFp);
+    }
   }
 
   drawStagebar();
@@ -192,32 +201,100 @@ function viewerTabs(song) {
   return tabs;
 }
 
-function docSrc(slug, doc, fp) {
+function docUrl(slug, doc, fp) {
   const P = `/api/songs/${encodeURIComponent(slug)}`;
-  const base = doc === "pdf" ? `${P}/pdf` : `${P}/render?doc=${doc}&v=${encodeURIComponent(fp || "")}`;
-  // Collapse the built-in PDF viewer's thumbnail/bookmark sidebar.
-  return base + "#navpanes=0&view=FitH";
+  return doc === "pdf" ? `${P}/pdf` : `${P}/render?doc=${doc}&v=${encodeURIComponent(fp || "")}`;
 }
 
-// `panes` is a shared mutable array; `rebuild` re-creates the viewer (used only
-// for structural changes — split/close). Switching a pane's doc just swaps that
-// one iframe's src in place, so the other pane never reloads.
+// ---- pdf.js: render PDFs into our own scroll container so scroll survives reloads --
+const PDFJS_BASE = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174";
+let pdfjsReady = null;
+function ensurePdfjs() {
+  if (pdfjsReady) return pdfjsReady;
+  pdfjsReady = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = `${PDFJS_BASE}/pdf.min.js`;
+    s.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_BASE}/pdf.worker.min.js`;
+      resolve(window.pdfjsLib);
+    };
+    s.onerror = () => reject(new Error("pdf.js failed to load"));
+    document.head.append(s);
+  });
+  return pdfjsReady;
+}
+
+// Render `url` into `view` (a scrollable div), preserving its current scrollTop.
+async function renderPdf(view, url) {
+  const token = (view._tok = (view._tok || 0) + 1);
+  const lib = await ensurePdfjs();
+  const pdf = await lib.getDocument(url).promise;
+  if (view._tok !== token) return; // superseded by a newer render
+  const width = view.clientWidth || 600;
+  const canvases = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    if (view._tok !== token) return;
+    const base = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: (width - 14) / base.width });
+    const c = el("canvas", { className: "pdfpage" });
+    c.width = vp.width; c.height = vp.height;
+    await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+    if (view._tok !== token) return;
+    canvases.push(c);
+  }
+  const top = view.scrollTop;          // same content height → restoring is exact
+  view.replaceChildren(...canvases);
+  view.scrollTop = top;
+}
+
+// Render with pdf.js; fall back to a native iframe if pdf.js can't load (offline).
+async function mountPdf(view, url) {
+  try {
+    await renderPdf(view, url);
+    view._renderedUrl = url;
+  } catch {
+    view.replaceChildren(el("iframe", { className: "pdffallback",
+      src: url + "#navpanes=0&view=FitH" }));
+    view._renderedUrl = url;
+  }
+}
+
+// `panes` is a shared mutable array; `rebuild` re-creates the viewer (split/close).
+// Each doc keeps its own scroll container mounted (lazily); switching a tab hides/shows
+// them (scroll preserved). `el._refreshFp(fp)` re-renders only the cleaned previews
+// after a re-clean, preserving their scroll position.
 function viewer(song, slug, panes, rebuild) {
   const tabs = viewerTabs(song);
   const keys = tabs.map(([k]) => k);
   for (let i = 0; i < panes.length; i++) if (!keys.includes(panes[i])) panes[i] = keys[0];
+  const refreshers = [];
 
   const slot = (i) => {
-    const iframe = el("iframe", { src: docSrc(slug, panes[i], song.cleaned_fingerprint) });
+    const frames = {};                  // doc -> scrollable pdfview div (kept alive)
+    const body = el("div", { className: "vbody" });
     const btns = {};
-    const setHere = (d) => {
-      if (panes[i] === d) return;
-      panes[i] = d;
-      iframe.src = docSrc(slug, d, song.cleaned_fingerprint);
-      for (const k in btns) btns[k].className = k === d ? "vtab active" : "vtab";
+    const ensureRendered = (doc) => {
+      const v = frames[doc];
+      if (!v || v._url === v._renderedUrl) return;
+      if (v.style.display === "none") return;      // render when shown
+      if (v.clientWidth > 0) mountPdf(v, v._url);
+      else requestAnimationFrame(() => ensureRendered(doc)); // wait for layout (e.g. after split)
+    };
+    const show = (doc) => {
+      panes[i] = doc;
+      if (!frames[doc]) {
+        const v = el("div", { className: "pdfview" });
+        v._url = docUrl(slug, doc, song.cleaned_fingerprint);
+        frames[doc] = v;
+        body.append(v);
+      }
+      for (const d in frames) frames[d].style.display = d === doc ? "" : "none";
+      for (const k in btns) btns[k].className = k === doc ? "vtab active" : "vtab";
+      ensureRendered(doc); // now visible → has width
     };
     const tabRow = tabs.map(([k, label]) => (btns[k] = el("button", {
-      className: k === panes[i] ? "vtab active" : "vtab", onclick: () => setHere(k),
+      className: "vtab", onclick: () => show(k),
     }, label)));
 
     const ctrl = panes.length === 1
@@ -227,10 +304,21 @@ function viewer(song, slug, panes, rebuild) {
           onclick: () => { panes.splice(i, 1); rebuild(); } }, "✕");
 
     const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), ctrl);
-    return el("div", { className: "vslot" }, bar, iframe);
+    show(panes[i]);
+    // Re-render only the cleaned previews; their scroll is preserved by renderPdf.
+    refreshers.push((fp) => {
+      for (const d in frames)
+        if (d === "cleaned" || d === "cleaned_nolyrics") {
+          frames[d]._url = docUrl(slug, d, fp);
+          if (frames[d].style.display !== "none") ensureRendered(d);
+        }
+    });
+    return el("div", { className: "vslot" }, bar, body);
   };
 
-  return el("div", { className: "viewer" }, panes.map((_, i) => slot(i)));
+  const root = el("div", { className: "viewer" }, panes.map((_, i) => slot(i)));
+  root._refreshFp = (fp) => refreshers.forEach((f) => f(fp));
+  return root;
 }
 
 function appendLog(line, isErr) {
@@ -258,7 +346,7 @@ function makeLog() {
 function renderPanel(panel, view, song, slug, refresh) {
   logBox = null;
   const P = `/api/songs/${encodeURIComponent(slug)}`;
-  if (view === "register") return panelRegister(panel, song);
+  if (view === "register") return panelRegister(panel, song, P, refresh);
   if (view === "clean") return panelClean(panel, song, slug, P, refresh);
   if (view === "fix") return panelFix(panel, song, P, refresh);
   if (view === "lyrics") return panelLyrics(panel, song, P, refresh);
@@ -267,14 +355,37 @@ function renderPanel(panel, view, song, slug, refresh) {
   if (view === "upload") return panelUpload(panel, song, P, refresh);
 }
 
-function panelRegister(panel, song) {
+function panelRegister(panel, song, P, refresh) {
+  const uploaded = !!(song.record?.uploads?.length);
+  const nameInput = el("input", { value: song.name, style: "width:100%" });
+  const saveBtn = el("button", { className: "primary", onclick: async () => {
+    const name = nameInput.value.trim();
+    if (!name || name === song.name) return;
+    saveBtn.disabled = true;
+    appendLog("Renaming…" + (uploaded ? " (updating YouTube titles in background)" : ""));
+    try {
+      const fresh = await postJSON(`${P}/rename`, { name });
+      Object.assign(song, fresh);
+      crumb.textContent = "› " + song.name;
+      appendLog("Renamed to " + song.name);
+      refresh();
+    } catch (e) { saveBtn.disabled = false; appendLog(e.message, true); }
+  }}, "Save name");
+
   panel.append(
     el("h2", {}, "Start"),
-    el("p", { className: "sub" }, "Sources for this song."),
+    el("label", {}, "Display name"),
+    nameInput,
+    el("div", { className: "row" }, saveBtn,
+      el("span", { className: "hint" }, uploaded
+        ? "Already on YouTube — titles will be updated too."
+        : "The folder name stays the same.")),
+    el("p", { className: "sub", style: "margin-top:16px" }, "Sources for this song."),
     el("p", {}, `Score: ${song.sources?.xml || "—"}`),
     el("p", {}, `PDF: ${song.sources?.pdf || "— (none)"}`),
     el("p", {}, `Mode: ${song.mode}`),
-    el("p", { className: "hint" }, "Go to the Clean step to build the score."));
+    el("p", { className: "hint" }, "Go to the Clean step to build the score."),
+    makeLog());
 }
 
 async function panelClean(panel, song, slug, P, refresh) {
@@ -422,8 +533,40 @@ function panelFix(panel, song, P, refresh) {
 }
 
 async function panelLyrics(panel, song, P, refresh) {
-  panel.append(el("h2", {}, "Lyrics"),
-    el("p", { className: "sub" }, "No API key needed — your AI does the reading, this catches the result."));
+  const mode = localStorage.getItem("lyricMode") === "manual" ? "manual" : "paste";
+  const swap = (m) => { localStorage.setItem("lyricMode", m); panel.replaceChildren(); panelLyrics(panel, song, P, refresh); };
+  panel.append(
+    el("h2", {}, "Lyrics"),
+    el("div", { className: "row" },
+      el("button", { className: mode === "paste" ? "vtab active" : "vtab", onclick: () => swap("paste") }, "Paste from AI"),
+      el("button", { className: mode === "manual" ? "vtab active" : "vtab", onclick: () => swap("manual") }, "Type by system")));
+  if (mode === "manual") return lyricsManual(panel, song, P, refresh);
+  return lyricsPaste(panel, song, P, refresh);
+}
+
+// Parse an import warning like "Measures 16-19 (staffs 1, 2): too many tokens …".
+function parseLyricWarning(w) {
+  const m = w.match(/^Measures (\d+)-(\d+) \(staffs ([\d,\s]+)\): (.+)$/);
+  if (!m) return null;
+  return {
+    mStart: +m[1], mEnd: +m[2],
+    staffIds: m[3].split(",").map((s) => +s.trim()).filter(Number.isFinite),
+    msg: m[4],
+  };
+}
+
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  ta.style.height = ta.scrollHeight + "px";
+}
+
+async function lyricsPaste(panel, song, P, refresh) {
+  const warns = song.lyrics?.warnings || [];
+  if (warns.length) {
+    panel.append(el("p", { className: "sub" }, "Mismatches (often a note problem — check the measure in MuseScore):"),
+      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w))));
+  }
+  panel.append(el("p", { className: "sub" }, "No API key needed — your AI does the reading, this catches the result."));
   const ta = el("textarea", { rows: 12, placeholder: "Paste the lyric JSON from your AI chat here…" });
   if (song.lyrics?.json) {
     try { ta.value = await api(`/api/songs/${encodeURIComponent(song.slug)}/lyrics-json`); } catch {}
@@ -455,13 +598,68 @@ async function panelLyrics(panel, song, P, refresh) {
           refresh();
         } catch (e) { appendLog(e.message, true); }
       }}, "3. Import lyrics")));
-
-  const warns = song.lyrics?.warnings || [];
-  if (warns.length) {
-    panel.append(el("p", { className: "sub" }, "Mismatches (often a note problem — check the measure in MuseScore):"),
-      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w))));
-  }
   panel.append(makeLog());
+}
+
+async function lyricsManual(panel, song, P, refresh) {
+  panel.append(el("p", { className: "sub" }, "Type the lyrics for each part, per system. Hyphenate syllables (e.g. \"lau-lun ai-ka\")."));
+  const holder = el("div", {}, el("p", { className: "hint" }, "Loading…"));
+  panel.append(holder, makeLog());
+
+  let grid;
+  try { grid = await getJSON(`${P}/lyric-grid`); }
+  catch (e) { holder.replaceChildren(el("p", { className: "err" }, e.message)); return; }
+  const { parts, systems, prefill } = grid;
+  const cellText = (si, name) => (prefill?.[si]?.[name]) || "";
+  const warns = (song.lyrics?.warnings || []).map(parseLyricWarning).filter(Boolean);
+  // Attach a warning to the system where its line STARTS (a line can span several
+  // systems if the part is blank in later ones); show the full measure range.
+  const cellWarns = (sys, p) => warns.filter((w) =>
+    w.staffIds.includes(p.id) && w.mStart >= sys.start && w.mStart <= sys.end);
+
+  holder.replaceChildren(...systems.map((sys) =>
+    el("div", { className: "sysblock" },
+      el("h4", {}, `System ${sys.index + 1} — measures ${sys.start}–${sys.end}`),
+      ...parts.map((p) => {
+        const ta = el("textarea", { rows: 1, value: cellText(sys.index, p.name),
+          "data-sys": sys.index, "data-part": p.name });
+        ta.oninput = () => autoGrow(ta);
+        return el("div", { className: "lyrow" },
+          el("label", {}, p.name), ta,
+          ...cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
+            `⚠ m${w.mStart}–${w.mEnd}${w.mEnd > sys.end ? " (spans later systems)" : ""}: ${w.msg}`)));
+      }))));
+  holder.querySelectorAll("textarea").forEach(autoGrow); // size to content (no scroll)
+  if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after re-import
+
+  const doImport = async (btn) => {
+    const map = {};
+    panel.querySelectorAll("textarea[data-sys]").forEach((t) => {
+      (map[t.dataset.sys] ||= {})[t.dataset.part] = t.value.trim();
+    });
+    const data = [];
+    for (const sys of systems) {
+      const lyrics = [];
+      for (const p of parts) {
+        const t = map[sys.index]?.[p.name];
+        if (t) lyrics.push({ parts: [p.name], text: t });
+      }
+      if (lyrics.length) data.push({ measure_start: sys.start, lyrics });
+    }
+    if (!data.length) { appendLog("Nothing typed yet.", true); return; }
+    btn.disabled = true;
+    lyricScroll = panel.scrollTop; // preserve scroll across the re-render
+    appendLog("Importing lyrics…");
+    try {
+      const fresh = await postJSON(`${P}/lyrics`, { json: JSON.stringify(data) });
+      Object.assign(song, fresh);
+      const w = song.lyrics?.warnings || [];
+      appendLog(w.length ? `Imported with ${w.length} warning(s).` : "Imported cleanly. Ready for review.");
+      refresh(); // re-renders with updated inline errors
+    } catch (e) { btn.disabled = false; appendLog(e.message, true); }
+  };
+  const importBtn = el("button", { className: "primary", onclick: () => doImport(importBtn) }, "Import lyrics");
+  panel.append(el("div", { className: "floatbar" }, importBtn));
 }
 
 function panelReview(panel, song, P, refresh) {

@@ -135,7 +135,10 @@ state model are in `DESIGN.md`.
   the stderr `Warning:` lines as the syllable-mismatch list). `system_grid` builds
   the per-system grid from `per_system.find_systems` + the staff voice summaries.
   `render_score_pdf` exports a `.mscx` to PDF via the MuseScore CLI (cached by
-  mtime) so scores can be shown in-browser next to the original PDF;
+  mtime) so scores can be shown in-browser next to the original PDF — it renders
+  from a temp copy with the staff size (`<Spatium>`) shrunk by `SPATIUM_SCALE`
+  (env `RENDER_SPATIUM_SCALE`, default 0.65) so the score's own system breaks fit
+  the page instead of MuseScore adding extra ones;
   `strip_lyrics_copy` writes a lyrics-removed copy (cached) so the "Cleaned MSCX"
   (no-lyrics) view always reflects the live structure rather than a stale snapshot.
 - `health.py` is **validation only** (never mutates): per voice it sums note/rest
@@ -161,7 +164,16 @@ state model are in `DESIGN.md`.
   review. YouTube uploads report live percentage via a `progress` WS message,
   are recorded into `record.uploads` (title/id/url) for review + delete/re-upload
   (`/youtube-delete`), use the human song name for titles, and remember used
-  playlists globally in `.playlists.json` (`/api/playlists`). Legacy `songs/<name>/`
+  playlists globally in `.playlists.json` (`/api/playlists`). The song's display
+  name is editable on the Start panel (`POST /rename`); if videos are already
+  uploaded, it retitles them (and the playlist) on YouTube in the background via
+  `rename_uploads` (each upload stores its `part`, so titles rebuild as
+  "<new name> <part>"). The folder slug never changes. All YouTube API calls go
+  through `_with_retry`/`_execute` (`upload_to_youtube.py`): 429 / 5xx / rate-limit
+  reasons are retried with exponential backoff + jitter (6 tries; the resumable
+  upload's `next_chunk` resumes on retry), while a daily-quota 403 raises
+  `QuotaExceeded` with a clear "try again after reset" message instead of looping.
+  Legacy `songs/<name>/`
   folders from the old CLI workflow are adopted by `import_legacy()` (run on
   startup and via `POST /api/import` / the Library's "Import existing" button): it
   infers a `.song.json` from the files present — input score, `*_cleaned.mscx`
@@ -181,8 +193,11 @@ state model are in `DESIGN.md`.
   cache-busted by the cleaned fingerprint so they refresh after re-clean / lyric
   import. The viewer can **split into two independent side-by-side panes** (the
   ⇆ Split control), each picking any doc — e.g. Original PDF next to Original XML.
-  All are rendered natively by the browser. **PDF measure-locating is page-level
-  only** (no bounding boxes) — see DESIGN.md.
+  PDFs are rendered with **pdf.js** (CDN, `renderPdf`) into our own scrollable
+  `<div>` so **scroll position survives a re-render** (after a re-clean / lyric
+  import the cleaned preview re-renders in place and restores `scrollTop`); falls
+  back to a native `<iframe>` if pdf.js can't load (offline). **PDF measure-locating
+  is page-level only** (no bounding boxes) — see DESIGN.md.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage is a permanent
@@ -378,7 +393,11 @@ stage — each step otherwise skips if its output already exists), and `merge_on
 sync is just off). `merge_mp3_to_video(..., force=True)` overwrites existing
 merged outputs, and it identifies the **raw** recording as the `.mov` whose name
 is not one of the `"<song> <part>.mov"` merge outputs (so re-merging never feeds
-its own output back in).
+its own output back in). Before the per-voice merges it downscales the recording
+**once** in place to `MAX_VIDEO_HEIGHT` (env, default 1080; 0 disables) via
+`_cap_video_height` — Retina screen recordings are 1440p+, and YouTube would serve
+that; capping keeps the merges `-c:v copy` (one re-encode, not one per voice).
+Already-merged songs need a **re-merge** (force) to regenerate at 1080p.
 
 This is heavily environment-dependent: it relies on specific macOS apps, global
 keyboard shortcuts wired in QuickRecorder/MuseScore, `MUSESCORE_EXPORT_PATH`,

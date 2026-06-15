@@ -26,6 +26,7 @@ JSON format:
 ]
 
 Notes:
+- It may like multiple pieces, but it's actually a single piece.
 - ALWAYS include "parts": [] (empty) in every lyric. Leave it empty by default — the
   text is then mapped automatically to the right voice(s) from "staff_number" and
   "position". Only put something in "parts" to correct a wrong mapping (see below).
