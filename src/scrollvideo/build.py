@@ -24,7 +24,7 @@ from . import audio as audio_mod
 from . import score as score_mod
 from . import spacing as spacing_mod
 from .engrave import engrave
-from .geometry import rasterise
+from .geometry import note_coverage, rasterise
 from .timing import SMOOTH_SECONDS, TempoMap, note_events, scroll_anchors, smooth_scroll
 from .video import mux, place, render
 
@@ -172,6 +172,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
 
         log("Rasterising the strip")
         strip = rasterise(eng.svg, layout, strip_height)[:height]
+        coverage = note_coverage(eng.svg, layout, strip_height)[:height]
         placed = place(events, layout, px_per_unit)
 
         if smooth_seconds:
@@ -193,14 +194,16 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                 log(f"{name}: rendering video (emphasised)")
                 out = os.path.join(out_dir, f"{base} {name}.mp4")
                 render(strip, placed, anchors, out, px_per_unit=px_per_unit, width=width,
-                       fps=fps, focus_staff=staff, audio_path=tracks.get(name))
+                       fps=fps, focus_staff=staff, audio_path=tracks.get(name),
+                       coverage=coverage)
                 written.append(out)
                 log(f"{name}: wrote {os.path.basename(out)}")
             return written
 
         log("Rendering the video (once, shared by every voice)")
         shared = os.path.join(tmp, "shared.mp4")
-        render(strip, placed, anchors, shared, px_per_unit=px_per_unit, width=width, fps=fps)
+        render(strip, placed, anchors, shared, px_per_unit=px_per_unit, width=width, fps=fps,
+               coverage=coverage)
         for name in wanted:
             out = os.path.join(out_dir, f"{base} {name}.mp4")
             if tracks.get(name):

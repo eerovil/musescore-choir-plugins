@@ -48,28 +48,59 @@ def test_render_writes_a_playable_video_of_the_expected_length(tmp_path):
     assert seconds == pytest.approx(2.0, abs=0.2)
 
 
-@needs_ffmpeg
-def test_only_sounding_notes_are_lit(tmp_path):
-    """The highlight appears while the note sounds and is gone after it stops."""
+def _frame_reader(path, height, width):
     import subprocess
-    strip = np.full((120, 800, 3), 255, dtype=np.uint8)
-    placed = place([NoteEvent("top", 0.0, 1.0)], _layout(), px_per_unit=0.24)
-    out = tmp_path / "v.mp4"
-    render(strip, placed, ([0.0, 3.0], [0.0, 0.0]), str(out),
-           px_per_unit=0.24, width=320, fps=10, duration=3.0, crf=0)
 
     def frame_at(seconds):
         raw = subprocess.run(
-            ["ffmpeg", "-v", "error", "-ss", str(seconds), "-i", str(out), "-frames:v", "1",
+            ["ffmpeg", "-v", "error", "-ss", str(seconds), "-i", str(path), "-frames:v", "1",
              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
-        return np.frombuffer(raw, dtype=np.uint8).reshape(120, 320, 3)
+        return np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+    return frame_at
 
-    def amber_pixels(frame):
-        # the blend is towards HIGHLIGHT: red stays high while blue drops
-        return int(((frame[:, :, 0].astype(int) - frame[:, :, 2].astype(int)) > 30).sum())
 
-    assert amber_pixels(frame_at(0.5)) > 0, "note not highlighted while sounding"
-    assert amber_pixels(frame_at(2.5)) == 0, "highlight outlived the note"
+def _blue_pixels(frame):
+    return int(((frame[:, :, 2].astype(int) - frame[:, :, 0].astype(int)) > 40).sum())
+
+
+@needs_ffmpeg
+def test_only_sounding_notes_are_lit(tmp_path):
+    """The highlight appears while the note sounds and is gone after it stops."""
+    strip = np.full((120, 800, 3), 255, dtype=np.uint8)
+    coverage = np.zeros((120, 800), dtype=np.uint8)
+    coverage[20:40, 20:40] = 255                    # a "note glyph" to recolour
+    strip[20:40, 20:40] = 0
+    placed = place([NoteEvent("top", 0.0, 1.0)], _layout(), px_per_unit=0.24)
+    out = tmp_path / "v.mp4"
+    render(strip, placed, ([0.0, 3.0], [0.0, 0.0]), str(out), px_per_unit=0.24,
+           width=320, fps=10, duration=3.0, crf=0, coverage=coverage)
+
+    frame_at = _frame_reader(out, 120, 320)
+    assert _blue_pixels(frame_at(0.5)) > 0, "note not highlighted while sounding"
+    assert _blue_pixels(frame_at(2.5)) == 0, "highlight outlived the note"
+
+
+@needs_ffmpeg
+def test_the_note_itself_turns_blue_rather_than_a_box_over_it(tmp_path):
+    """Only pixels the glyph covers change; the white around it stays white."""
+    strip = np.full((120, 800, 3), 255, dtype=np.uint8)
+    coverage = np.zeros((120, 800), dtype=np.uint8)
+    coverage[24:32, 24:32] = 255                    # glyph: a small square
+    strip[24:32, 24:32] = 0
+    placed = place([NoteEvent("top", 0.0, 2.0)], _layout(), px_per_unit=0.24)
+    out = tmp_path / "v.mp4"
+    render(strip, placed, ([0.0, 2.0], [0.0, 0.0]), str(out), px_per_unit=0.24,
+           width=320, fps=10, duration=1.0, crf=0, coverage=coverage, playhead=0.0)
+
+    # playhead=0 keeps strip and frame columns aligned, so the glyph is where we put it
+    frame = _frame_reader(out, 120, 320)(0.5)
+    glyph = frame[24:32, 24:32]
+    assert _blue_pixels(glyph) > 0, "the glyph should be blue"
+    # the note's box is much larger than the glyph; the rest of it must be untouched
+    box = placed[0]
+    around = frame[max(box.y0, 0):box.y1, max(box.x0, 0):box.x1].copy()
+    around[24 - max(box.y0, 0):32 - max(box.y0, 0), :] = 255
+    assert _blue_pixels(around) == 0, "colour leaked outside the glyph — that is a box"
 
 
 @needs_ffmpeg

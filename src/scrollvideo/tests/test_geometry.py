@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from lxml import etree
 
 from src.scrollvideo import geometry
 from src.scrollvideo.engrave import engrave
@@ -17,6 +18,8 @@ MINI_SVG = """<svg width="100px" height="20px" xmlns="http://www.w3.org/2000/svg
           <path d="M0 300 L900 300" /><path d="M0 400 L900 400" />
           <g id="n1" class="note">
             <g class="notehead"><use xlink:href="#x" transform="translate(200, 100)" /></g>
+            <g class="stem"><path d="M310 90 L310 -320" stroke-width="18" /></g>
+            <g class="verse"><text x="200" y="600">la</text></g>
           </g>
         </g>
       </g>
@@ -90,3 +93,42 @@ def test_tiled_and_single_shot_rasterisation_agree(fermata_musicxml, monkeypatch
     assert np.abs(ink_whole.sum(axis=0) - ink_tiled.sum(axis=0)).max() <= 1
     differing = np.abs(tiled.astype(int) - whole.astype(int)).any(axis=2).sum()
     assert differing < 0.001 * tiled.shape[0] * tiled.shape[1]
+
+
+def test_the_note_box_covers_the_stem_not_just_the_head():
+    """Highlighting recolours what is inside this box; without the stem a lit
+    note keeps a black tail."""
+    note = parse_layout(MINI_SVG).notes["n1"]
+    x0, y0, x1, y1 = note.box()
+    assert y0 <= -320 + 300, "box should reach the top of the stem"
+    assert y1 >= 100 + 300 - 1
+    assert x0 <= 200 + 500 and x1 >= 310 + 500
+
+
+def test_marking_paints_the_glyph_but_not_the_lyric():
+    """Lyrics sit inside the note group but are not part of the note."""
+    from src.scrollvideo.geometry import MARKER, _mark_notes
+    marked = _mark_notes(MINI_SVG)
+    root = etree.fromstring(marked.encode())
+    ns = {"s": "http://www.w3.org/2000/svg"}
+    head = root.find(".//s:g[@class='notehead']/s:use", ns)
+    stem = root.find(".//s:g[@class='stem']/s:path", ns)
+    lyric = root.find(".//s:g[@class='verse']/s:text", ns)
+    assert MARKER.lower() in head.get("style").lower()
+    # verovio's own stylesheet outranks presentation attributes, so this has to
+    # be an inline style or stems come back black
+    assert "style" in stem.attrib and MARKER.lower() in stem.get("style").lower()
+    assert MARKER.lower() not in (lyric.get("style") or "").lower()
+
+
+def test_coverage_marks_the_note_and_leaves_the_staff_lines_alone(fermata_musicxml):
+    eng = engrave(fermata_musicxml)
+    from src.scrollvideo.geometry import note_coverage
+    coverage = note_coverage(eng.svg, eng.layout, 240)
+    strip = rasterise(eng.svg, eng.layout, 240)
+    ink = (strip < 128).any(axis=2)
+    assert coverage.shape == ink.shape
+    assert (coverage > 0).any(), "no note glyphs marked"
+    assert (coverage > 0).sum() < ink.sum(), "everything got marked, not just notes"
+    # nothing may be marked where there is no ink at all
+    assert not ((coverage > 200) & ~ink).any()

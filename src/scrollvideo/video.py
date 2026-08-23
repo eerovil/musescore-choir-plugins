@@ -17,9 +17,10 @@ import numpy as np
 from .geometry import Layout
 from .timing import NoteEvent
 
-FOCUS_ALPHA = 0.55       # highlight strength on the voice this track is for
-BACKGROUND_ALPHA = 0.16  # ... and on the other voices
-HIGHLIGHT = (255, 210, 40)
+# MuseScore's playback blue, sampled from the score window.
+HIGHLIGHT = (42, 95, 171)
+FOCUS_ALPHA = 1.0        # how blue the voice this track is for goes
+BACKGROUND_ALPHA = 0.45  # ... and the other voices, when emphasising one
 TAIL_SECONDS = 1.5       # keep rolling past the last note
 # Engraving is flat white with sharp black marks — x264 finds it very compressible,
 # so a fast preset costs little quality here and saves a lot of time at 4K.
@@ -57,17 +58,17 @@ class Placed:
 
 
 def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float) -> List[Placed]:
-    """Note events -> pixel rectangles on the strip (sorted by onset)."""
+    """Note events -> the pixel box of each drawn note (sorted by onset)."""
     placed = []
     for e in events:
         geom = layout.notes.get(e.note_id)
         if geom is None:
             continue
-        sp = geom.staff_spacing
+        x0, y0, x1, y1 = geom.box()
         placed.append(Placed(
             e.on, e.off,
-            int((geom.x - 0.15 * sp) * px_per_unit), int((geom.x + 1.35 * sp) * px_per_unit),
-            int((geom.y - 0.75 * sp) * px_per_unit), int((geom.y + 0.75 * sp) * px_per_unit),
+            int(x0 * px_per_unit), int(x1 * px_per_unit),
+            int(y0 * px_per_unit), int(y1 * px_per_unit),
             layout.staff_index(geom)))
     placed.sort(key=lambda p: p.on)
     return placed
@@ -77,8 +78,15 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
            out_path: str, *, px_per_unit: float, width: int = 3840, fps: int = 60,
            playhead: float = 0.35, focus_staff: Optional[int] = None,
            audio_path: Optional[str] = None, duration: Optional[float] = None,
-           crf: int = 20, preset: str = DEFAULT_PRESET) -> str:
-    """Write the scrolling video. `focus_staff` lights one staff and dims the rest."""
+           crf: int = 20, preset: str = DEFAULT_PRESET,
+           coverage: Optional[np.ndarray] = None) -> str:
+    """Write the scrolling video. `focus_staff` lights one staff and dims the rest.
+
+    `coverage` is `geometry.note_coverage`: how much of each pixel a note glyph
+    covers. A sounding note is repainted blue through it, so the note itself turns
+    blue — stem, dots and antialiased edges included — rather than sitting under a
+    coloured box. Without it, the box is drawn instead.
+    """
     height = strip.shape[0]
     strip_w = strip.shape[1]
     times, xs = anchors
@@ -125,9 +133,26 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
                 x0, x1 = max(p.x0 - left, 0), min(p.x1 - left, width)
                 if x1 <= x0:
                     continue
-                alpha = FOCUS_ALPHA if focus_staff in (None, p.staff) else BACKGROUND_ALPHA
-                patch = frame[p.y0:p.y1, x0:x1].astype(np.float32)
-                frame[p.y0:p.y1, x0:x1] = (patch * (1 - alpha) + colour * alpha).astype(np.uint8)
+                y0, y1 = max(p.y0, 0), min(p.y1, height)
+                if y1 <= y0:
+                    continue
+                strength = FOCUS_ALPHA if focus_staff in (None, p.staff) else BACKGROUND_ALPHA
+
+                if coverage is None:
+                    patch = frame[y0:y1, x0:x1].astype(np.float32)
+                    frame[y0:y1, x0:x1] = (patch * (1 - strength)
+                                           + colour * strength).astype(np.uint8)
+                    continue
+
+                # Repaint the glyph: where the note covers the pixel, draw it in
+                # blue over white instead of black, weighted by that coverage.
+                cover = coverage[y0:y1, x0 + left:x1 + left]
+                if not cover.any():
+                    continue
+                a = (cover.astype(np.float32) / 255.0 * strength)[:, :, None]
+                patch = frame[y0:y1, x0:x1].astype(np.float32)
+                frame[y0:y1, x0:x1] = np.where(
+                    a > 0, 255.0 - a * (255.0 - colour), patch).astype(np.uint8)
 
             ff.stdin.write(frame.tobytes())
         ff.stdin.close()

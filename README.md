@@ -153,7 +153,8 @@ unattended, and the audio can't drift against the picture.
     ./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 720 --no-audio
 
 One video per voice: the score scrolls horizontally as one long system, bar numbers
-printed above, and every sounding note lights up. Click/percussion staves are left
+printed above, and every sounding note turns MuseScore blue — the note itself,
+stem and all, not a box drawn over it. Click/percussion staves are left
 out (`--keep-silent` keeps them).
 
 Output is **3840x2160 at 60fps** (`--width`, `--height`, `--fps` to change it); 60fps

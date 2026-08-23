@@ -112,9 +112,9 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 
 ```bash
 .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
-# 149 passed, 4 skipped  — a fresh checkout (browser tests skip; so do the
+# 153 passed, 4 skipped  — a fresh checkout (browser tests skip; so do the
 #                          scrollvideo sync tests without a MuseScore CLI)
-# 153 passed             — with Playwright installed and MUSESCORE_CLI_PATH set
+# 157 passed             — with Playwright installed and MUSESCORE_CLI_PATH set
 ```
 
 The two extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
@@ -556,8 +556,20 @@ to `entry["tstamp"]`.
   Measured end to end (spacer + 2s smoothing): Käyttäytymisohjeita's speed
   coefficient of variation goes 0.31 -> 0.11 and Venematka's 0.43 -> 0.16, costing
   about half a bar of on-screen music.
+- **The sounding note is repainted, not covered.** `geometry.note_coverage` renders
+  a second pass with the note glyphs in a marker colour nothing else uses (pure red
+  on a black-and-white engraving) and reads coverage back as red-minus-green: full
+  on the glyph, zero on staff lines and lyrics, and correctly *partial* on
+  antialiased edges. `video.render` then draws those pixels as blue-on-white
+  weighted by coverage, so the note itself goes MuseScore blue — stem, dots and
+  smooth outline included — instead of sitting under a coloured box. Two gotchas
+  are load-bearing: verovio ships a stylesheet (`#id path {stroke:currentColor}`)
+  that outranks presentation attributes, so marking must use an **inline style** or
+  stems stay black; and `NoteGeom.bbox` must span the stem, or a lit note keeps a
+  black tail. Beams are shared between notes and deliberately stay black — colouring
+  one per sounding note would make them flicker.
 - `video.py` composites: the engraving is rasterised **once** and a frame is a crop
-  of that strip plus an alpha blend over each sounding note's rectangle. Nothing is
+  of that strip plus the recolouring above. Nothing is
   re-engraved per frame — a four-voice minute of music costs about a minute of CPU
   for all four videos. Scroll position is interpolated from the notes' own x
   positions (`timing.scroll_anchors`), so a fermata's held note simply sits still.
@@ -645,6 +657,10 @@ without it, like the browser tests:
   at the end being closed rather than dropped.
 - `test_video.py` — highlights land on the right staff, and are present while a note
   sounds and gone after it stops (decoded back out of the rendered mp4).
+- `test_geometry.py` also pins the highlight: the note box reaches the stem, marking
+  paints the glyph via an inline style but leaves the lyric alone, and coverage marks
+  strictly less than all the ink. `test_video.py` pins that colour lands only where
+  the glyph is — a leak outside it means someone reintroduced the box.
 - `test_spacing.py` — rest slots per measure follow its length (a chord does not
   lengthen one), the subdivision scales them, the singing parts come back untouched,
   an impossible subdivision gives up rather than guessing, and where the crop falls.

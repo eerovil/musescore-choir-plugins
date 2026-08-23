@@ -13,7 +13,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import cairosvg
 import numpy as np
@@ -22,11 +22,17 @@ from lxml import etree
 
 SVG_NS = "http://www.w3.org/2000/svg"
 _TRANSLATE = re.compile(r"translate\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)")
-_DEF_SCALE = re.compile(r'<svg class="definition-scale"[^>]*viewBox="([\d.\- ]+)"[^>]*>')
-_ROOT_SIZE = re.compile(r'^<svg width="[\d.]+px" height="[\d.]+px"')
+_STEM = re.compile(r"M\s*([-\d.]+)\s+([-\d.]+)\s+L\s*([-\d.]+)\s+([-\d.]+)")
+_DEF_SCALE = re.compile(r'<svg[^>]*class="definition-scale"[^>]*>')
+_VIEWBOX = re.compile(r'viewBox="([\d.\- ]+)"')
+_WIDTH = re.compile(r'width="[\d.]+px"')
+_HEIGHT = re.compile(r'height="[\d.]+px"')
 
 # Cairo refuses surfaces wider than 32767 px, so long scores rasterise in tiles.
 MAX_TILE_PX = 8000
+
+# Pure red: the engraving is black on white, so nothing else can produce it.
+MARKER = "#FF0000"
 
 
 @dataclass(frozen=True)
@@ -37,6 +43,17 @@ class NoteGeom:
     y: float
     staff_top: float      # top staff line of the staff it belongs to (its band id)
     staff_spacing: float  # distance between two staff lines
+    # The whole drawn note - notehead, stem, dots, flag - not just the head.
+    # Highlighting recolours what is inside this box, so it has to contain the
+    # stem or a lit note keeps a black tail.
+    bbox: Optional[Tuple[float, float, float, float]] = None
+
+    def box(self) -> Tuple[float, float, float, float]:
+        if self.bbox:
+            return self.bbox
+        sp = self.staff_spacing
+        return (self.x - 0.2 * sp, self.y - 0.75 * sp,
+                self.x + 1.4 * sp, self.y + 0.75 * sp)
 
 
 @dataclass(frozen=True)
@@ -56,12 +73,34 @@ def _tag(name: str) -> str:
     return f"{{{SVG_NS}}}{name}"
 
 
+def _definition_scale(svg_text: str) -> Tuple[str, List[float]]:
+    """The nested <svg class="definition-scale"> tag and its viewBox.
+
+    Coordinates live in that viewBox, not the root, whose px size is 1/25 of it.
+    Matched loosely: once the SVG has been through lxml the attribute order and
+    namespace declarations differ from what verovio emitted.
+    """
+    tag = _DEF_SCALE.search(svg_text)
+    box = _VIEWBOX.search(tag.group(0)) if tag else None
+    if not box:
+        raise ValueError("Not a verovio SVG: no definition-scale viewBox.")
+    return tag.group(0), [float(v) for v in box.group(1).split()]
+
+
+def _window(svg_text: str, tag: str, x0: float, w_units: float, height_units: float,
+            w_px: int, h_px: int) -> str:
+    """The SVG showing only [x0, x0+w_units), sized to w_px by h_px."""
+    windowed = _VIEWBOX.sub(f'viewBox="{x0} 0 {w_units} {height_units}"', tag, count=1)
+    doc = svg_text.replace(tag, windowed, 1)
+    head_end = doc.index(">") + 1
+    head = _WIDTH.sub(f'width="{w_px}px"', doc[:head_end], count=1)
+    head = _HEIGHT.sub(f'height="{h_px}px"', head, count=1)
+    return head + doc[head_end:]
+
+
 def parse_layout(svg_text: str) -> Layout:
     """Note positions and staff bands, in the units of the definition-scale viewBox."""
-    m = _DEF_SCALE.search(svg_text)
-    if not m:
-        raise ValueError("Not a verovio SVG: no definition-scale viewBox.")
-    vb = [float(v) for v in m.group(1).split()]
+    _, vb = _definition_scale(svg_text)
 
     root = etree.fromstring(svg_text.encode())
 
@@ -100,10 +139,110 @@ def parse_layout(svg_text: str) -> Layout:
             t = _TRANSLATE.match(use.get("transform", "") or "")
             if not t:
                 continue
-            notes[note.get("id")] = NoteGeom(float(t.group(1)) + odx,
-                                             float(t.group(2)) + ody, top, spacing)
+            nx, ny = float(t.group(1)) + odx, float(t.group(2)) + ody
+            notes[note.get("id")] = NoteGeom(nx, ny, top, spacing,
+                                             _glyph_box(note, nx, ny, spacing, odx, ody))
 
     return Layout(vb[2], vb[3], notes, sorted(staff_tops))
+
+
+def _glyph_box(note: etree._Element, nx: float, ny: float, spacing: float,
+               odx: float, ody: float) -> Tuple[float, float, float, float]:
+    """Box around everything this note draws, in units."""
+    x0, y0 = nx - 0.2 * spacing, ny - 0.75 * spacing
+    x1, y1 = nx + 1.4 * spacing, ny + 0.75 * spacing
+
+    for stem in note.findall(f".//{_tag('g')}[@class='stem']/{_tag('path')}"):
+        d = _STEM.match(stem.get("d", "") or "")
+        if d:
+            sx = float(d.group(1)) + odx
+            top, bottom = sorted((float(d.group(2)) + ody, float(d.group(4)) + ody))
+            x0, x1 = min(x0, sx - 0.15 * spacing), max(x1, sx + 0.15 * spacing)
+            y0, y1 = min(y0, top), max(y1, bottom)
+
+    for dot in note.findall(f".//{_tag('g')}[@class='dots']/{_tag('ellipse')}"):
+        cx, cy = float(dot.get("cx", 0)) + odx, float(dot.get("cy", 0)) + ody
+        rx, ry = float(dot.get("rx", 0)), float(dot.get("ry", 0))
+        x0, x1 = min(x0, cx - rx), max(x1, cx + rx)
+        y0, y1 = min(y0, cy - ry), max(y1, cy + ry)
+
+    for flag in note.findall(f".//{_tag('g')}[@class='flag']/{_tag('use')}"):
+        f = _TRANSLATE.match(flag.get("transform", "") or "")
+        if f:
+            fx, fy = float(f.group(1)) + odx, float(f.group(2)) + ody
+            x0, x1 = min(x0, fx - 0.2 * spacing), max(x1, fx + 1.6 * spacing)
+            y0, y1 = min(y0, fy - 1.2 * spacing), max(y1, fy + 1.2 * spacing)
+
+    return (x0, y0, x1, y1)
+
+
+def _tiles(svg_text: str, layout: Layout, height_px: int) -> Iterator[Tuple[int, int, np.ndarray]]:
+    """Render the strip in tiles: (x offset, width, RGB tile).
+
+    Cairo caps surface dimensions and a 3-minute score is wider than the cap.
+    Tile edges are cut on the output pixel grid, not by converting a fixed unit
+    width, so the seams abut exactly instead of accumulating rounding drift.
+    """
+    tag, _ = _definition_scale(svg_text)
+    scale = height_px / layout.height
+    total_px = int(round(layout.width * scale))
+
+    x_px = 0
+    while x_px < total_px:
+        w_px = min(MAX_TILE_PX, total_px - x_px)
+        doc = _window(svg_text, tag, x_px / scale, w_px / scale, layout.height,
+                      w_px, height_px)
+        png = cairosvg.svg2png(bytestring=doc.encode(), background_color="white")
+        tile = np.asarray(Image.open(io.BytesIO(png)).convert("RGB"), dtype=np.uint8)
+        yield x_px, w_px, tile
+        x_px += w_px
+
+
+def note_coverage(svg_text: str, layout: Layout, height_px: int) -> np.ndarray:
+    """Per-pixel coverage of the note glyphs, 0-255, for recolouring them.
+
+    The notes are re-rendered in a marker colour no engraving uses, and coverage
+    read back as red-minus-green: pure red where a glyph covers the pixel, zero
+    on the black staff lines and lyrics, and correctly partial on antialiased
+    edges — so a highlighted note keeps its smooth outline instead of a fringe.
+    """
+    marked = _mark_notes(svg_text)
+    width_px = int(round(layout.width * height_px / layout.height))
+    coverage = np.zeros((height_px, width_px), dtype=np.uint8)
+    for x_px, w_px, tile in _tiles(marked, layout, height_px):
+        red = tile[:, :w_px, 0].astype(np.int16)
+        green = tile[:, :w_px, 1].astype(np.int16)
+        coverage[:, x_px:x_px + w_px] = np.clip(red - green, 0, 255).astype(np.uint8)
+    return coverage
+
+
+# Verovio ships a stylesheet ("#id ellipse, #id path, ... {stroke:currentColor}")
+# which outranks presentation attributes, so marking has to be done with an inline
+# style or stems come back black.
+_MARK_STYLE = f"fill:{MARKER};stroke:{MARKER}"
+_PLAIN_STYLE = "fill:#000000;stroke:#000000"
+_DRAWN = ("use", "ellipse", "polygon", "polyline", "rect", "path")
+
+
+def _mark_notes(svg_text: str) -> str:
+    """The same SVG with every note glyph painted in the marker colour.
+
+    Lyrics live inside the note group but are not part of the note, so they are
+    put back to black; beams are shared between notes and stay black too, since
+    colouring one per sounding note would make them flicker.
+    """
+    root = etree.fromstring(svg_text.encode())
+    for note in root.iter(_tag("g")):
+        if note.get("class") != "note":
+            continue
+        for part in note.iter():
+            if etree.QName(part).localname in _DRAWN:
+                part.set("style", _MARK_STYLE)
+        for verse in note.findall(f".//{_tag('g')}[@class='verse']"):
+            for part in verse.iter():
+                if etree.QName(part).localname in _DRAWN + ("text", "tspan"):
+                    part.set("style", _PLAIN_STYLE)
+    return etree.tostring(root, encoding="unicode")
 
 
 def rasterise(svg_text: str, layout: Layout, height_px: int) -> np.ndarray:
@@ -119,20 +258,8 @@ def rasterise(svg_text: str, layout: Layout, height_px: int) -> np.ndarray:
 
     # Filled tile by tile into one buffer: at 4K a strip is hundreds of MB, and
     # collecting tiles before joining them would hold two copies at once.
+    total_px = int(round(layout.width * height_px / layout.height))
     strip = np.empty((height_px, total_px, 3), dtype=np.uint8)
-    x_px = 0
-    while x_px < total_px:
-        w_px = min(MAX_TILE_PX, total_px - x_px)
-        # Derive the unit window from the pixel window, not the other way round.
-        x0_units, w_units = x_px / scale, w_px / scale
-        doc = svg_text.replace(
-            m.group(0),
-            m.group(0).replace(f'viewBox="{m.group(1)}"',
-                               f'viewBox="{x0_units} 0 {w_units} {layout.height}"'), 1)
-        doc = _ROOT_SIZE.sub(f'<svg width="{w_px}px" height="{height_px}px"', doc, count=1)
-        png = cairosvg.svg2png(bytestring=doc.encode(), background_color="white")
-        tile = np.asarray(Image.open(io.BytesIO(png)).convert("RGB"), dtype=np.uint8)
+    for x_px, w_px, tile in _tiles(svg_text, layout, height_px):
         strip[:, x_px:x_px + w_px] = tile[:, :w_px]
-        x_px += w_px
-
     return strip
