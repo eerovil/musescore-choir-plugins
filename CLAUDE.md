@@ -248,8 +248,15 @@ state model are in `DESIGN.md`.
   assigns indices and labels on save.
 - `health.py` is **validation only** (never mutates): per voice it sums note/rest
   durations as exact whole-note `Fraction`s (so tuplets don't round-off) and flags
-  `malformed-measure` (voice doesn't fill the bar) and `extra-voices` (a staff
-  measure with >1 note-bearing voice). Missing notes that still fill the bar (a
+  `malformed-measure` (voice doesn't fill the bar), `extra-voices` (a staff
+  measure with >1 note-bearing voice), and `unprinted-meter` — a bar every voice
+  agrees on, at a length no printed time signature gives. **That last one is the
+  only check that does not compare the score against itself**, and it exists
+  because everything that does can be satisfied by a self-consistent wrong answer:
+  a repair pass once "fixed" a 4/4 bar by padding every voice to 9/8, and health,
+  the lyric arithmetic and the tests were all happy. Measure 1 is exempt (an
+  anacrusis prints no signature) and an already-uneven bar is left to
+  `malformed-measure` rather than reported twice. Missing notes that still fill the bar (a
   half-rest standing in for lost notes, e.g. the m18 case) are **not**
   tick-detectable — they surface as lyric syllable overflow at import. Missing
   slurs are undetectable and stay manual. `merge_issues` carries over `dismissed`

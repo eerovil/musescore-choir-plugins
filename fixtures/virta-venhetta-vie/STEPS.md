@@ -259,3 +259,9 @@ twice. A fourth belongs with them:
 * **Self-consistency is not correctness.** Every automatic check here can be
   satisfied by a wrong answer, because the checks compare the file against itself.
   Only the page settles it.
+
+That last rule now has teeth. The health check gained `unprinted-meter`: a bar every
+voice agrees on, at a length no printed time signature gives, is flagged. It is the
+only check here that appeals to the engraving rather than to the file, and run
+against the version that slipped through it raises four issues where that version
+raised none.

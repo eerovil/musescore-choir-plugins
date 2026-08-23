@@ -5,6 +5,12 @@ Validation only; never mutates the score. Findings:
     (the auto-fixers couldn't repair it — likely lost notes or a bad tuplet).
   - extra-voices: a staff measure with more than one note-bearing voice
     (the split didn't fully separate the voices).
+  - unprinted-meter: a bar every voice agrees on, at a length the engraving never
+    prints. The engraving is the only authority on meter, and this is the one
+    finding that does not compare the score against itself — every other check
+    here can be satisfied by a wrong answer that is merely self-consistent. It
+    exists because a repair pass once "fixed" a 4/4 bar by padding every voice to
+    9/8 and passed everything.
 
 Missing notes that *do* fill the bar (a half-rest standing in for lost notes)
 aren't tick-detectable; they surface as lyric syllable overflow at import time.
@@ -120,18 +126,41 @@ def scan(cleaned_path: str) -> List[Dict]:
 
             voices = measure.findall("voice")
             note_bearing = 0
+            uneven = False
             for vi, voice in enumerate(voices):
                 total, has_chord, _ = _voice_length(voice, nominal)
                 if has_chord:
                     note_bearing += 1
                 # Only flag voices that carry notes and don't fill the bar.
                 if has_chord and total != nominal:
+                    uneven = True
                     issues.append({
                         "id": f"malformed-m{mi}-s{sid}-v{vi}",
                         "kind": "malformed-measure",
                         "measure": mi,
                         "staff": label,
                         "detail": f"voice {vi + 1} fills {total} of {nominal}",
+                    })
+            # The engraving is the only authority on meter. A measure whose
+            # voices agree on a length the printed time signature does not give,
+            # and which prints no signature of its own, is claiming a meter
+            # nobody wrote down. That is almost always an OCR artefact -- or a
+            # repair that "fixed" a bar by agreeing with the damage. Measure 1 is
+            # exempt: an anacrusis is a real engraving feature with no signature.
+            # Only when the bar is otherwise sound: an uneven bar is already
+            # reported, and this is about the case nothing else can see -- every
+            # voice agreeing on a meter that was never printed.
+            if mi > 1 and ts is None and not uneven:
+                agreed = {t for t, has, _ in
+                          (_voice_length(v, nominal) for v in voices) if has}
+                if len(agreed) == 1 and agreed != {sig}:
+                    got = agreed.pop()
+                    issues.append({
+                        "id": f"unprinted-meter-m{mi}-s{sid}",
+                        "kind": "unprinted-meter",
+                        "measure": mi,
+                        "staff": label,
+                        "detail": f"bar is {got} but the engraving says {sig}",
                     })
             if note_bearing > 1:
                 issues.append({
