@@ -1,0 +1,311 @@
+[
+  {
+    "measure_start": 1,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "position": "above",
+        "text": "Vir-ta ven-het-tä vie, mi-hin päät-ty-vi",
+        "parts": []
+      },
+      {
+        "staff_number": 1,
+        "position": "below",
+        "text": "Vir-ta ven-het-tä vie, ven-het-tä, ven-het-tä vie.",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "above",
+        "text": "Vir-ta ven-het-tä, ven-het-tä",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "below",
+        "text": "Vir-ta ven-het-tä",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 4,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "position": "above",
+        "text": "tie? Lyö kuo-hut pur-ren puu-ta ja tal-kaa.",
+        "parts": []
+      },
+      {
+        "staff_number": 1,
+        "position": "below",
+        "text": "Lyö kuo-hut pur-ren puu-ta ja tal-kaa.",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "above",
+        "text": "vie. Lyö kuo-hut pur-ren puu-ta ja tal-kaa.",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "below",
+        "text": "vie. Lyö kuo-hut pur-ren puu-ta ja tal-kaa. Mi-kä",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 8,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "Vir-va-liek-ki le-vo-ton, vir-va-liek-ki le-vo-ton ja",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "text": "ih-mi-nen on, mi-kä ih-mi-nen on?",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 11,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "hiek-ka he-ljä rii-te-lee-pi jal-kaa. Yk-si syn-tyy",
+        "parts": [
+          "T1",
+          "T2",
+          "B1",
+          "B2"
+        ]
+      }
+    ]
+  },
+  {
+    "measure_start": 15,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "rie-muun, ja toi-nen mur-hee-seen, ja kul-la-kin on",
+        "parts": [
+          "T1",
+          "T2",
+          "B1",
+          "B2"
+        ]
+      }
+    ]
+  },
+  {
+    "measure_start": 19,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "kel-lon-sa poh-jass' sy-dä-men. Kun se sei-sah-taa, niin",
+        "parts": [
+          "T1",
+          "T2",
+          "B1",
+          "B2"
+        ]
+      }
+    ]
+  },
+  {
+    "measure_start": 23,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "position": "above",
+        "text": "kuo-lon ai-ka al-kaa. Ei",
+        "parts": []
+      },
+      {
+        "staff_number": 1,
+        "position": "below",
+        "text": "kuo-lon ai-ka al-kaa. vir-ta ven-het-tä",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "above",
+        "text": "kuo-lon ai-ka al-kaa. Vir-ta ven-het-tä vie, mi-hin päät-ty-vi",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "below",
+        "text": "kuo-lon ai-ka al-kaa. vir-ta ven-het-tä",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 27,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "position": "above",
+        "text": "tie-dä si-tä ih-mi-sis-tä ken-kään.",
+        "parts": []
+      },
+      {
+        "staff_number": 1,
+        "position": "below",
+        "text": "vie, mi-hin päät-ty-vi tie? Me-ri, tai-vas ja",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "above",
+        "text": "tie, ei tie-dä si-tä ken-kään.",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "below",
+        "text": "vie, mi-hin päät-ty-vi tie?",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 31,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "maa, kaik-ki, kaik-ki ka-to-aa; kuin-ka säi-lyi-si sie-lu",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "text": "kaik-ki ka-to-aa,",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 35,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "ih-mi-sen-kään? Mut u-nes-sa niin ar-mas on a-ja-tel-la noin: Viel'",
+        "parts": [
+          "T1",
+          "T2",
+          "B1",
+          "B2"
+        ]
+      }
+    ]
+  },
+  {
+    "measure_start": 38,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "ker-ran ke-vät saa-puu ja koit-taa uu-si koi; ja huo-men-tuu-let tun-tu-reil-ta,",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "text": "Vai-ko val-het-ta, val-het-ta,",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 41,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "huo-men-tuu-let tun-tu-reil-ta hen-kää, ja huo-men-tuu-let tun-tu-reil-ta",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "above",
+        "text": "Vai-ko val-het-ta lie? Vai-ko",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "below",
+        "text": "val-het-ta lie? Vai-ko",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 44,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "position": "above",
+        "text": "huo-men-tuu-let tun-tu-reil-ta hen-kää.",
+        "parts": []
+      },
+      {
+        "staff_number": 1,
+        "position": "below",
+        "text": "hen-kää, ja huo-men-tuu-let hen-kää. Vir-ta ven-het-tä",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "text": "val-het-ta, val-het-ta, val-het-ta, val-het-ta lie?",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 47,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "position": "above",
+        "text": "Vir-ta ven-het-tä vie, vie, vir-ta ven-het-tä,",
+        "parts": []
+      },
+      {
+        "staff_number": 1,
+        "position": "below",
+        "text": "vie, vir-ta ven-het-tä vie, vie, vir-ta",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "above",
+        "text": "Vir-ta ven-het-tä vie, vir-ta ven-het-tä vie,",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "position": "below",
+        "text": "Vir-ta ven-het-tä vie, vie,",
+        "parts": []
+      }
+    ]
+  },
+  {
+    "measure_start": 50,
+    "lyrics": [
+      {
+        "staff_number": 1,
+        "text": "ven-het-tä, ven-het-tä, ven-het-tä, ven-het-tä vie.",
+        "parts": []
+      },
+      {
+        "staff_number": 2,
+        "text": "vir-ta ven-het-tä, ven-het-tä vie.",
+        "parts": []
+      }
+    ]
+  }
+]

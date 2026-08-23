@@ -1,0 +1,12 @@
+{
+  "name": "Virta Venhettä Vie",
+  "slug": "virta-venhetta-vie",
+  "stage": "clean",
+  "mode": "normal",
+  "sources": {
+    "xml": "Virta-venhetta-vie.xml",
+    "pdf": "Virta venhettä vie.pdf"
+  },
+  "created_at": 1787475359.460669,
+  "updated_at": 1787475359.462615
+}
