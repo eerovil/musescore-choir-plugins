@@ -124,6 +124,22 @@ staff, measure and chord, and says **why**. Applying is strict: an entry that no
 longer matches raises, so a pipeline change that moves the note fails the build
 instead of quietly leaving the defect in.
 
+**Every song gets this, not just the fixture.** `run_clean` applies
+`<song dir>/fixes.json` right after cleaning (`pipeline.apply_recorded_fixes`), so a
+recorded edit survives a re-clean. Before that it did not: cleaning rebuilds from the
+source, so a hand edit made afterwards vanished the next time anyone cleaned, and the
+same three page-verified rests were typed into Kaksi laulua krapulasta twice in one
+session. Replaying a recorded fix is not the pipeline guessing — the judgement was
+already made and written down. A fix that no longer matches fails the clean with the
+entry named, rather than being skipped.
+
+Three kinds: `undot` and `slur` name a chord, and `append` works on the end of a bar
+(`drop` takes off the rest a scan padded with in place of notes it lost). Appending
+rather than rewriting keeps what the tokens cannot carry — a triplet bracket, a tie —
+and every kind checks what the bar reads **now** (`from`) before touching it, tuplet
+brackets included. A note's spelling is derived from its pitch: the first fixes to
+carry one by hand got three of four wrong.
+
 ```bash
 fixtures/virta-venhetta-vie/reset.sh        # drop it into songs/ at the furthest stage
 fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clean
