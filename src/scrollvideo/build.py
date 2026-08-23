@@ -42,6 +42,11 @@ JUMP_MARKUP = ("Jump",)
 ALIGNMENT_TOLERANCE = 0.2
 ALIGNMENT_REQUIRED = 0.98
 
+# The name of the every-voice mix. Downstream (review, YouTube titles, delete) reads
+# the part out of the file name, so this is also what the combined video is called
+# there — the same name the old screen recorder used.
+COMBINED = "ALL"
+
 
 def _noop(_msg: str) -> None:
     pass
@@ -88,7 +93,7 @@ def alignment(events: Sequence, midi_path: str) -> float:
 def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]] = None,
                  height: int = 2160, width: int = 3840, fps: int = 60,
                  with_audio: bool = True, keep_silent: bool = False,
-                 emphasise: bool = False,
+                 emphasise: bool = False, combined: bool = True,
                  spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
                  smooth_seconds: float = SMOOTH_SECONDS,
                  basename: Optional[str] = None,
@@ -100,6 +105,10 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
     dominates the cost — 18s of a 21s render — so this is roughly 3x faster for a
     four-part score. `emphasise=True` instead re-renders per voice with that
     voice's notes lit brighter than the rest, which costs a full encode each.
+
+    `combined` also writes "<base> ALL", the same picture with every voice at equal
+    volume — what a singer listens to once they know their own line, and what the
+    old screen recorder always produced.
     """
     # Checked before the work, not at the encode: engraving, rasterising and the
     # audio mixes take minutes, and failing at the end with a bare FileNotFoundError
@@ -189,18 +198,27 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
             anchors = smooth_scroll(*anchors, fps=fps, seconds=smooth_seconds,
                                     page_width=layout.width)
 
+        # Each output is (file name, the voice its mix leans on). "ALL" leans on no
+        # voice: render_mix(focus=None) is already the even mix, and render() with no
+        # focus_staff already lights every voice equally. Asking for one part is asking
+        # for one video, so ALL only rides along when the whole score was asked for.
+        mixes = [(name, name) for name in wanted]
+        if combined and with_audio and len(wanted) > 1:
+            mixes.append((COMBINED, None))
+
         tracks: dict = {}
         if with_audio:
-            log(f"Rendering {len(wanted)} audio mix(es)")
-            with ThreadPoolExecutor(max_workers=min(4, len(wanted))) as pool:
-                futures = {name: pool.submit(audio_mod.render_mix, source, name,
+            log(f"Rendering {len(mixes)} audio mix(es)")
+            with ThreadPoolExecutor(max_workers=min(4, len(mixes))) as pool:
+                futures = {name: pool.submit(audio_mod.render_mix, source, focus,
                                              os.path.join(tmp, f"{name}.wav"))
-                           for name in wanted}
+                           for name, focus in mixes}
                 tracks = {name: future.result() for name, future in futures.items()}
 
         if emphasise:
-            for name in wanted:
-                staff = names.index(name) if len(layout.staff_tops) == len(names) else None
+            for name, focus in mixes:
+                staff = (names.index(focus)
+                         if focus and len(layout.staff_tops) == len(names) else None)
                 log(f"{name}: rendering video (emphasised)")
                 out = os.path.join(out_dir, f"{base} {name}.mp4")
                 render(strip, placed, anchors, out, px_per_unit=px_per_unit, width=width,
@@ -214,7 +232,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         shared = os.path.join(tmp, "shared.mp4")
         render(strip, placed, anchors, shared, px_per_unit=px_per_unit, width=width, fps=fps,
                coverage=coverage)
-        for name in wanted:
+        for name, _focus in mixes:
             out = os.path.join(out_dir, f"{base} {name}.mp4")
             if tracks.get(name):
                 mux(shared, tracks[name], out)

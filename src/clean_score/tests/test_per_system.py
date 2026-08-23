@@ -326,3 +326,87 @@ def test_prompted_answers_are_recorded_for_the_next_run():
     # A later run needs no prompting at all.
     again = clean_per_system(_load(), input_path=FIXTURE)
     assert again.parts == ["T1", "T2", "T3", "B"]
+
+
+# --------------------------------------------------------------------------- #
+# Divisi written as a chord in one voice
+# --------------------------------------------------------------------------- #
+
+def _stacked_score(pitches=("43", "50")):
+    """One measure, one staff, one voice, whose chord stacks two noteheads.
+
+    What an engraver writes when two singers hold a chord together — the shape that
+    used to hand both notes to the upper part and leave the lower one silent.
+    """
+    root = etree.Element("museScore")
+    score = etree.SubElement(root, "Score")
+    part = etree.SubElement(score, "Part")
+    etree.SubElement(part, "trackName").text = "B"
+    etree.SubElement(part, "Staff", id="1")
+    staff = etree.SubElement(score, "Staff", id="1")
+    measure = etree.SubElement(staff, "Measure")
+    voice = etree.SubElement(measure, "voice")
+    chord = etree.SubElement(voice, "Chord")
+    etree.SubElement(chord, "durationType").text = "whole"
+    for pitch in pitches:
+        etree.SubElement(etree.SubElement(chord, "Note"), "pitch").text = pitch
+    return root
+
+
+def _by_part(root):
+    return {p.find("trackName").text: s
+            for p, s in zip(root.findall(".//Part"), root.findall(".//Score/Staff"))}
+
+
+def test_two_parts_on_a_stacked_chord_take_one_notehead_each():
+    root = _stacked_score()
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "B1,B2"}})
+    staves = _by_part(root)
+    assert _pitches(staves["B1"], 0) == ["50"]   # upper notehead
+    assert _pitches(staves["B2"], 0) == ["43"]   # lower one, which used to be silence
+
+
+def test_where_the_stack_narrows_the_parts_sing_in_unison():
+    """Inside a stacked bar, a lone notehead is the two voices converging, not a rest."""
+    root = _stacked_score()
+    voice = root.find(".//Score/Staff/Measure/voice")
+    single = etree.SubElement(voice, "Chord")
+    etree.SubElement(single, "durationType").text = "whole"
+    etree.SubElement(etree.SubElement(single, "Note"), "pitch").text = "48"
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "B1,B2"}})
+    staves = _by_part(root)
+    assert _pitches(staves["B1"], 0) == ["50", "48"]
+    assert _pitches(staves["B2"], 0) == ["43", "48"]   # not a bar of silence
+
+
+def test_one_voice_with_no_stack_is_left_to_rest():
+    """One printed line in a bar of a two-voice staff: unison or a tacit voice is a
+    reading of the page, so the rebuild declines to guess and the second part rests."""
+    root = _stacked_score(pitches=("50",))
+    staff = root.find(".//Score/Staff")
+    lower = etree.SubElement(staff.find("Measure"), "voice")   # a real second voice
+    chord = etree.SubElement(lower, "Chord")
+    etree.SubElement(chord, "durationType").text = "whole"
+    etree.SubElement(etree.SubElement(chord, "Note"), "pitch").text = "43"
+    measure2 = etree.SubElement(staff, "Measure")              # ...absent in the next bar
+    single = etree.SubElement(etree.SubElement(measure2, "voice"), "Chord")
+    etree.SubElement(single, "durationType").text = "whole"
+    etree.SubElement(etree.SubElement(single, "Note"), "pitch").text = "48"
+
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "B1,B2"}})
+    staves = _by_part(root)
+    assert _pitches(staves["B1"], 1) == ["48"]
+    assert _pitches(staves["B2"], 1) == []        # a measure rest, as before the change
+
+
+def test_a_staff_with_its_own_second_voice_is_left_alone():
+    """Two real voices still copy verbatim: chords there are genuine double stops."""
+    root = _stacked_score()
+    voice2 = etree.SubElement(root.find(".//Measure"), "voice")
+    chord = etree.SubElement(voice2, "Chord")
+    etree.SubElement(chord, "durationType").text = "whole"
+    etree.SubElement(etree.SubElement(chord, "Note"), "pitch").text = "38"
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "B1,B2"}})
+    staves = _by_part(root)
+    assert _pitches(staves["B1"], 0) == ["43", "50"]   # voice 1, both noteheads
+    assert _pitches(staves["B2"], 0) == ["38"]         # voice 2
