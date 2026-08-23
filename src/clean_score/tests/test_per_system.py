@@ -13,7 +13,6 @@ import pytest
 from lxml import etree
 
 from src.clean_score.utils.per_system import (
-    JsonAnswerStore,
     clean_per_system,
     layout_for_file,
     save_answers,
@@ -21,7 +20,7 @@ from src.clean_score.utils.per_system import (
     has_answers,
     system_layout,
     system_ranges,
-    use_answer_store,
+    use_answer_file,
 )
 from src.clean_score.utils.per_system_prompt import prompt_for_answers
 
@@ -47,8 +46,8 @@ ANSWERS = {
 
 @pytest.fixture(autouse=True)
 def isolated_store(tmp_path):
-    """Never touch the repo's real answer store from a test."""
-    with use_answer_store(JsonAnswerStore(str(tmp_path / "answers.json"))):
+    """Never touch the repo's real answer file from a test."""
+    with use_answer_file(str(tmp_path / "answers.json")):
         yield
 
 
