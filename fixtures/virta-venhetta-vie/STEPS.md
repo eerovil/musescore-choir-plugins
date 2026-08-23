@@ -95,9 +95,38 @@ counts alone — in system 2 the score has 11 eligible notes under T1 where the
 printed page shows only "tie?", because both tenors converge on "Lyö kuo-hut pur-ren
 puu-ta ja tal-kaa." after the imitative entry. Adding that tail made T1 fit exactly
 (11 = 11), and the same reading resolved B1 (11) and B2 (13, taking the extra
-"Mi-kä" that is printed once, under the lower voice).
+"Mi-kä" that is printed once, under the lower voice). That left **12**.
 
-Second pass: **12 mismatches**, and this is what they are:
+The remaining twelve were all `too_few` — the score offering *more* eligible notes
+than the page shows syllables — and were first written off as OCR-dropped melisma
+slurs. Re-reading the scan at 400 dpi (`pdftoppm -r 400`, cropped per system; the
+whole-page renders used earlier are far too coarse to see a slur) showed that was
+mostly wrong. The dominant cause is **text sharing between staves**:
+
+> A voice whose own printed line covers only *part* of a system sings the other
+> staff's words for the rest of it.
+
+It is visible directly — in m38–40 the bass staff has two measures of notes with no
+text under them before "Vai-ko val-het-ta…" begins — and it checks out
+arithmetically every time:
+
+| | slots | reading | total |
+|---|---|---|---|
+| m31–34 B1 | 15 | the whole tenor line | 15 |
+| m38–40 B1 | 21 | the whole tenor line | 21 |
+| m38–40 B2 | 20 | tenor line to "koi;" (12) + its own "Vai-ko val-het-ta, val-het-ta," (8) | 20 |
+| m41–43 B1 | 18 | tenor line to "hen-kää," (10) + its own "Vai-ko val-het-ta lie? Vai-ko" (8) | 18 |
+
+All four land exactly, and the placed result reads correctly back out of the score:
+B1 sings the tenors' words through m41, then diverges at "hen-kää, Vai-ko"; B2
+diverges a measure earlier, at m39. Encoding that dropped the count from **12 to 8**,
+and the notes left without a syllable from **87 to 30**.
+
+The earlier reading was not applied widely enough: text sharing was assumed only for
+systems 4, 5, 6 and 10, where the bass has *no* printed text at all. The rule is
+more general — a bass line can share for two measures and then break away.
+
+### What is left, and why
 
 ```
 [too_few] m8-10   B1:  10 syllables for 15 slots     gap +5
@@ -105,43 +134,46 @@ Second pass: **12 mismatches**, and this is what they are:
 [too_few] m27-30  T1:  10 syllables for 15 slots     gap +5
 [too_few] m27-30  B1:   8 syllables for 13 slots     gap +5
 [too_few] m27-30  B2:   7 syllables for 12 slots     gap +5
-[too_few] m31-34  B1:   5 syllables for 15 slots     gap +10
-[too_few] m31-34  B2:   5 syllables for 18 slots     gap +13
-[too_few] m38-40  B1:   8 syllables for 21 slots     gap +13
-[too_few] m38-40  B2:   8 syllables for 20 slots     gap +12
-[too_few] m41-43  B1:   8 syllables for 18 slots     gap +10
+[too_few] m31-34  B2:  17 syllables for 18 slots     gap +1
 [too_few] m44-46  T1:  10 syllables for 13 slots     gap +3
 [too_few] m50-52  B1:   9 syllables for 14 slots     gap +5
 ```
 
-**Every one is `too_few`. Not a single `too_many`.** That one-sidedness is the whole
-finding. If the transcription were wrong — a misread word, a line on the wrong voice
-— the errors would fall on both sides. A score that consistently offers *more*
-eligible notes than the page shows syllables means the notes that should be melisma
-continuations are not marked as such: the OCR dropped the slurs.
+All eight are `too_few`, so nothing is silently dropped — every gap is notes left
+without a syllable, never text thrown away.
 
-That matches what the codebase already says about slurs — they connect different
-pitches, so unlike ties they cannot be pitch-checked and are never auto-mirrored;
-CLAUDE.md calls them "fixed by hand in the score". The gaps say *where*: the largest
-are in the bass under sustained figures (m31–34, m38–40, m41–43), which is exactly
-where a male-choir bass line holds long notes against a moving tenor.
+**Missing slurs are real, but they are the smaller cause.** The m8–10 crop shows a
+slur the OCR plainly lost, under the bass half-note approaching the 2/4, and its
+text is fully printed there so sharing cannot explain the gap. Those two lines are
+genuinely melisma damage.
 
-So the lyric mismatch report doubles as **the closest thing the toolkit has to a
-missing-slur detector** — worth remembering as a possible feature, and a good reason
-to keep this fixture around in its unfixed state.
+**m31–34 B2** is the one line where the two causes meet. Its 18 notes fall 5/3/5/5
+across the four measures: m31 matches its own printed line exactly (5) and m33–34
+match the tenor's (5/5), so it is sharing — but m32 has one note fewer than the
+tenor's four. The repeated "kaik-ki" was trimmed to fit rather than mangling the
+hyphenation across the barline, leaving one note unset. The likeliest truth is a
+melisma there.
+
+**m27-30, m44-46, m50-52** were not re-read at 400 dpi. They may be either cause.
 
 ## Step 4 — Where the AI stops
 
-The song stays at stage `fix` with 12 mismatches and 1 health issue, deliberately.
-Both remaining problems need the same thing: **someone looking at the score in
-MuseScore**, comparing it against the scan, and drawing in what the OCR lost.
+The song stays at stage `fix` with 8 lyric mismatches and 1 health issue.
 
 - **m26 (`len="9/8"`)** — the measure is over-full. Which note is spurious is a
   judgement about what the engraver wrote; a pass that guessed would corrupt scores.
-- **the dropped slurs** — an AI can say a slur is missing somewhere in m38–40 in the
-  bass, and roughly how many notes it should cover. It cannot say which notes without
-  reading the noteheads off the scan at a precision this render does not support.
+  It has not been read at 400 dpi yet, and probably could be.
+- **the dropped slurs** — at 400 dpi a slur *is* legible, so this is no longer
+  obviously beyond an AI; it needs the slur written into the .mscx as a spanner,
+  which is a different kind of edit from placing text.
+- **the three unexamined systems** — cheap to settle, just not done.
 
-Fix either one and re-run the health check / lyric import, and the counts should
-fall. That is the natural next experiment, and the fixture is set up so it costs
-nothing to try and nothing to undo.
+Fix any of these and re-run `build.py`; the counts should fall further. The fixture
+is set up so that costs nothing to try and nothing to undo.
+
+## A note on method
+
+The single biggest lever in this whole exercise was **resolution**. Reading the
+score as whole rendered pages produced a confident, tidy and substantially wrong
+conclusion; the same score cropped per system at 400 dpi overturned it in minutes.
+Any future AI step against a scanned score should crop and zoom first.

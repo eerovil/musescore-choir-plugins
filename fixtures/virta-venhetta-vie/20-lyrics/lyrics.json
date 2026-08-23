@@ -184,9 +184,16 @@
         "parts": []
       },
       {
-        "staff_number": 2,
-        "text": "kaik-ki ka-to-aa,",
-        "parts": []
+        "text": "maa, kaik-ki, kaik-ki ka-to-aa; kuin-ka säi-lyi-si sie-lu",
+        "parts": [
+          "B1"
+        ]
+      },
+      {
+        "text": "kaik-ki ka-to-aa, kaik-ki ka-to-aa; kuin-ka säi-lyi-si sie-lu",
+        "parts": [
+          "B2"
+        ]
       }
     ]
   },
@@ -214,9 +221,16 @@
         "parts": []
       },
       {
-        "staff_number": 2,
-        "text": "Vai-ko val-het-ta, val-het-ta,",
-        "parts": []
+        "text": "ker-ran ke-vät saa-puu ja koit-taa uu-si koi; ja huo-men-tuu-let tun-tu-reil-ta,",
+        "parts": [
+          "B1"
+        ]
+      },
+      {
+        "text": "ker-ran ke-vät saa-puu ja koit-taa uu-si koi; Vai-ko val-het-ta, val-het-ta,",
+        "parts": [
+          "B2"
+        ]
       }
     ]
   },
@@ -229,16 +243,16 @@
         "parts": []
       },
       {
-        "staff_number": 2,
-        "position": "above",
-        "text": "Vai-ko val-het-ta lie? Vai-ko",
-        "parts": []
+        "text": "huo-men-tuu-let tun-tu-reil-ta hen-kää, Vai-ko val-het-ta lie? Vai-ko",
+        "parts": [
+          "B1"
+        ]
       },
       {
-        "staff_number": 2,
-        "position": "below",
         "text": "val-het-ta lie? Vai-ko",
-        "parts": []
+        "parts": [
+          "B2"
+        ]
       }
     ]
   },
