@@ -557,17 +557,19 @@ to `entry["tstamp"]`.
   coefficient of variation goes 0.31 -> 0.11 and Venematka's 0.43 -> 0.16, costing
   about half a bar of on-screen music.
 - **The sounding note is repainted, not covered.** `geometry.note_coverage` renders
-  a second pass with the note glyphs in a marker colour nothing else uses (pure red
+  a second pass with the **noteheads** in a marker colour nothing else uses (pure red
   on a black-and-white engraving) and reads coverage back as red-minus-green: full
-  on the glyph, zero on staff lines and lyrics, and correctly *partial* on
-  antialiased edges. `video.render` then draws those pixels as blue-on-white
-  weighted by coverage, so the note itself goes MuseScore blue — stem, dots and
-  smooth outline included — instead of sitting under a coloured box. Two gotchas
-  are load-bearing: verovio ships a stylesheet (`#id path {stroke:currentColor}`)
-  that outranks presentation attributes, so marking must use an **inline style** or
-  stems stay black; and `NoteGeom.bbox` must span the stem, or a lit note keeps a
-  black tail. Beams are shared between notes and deliberately stay black — colouring
-  one per sounding note would make them flicker.
+  on the head, zero on staff lines and on the lyric that shares the note's group, and
+  correctly *partial* on antialiased edges. `video.render` draws those pixels as
+  blue-on-white weighted by coverage, so the head itself goes MuseScore blue with a
+  smooth outline instead of sitting under a coloured box.
+  **Heads only** — stems, flags and beams stay black. That is a deliberate choice
+  (colouring stems drags the eye up and down as they flip direction, and a beam is
+  shared between notes so it would flicker), and it keeps `NoteGeom.box()` down to
+  the head, which is less to composite per frame.
+  One gotcha is load-bearing: verovio ships a stylesheet
+  (`#id ellipse, #id path, ... {stroke:currentColor}`) that outranks presentation
+  attributes on the shapes it names, so marking uses an **inline style**.
 - `video.py` composites: the engraving is rasterised **once** and a frame is a crop
   of that strip plus the recolouring above. Nothing is
   re-engraved per frame — a four-voice minute of music costs about a minute of CPU
@@ -657,9 +659,9 @@ without it, like the browser tests:
   at the end being closed rather than dropped.
 - `test_video.py` — highlights land on the right staff, and are present while a note
   sounds and gone after it stops (decoded back out of the rendered mp4).
-- `test_geometry.py` also pins the highlight: the note box reaches the stem, marking
-  paints the glyph via an inline style but leaves the lyric alone, and coverage marks
-  strictly less than all the ink. `test_video.py` pins that colour lands only where
+- `test_geometry.py` also pins the highlight: the note box is the head and stops short
+  of the stem, marking paints the head via an inline style but leaves the stem and the
+  lyric alone, and coverage marks strictly less than all the ink. `test_video.py` pins that colour lands only where
   the glyph is — a leak outside it means someone reintroduced the box.
 - `test_spacing.py` — rest slots per measure follow its length (a chord does not
   lengthen one), the subdivision scales them, the singing parts come back untouched,

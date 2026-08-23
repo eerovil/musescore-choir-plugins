@@ -13,7 +13,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Tuple
 
 import cairosvg
 import numpy as np
@@ -43,14 +43,9 @@ class NoteGeom:
     y: float
     staff_top: float      # top staff line of the staff it belongs to (its band id)
     staff_spacing: float  # distance between two staff lines
-    # The whole drawn note - notehead, stem, dots, flag - not just the head.
-    # Highlighting recolours what is inside this box, so it has to contain the
-    # stem or a lit note keeps a black tail.
-    bbox: Optional[Tuple[float, float, float, float]] = None
 
     def box(self) -> Tuple[float, float, float, float]:
-        if self.bbox:
-            return self.bbox
+        """The notehead, which is what highlighting recolours."""
         sp = self.staff_spacing
         return (self.x - 0.2 * sp, self.y - 0.75 * sp,
                 self.x + 1.4 * sp, self.y + 0.75 * sp)
@@ -139,41 +134,10 @@ def parse_layout(svg_text: str) -> Layout:
             t = _TRANSLATE.match(use.get("transform", "") or "")
             if not t:
                 continue
-            nx, ny = float(t.group(1)) + odx, float(t.group(2)) + ody
-            notes[note.get("id")] = NoteGeom(nx, ny, top, spacing,
-                                             _glyph_box(note, nx, ny, spacing, odx, ody))
+            notes[note.get("id")] = NoteGeom(float(t.group(1)) + odx,
+                                             float(t.group(2)) + ody, top, spacing)
 
     return Layout(vb[2], vb[3], notes, sorted(staff_tops))
-
-
-def _glyph_box(note: etree._Element, nx: float, ny: float, spacing: float,
-               odx: float, ody: float) -> Tuple[float, float, float, float]:
-    """Box around everything this note draws, in units."""
-    x0, y0 = nx - 0.2 * spacing, ny - 0.75 * spacing
-    x1, y1 = nx + 1.4 * spacing, ny + 0.75 * spacing
-
-    for stem in note.findall(f".//{_tag('g')}[@class='stem']/{_tag('path')}"):
-        d = _STEM.match(stem.get("d", "") or "")
-        if d:
-            sx = float(d.group(1)) + odx
-            top, bottom = sorted((float(d.group(2)) + ody, float(d.group(4)) + ody))
-            x0, x1 = min(x0, sx - 0.15 * spacing), max(x1, sx + 0.15 * spacing)
-            y0, y1 = min(y0, top), max(y1, bottom)
-
-    for dot in note.findall(f".//{_tag('g')}[@class='dots']/{_tag('ellipse')}"):
-        cx, cy = float(dot.get("cx", 0)) + odx, float(dot.get("cy", 0)) + ody
-        rx, ry = float(dot.get("rx", 0)), float(dot.get("ry", 0))
-        x0, x1 = min(x0, cx - rx), max(x1, cx + rx)
-        y0, y1 = min(y0, cy - ry), max(y1, cy + ry)
-
-    for flag in note.findall(f".//{_tag('g')}[@class='flag']/{_tag('use')}"):
-        f = _TRANSLATE.match(flag.get("transform", "") or "")
-        if f:
-            fx, fy = float(f.group(1)) + odx, float(f.group(2)) + ody
-            x0, x1 = min(x0, fx - 0.2 * spacing), max(x1, fx + 1.6 * spacing)
-            y0, y1 = min(y0, fy - 1.2 * spacing), max(y1, fy + 1.2 * spacing)
-
-    return (x0, y0, x1, y1)
 
 
 def _tiles(svg_text: str, layout: Layout, height_px: int) -> Iterator[Tuple[int, int, np.ndarray]]:
@@ -216,32 +180,29 @@ def note_coverage(svg_text: str, layout: Layout, height_px: int) -> np.ndarray:
     return coverage
 
 
-# Verovio ships a stylesheet ("#id ellipse, #id path, ... {stroke:currentColor}")
-# which outranks presentation attributes, so marking has to be done with an inline
-# style or stems come back black.
+# An inline style, not fill/stroke attributes: verovio ships a stylesheet
+# ("#id ellipse, #id path, ... {stroke:currentColor}") that outranks presentation
+# attributes on the shapes it names.
 _MARK_STYLE = f"fill:{MARKER};stroke:{MARKER}"
-_PLAIN_STYLE = "fill:#000000;stroke:#000000"
 _DRAWN = ("use", "ellipse", "polygon", "polyline", "rect", "path")
 
 
 def _mark_notes(svg_text: str) -> str:
-    """The same SVG with every note glyph painted in the marker colour.
+    """The same SVG with every **notehead** painted in the marker colour.
 
-    Lyrics live inside the note group but are not part of the note, so they are
-    put back to black; beams are shared between notes and stay black too, since
-    colouring one per sounding note would make them flicker.
+    Heads only. Stems, flags and beams stay black: the head alone reads as the
+    note being sung, and colouring stems drags the eye up and down the staff as
+    they flip direction. Lyrics live inside the note group and are likewise left
+    alone.
     """
     root = etree.fromstring(svg_text.encode())
     for note in root.iter(_tag("g")):
         if note.get("class") != "note":
             continue
-        for part in note.iter():
-            if etree.QName(part).localname in _DRAWN:
-                part.set("style", _MARK_STYLE)
-        for verse in note.findall(f".//{_tag('g')}[@class='verse']"):
-            for part in verse.iter():
-                if etree.QName(part).localname in _DRAWN + ("text", "tspan"):
-                    part.set("style", _PLAIN_STYLE)
+        for head in note.findall(f".//{_tag('g')}[@class='notehead']"):
+            for part in head.iter():
+                if etree.QName(part).localname in _DRAWN:
+                    part.set("style", _MARK_STYLE)
     return etree.tostring(root, encoding="unicode")
 
 

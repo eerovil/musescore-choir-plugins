@@ -95,29 +95,25 @@ def test_tiled_and_single_shot_rasterisation_agree(fermata_musicxml, monkeypatch
     assert differing < 0.001 * tiled.shape[0] * tiled.shape[1]
 
 
-def test_the_note_box_covers_the_stem_not_just_the_head():
-    """Highlighting recolours what is inside this box; without the stem a lit
-    note keeps a black tail."""
+def test_the_note_box_is_the_head_and_stops_short_of_the_stem():
+    """Only the head is recoloured, so the box need not chase the stem."""
     note = parse_layout(MINI_SVG).notes["n1"]
     x0, y0, x1, y1 = note.box()
-    assert y0 <= -320 + 300, "box should reach the top of the stem"
-    assert y1 >= 100 + 300 - 1
-    assert x0 <= 200 + 500 and x1 >= 310 + 500
+    assert y0 > -320 + 300, "box should not reach up the stem"
+    assert y0 < 100 + 300 < y1, "box should contain the notehead"
 
 
-def test_marking_paints_the_glyph_but_not_the_lyric():
-    """Lyrics sit inside the note group but are not part of the note."""
+def test_marking_paints_the_notehead_only():
+    """Heads turn blue; stems, and the lyric that lives in the same group, do not."""
     from src.scrollvideo.geometry import MARKER, _mark_notes
-    marked = _mark_notes(MINI_SVG)
-    root = etree.fromstring(marked.encode())
+    root = etree.fromstring(_mark_notes(MINI_SVG).encode())
     ns = {"s": "http://www.w3.org/2000/svg"}
     head = root.find(".//s:g[@class='notehead']/s:use", ns)
     stem = root.find(".//s:g[@class='stem']/s:path", ns)
     lyric = root.find(".//s:g[@class='verse']/s:text", ns)
-    assert MARKER.lower() in head.get("style").lower()
-    # verovio's own stylesheet outranks presentation attributes, so this has to
-    # be an inline style or stems come back black
-    assert "style" in stem.attrib and MARKER.lower() in stem.get("style").lower()
+    # an inline style, because verovio's stylesheet outranks fill/stroke attributes
+    assert MARKER.lower() in (head.get("style") or "").lower()
+    assert MARKER.lower() not in (stem.get("style") or "").lower()
     assert MARKER.lower() not in (lyric.get("style") or "").lower()
 
 
