@@ -22,9 +22,10 @@ from lxml import etree
 
 from . import audio as audio_mod
 from . import score as score_mod
+from . import spacing as spacing_mod
 from .engrave import engrave
 from .geometry import rasterise
-from .timing import TempoMap, note_events, scroll_anchors
+from .timing import SMOOTH_SECONDS, TempoMap, note_events, scroll_anchors, smooth_scroll
 from .video import mux, place, render
 
 Logger = Callable[[str], None]
@@ -87,7 +88,10 @@ def alignment(events: Sequence, midi_path: str) -> float:
 def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]] = None,
                  height: int = 2160, width: int = 3840, fps: int = 60,
                  with_audio: bool = True, keep_silent: bool = False,
-                 emphasise: bool = False, log: Logger = _noop) -> List[str]:
+                 emphasise: bool = False,
+                 spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
+                 smooth_seconds: float = SMOOTH_SECONDS,
+                 log: Logger = _noop) -> List[str]:
     """Render a scrolling video per voice. Returns the paths written.
 
     The picture is the same for every voice, so by default it is encoded once and
@@ -127,11 +131,21 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         musicxml = audio_mod.run_musescore(source, os.path.join(tmp, "score.musicxml"))
         midi = audio_mod.run_musescore(source, os.path.join(tmp, "score.mid"))
 
+        # A rest-only staff makes measure width follow beats rather than note
+        # density; it is engraved and then cropped off the bottom.
+        spaced = None
+        if spacer_per_quarter:
+            spaced = spacing_mod.add_spacer_staff(
+                musicxml, os.path.join(tmp, "spaced.musicxml"), spacer_per_quarter)
+            if spaced is None:
+                log("Could not build the spacer staff; engraving as-is")
+
         log("Engraving one continuous system (verovio)")
-        eng = engrave(musicxml)
+        eng = engrave(spaced or musicxml)
         layout = eng.layout
-        if len(layout.staff_tops) != len(names):
-            log(f"Warning: {len(layout.staff_tops)} engraved staves vs {len(names)} parts; "
+        singing_staves = len(layout.staff_tops) - (1 if spaced else 0)
+        if singing_staves != len(names):
+            log(f"Warning: {singing_staves} engraved staves vs {len(names)} parts; "
                 "highlighting every voice equally.")
 
         tempo = TempoMap.from_midi(midi)
@@ -150,10 +164,19 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         if repeated:
             log(f"{repeated} notes are played more than once (repeats followed)")
 
-        px_per_unit = height / layout.height
+        # Rasterise tall enough that the picture still fills `height` once the
+        # spacer staff at the bottom is cropped away.
+        visible = spacing_mod.visible_height(layout) if spaced else layout.height
+        strip_height = int(round(height * layout.height / visible))
+        px_per_unit = strip_height / layout.height
+
         log("Rasterising the strip")
-        strip = rasterise(eng.svg, layout, height)
+        strip = rasterise(eng.svg, layout, strip_height)[:height]
         placed = place(events, layout, px_per_unit)
+
+        if smooth_seconds:
+            anchors = smooth_scroll(*anchors, fps=fps, seconds=smooth_seconds,
+                                    page_width=layout.width)
 
         tracks: dict = {}
         if with_audio:

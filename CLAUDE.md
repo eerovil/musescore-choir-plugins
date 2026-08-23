@@ -112,9 +112,9 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 
 ```bash
 .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
-# 135 passed, 4 skipped  — a fresh checkout (browser tests skip; so do the
+# 149 passed, 4 skipped  — a fresh checkout (browser tests skip; so do the
 #                          scrollvideo sync tests without a MuseScore CLI)
-# 139 passed             — with Playwright installed and MUSESCORE_CLI_PATH set
+# 153 passed             — with Playwright installed and MUSESCORE_CLI_PATH set
 ```
 
 The two extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
@@ -512,6 +512,21 @@ the MIDI's own note-ons — every highlight lands within 20ms of a note MuseScor
 actually plays. This is what `tests/test_sync.py` pins; don't "simplify" it back
 to `entry["tstamp"]`.
 
+- `spacing.py` makes **measure width follow beats instead of note density**. Verovio
+  spaces a measure by what is in it, so a bar of sixteenths under lyrics comes out
+  1.9x wider *per beat* than a bar of half notes — and since the scroll follows the
+  notes, the video speeds up and slows down with the engraving. The fix is the one
+  `add_rest_track.qml` already used in MuseScore: a staff of evenly spaced rests, so
+  every measure holds the same number of slots per beat and verovio's per-slot
+  minimum sets the width. It is injected into the **MusicXML** (after MuseScore has
+  produced it, so it never reaches the MIDI or the audio) and cropped back off the
+  bottom of the strip by `visible_height` — `build_videos` rasterises proportionally
+  taller so the singing staves still fill the frame. The crop margin is deliberately
+  tiny: the last staff's lyrics sit in the gap above the spacer, and a generous
+  margin clips them. Default is eighth rests (`--spacer 2`): sixteenths are more even
+  (1.21x) but show 3.5 bars per screen instead of 4.6. Verovio's own spacing options
+  cannot do this job — `spacingNonLinear: 1.0` gets the spread to 1.04x but makes the
+  page 7x wider, leaving less than one bar on screen.
 - `score.py` is the only edit made to the score before engraving: parts with nothing
   to sing (percussion, or a staff of only rests — the click track
   `add_rest_track.qml` adds) are dropped, along with the staves they own. They would
@@ -530,6 +545,17 @@ to `entry["tstamp"]`.
   because cairo caps surface dimensions at 32767px and a 3-minute score is wider;
   tile edges are cut on the **output pixel grid**, not by converting a fixed unit
   width, so seams don't accumulate rounding drift.
+- `timing.smooth_scroll` finishes the job the spacer starts: it averages the scroll
+  **speed** over a couple of seconds and integrates it back into positions. Averaging
+  positions directly would flatten the curve at both ends — a perfectly even scroll
+  would ramp up at the start and down at the finish. Repeats stay sharp: a jump back
+  is real motion, and jumps are found in the anchors *before* resampling smears them
+  across frames, then each stretch is smoothed on its own. Scrolling at a dead
+  constant speed is not an option: measured, it puts the sung note up to 0.45 screens
+  from where it belongs, where smoothing keeps it inside 0.02.
+  Measured end to end (spacer + 2s smoothing): Käyttäytymisohjeita's speed
+  coefficient of variation goes 0.31 -> 0.11 and Venematka's 0.43 -> 0.16, costing
+  about half a bar of on-screen music.
 - `video.py` composites: the engraving is rasterised **once** and a frame is a crop
   of that strip plus an alpha blend over each sounding note's rectangle. Nothing is
   re-engraved per frame — a four-voice minute of music costs about a minute of CPU
@@ -619,6 +645,12 @@ without it, like the browser tests:
   at the end being closed rather than dropped.
 - `test_video.py` — highlights land on the right staff, and are present while a note
   sounds and gone after it stops (decoded back out of the rendered mp4).
+- `test_spacing.py` — rest slots per measure follow its length (a chord does not
+  lengthen one), the subdivision scales them, the singing parts come back untouched,
+  an impossible subdivision gives up rather than guessing, and where the crop falls.
+- `test_timing.py` also pins the smoothing: an already-even scroll is left exactly
+  even (the edge-ramp bug), uneven spacing is evened out, and a repeat stays one
+  clean jump rather than three smeared ones.
 - `test_score.py` — which parts count as silent, that dropping one takes its staff
   with it, and that the original file is never modified.
 - `test_audio.py` / `test_build.py` — the volume edit (replaced, not duplicated;

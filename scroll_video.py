@@ -37,6 +37,12 @@ def main() -> None:
     parser.add_argument("--no-audio", action="store_true", help="video only, no audio mix")
     parser.add_argument("--keep-silent", action="store_true",
                         help="keep click/percussion staves (dropped by default)")
+    parser.add_argument("--spacer", type=int, default=2, choices=[0, 1, 2, 4, 8],
+                        metavar="N",
+                        help="rests per quarter in the hidden spacing staff, which makes "
+                             "measure width follow beats (0 disables; default 2 = eighths)")
+    parser.add_argument("--smooth", type=float, default=2.0, metavar="SECONDS",
+                        help="seconds to average the scroll speed over (0 disables)")
     parser.add_argument("--emphasise", action="store_true",
                         help="light each voice's own notes brighter; re-encodes per voice (slow)")
     args = parser.parse_args()
@@ -47,6 +53,7 @@ def main() -> None:
         written = build_videos(args.score, out_dir, parts=args.parts, height=args.height,
                                width=args.width, fps=args.fps, with_audio=not args.no_audio,
                                keep_silent=args.keep_silent, emphasise=args.emphasise,
+                               spacer_per_quarter=args.spacer, smooth_seconds=args.smooth,
                                log=lambda m: print(m, flush=True))
     except NotImplementedError as exc:
         sys.exit(f"Unsupported score: {exc}")

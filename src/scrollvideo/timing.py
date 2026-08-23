@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import List, Mapping, Sequence, Tuple
 
 import mido
+import numpy as np
 
 DEFAULT_TEMPO = 500_000  # us per quarter note = 120 bpm
 
@@ -96,6 +97,74 @@ def note_events(timemap: Sequence[dict], tempo: TempoMap,
 
     events.sort(key=lambda e: (e.on, e.off))
     return events
+
+
+# How long a window the scroll speed is averaged over. Long enough to even out
+# per-measure spacing, short enough that the sung note stays put on screen.
+SMOOTH_SECONDS = 2.0
+# A backward jump this large is a repeat returning to an earlier part of the page,
+# not spacing noise; smoothing across it would slide the scroll through the jump.
+JUMP_FRACTION = 0.25
+
+
+def smooth_scroll(times: Sequence[float], xs: Sequence[float], *, fps: int,
+                  seconds: float = SMOOTH_SECONDS,
+                  page_width: float = 0.0) -> Tuple[List[float], List[float]]:
+    """Even out the scroll speed without letting the sung note wander off station.
+
+    The engraving decides where a note sits, so following note positions exactly
+    makes the scroll speed track how densely each measure happens to be engraved.
+    Averaging over a couple of seconds removes that jitter while keeping the curve
+    anchored to the music: on the Käyttäytymisohjeita fixture it takes the speed's
+    coefficient of variation from 0.30 to 0.15 while the sung note moves less than
+    2% of a screen. Scrolling at a dead constant speed would instead drift by
+    nearly half a screen, which is why this smooths rather than straightens.
+
+    It is the **speed** that is averaged, and the result integrated back into
+    positions. Averaging positions directly would flatten the curve at both ends
+    (the pad has no slope to continue), so a perfectly even scroll would come out
+    ramping up at the start and down at the finish.
+
+    Repeats stay sharp: a jump back to a repeated section is real motion, and each
+    stretch between jumps is smoothed on its own. Jumps are found in the anchors,
+    before resampling smears them across frames.
+    """
+    if len(times) < 2 or seconds <= 0:
+        return list(times), list(xs)
+
+    at = np.asarray(times, dtype=float)
+    ax = np.asarray(xs, dtype=float)
+    threshold = JUMP_FRACTION * page_width if page_width > 0 else float("inf")
+    starts = [0] + [i + 1 for i, step in enumerate(np.diff(ax)) if step < -threshold]
+    bounds = starts + [len(at)]
+
+    width = max(1, int(round(seconds * fps)) | 1)
+    out_times: List[float] = []
+    out_xs: List[float] = []
+
+    for first, last in zip(bounds, bounds[1:]):
+        seg_t, seg_x = at[first:last], ax[first:last]
+        if len(seg_t) < 2:
+            out_times.extend(seg_t.tolist())
+            out_xs.extend(seg_x.tolist())
+            continue
+
+        grid = np.arange(seg_t[0], seg_t[-1] + 0.5 / fps, 1.0 / fps)
+        curve = np.interp(grid, seg_t, seg_x)
+        if len(curve) > width + 1:
+            speed = np.diff(curve)
+            padded = np.pad(speed, width // 2, mode="edge")
+            eased = np.convolve(padded, np.ones(width) / width, mode="valid")
+            travelled = np.cumsum(eased)
+            # Averaging does not conserve the total exactly; rescale so the segment
+            # still ends where the music does, which keeps the notes in step.
+            if travelled[-1] > 0:
+                travelled *= (curve[-1] - curve[0]) / travelled[-1]
+            curve = np.concatenate([[curve[0]], curve[0] + travelled])
+        out_times.extend(grid.tolist())
+        out_xs.extend(curve.tolist())
+
+    return out_times, out_xs
 
 
 def scroll_anchors(timemap: Sequence[dict], tempo: TempoMap, layout,

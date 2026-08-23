@@ -166,6 +166,14 @@ for all four 4K videos (25 MB each), or about 50 seconds at `--height 1080 --fps
 `--emphasise` instead lights each voice's own notes brighter than the rest, which
 costs a full re-encode per voice.
 
+Measure width is forced to follow the number of beats rather than how many notes
+happen to be in the bar, so the scroll runs at a steady speed instead of surging
+through sparse bars and crawling through busy ones. This replaces what the
+`add_rest_track.qml` click staff used to do: a hidden staff of evenly spaced rests
+is engraved and then cropped off the picture. `--spacer 4` uses sixteenths (more
+even, less music on screen), `--spacer 0` turns it off. `--smooth SECONDS` sets how
+long the scroll speed is averaged over (default 2; 0 disables).
+
 The render is deterministic: same score in, byte-identical videos out.
 
 How it fits together:

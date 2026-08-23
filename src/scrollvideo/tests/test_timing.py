@@ -77,3 +77,52 @@ def test_a_repeated_note_is_reported_against_the_note_on_the_page():
                          tempo, drawn_id={"a": "a", "a-rend2": "a"})
     assert [e.note_id for e in events] == ["a", "a"]
     assert [e.on for e in events] == [0.0, 1.0]
+
+
+def _speeds(times, xs, fps):
+    import numpy as np
+    grid = np.asarray(times)
+    return np.diff(np.asarray(xs)) / np.diff(grid)
+
+
+def test_smoothing_leaves_an_already_even_scroll_alone():
+    import numpy as np
+    from src.scrollvideo.timing import smooth_scroll
+    times = [i / 10 for i in range(101)]
+    xs = [t * 500 for t in times]
+    out_t, out_x = smooth_scroll(times, xs, fps=10, seconds=2.0)
+    assert np.allclose(np.diff(out_x), np.diff(out_x)[0], rtol=1e-6)
+
+
+def test_smoothing_evens_out_uneven_spacing():
+    """A scroll that lurches between wide and narrow measures comes out steadier."""
+    import numpy as np
+    from src.scrollvideo.timing import smooth_scroll
+    fps = 30
+    times, xs, x = [], [], 0.0
+    for i in range(40):                       # alternate slow and fast half-seconds
+        times.append(i * 0.5)
+        xs.append(x)
+        x += 100 if i % 2 else 900
+    before = _speeds(times, xs, fps)
+    _, smoothed = smooth_scroll(times, xs, fps=fps, seconds=2.0)
+    after = np.diff(smoothed) * fps
+    assert after.std() / after.mean() < before.std() / before.mean() / 3
+
+
+def test_smoothing_never_scrolls_backwards_through_a_repeat():
+    """The jump back to a repeated section is real motion, not jitter to average."""
+    import numpy as np
+    from src.scrollvideo.timing import smooth_scroll
+    fps = 30
+    times = [i * 0.1 for i in range(60)]
+    xs = [i * 100.0 for i in range(30)] + [i * 100.0 for i in range(30)]   # jumps back
+    _, smoothed = smooth_scroll(times, xs, fps=fps, seconds=1.0, page_width=3000.0)
+    drops = [d for d in np.diff(smoothed) if d < -10]
+    assert len(drops) == 1, "the repeat jump should stay a single clean jump"
+
+
+def test_smoothing_can_be_turned_off():
+    from src.scrollvideo.timing import smooth_scroll
+    times, xs = [0.0, 1.0, 2.0], [0.0, 10.0, 100.0]
+    assert smooth_scroll(times, xs, fps=30, seconds=0) == (times, xs)
