@@ -283,8 +283,15 @@ def ensure_extra_rest_staff(score: etree._Element, n_main_parts: int) -> None:
                     voice.append(_make_eighth_rest())
 
 
-def rename_parts_in_score(root: etree._Element, part_string: str) -> None:
-    """Rename Part and Instrument names in the score (in-place). Then ensure extra rest staff exists."""
+def rename_parts_in_score(root: etree._Element, part_string: str,
+                          click: bool = False) -> None:
+    """Rename Part and Instrument names in the score, in place.
+
+    `click` also adds the spacer staff of rests the recording stage uses for even
+    measure spacing. It is off by default: renaming is now part of cleaning any
+    score, and a staff that only matters when producing a video has no business
+    appearing in one that is being reviewed.
+    """
     score = root if root.tag == "Score" else root.find(".//Score")
     if score is None:
         raise ValueError("No <Score> found in document")
@@ -310,7 +317,8 @@ def rename_parts_in_score(root: etree._Element, part_string: str) -> None:
             tn = instr.find("trackName")
             if tn is not None:
                 tn.text = full_name
-    ensure_extra_rest_staff(score, len(names))
+    if click:
+        ensure_extra_rest_staff(score, len(names))
 
 
 def main() -> None:
@@ -323,12 +331,14 @@ def main() -> None:
         help="Part letters: S=Soprano, A=Alto, T=Tenor, B=Bass, M=Men, W=Women (e.g. SSAA or SSSSAA)",
     )
     parser.add_argument("-o", "--output", help="Output .mscx file (default: overwrite input)")
+    parser.add_argument("--click", action="store_true",
+                        help="also add the click/spacer staff the recording stage uses")
     args = parser.parse_args()
 
     with open(args.mscx, "r", encoding="utf-8") as f:
         root = etree.fromstring(f.read().encode("utf-8"))
 
-    rename_parts_in_score(root, args.part_string)
+    rename_parts_in_score(root, args.part_string, click=args.click)
 
     out_path = args.output or args.mscx
     with open(out_path, "wb") as f:

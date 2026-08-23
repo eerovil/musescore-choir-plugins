@@ -180,6 +180,7 @@ def main(
     add_staffs: Optional[str] = None,
     interactive: bool = True,
     per_system: bool = False,
+    voicing: Optional[str] = None,
 ) -> None:
     """
     Converts a MuseScore XML file from a single-staff, two-voice structure
@@ -392,7 +393,7 @@ def main(
 
     add_missing_ties(root)
 
-    part_types = detect_part_types(root)
+    part_types = detect_part_types(root, voicing)
     # Apply part name
     for part in root.findall(".//Part"):
         staff: Optional[etree._Element] = part.find(".//Staff")
@@ -426,6 +427,18 @@ def main(
                     transposing_clef_type = clef.find(".//transposingClefType")
                     if transposing_clef_type is not None:
                         transposing_clef_type.text = clef_type
+            # A treble staff that turns out to be a tenor part was read an octave
+            # high: the notes sit where an 8vb clef puts them but were taken at
+            # face value. Marking the clef alone would leave the practice track
+            # singing the line an octave above the men, so move the pitches too.
+            # tpc is octave-independent and stays as it is.
+            if part_types[staff_id].get("octave_down"):
+                moved = 0
+                for pitch in staff.iter("pitch"):
+                    if pitch.text and pitch.text.strip().isdigit():
+                        pitch.text = str(int(pitch.text.strip()) - 12)
+                        moved += 1
+                logger.debug(f"Moved staff {staff_id} down an octave ({moved} notes)")
 
     # delete all bracket
     delete_all_elements_by_selector(root, ".//bracket")

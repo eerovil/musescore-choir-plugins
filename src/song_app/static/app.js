@@ -87,14 +87,24 @@ async function renderLibrary() {
 function newSongDialog() {
   const name = el("input", { placeholder: "Song name, e.g. Laulun aika" });
   const per = el("input", { type: "checkbox" });
+  // Which voices sing it. Asked here because nothing in the file can settle it:
+  // a male-choir score is written in treble sounding an octave down and editions
+  // routinely leave the 8 off the clef, so its tenor line reads as a soprano one.
+  const voicing = el("select", {},
+    el("option", { value: "" }, "Choose…"),
+    el("option", { value: "men" }, "Men (TTBB)"),
+    el("option", { value: "women" }, "Women (SSAA)"),
+    el("option", { value: "mixed" }, "Mixed (SATB)"));
   const xml = el("input", { type: "file", accept: ".mscx,.mscz,.musicxml,.xml" });
   const pdf = el("input", { type: "file", accept: ".pdf" });
   const status = el("p", { className: "hint" });
   const create = el("button", { className: "primary", onclick: async () => {
     if (!name.value.trim() || !xml.files[0]) { status.textContent = "Name and a score file are required."; return; }
+    if (!voicing.value) { status.textContent = "Choose who sings it — it decides the part names."; return; }
     const fd = new FormData();
     fd.append("name", name.value.trim());
     fd.append("per_system", per.checked);
+    fd.append("voicing", voicing.value);
     fd.append("xml", xml.files[0]);
     if (pdf.files[0]) fd.append("pdf", pdf.files[0]);
     status.textContent = "Creating…";
@@ -109,6 +119,7 @@ function newSongDialog() {
     el("label", {}, "Name"), name,
     el("label", {}, "Score file (.mscx / .mscz / .musicxml / .xml)"), xml,
     el("label", {}, "Score PDF (recommended — used for lyrics)"), pdf,
+    el("label", {}, "Who sings it"), voicing,
     el("div", { className: "row" }, per, el("span", {}, "Staves change parts per system (per-system mode)")),
     el("div", { className: "row" }, create, el("button", { onclick: renderLibrary }, "Cancel")),
     status));

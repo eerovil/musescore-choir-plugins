@@ -9,13 +9,87 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 
-def detect_part_types(root: etree._Element) -> None:
+# What each voicing may contain, high to low.
+VOICINGS = {
+    "men": ("Tenor", "Bass"),
+    "women": ("Soprano", "Alto"),
+    "mixed": ("Soprano", "Alto", "Tenor", "Bass"),
+}
+
+
+def _forced_part_types(root: etree._Element, voicing: str) -> dict:
+    """Name the staves from the voicing instead of guessing from pitch.
+
+    Pitch cannot settle this on its own. A male-choir score is written in treble
+    clef sounding an octave down, and editions routinely leave the 8 off the clef
+    -- the reference case reads as 66-82, squarely soprano, and is a tenor line.
+    Told it is a men's score, the answer is forced: every G staff is a tenor part,
+    and it is marked G8vb whether the engraver marked it or not.
+    """
+    treble, bass = [], []
+    for staff in root.findall(".//Score/Staff"):
+        # A staff with no notes is not a voice -- the recording spacer is one, and
+        # counting it would shift the split and hand a name to a click track.
+        if staff.find(".//Note") is None:
+            continue
+        clef = staff.find(".//Clef/concertClefType")
+        kind = (clef.text.strip() if clef is not None and clef.text else "G")
+        (bass if kind.startswith("F") else treble).append((int(staff.get("id", "0")), kind))
+
+    def split(staves, upper, lower):
+        """Upper half takes the higher name; staves are already in musical order."""
+        half = (len(staves) + 1) // 2
+        return {sid: (upper if i < half else lower, kind)
+                for i, (sid, kind) in enumerate(staves)}
+
+    named = {}
+    if voicing == "men":
+        named.update({sid: ("Tenor", kind) for sid, kind in treble})
+        named.update({sid: ("Bass", kind) for sid, kind in bass})
+    elif voicing == "women":
+        named.update(split(treble, "Soprano", "Alto"))
+        named.update({sid: ("Alto", kind) for sid, kind in bass})
+    else:  # mixed
+        named.update(split(treble, "Soprano", "Alto"))
+        named.update(split(bass, "Tenor", "Bass"))
+
+    info = {}
+    for staff in root.findall(".//Score/Staff"):
+        sid = int(staff.get("id", "0"))
+        if sid not in named:
+            continue
+        part_name, was = named[sid]
+        pitches = [int(p.text) for p in staff.iter("pitch") if p.text]
+        clef_type = "G8vb" if (part_name == "Tenor" and not was.startswith("F")) else was
+        info[sid] = {
+            "clef_type": clef_type,
+            "highest_note": max(pitches) if pitches else None,
+            "lowest_note": min(pitches) if pitches else None,
+            "part_name": part_name,
+            "part_slug": part_name[0],
+            # A plain G staff that is really a tenor part was read an octave high:
+            # the notes sit where an 8vb clef puts them, but were taken at face value.
+            "octave_down": clef_type == "G8vb" and was == "G",
+        }
+    return info
+
+
+def detect_part_types(root: etree._Element, voicing: Optional[str] = None) -> None:
     """
     For each staff, return a clef type and part name.
     E.g. TTBB
     T1, T2, B1, B2
     G8vb, G8vb, F, F
+
+    `voicing` ("men"/"women"/"mixed") forces the answer instead of inferring it
+    from clef and pitch range, which cannot tell a tenor line under an unmarked
+    octave clef from a soprano one.
     """
+    if voicing in VOICINGS:
+        part_info = _forced_part_types(root, voicing)
+        _number_parts(part_info)
+        logger.debug(f"Part info ({voicing}): {json.dumps(part_info, indent=2)}")
+        return part_info
     any_f_clef: bool = False
     # First pass: Find F clefs
     for staff in root.findall(".//Score/Staff"):
@@ -90,15 +164,18 @@ def detect_part_types(root: etree._Element) -> None:
             "part_slug": part_name[0] if part_name else "",
         }
 
-    sorted_staff_ids: List[int] = sorted(part_info.keys())
+    _number_parts(part_info)
+    logger.debug(f"Part info: {json.dumps(part_info, indent=2)}")
+    return part_info
+
+
+def _number_parts(part_info: dict) -> None:
+    """Number the staves within each run of the same part name: T1, T2, B1, B2."""
     index = 1
     prev_part_name: Optional[str] = None
-    for staff_id in sorted_staff_ids:
+    for staff_id in sorted(part_info.keys()):
         if prev_part_name and part_info[staff_id]["part_name"] != prev_part_name:
             index = 1
         part_info[staff_id]["part_index"] = index
         index += 1
         prev_part_name = part_info[staff_id]["part_name"]
-
-    logger.debug(f"Part info: {json.dumps(part_info, indent=2)}")
-    return part_info

@@ -105,6 +105,7 @@ def run_clean(
     per_system: bool,
     add_staffs: Optional[str] = None,
     log: Logger = _noop,
+    voicing: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Convert + clean. Returns (cleaned_path, mscx_intermediate_path).
 
@@ -120,6 +121,7 @@ def run_clean(
         add_staffs=add_staffs or "",
         interactive=False,
         per_system=per_system,
+        voicing=voicing,
     )
     if not os.path.exists(cleaned):
         raise RuntimeError("Cleaning produced no output (no parts declared?).")

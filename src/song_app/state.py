@@ -181,8 +181,13 @@ def save_playlist(playlist_id: str, title: Optional[str] = None) -> None:
         pass
 
 
-def create(name: str, per_system: bool) -> Song:
-    """Create a new song folder + state file. Caller then attaches source files."""
+def create(name: str, per_system: bool, voicing: str = "") -> Song:
+    """Create a new song folder + state file. Caller then attaches source files.
+
+    `voicing` ("men"/"women"/"mixed") settles what the parts are called. Clef and
+    pitch cannot: a male-choir score is written in treble sounding an octave down
+    and editions often leave the 8 off, so a tenor line reads as a soprano one.
+    """
     _ensure_songs_dir()
     slug = slugify(name)
     # Avoid collisions with an existing song.
@@ -195,6 +200,7 @@ def create(name: str, per_system: bool) -> Song:
         "slug": slug,
         "stage": "register",
         "mode": "per-system" if per_system else "normal",
+        "voicing": voicing or "",
         "sources": {},
         "created_at": time.time(),
     })

@@ -443,6 +443,19 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    other, normalizes TimeSig/KeySig/Clef, forces stems up, strips dynamics,
    hairpins, articulations, tempo, harmony, layout breaks, and lengthens
    fermatas (`timeStretch=3`).
+5b. **Voicing decides the part names.** A song records `voicing` ("men"/"women"/
+   "mixed") when it is created, and `detect_part_types(root, voicing)` uses it
+   instead of guessing from clef and pitch range. It has to: a male-choir score is
+   written in treble sounding an octave down and editions routinely leave the 8 off
+   the clef, so its tenor line reads as 66–82 — squarely soprano — and no pitch rule
+   can tell the two apart. men → every treble staff is a Tenor and is **marked
+   G8vb**; women → the treble staves split Soprano/Alto; mixed → each clef splits
+   into the two voices it carries (S/A, T/B). Marking the clef is not enough on its
+   own: a plain-G staff that turns out to be a tenor part was read an octave high,
+   so its pitches are moved down twelve semitones (`octave_down`) or the practice
+   track sings the line an octave above the men. Staves with no notes are skipped —
+   the recording spacer is one, and counting it shifts the split. With no voicing
+   recorded the old guess still runs, so existing songs clean as before.
 6. `add_missing_ties` recovers OCR-dropped ties by mirroring them from a parallel
    voice that kept the tie at the same tick span (requires **same pitch**, so it's
    safe). Slurs are **not** auto-mirrored: a slur connects different pitches, so it

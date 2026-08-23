@@ -233,6 +233,7 @@ def api_import() -> Dict:
 async def api_create(
     name: str = Form(...),
     per_system: bool = Form(False),
+    voicing: str = Form(""),
     xml: UploadFile = None,
     pdf: UploadFile = None,
 ) -> Dict:
@@ -241,7 +242,9 @@ async def api_create(
     if xml is None:
         raise HTTPException(400, "A MuseScore/MusicXML file is required")
 
-    song = state.create(name.strip(), per_system)
+    if voicing and voicing not in ("men", "women", "mixed"):
+        raise HTTPException(400, "voicing must be men, women or mixed")
+    song = state.create(name.strip(), per_system, voicing)
     # Save the score file.
     xml_name = os.path.basename(xml.filename)
     with open(song.path(xml_name), "wb") as f:
@@ -296,6 +299,7 @@ def _run_clean(slug: str) -> None:
     try:
         cleaned, _ = pipeline.run_clean(
             xml, song.dir, per_system=(song.mode == "per-system"), log=log,
+            voicing=song.data.get("voicing") or None,
         )
         rel = os.path.relpath(cleaned, song.dir)
         song.data["cleaned"] = rel

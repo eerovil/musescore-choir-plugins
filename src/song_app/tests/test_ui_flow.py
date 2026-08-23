@@ -125,6 +125,7 @@ def _new_song(page, base, name, per_system=True):
     page.get_by_role("button", name="+ New song").click()
     page.get_by_placeholder("Song name").fill(name)
     page.locator("input[type=file]").first.set_input_files(FIXTURE)
+    page.locator("select").select_option("men")     # laulun_aika is a male-choir score
     if per_system:
         page.locator("input[type=checkbox]").check()
     page.get_by_role("button", name="Create").click()
@@ -448,3 +449,24 @@ def test_a_long_panel_scrolls_itself_and_leaves_the_viewer_in_place(page, live_a
     page.locator(".sysblock").last.locator("textarea").first.scroll_into_view_if_needed()
     after = page.locator(".vbody").first.bounding_box()
     assert abs(after["y"] - before["y"]) < 2, "the viewer moved when the panel scrolled"
+
+
+def test_creating_a_song_requires_saying_who_sings_it(page, live_app):
+    """Nothing in the file settles the part names.
+
+    A male-choir score is written in treble sounding an octave down and editions
+    routinely leave the 8 off the clef, so its tenor line reads as a soprano one
+    on pitch alone. The form asks rather than guesses.
+    """
+    page.goto(live_app)
+    page.get_by_role("button", name="+ New song").click()
+    page.get_by_placeholder("Song name").fill("Voicing test")
+    page.locator("input[type=file]").first.set_input_files(FIXTURE)
+
+    page.get_by_role("button", name="Create").click()
+    expect(page.locator(".hint")).to_contain_text("Choose who sings it")
+    assert "#/song/" not in page.url, "it created the song anyway"
+
+    page.locator("select").select_option("mixed")
+    page.get_by_role("button", name="Create").click()
+    page.wait_for_url("**/#/song/**", timeout=30_000)
