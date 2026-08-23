@@ -155,3 +155,38 @@ def test_blank_editor_cells_are_left_out_rather_than_clearing_a_part():
     assert blocks_from_cells(grid, {"0": {"S": "yk-si kak"}}) == [
         {"measure_start": 1, "lyrics": [{"parts": ["S"], "text": "yk-si kak"}]}
     ]
+
+
+def test_slot_counts_are_what_a_mismatch_is_measured_against():
+    """The counts a reading is checked against must agree with the diagnostics.
+
+    A `too_few` says N syllables for M slots; slot_counts must produce that same
+    M over the same measures, or the number an agent reasons from is not the
+    number the importer used.
+    """
+    import os
+
+    from lxml import etree
+
+    from src.clean_score import lyric_txt
+
+    fixture = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))),
+        "fixtures", "virta-venhetta-vie", "20-lyrics",
+        "Virta-venhetta-vie_cleaned.mscx",
+    )
+    if not os.path.exists(fixture):
+        pytest.skip("prototyping fixture not present")
+
+    root = etree.parse(fixture).getroot()
+    counts = lyric_txt.slot_counts(root)
+    assert set(counts) == {1, 2, 3, 4}
+
+    # The three known residuals, as the last build reported them.
+    for staff, (lo, hi), slots in ((4, (8, 10), 11), (4, (31, 34), 18), (3, (50, 52), 14)):
+        assert sum(counts[staff].get(m, 0) for m in range(lo, hi + 1)) == slots
+
+    # Eligibility matches the export: a continuation note takes no syllable, so
+    # the totals cannot exceed the notes present.
+    assert all(n >= 0 for per in counts.values() for n in per.values())

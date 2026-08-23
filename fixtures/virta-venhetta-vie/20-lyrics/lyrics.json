@@ -66,9 +66,16 @@
         "parts": []
       },
       {
-        "staff_number": 2,
-        "text": "ih-mi-nen on, mi-kä ih-mi-nen on?",
-        "parts": []
+        "text": "Vir-va-liek-ki le-vo-ton, vir-va-liek-ki le-vo-ton ja",
+        "parts": [
+          "B1"
+        ]
+      },
+      {
+        "text": "ih-mi-nen on, mi-kä ih-mi-nen on? ja",
+        "parts": [
+          "B2"
+        ]
       }
     ]
   },
@@ -152,7 +159,7 @@
       {
         "staff_number": 1,
         "position": "above",
-        "text": "tie-dä si-tä ih-mi-sis-tä ken-kään.",
+        "text": "tie-dä si-tä ih-mi-sis-tä ken-kään. Me-ri, tai-vas ja",
         "parts": []
       },
       {
@@ -164,13 +171,13 @@
       {
         "staff_number": 2,
         "position": "above",
-        "text": "tie, ei tie-dä si-tä ken-kään.",
+        "text": "tie, ei tie-dä si-tä ken-kään. Me-ri, tai-vas ja",
         "parts": []
       },
       {
         "staff_number": 2,
         "position": "below",
-        "text": "vie, mi-hin päät-ty-vi tie?",
+        "text": "vie, mi-hin päät-ty-vi tie? Me-ri, tai-vas ja",
         "parts": []
       }
     ]
@@ -262,7 +269,7 @@
       {
         "staff_number": 1,
         "position": "above",
-        "text": "huo-men-tuu-let tun-tu-reil-ta hen-kää.",
+        "text": "hen-kää, ja huo-men-tuu-let tun-tu-reil-ta hen-kää.",
         "parts": []
       },
       {
@@ -316,9 +323,16 @@
         "parts": []
       },
       {
-        "staff_number": 2,
+        "text": "ven-het-tä, ven-het-tä, ven-het-tä, ven-het-tä vie.",
+        "parts": [
+          "B1"
+        ]
+      },
+      {
         "text": "vir-ta ven-het-tä, ven-het-tä vie.",
-        "parts": []
+        "parts": [
+          "B2"
+        ]
       }
     ]
   }

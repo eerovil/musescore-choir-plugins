@@ -14,5 +14,9 @@ verovio
 cairosvg
 mido
 numpy
+# Not pip: the printed-system crops (src/song_app/pdf_systems.py) shell out to
+# poppler's pdftoppm and pdfinfo.  macOS: brew install poppler
+# Without them the Systems tab and the lyric editor's score crops are unavailable
+# (their tests skip); everything else works.
 # Browser tests only (src/song_app/tests/test_ui_flow.py); they skip when it is absent:
 #   pip install pytest-playwright && playwright install chromium

@@ -36,6 +36,7 @@ scroll_video.py          CLI wrapper → src/scrollvideo (render scrolling pract
 src/song_app/            Local web app tying the workflow together (see DESIGN.md)
   state.py               Song state machine (.song.json), slug, stages
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
+  pdf_systems.py         Crop the source PDF into one image per printed system
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
@@ -56,6 +57,7 @@ src/stemmanauha/         Audio/video recording automation (macOS, AppleScript + 
   create_video.py        Orchestrates mp3 export -> video record -> merge -> upload
   upload_to_youtube.py   YouTube Data API upload
   *.scpt                 AppleScript files driving MuseScore + QuickRecorder
+fixtures/                In-repo prototyping song (see fixtures/*/README.md, STEPS.md)
 songs/                   Per-song working dirs (gitignored, output lives here)
 backup/                  Gitignored .mscz backups (created by backup.sh)
 *.txt prompts            lyric_json_prompt.txt, lyrics_txt_prompt.txt (LLM prompts for lyric fixing)
@@ -108,16 +110,37 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ./backup.sh
 ```
 
+### The prototyping fixture
+
+`fixtures/virta-venhetta-vie/` is a real public-domain song (Kuula/Leino, TTBB,
+scanned + OCR'd) kept at three stages, so a change can meet real OCR damage
+immediately instead of a synthetic score. **Not** a unit-test fixture in the usual
+sense — though `test_pdf_systems.py`, `test_bounds_api.py` and the browser tests do
+read it — and it is free to change shape as the app does.
+
+```bash
+fixtures/virta-venhetta-vie/reset.sh        # drop it into songs/ at the furthest stage
+fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clean
+.venv/bin/python fixtures/virta-venhetta-vie/build.py   # regenerate the derived stages
+```
+
+Stages are overlays holding only what they add, so the 745 KB scan is stored once.
+It stops at stage `fix` on purpose: one unfixable over-full measure (m26 arrives with
+`len="9/8"`) and 2 lyric mismatches, each one note over — a dropped melisma slur apiece. `STEPS.md` records how each stage
+was produced, including a wrong conclusion and its correction — worth reading before
+trusting a tidy-looking diagnosis of a scanned score.
+
 ### Tests
 
 ```bash
 .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
-# 153 passed, 4 skipped  — a fresh checkout (browser tests skip; so do the
-#                          scrollvideo sync tests without a MuseScore CLI)
-# 157 passed             — with Playwright installed and MUSESCORE_CLI_PATH set
+# 171 passed              — with poppler, Playwright and MUSESCORE_CLI_PATH all set
+# fewer                   — without Playwright the browser tests skip; without
+#                           poppler the pdf_systems and bounds tests skip; without
+#                           a MuseScore CLI the scrollvideo sync tests skip too
 ```
 
-The two extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
+The six extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
 marked `browser`. They need a two-step install, and the module skips unless **both**
 steps are done — the pip package alone is not enough, so a half install still skips
 rather than erroring:
@@ -199,6 +222,28 @@ state model are in `DESIGN.md`.
   the page instead of MuseScore adding extra ones;
   `strip_lyrics_copy` writes a lyrics-removed copy (cached) so the "Cleaned MSCX"
   (no-lyrics) view always reflects the live structure rather than a stale snapshot.
+- `pdf_systems.py` cuts the **original PDF** into one image per printed system, so
+  the score can be read at a resolution where a slur or a lyric line under the lower
+  staff is actually visible; a whole A4 rendered small enough to look at is not.
+  Shells out to poppler (`pdftoppm`, `pdfinfo`) — not a pip dependency, so the
+  Systems tab and the lyric crops are simply unavailable without it (tests skip).
+  **Where the boundaries come from is deliberately not decided here.** Detecting
+  them from the image was tried and removed: staff-line detection died at 0.5° of
+  skew and 20% ink dropout, and grouping staves into systems relied on a
+  left-margin bracket only some editions print — across nine real songs it agreed
+  with the score twice. Instead an AI reads them off the page
+  (`page_images(grid=True)` overlays a labelled percentage scale, which turns
+  estimating coordinates into reading them) and a person corrects them by dragging
+  in the **Systems** viewer tab. They live in `.systems.json` beside the song as
+  fractions of page height, so they survive any change of resolution, and the app
+  and an agent read the same file. `crop_systems` rasterises **only the band**
+  (`pdftoppm -x -y -W -H`): a page at 400 dpi takes ~7s, one system 0.9s, and this
+  is on the path where someone clicks a lyric cell and waits. `label()` attaches
+  each band's measure range from a score that still has its line breaks — the
+  converted input, since normal-mode cleaning strips them — and **refuses when the
+  counts disagree**, because a silently wrong alignment puts lyrics on the wrong
+  measures while a missing one is visible at once. The server, never the browser,
+  assigns indices and labels on save.
 - `health.py` is **validation only** (never mutates): per voice it sums note/rest
   durations as exact whole-note `Fraction`s (so tuplets don't round-off) and flags
   `malformed-measure` (voice doesn't fill the bar) and `extra-voices` (a staff
@@ -256,6 +301,14 @@ state model are in `DESIGN.md`.
   import the cleaned preview re-renders in place and restores `scrollTop`); falls
   back to a native `<iframe>` if pdf.js can't load (offline). **PDF measure-locating
   is page-level only** (no bounding boxes) — see DESIGN.md.
+- The Lyrics panel's **Type by system** mode divides by the *printed* systems from
+  `.systems.json`, not by the score's line breaks: normal-mode cleaning strips those,
+  so the editor used to offer one cell per part covering the whole piece and only
+  ever worked for per-system scores. `editor_grid(root, systems=[(start, end), ...])`
+  takes the ranges; unlabelled bounds are refused and it falls back to the score.
+  Focusing a cell shows that system in the viewer's **One system** tab (only the
+  first pane follows the cursor, so a split can keep another document in view); a
+  small inline crop above each block is available too, off by default.
 - The Lyrics panel has two client-side modes (remembered in `localStorage`):
   **Paste from AI** keeps the prompt/JSON round-trip, while **Type by system**
   fetches `/lyric-grid` (`lyric_txt.editor_grid(...).to_dict()`) and renders a
@@ -415,7 +468,8 @@ song app's manual editor) go through these, and nothing else is public:
 ```python
 export_lyrics(root) -> str                      # the TXT projection of the score
 place_lyrics(root, source, fmt=, replace=, split=) -> LyricImport
-editor_grid(root) -> EditorGrid                 # parts x printed systems, prefilled
+editor_grid(root, systems=) -> EditorGrid       # parts x printed systems, prefilled
+slot_counts(root) -> {staff: {measure: n}}      # notes that take a syllable
 blocks_from_cells(grid, cells) -> [block]       # those cells as lyric JSON
 export_file(...) / import_file(...) -> LyricImport      # the .txt/.json adapters
 ```
@@ -678,6 +732,55 @@ without it, like the browser tests:
 - `tests/test_files/fermata.mscx` — `simple_1_output` with a `timeStretch=3` fermata
   added to measure 1 (4.00s -> 5.00s of MIDI). `fermata.musicxml` is the same score
   pre-converted so engraving tests need no MuseScore.
+
+## Reading a scanned score (playbook)
+
+Hard-won in the session that built `pdf_systems`, where reading whole rendered pages
+produced a confident, tidy and substantially wrong conclusion. If you are an agent
+about to read a score off a PDF, start here.
+
+**Crop before concluding anything.** A whole A4 rendered small enough to look at
+cannot show a slur or a notehead. Use `pdf_systems.crop_systems` (400 dpi, one band,
+~0.9s) and read a system at a time. `page_images(grid=True)` overlays a labelled
+percentage scale for reading system boundaries off — never estimate them by eye, that
+is how a crop ends up clipping the lyric line under the bottom staff.
+
+**Let the arithmetic check the reading.** `lyric_txt.slot_counts(root)` gives
+`[staff][measure] = notes that take a syllable`. Every correct correction predicts
+its slot count *before* being encoded and lands on it exactly; a reading that needs
+the numbers bent to fit is wrong. `place_lyrics` returns the same numbers as
+`Mismatch` records.
+
+**The direction of a mismatch says what kind of problem it is:**
+
+| | means |
+|---|---|
+| `too_many` | the **reading** is wrong — too many syllables for the notes |
+| `too_few`, by a lot | usually a voice **sharing** another staff's words (below) |
+| `too_few`, by exactly one or two | usually a **dropped slur** — a melisma the OCR lost |
+| all `too_few`, never `too_many` | do **not** conclude "missing slurs" from this alone; that inference was made once and was mostly wrong |
+
+**Voices sing words that are not printed under them.** Older choral engraving prints
+a text once and expects more than one voice to use it, so notes with no text beneath
+are the norm, not an anomaly:
+
+- Text set *between* the staves usually serves both.
+- A voice's own line can start part-way through a system; before that it sings the
+  other staff's words (bass sharing the tenor line for two measures, then breaking
+  away at its own entry).
+- A voice whose per-measure note counts **match another voice's exactly** is very
+  likely singing that voice's words — in the fixture the upper bass doubles the tenor
+  rhythm throughout.
+- A measure where *every* voice has the same note count and one text is printed is a
+  unison convergence: all of them sing it.
+
+**Check continuity across system breaks.** Each voice's text must join into a
+sentence from one system to the next. When it is ambiguous which staff a line between
+two staves belongs to, this decides it — only one assignment leaves every voice with
+a sentence.
+
+Worked through twice, with the wrong turn left in, in
+`fixtures/virta-venhetta-vie/STEPS.md`.
 
 ## MuseScore plugins (`plugins/`)
 

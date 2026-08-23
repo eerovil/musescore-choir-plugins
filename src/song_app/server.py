@@ -15,7 +15,7 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import health, pipeline, state
+from . import health, pdf_systems, pipeline, state
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -123,6 +123,9 @@ def _derived(song: state.Song) -> Dict:
         "stage_index": state.STAGES.index(song.stage) if song.stage in state.STAGES else 0,
         "has_pdf": bool(pdf and os.path.exists(pdf)),
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
+        # Printed-system bounds, labelled with the measures they cover: what lets
+        # the viewer show one system and the lyric editor ask per system.
+        "systems": len([b for b in pdf_systems.load_bounds(song.dir) if b.measure_start]),
         "open_issues": [i for i in issues if i.get("status") == "open"],
         "recording": is_recording(song),
         "media": _media_list(song),
@@ -426,7 +429,7 @@ def api_lyric_grid(slug: str) -> Dict:
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         raise HTTPException(400, "Clean the score first")
-    return pipeline.lyric_grid(cleaned)
+    return pipeline.lyric_grid(cleaned, song.dir)
 
 
 @app.get("/api/songs/{slug}/lyrics-json")
@@ -449,7 +452,7 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     body = body or {}
     cells = body.get("cells")
     if cells:
-        blocks = pipeline.lyric_blocks(cleaned, cells)
+        blocks = pipeline.lyric_blocks(cleaned, cells, song.dir)
         if not blocks:
             raise HTTPException(400, "Nothing typed yet")
         json_text = json.dumps(blocks, ensure_ascii=False, indent=2)
@@ -479,6 +482,82 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
 # --------------------------------------------------------------------------
 # Files + local app actions
 # --------------------------------------------------------------------------
+def _song_pdf(song) -> str:
+    pdf = song.source_path("pdf")
+    if not pdf or not os.path.exists(pdf):
+        raise HTTPException(404, "No PDF")
+    return pdf
+
+
+def _bounds_score(song) -> str:
+    """The score to label bounds against: the converted input, which still has
+    its line breaks (normal-mode cleaning strips them)."""
+    xml = song.source_path("xml")
+    if not xml or not os.path.exists(xml):
+        return ""
+    try:
+        return pipeline.convert_to_mscx(xml, song.dir)
+    except Exception:
+        return ""
+
+
+@app.get("/api/songs/{slug}/bounds")
+def api_bounds(slug: str) -> Dict:
+    """Printed-system boundaries, plus what the editor needs to draw them."""
+    song = _require(slug)
+    pdf = _song_pdf(song)
+    systems = pipeline.system_bounds(song.dir)
+    declared = pipeline.declared_system_count(_bounds_score(song))
+    return {
+        "pages": pipeline.page_count(pdf),
+        "systems": systems,
+        "declared": declared,       # how many systems the score says there are
+    }
+
+
+@app.put("/api/songs/{slug}/bounds")
+def api_save_bounds(slug: str, body: Dict = None) -> Dict:
+    """Persist edited boundaries: {"systems": [{page, top, bottom}, ...]}."""
+    song = _require(slug)
+    _song_pdf(song)
+    bands = (body or {}).get("systems")
+    if bands is None:
+        raise HTTPException(400, "No systems given")
+    try:
+        saved = pipeline.save_system_bounds(song.dir, bands, _bounds_score(song))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(400, f"Bad bounds: {exc}")
+    return {"systems": saved}
+
+
+@app.get("/api/songs/{slug}/page/{page}")
+def api_page(slug: str, page: int, dpi: int = 150, grid: bool = False):
+    """One rasterised page of the original PDF, for the bounds editor."""
+    song = _require(slug)
+    pdf = _song_pdf(song)
+    if page < 1 or page > pipeline.page_count(pdf):
+        raise HTTPException(404, "No such page")
+    try:
+        path = pipeline.page_image(song.dir, pdf, page, max(50, min(dpi, 600)), grid)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/songs/{slug}/system/{index}")
+def api_system_image(slug: str, index: int, dpi: int = 400):
+    """One printed system, cropped from the stored bounds."""
+    song = _require(slug)
+    pdf = _song_pdf(song)
+    try:
+        path = pipeline.system_crop(song.dir, pdf, index, max(50, min(dpi, 600)))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return FileResponse(path, media_type="image/png")
+
+
 @app.get("/api/songs/{slug}/pdf")
 def api_pdf(slug: str):
     song = _require(slug)

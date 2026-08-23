@@ -22,6 +22,7 @@ song app's manual editor. Its interface:
     export_lyrics(root) -> str                     the TXT projection of the score
     place_lyrics(root, source, replace=, split=)   put lyrics in; returns LyricImport
     editor_grid(root) -> EditorGrid                what the manual editor renders
+    slot_counts(root) -> {staff: {measure: n}}     notes that take a syllable
     blocks_from_cells(grid, cells) -> [block]      that editor's cells as lyric JSON
     export_file(...) / import_file(...)            the .txt/.json file adapters
 
@@ -1342,13 +1343,36 @@ def place_lyrics(
 _NON_LYRIC_PART_WORDS = ("drum", "click", "rest")
 
 
-def editor_grid(score_root: etree._Element) -> EditorGrid:
+def slot_counts(score_root: etree._Element) -> Dict[int, Dict[int, int]]:
+    """`[staff_id][measure] = how many notes there take a syllable`.
+
+    The arithmetic that checks a reading of the printed page. A line whose
+    syllables do not match these counts is either mis-assigned or the score is
+    missing a slur, and which one it is follows from the direction: too few
+    syllables means notes without words, too many means the reading is wrong.
+    Same eligibility as the TXT export -- voice 0, verse 1, no rests, and no
+    slur or tie continuations.
+    """
+    return _get_chord_counts_per_measure(
+        score_root.find(".//Score") if score_root.tag != "Score" else score_root
+    )
+
+
+def editor_grid(
+    score_root: etree._Element,
+    systems: Optional[List[Tuple[int, int]]] = None,
+) -> EditorGrid:
     """The manual editor's projection: one text cell per (printed system, output part).
 
     Parts come from the score's own track names (click/spacer staves excluded), systems
     from the printed line breaks, and each cell is prefilled with the lyrics already in
     the score for that part over that system's measures — the same syllable rules the
     TXT export uses, so what the editor shows round-trips back through `place_lyrics`.
+
+    `systems` overrides the line breaks with explicit (start, end) measure ranges. It is
+    needed because normal-mode cleaning strips layout breaks, so the cleaned score has
+    no systems left to find and the whole piece collapses into one cell per part. The
+    printed systems still exist -- on the page -- and are supplied from there.
     """
     score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
     parts: List[EditorPart] = []
@@ -1361,8 +1385,13 @@ def editor_grid(score_root: etree._Element) -> EditorGrid:
         parts.append(EditorPart(id=sid, name=name or f"staff {sid}"))
     parts.sort(key=lambda p: p.id)
 
-    systems = [EditorSystem(index=r.index, start=r.start, end=r.end)
-               for r in system_ranges(score_root)]
+    if systems:
+        ranges = [EditorSystem(index=i, start=a, end=b)
+                  for i, (a, b) in enumerate(systems)]
+    else:
+        ranges = [EditorSystem(index=r.index, start=r.start, end=r.end)
+                  for r in system_ranges(score_root)]
+    systems = ranges
     by_measure = _lyrics_by_measure_staff(score_root)
     cells: Dict[int, Dict[str, str]] = {}
     for system in systems:
