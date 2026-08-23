@@ -22,6 +22,7 @@ song app's manual editor. Its interface:
     export_lyrics(root) -> str                     the TXT projection of the score
     place_lyrics(root, source, replace=, split=)   put lyrics in; returns LyricImport
     editor_grid(root) -> EditorGrid                what the manual editor renders
+    slot_counts(root) -> {staff: {measure: n}}     notes that take a syllable
     blocks_from_cells(grid, cells) -> [block]      that editor's cells as lyric JSON
     export_file(...) / import_file(...)            the .txt/.json file adapters
 
@@ -1340,6 +1341,21 @@ def place_lyrics(
 
 # Staves that carry no lyrics: the click/spacer track added for recording.
 _NON_LYRIC_PART_WORDS = ("drum", "click", "rest")
+
+
+def slot_counts(score_root: etree._Element) -> Dict[int, Dict[int, int]]:
+    """`[staff_id][measure] = how many notes there take a syllable`.
+
+    The arithmetic that checks a reading of the printed page. A line whose
+    syllables do not match these counts is either mis-assigned or the score is
+    missing a slur, and which one it is follows from the direction: too few
+    syllables means notes without words, too many means the reading is wrong.
+    Same eligibility as the TXT export -- voice 0, verse 1, no rests, and no
+    slur or tie continuations.
+    """
+    return _get_chord_counts_per_measure(
+        score_root.find(".//Score") if score_root.tag != "Score" else score_root
+    )
 
 
 def editor_grid(

@@ -456,7 +456,8 @@ song app's manual editor) go through these, and nothing else is public:
 ```python
 export_lyrics(root) -> str                      # the TXT projection of the score
 place_lyrics(root, source, fmt=, replace=, split=) -> LyricImport
-editor_grid(root) -> EditorGrid                 # parts x printed systems, prefilled
+editor_grid(root, systems=) -> EditorGrid       # parts x printed systems, prefilled
+slot_counts(root) -> {staff: {measure: n}}      # notes that take a syllable
 blocks_from_cells(grid, cells) -> [block]       # those cells as lyric JSON
 export_file(...) / import_file(...) -> LyricImport      # the .txt/.json adapters
 ```
@@ -518,6 +519,55 @@ test `test_lyric_txt_spanner.py` asserts export→import round-trips back to the
 original XML. The `il-man il-ki-rii-vi-` case (where a word's syllables span a
 measure boundary) is covered by the two `measure_14` regression tests; the
 syllable distribution in `json_lines_to_by_measure` must keep them green.
+
+## Reading a scanned score (playbook)
+
+Hard-won in the session that built `pdf_systems`, where reading whole rendered pages
+produced a confident, tidy and substantially wrong conclusion. If you are an agent
+about to read a score off a PDF, start here.
+
+**Crop before concluding anything.** A whole A4 rendered small enough to look at
+cannot show a slur or a notehead. Use `pdf_systems.crop_systems` (400 dpi, one band,
+~0.9s) and read a system at a time. `page_images(grid=True)` overlays a labelled
+percentage scale for reading system boundaries off — never estimate them by eye, that
+is how a crop ends up clipping the lyric line under the bottom staff.
+
+**Let the arithmetic check the reading.** `lyric_txt.slot_counts(root)` gives
+`[staff][measure] = notes that take a syllable`. Every correct correction predicts
+its slot count *before* being encoded and lands on it exactly; a reading that needs
+the numbers bent to fit is wrong. `place_lyrics` returns the same numbers as
+`Mismatch` records.
+
+**The direction of a mismatch says what kind of problem it is:**
+
+| | means |
+|---|---|
+| `too_many` | the **reading** is wrong — too many syllables for the notes |
+| `too_few`, by a lot | usually a voice **sharing** another staff's words (below) |
+| `too_few`, by exactly one or two | usually a **dropped slur** — a melisma the OCR lost |
+| all `too_few`, never `too_many` | do **not** conclude "missing slurs" from this alone; that inference was made once and was mostly wrong |
+
+**Voices sing words that are not printed under them.** Older choral engraving prints
+a text once and expects more than one voice to use it, so notes with no text beneath
+are the norm, not an anomaly:
+
+- Text set *between* the staves usually serves both.
+- A voice's own line can start part-way through a system; before that it sings the
+  other staff's words (bass sharing the tenor line for two measures, then breaking
+  away at its own entry).
+- A voice whose per-measure note counts **match another voice's exactly** is very
+  likely singing that voice's words — in the fixture the upper bass doubles the tenor
+  rhythm throughout.
+- A measure where *every* voice has the same note count and one text is printed is a
+  unison convergence: all of them sing it.
+
+**Check continuity across system breaks.** Each voice's text must join into a
+sentence from one system to the next. When it is ambiguous which staff a line between
+two staves belongs to, this decides it — only one assignment leaves every voice with
+a sentence.
+
+Worked through twice, with the wrong turn left in, in
+`fixtures/virta-venhetta-vie/STEPS.md`.
 
 ## MuseScore plugins (`plugins/`)
 
