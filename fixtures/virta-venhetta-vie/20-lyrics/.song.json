@@ -8,9 +8,9 @@
     "pdf": "Virta venhettä vie.pdf"
   },
   "created_at": 1787475359.460669,
-  "updated_at": 1787488248.637781,
+  "updated_at": 1787488670.4555168,
   "cleaned": "Virta-venhetta-vie_cleaned.mscx",
-  "cleaned_fingerprint": "sha1:8047be96b826e9c7fd2214dd10ae9e29b398f10c",
+  "cleaned_fingerprint": "sha1:6f8df621503eda58dcbef41471a74e7247ab5516",
   "health": {
     "checked_against": "sha1:12fbff6905f69994c251c5ca743cc1ccb296dae2",
     "issues": [
@@ -26,19 +26,8 @@
   },
   "lyrics": {
     "json": "lyrics.json",
-    "imported_against": "sha1:8047be96b826e9c7fd2214dd10ae9e29b398f10c",
+    "imported_against": "sha1:6f8df621503eda58dcbef41471a74e7247ab5516",
     "warnings": [
-      {
-        "kind": "too_few",
-        "message": "Measures 8-10 (staffs 4): too few tokens (10 syllables, 11 slots); some slots will be empty.",
-        "measure_start": 8,
-        "measure_end": 10,
-        "staff_ids": [
-          4
-        ],
-        "syllables": 10,
-        "slots": 11
-      },
       {
         "kind": "too_few",
         "message": "Measures 31-34 (staffs 4): too few tokens (17 syllables, 18 slots); some slots will be empty.",

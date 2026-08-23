@@ -244,10 +244,13 @@ def _open_systems_tab(page, base, slug):
     page.goto(f"{base}/#/song/{slug}")
     page.get_by_role("button", name="Systems").click()
     expect(page.locator(".sysband").first).to_be_visible(timeout=30_000)
+    # Every page, not just the first: each image's load fires a redraw of the
+    # bands, and one arriving mid-drag replaces the element being dragged.
     page.wait_for_function(
-        "() => { const i = document.querySelector('.syspage img');"
-        "        return i && i.complete && i.getBoundingClientRect().height > 50; }",
-        timeout=60_000,
+        "() => { const i = [...document.querySelectorAll('.syspage img')];"
+        "        return i.length > 0 && i.every(x => x.complete"
+        "               && x.getBoundingClientRect().height > 50); }",
+        timeout=90_000,
     )
 
 

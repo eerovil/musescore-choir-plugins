@@ -159,33 +159,46 @@ That took the mismatches from **8 to 3** and the notes without a syllable from
 ### What is left, and why
 
 ```
-[too_few] m8-10   B2:  10 syllables for 11 slots     gap +1
 [too_few] m31-34  B2:  17 syllables for 18 slots     gap +1
 [too_few] m50-52  B1:  13 syllables for 14 slots     gap +1
 ```
 
-Three lines, each exactly one note over. That is the shape of a **single dropped
-melisma slur** per line, and in m8–10 the slur is plainly visible in the crop: a
-curve over the lower bass half-note running into the 2/4, on the "ih - " of
-"ih - mi-nen". The OCR lost it, so the note counts as a syllable slot.
+A third residual turned out **not** to be a slur at all. m8–10 B2 had 11 slots for
+its 10 printed syllables, and the obvious reading was a lost melisma — but the XML
+shows the tie is present and intact:
 
-Nothing here is a lyric error any more. The text is right; the score is missing
-three slurs. Fixing it means writing spanners into the `.mscx`, not editing
-`lyrics.json` -- see step 4.
+```
+m9:  quarter/p48  eighth/p46  eighth/p45  half/p46+Tie
+m10: quarter/p46+Tie  rest/eighth  eighth/p46
+```
+
+The uncounted note is the lone eighth *after the rest*, aligned with where the
+tenors sing "ja" — the convergence into the next shared phrase, not a melisma.
+Adding "ja" made it 11 for 11. **Check the XML before calling something a missing
+slur**; a gap of one looks the same either way from the counts alone.
+
+The two that remain are melismas, and both are visible as such:
+
+* **m31–34 B2** — from m32 both bass voices move with the tenors, and B2 has three
+  notes against their four, one of them a half-note sustained while the others move.
+* **m50–52 B1** — one note more than the tenor line it doubles, in m50. m51 has its
+  slurs; m50 does not.
+
+Neither is a lyric error. The text is right and the score is missing two slurs, so
+the fix is a spanner in the `.mscx` — by hand in MuseScore, or written in — not an
+edit to `lyrics.json`.
 
 ## Step 4 — Where the AI stops
 
-The song stays at stage `fix` with 3 lyric mismatches and 1 health issue.
+The song stays at stage `fix` with 2 lyric mismatches and 1 health issue, and both
+are now localised to single notes:
 
 - **m26 (`len="9/8"`)** — the measure is over-full. Which note is spurious is a
   judgement about what the engraver wrote; a pass that guessed would corrupt scores.
-  It has not been read at 400 dpi yet, and probably could be.
-- **the three dropped slurs** — at 400 dpi a slur *is* legible, so this is no longer
-  beyond an AI. It needs the slur written into the .mscx as a spanner, which is a
-  different kind of edit from placing text.
-
-Fix either and re-run `build.py`; the counts should fall to zero. The fixture is set
-up so that costs nothing to try and nothing to undo.
+- **two dropped slurs** — m31–34 B2 (the sustained note in m32) and m50–52 B1 (in
+  m50). Writing a slur into the score is the first edit here that changes the
+  *music* rather than the text about it, which is why it stopped for a decision
+  rather than proceeding.
 
 ## A note on method
 
@@ -193,13 +206,15 @@ The single biggest lever in this whole exercise was **resolution**. Reading the
 score as whole rendered pages produced a confident, tidy and substantially wrong
 conclusion -- "all `too_few`, therefore missing slurs" -- when the real cause was
 mostly voices sharing the other staff's words. The same score cropped per system at
-400 dpi overturned it in minutes, and a second pass with the crops resolved five
-more lines that page-scale reading could not.
+400 dpi overturned it in minutes, and a second pass with the crops resolved six more
+lines that page-scale reading could not.
 
-Two rules worth carrying to any scanned score:
+Three rules worth carrying to any scanned score:
 
 * **Crop and zoom before concluding anything.** A whole A4 rendered small enough to
   look at cannot show a slur or a notehead.
 * **Let the arithmetic check the reading.** Every correction above was predicted by
   the slot counts before it was encoded, and landed exactly. A reading that needs the
   numbers bent to fit is wrong.
+* **Read the XML before blaming the OCR.** The one gap confidently called a missing
+  slur had its tie present all along.
