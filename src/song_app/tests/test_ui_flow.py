@@ -10,7 +10,8 @@ Needs Playwright, which is not part of the default install:
     .venv/bin/pip install pytest-playwright
     .venv/bin/playwright install chromium
 
-Without it the whole module skips, so the normal test command is unaffected.
+The module skips unless both the packages and a browser are present, so the normal
+test command is unaffected either way.
 """
 
 import os
@@ -25,11 +26,40 @@ _NEEDS = "pip install pytest-playwright && playwright install chromium"
 pytest.importorskip("playwright.sync_api", reason=_NEEDS)
 pytest.importorskip("pytest_playwright", reason=_NEEDS)  # supplies the `page` fixture
 
+
+def _browser_installed() -> bool:
+    """The pip packages are only half the install; the browser is a separate download.
+
+    Launching is the honest check: `chromium.executable_path` names the full Chromium
+    build, but a headless run starts `chrome-headless-shell`, which is downloaded
+    separately and can be missing on its own — so only a real launch proves the tests
+    can run.
+
+    It runs at import, which costs a browser start (~0.5s) on every collection of this
+    file, `-m "not browser"` included. Running it from a fixture instead does not work:
+    pytest-playwright has its own Playwright session by then, and a second one inside it
+    fails — which the guard would read as "no browser" and skip tests that would pass.
+    """
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch().close()
+        return True
+    except Exception:
+        return False
+
+
+if not _browser_installed():
+    pytest.skip(_NEEDS, allow_module_level=True)
+
 import uvicorn
 from playwright.sync_api import expect
 
 from src.clean_score.tests.test_per_system import ANSWERS
 from src.clean_score.utils.per_system import use_answer_file
+
+pytestmark = pytest.mark.browser
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -41,6 +71,14 @@ def _free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+@pytest.fixture
+def own_answers(tmp_path):
+    """Answers are keyed by the score's file name, and both tests upload the same score,
+    so give each test its own file — otherwise the second one opens the first's grid."""
+    with use_answer_file(str(tmp_path / "answers.json")):
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -62,22 +100,23 @@ def live_app(tmp_path_factory):
         server.app, host="127.0.0.1", port=port, log_level="warning",
     ))
     thread = threading.Thread(target=srv.run, daemon=True)
-    with use_answer_file(str(tmp / "answers.json")):
+    try:
         thread.start()
         deadline = time.time() + 30
         while not srv.started and time.time() < deadline:
             time.sleep(0.05)
         assert srv.started, "the app did not start"
-        try:
-            yield f"http://127.0.0.1:{port}"
-        finally:
-            srv.should_exit = True
-            thread.join(timeout=10)
-            state.SONGS_DIR = previous_dir
-            if previous_cli is None:
-                os.environ.pop("MUSESCORE_CLI_PATH", None)
-            else:
-                os.environ["MUSESCORE_CLI_PATH"] = previous_cli
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        # Everything below is global to the process, so it is restored even when the
+        # app never came up — otherwise the rest of the session runs against a tmp dir.
+        srv.should_exit = True
+        thread.join(timeout=10)
+        state.SONGS_DIR = previous_dir
+        if previous_cli is None:
+            os.environ.pop("MUSESCORE_CLI_PATH", None)
+        else:
+            os.environ["MUSESCORE_CLI_PATH"] = previous_cli
 
 
 def _new_song(page, base, name, per_system=True):
@@ -92,7 +131,7 @@ def _new_song(page, base, name, per_system=True):
     expect(page.locator(".stagebar")).to_be_visible()
 
 
-def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_app, page):
+def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_app, own_answers, page):
     """The whole journey: create → answer the grid → clean → type lyrics → see the mismatch."""
     _new_song(page, live_app, "Laulun aika")
 
@@ -140,7 +179,7 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     expect(page.locator('textarea[data-sys="0"][data-part="T1"]')).to_have_value("yk")
 
 
-def test_grid_marks_cleared_and_inherited_staves(live_app, page):
+def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
     """A blank cell inherits the staff's previous answer; '-' says it is silent."""
     _new_song(page, live_app, "Grid rules")
 
@@ -159,12 +198,11 @@ def test_grid_marks_cleared_and_inherited_staves(live_app, page):
     expect(staff1(3)).to_have_class(re.compile(r"\bunset\b"))
 
     # Cleaning warns about exactly those dropped slots before it runs.
+    # The handler has to be registered before the click: the dialog blocks the page,
+    # so a wrapper that waits around the click would deadlock with it.
     dropped = []
-    page.on("dialog", lambda d: (dropped.append(d.message), d.dismiss()))
+    page.once("dialog", lambda d: (dropped.append(d.message), d.dismiss()))
     page.get_by_role("button", name="Run clean").click()
-    deadline = time.time() + 10
-    while not dropped and time.time() < deadline:
-        page.wait_for_timeout(100)
     assert dropped, "cleaning with unnamed staves must confirm first"
     assert "staff 1 · system 3" in dropped[0], dropped[0]
     assert "staff 1 · system 4" in dropped[0], dropped[0]

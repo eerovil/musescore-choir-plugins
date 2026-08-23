@@ -99,19 +99,25 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q   # 84 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q
+# 82 passed, 1 skipped   — a fresh checkout (the browser tests skip)
+# 84 passed              — once Playwright is installed
 ```
 
-Two of those are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright).
-They need one extra install and skip cleanly without it, so the command above works
-either way:
+The two extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
+marked `browser`. They need a two-step install, and the module skips unless **both**
+steps are done — the pip package alone is not enough, so a half install still skips
+rather than erroring:
 
 ```bash
 .venv/bin/pip install pytest-playwright
 .venv/bin/playwright install chromium      # ~95 MB, into ~/Library/Caches/ms-playwright
+
+.venv/bin/python -m pytest ... -m "not browser"   # skip them even when installed
 ```
 
-`pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
+`pyproject.toml` sets `log_cli_level=DEBUG` and registers the `browser` marker.
+Key test modules:
 
 - `test_lyric_txt_spanner.py` — asserts lyric export→import round-trips back to
   the original XML (the real behavioral coverage), driven through `export_lyrics` /

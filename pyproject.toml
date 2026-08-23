@@ -1,2 +1,5 @@
 [tool.pytest.ini_options]
 log_cli_level="DEBUG"
+markers = [
+    "browser: drives the app in a real browser (Playwright); slow, needs a browser install",
+]
