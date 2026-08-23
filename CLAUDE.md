@@ -18,8 +18,10 @@ it so each voice has its own staff, generate per-voice practice audio (each voic
 louder than the rest), record a play-along video, and optionally upload to
 YouTube.
 
-MuseScore `.mscx` files are XML; almost all Python here is `lxml` tree
-manipulation. There is no database, server, or web frontend.
+MuseScore `.mscx` files are XML; almost all musical processing is `lxml` tree
+manipulation. There is no database: persistent app state is JSON/files under
+`songs/`. The local FastAPI server and vanilla-JS frontend in `src/song_app/`
+orchestrate the same file-based tools.
 
 ## Layout
 
@@ -35,7 +37,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
-  static/                Vanilla-JS SPA (library + 3-pane workspace, PDF iframe)
+  static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
 src/clean_score/         Score-cleaning package
   main.py                Voice-splitting pipeline (single-staff/2-voice -> 2-staff)
   lyric_txt.py           Lyric export/import (txt + json formats), slur/tie aware
@@ -58,13 +60,18 @@ backup/                  Gitignored .mscz backups (created by backup.sh)
   (lxml, pytest, dotenv, google-api-python-client, google-auth-oauthlib, pillow,
   pyautogui, fastapi, uvicorn, python-multipart; recording also needs
   `obsws-python`, `ffmpeg`/`ffprobe` on PATH, and macOS with MuseScore 3 +
-  QuickRecorder).
+  QuickRecorder). **Dependency-file gap:** `create_video.py` imports
+  `obsws_python`, but `obsws-python` is not currently listed in
+  `pip-requirements.txt`; install it separately in a fresh environment.
 - Config is via `.env` (falls back to `.env.default`). Keys:
   `MUSESCORE_CLI_PATH`, `MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
   `YOUTUBE_CLIENT_SECRETS_PATH`. Never commit real secrets;
   `.env`, `client_secrets.json`, and `token.pickle` are gitignored.
 - The CLI wrappers import the package via `from src.clean_score... import ...`,
   so **run them from the repo root** (e.g. `./clean_score.py ...`).
+- `./song.py` prefers port 8000, scans the next 49 ports when it is occupied,
+  and enables uvicorn source reload by default (watching only `src/`). Use
+  `--port`, `--no-browser`, or `--no-reload` when needed.
 
 ### Common commands
 
@@ -185,7 +192,7 @@ state model are in `DESIGN.md`.
   `*_cleaned.mscx` is saved in MuseScore (guarded by fingerprint so our own writes
   don't loop). Static SPA is mounted at `/` (so `/api/*` wins).
 - `static/` is a dependency-free vanilla-JS SPA: a library view and a 3-pane
-  workspace (stage rail · per-stage panel · viewer `<iframe>`, controls clustered
+  workspace (stage rail · per-stage panel · document viewer, controls clustered
   left, previews right). The viewer tabs
   between **Original PDF**, **Original XML** (the OCR input), **Cleaned MSCX**
   (lyrics stripped) and **Cleaned MSCX with lyrics** — all but the first are
@@ -198,10 +205,22 @@ state model are in `DESIGN.md`.
   import the cleaned preview re-renders in place and restores `scrollTop`); falls
   back to a native `<iframe>` if pdf.js can't load (offline). **PDF measure-locating
   is page-level only** (no bounding boxes) — see DESIGN.md.
+- The Lyrics panel has two client-side modes (remembered in `localStorage`):
+  **Paste from AI** keeps the prompt/JSON round-trip, while **Type by system**
+  fetches `/lyric-grid` and renders a textarea for every `(printed system, output
+  part)`. The backend derives part names from `Part/trackName`, skips click/rest
+  parts, gets system ranges from `per_system.find_systems`, and prefills cells by
+  exporting the score's current lyrics. The browser turns non-empty cells into
+  name-addressed JSON blocks (`parts: [part name]`, `measure_start: system start`)
+  and submits them through the same `/lyrics` importer. Import warnings are parsed
+  back onto the matching system/part cell; lyric-panel scroll is preserved across
+  the refresh. Blank cells are omitted, so this editor expresses a lyric line
+  starting in a system, not an instruction to clear one isolated cell.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
-  No automatic LLM (users have no API key) — the lyrics stage is a permanent
-  copy-paste round-trip (copy prompt → user's own AI + PDF → paste JSON back).
+  No automatic LLM (users have no API key) — the lyrics stage supports either a
+  copy-paste round-trip (copy prompt → user's own AI + PDF → paste JSON back) or
+  direct per-system entry.
 
 There are not yet pytest tests for `song_app`; it was smoke-tested end-to-end
 (create → per-system grid → clean → health → lyric import overflow warnings)
