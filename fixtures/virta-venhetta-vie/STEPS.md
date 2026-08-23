@@ -304,3 +304,25 @@ again.
 **The fixture now runs clean the whole way: no health issues, no lyric mismatches,
 stage `review`.** Of 87 notes originally without a syllable, none are left, and the
 score carries two recorded human judgements, each with its reason written out.
+
+### What "clean" does not mean
+
+It means every automatic check is satisfied — every bar fills, every eligible note
+carries a syllable — and `set_stage("review")` is gated on exactly that. The stage
+is named for the work still to do, not for a verdict.
+
+Not established, by anything here:
+
+* **That the words are right.** They were transcribed off a scan and spot-checked.
+  A misread word with the right syllable count is invisible to every check.
+* **That the syllables sit on the right notes.** Matching counts say how many, not
+  where.
+* **That the remaining slurs are right.** Only the ones that broke the arithmetic
+  were found. One that happens to balance against something else leaves no trace.
+* **That the pitches and rhythms are right.** A wrong note that still fills the bar
+  is undetectable here, as the health check has always said.
+
+The strongest evidence for all of this is in step 5: a repair that padded a 4/4 bar
+to 9/8 satisfied the health check, the lyric arithmetic and the whole test suite,
+and was wrong. Nobody has yet compared this score against the page from end to end,
+and **record** and **upload** have never been run on it at all.

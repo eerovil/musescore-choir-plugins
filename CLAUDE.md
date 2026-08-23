@@ -132,7 +132,10 @@ fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clea
 
 Stages are overlays holding only what they add, so the 745 KB scan is stored once.
 It now runs clean the whole way: **no health issues, no lyric mismatches**, and it
-reaches stage `review`. Two things needed a person to read the page, and both are
+reaches stage `review` — which means every automatic check is satisfied, not that
+the song is right. Nobody has compared it against the page end to end, the words and
+their alignment are unverified, and **record** and **upload** have never been run on
+it. See STEPS.md, "What clean does not mean". Two things needed a person to read the page, and both are
 recorded in `fixes.json` with their reasoning — a dot the OCR invented in m26, and a
 slur it dropped in m50. A third case needed no score edit at all: in m32 the bass
 lower voice holds one syllable while the others sing two, which is a rhythm
