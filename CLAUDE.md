@@ -99,7 +99,7 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ -q     # 60 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q   # 73 tests, all passing
 ```
 
 `pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
@@ -112,9 +112,13 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
   output, regenerate the goldens by copying the freshly produced
   `<name>_test_output.mscx` over `<name>_output.mscx`. The comparison is
   shallow (tags only, not text/attributes).
-- `test_per_system.py` — drives the `--per-system` rebuild against the real
-  `laulun_aika.mscx` fixture (systems, part order, per-system pull, tuplet survival,
-  line breaks, prompt reuse, and the answer cache).
+- `test_per_system.py` — drives the per-system module's own interface against the
+  real `laulun_aika.mscx` fixture (systems, layout, part order, per-system pull,
+  tuplet survival, line breaks, lyric map/metaTags, carried-forward answers, answer
+  persistence) and pins both assignment adapters — the CLI prompt and grid answers —
+  to the same rebuild.
+- `src/song_app/tests/test_clean_flow.py` — the song-app path: grid answers →
+  `save_system_answers` → headless `run_clean` → rebuilt parts + lyric routing.
 - `test_missing_tuplets.py` — the dropped-tuplet cross-voice auto-fix (mirror
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` / `test_json_staff_mapping.py` — the
@@ -136,11 +140,13 @@ state model are in `DESIGN.md`.
   separate stage, so a song can be "recorded but not yet uploaded". The folder is
   a slug; the display name lives in the JSON.
 - `pipeline.py` is the glue: `convert_to_mscx` (mscx as-is / mscz unzip / xml via
-  MuseScore CLI), `run_clean` (calls `main(..., interactive=False)`; per-system
-  reads `.persystem_cache.json`, which the **grid form** populates via
-  `save_system_answers`), and `run_lyric_import` (calls `import_file`, capturing
-  the stderr `Warning:` lines as the syllable-mismatch list). `system_grid` builds
-  the per-system grid from `per_system.find_systems` + the staff voice summaries.
+  MuseScore CLI), `run_clean` (calls `main(..., interactive=False)`; per-system runs off
+  the answers the **grid form** recorded via `save_system_answers`), and
+  `run_lyric_import` (calls `import_file`, capturing the stderr `Warning:` lines
+  as the syllable-mismatch list). `system_grid` / `save_system_answers` /
+  `has_system_answers` / `system_ranges` are one-liners over the per-system module's
+  interface (`layout_for_file`, `save_answers`, `has_answers`, `system_ranges`) —
+  the grid is an adapter, not a second implementation.
   `render_score_pdf` exports a `.mscx` to PDF via the MuseScore CLI (cached by
   mtime) so scores can be shown in-browser next to the original PDF — it renders
   from a temp copy with the staff size (`<Spatium>`) shrunk by `SPATIUM_SCALE`
@@ -209,7 +215,7 @@ state model are in `DESIGN.md`.
   **Paste from AI** keeps the prompt/JSON round-trip, while **Type by system**
   fetches `/lyric-grid` and renders a textarea for every `(printed system, output
   part)`. The backend derives part names from `Part/trackName`, skips click/rest
-  parts, gets system ranges from `per_system.find_systems`, and prefills cells by
+  parts, gets system ranges via `pipeline.system_ranges`, and prefills cells by
   exporting the score's current lyrics. The browser turns non-empty cells into
   name-addressed JSON blocks (`parts: [part name]`, `measure_start: system start`)
   and submits them through the same `/lyrics` importer. Import warnings are parsed
@@ -282,24 +288,39 @@ stem/pitch logic, not strictly by the typed order. `≤2`-voice divisi is left a
 
 `--per-system` (`utils/per_system.py`) is a separate opt-in mode for scores where the
 physical staves change role per printed system (the Laulun aika fixture). It bypasses
-the normal split entirely: `find_systems` cuts at line breaks, `prompt_system_decls`
-asks the user to name each staff's voices per system, and `build_parts` rebuilds the
-score as one staff per named part (sorted S<A<T<B, then by number), pulling each
-part's notes from the declared `(staff, voice)` per system and filling measure-rests
-where absent. Old Parts/Staves are removed (that's how part deletion happens). Same
-name on two staves in a system → first wins; blank → skip. Each staff prompt offers
-the previous system's answer as a `[default]` (Enter reuses, `-` clears), and the
-original line breaks are re-added on the top staff so the system layout survives.
-Answers are cached per input file (basename, no extension) in `.persystem_cache.json`
-at the repo root (gitignored): each interactive run loads the prior answers as the
-`[default]` per staff and saves the chosen answers back, so re-running needs almost no
-typing — and a complete cache lets `--per-system` run **non-interactively** (no TTY),
-which is how tests drive it (`revoice_by_system(..., can_prompt=False)`).
-main() handles this in an early branch. Because the PDF's printed staff numbering
+the normal split entirely, and the module owns the whole assignment-to-score behavior
+behind one entry point, `clean_per_system(root, input_path=..., answers_from=...)`:
+it cuts systems at line breaks, describes each system's note-bearing staves
+(`system_layout` / `layout_for_file` → `SystemLayout`/`StaffRow`), resolves the
+answers, rebuilds the score as one staff per named part (sorted S<A<T<B, then by
+number) pulling each part's notes from the declared `(staff, voice)` per system and
+filling measure-rests where absent, re-adds the original line breaks on the top staff,
+runs the post-rebuild cleanup (`add_missing_ties` + the same decoration strip the split
+does), and writes the lyric-routing metaTags. Old Parts/Staves are removed (that's how
+part deletion happens). Same name on two staves in a system → first wins.
+
+Assignments are an `Answers` mapping (`{system_index: {staff_id: "T1,T2"}}`) produced
+by either of two **adapters at the same seam**: the terminal prompt
+(`utils/per_system_prompt.prompt_for_answers`, passed to `clean_per_system` as
+`answers_from`) and the web grid (`song_app.pipeline.system_grid` →
+`save_system_answers`, after which the rebuild reads them back from the store).
+A staff left blank in a system inherits its previous system's answer (`-` =
+`per_system.CLEARED` declares nothing and stops that inheritance); the
+prompt offers the recorded answer as a `[default]` (Enter reuses it). Answers are
+recorded per input file (basename, no extension) in `.persystem_cache.json` at the repo
+root (gitignored) via `save_answers`/`saved_answers`/`has_answers`; the store itself is
+internal (`JsonAnswerStore`, swappable in tests through `use_answer_store`). A complete
+answer set lets per-system mode run **non-interactively** (no TTY) — that is how the web
+app cleans headless after the grid is submitted, and how the tests drive it. `main()`
+handles per-system mode in an early branch: it calls `clean_per_system` (handing it the
+prompt adapter only when there is a TTY) and writes the file — the rebuild details and
+the metadata are the module's.
+
+Because the PDF's printed staff numbering
 **shifts per system** as parts are omitted (e.g. with T3 absent, the bass becomes
 printed staff 3), it writes a per-system `lyricsSystemMap` metaTag (JSON: per
 measure-range, `printed_no -> [output staff ids]`) in addition to an identity
-`lyricsStaffMap` fallback. `build_system_lyric_map` builds it by grouping parts that
+`lyricsStaffMap` fallback. The module builds it by grouping parts that
 share a source staff into one printed staff (divisi: voice 0 → 'above', voice 1 →
 'below') and ordering printed staves by **musical rank** (S<A<T<B, then number) — not
 by the OCR's source-staff order, which can be shuffled. `lyric_txt.py` import reads it
@@ -367,7 +388,7 @@ prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
   A null `measure_start` (the LLM emits null when no measure number is printed at the
   start of a line) is auto-filled by `_fill_missing_measure_starts`: blocks are one
   per printed system in order, so each null block takes the start measure of the
-  system at its position (`find_systems`); explicit values are left alone, and a
+  system at its position (`per_system.system_ranges`); explicit values are left alone, and a
   block-count vs system-count mismatch is warned (so the user verifies alignment).
 - Import is in-place on the tree, removes verse 2+, and clears lyrics from
   ineligible (spanner-continuation) chords. `--replace` / `clear_existing=True`

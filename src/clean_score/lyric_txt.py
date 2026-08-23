@@ -1074,8 +1074,8 @@ def _fill_missing_measure_starts(json_str: str, score_root: etree._Element) -> s
     if not any(b.get("measure_start") is None for b in blocks):
         return json_str  # nothing to infer
 
-    from .utils.per_system import find_systems
-    starts = [a + 1 for (a, _b) in find_systems(score_root)]
+    from .utils.per_system import system_ranges
+    starts = [r.start for r in system_ranges(score_root)]
     if not starts:
         print("Warning: lyric lines have null measure_start but the score has no "
               "system breaks to infer from; those lines were skipped.", file=sys.stderr)

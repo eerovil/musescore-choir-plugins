@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 from copy import deepcopy
-import json
 import os
 import sys
 from lxml import etree
@@ -28,7 +27,8 @@ from .utils.revoice import (
     capture_revoice_plan,
     establish_baseline,
 )
-from .utils.per_system import revoice_by_system
+from .utils.per_system import clean_per_system
+from .utils.per_system_prompt import prompt_for_answers
 
 from .utils.utils import (
     delete_all_elements_by_selector,
@@ -221,41 +221,21 @@ def main(
     # Per-system mode: rebuild the score from per-system part declarations instead of
     # the normal split. For badly-parsed scores where staves change role per system.
     if per_system:
-        input_key = os.path.splitext(os.path.basename(input_path))[0]
         can_prompt = interactive and sys.stdin.isatty()
-        parts, system_map = revoice_by_system(
-            root, input_key=input_key, can_prompt=can_prompt
+        result = clean_per_system(
+            root,
+            input_path=input_path,
+            answers_from=prompt_for_answers if can_prompt else None,
         )
-        if not parts:
+        if not result:
             logger.warning("Per-system re-voicing produced no parts; nothing written.")
             return
-        add_missing_ties(root)
-        # Note: LayoutBreaks are intentionally kept (per_system re-adds system breaks).
-        for sel in (
-            ".//Lyrics", ".//offset", ".//Dynamic",
-            ".//Spanner[@type='HairPin']", ".//Articulation", ".//Tempo",
-            ".//Harmony", ".//bracket", ".//barLineSpan",
-        ):
-            delete_all_elements_by_selector(root, sel)
-        score_element = root.find(".//Score")
-        existing_meta = score_element.findall("metaTag")
-        insert_at = (
-            score_element.index(existing_meta[-1]) + 1 if existing_meta else len(score_element)
-        )
-        # Per-system printed-staff -> output-staff map (the printed numbering shifts
-        # per system as parts are omitted), plus an identity lyricsStaffMap fallback.
-        sys_meta = etree.Element("metaTag", name="lyricsSystemMap")
-        sys_meta.text = json.dumps(system_map, separators=(",", ":"))
-        score_element.insert(insert_at, sys_meta)
-        meta = etree.Element("metaTag", name="lyricsStaffMap")
-        meta.text = ";".join(f"{i}:{i}" for i in range(1, len(parts) + 1))
-        score_element.insert(insert_at, meta)
         output_content = etree.tostring(
             root, pretty_print=True, encoding="UTF-8"
         ).decode("UTF-8")
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(output_content)
-        logger.info("Per-system re-voicing complete. Parts: %s", parts)
+        logger.info("Per-system re-voicing complete. Parts: %s", result.parts)
         return
 
     # Resolve OCR voice-count anomalies (measures with >2 voices) before splitting.

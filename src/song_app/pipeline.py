@@ -20,7 +20,7 @@ from lxml import etree
 
 from src.clean_score.main import main as clean_main
 from src.clean_score.lyric_txt import import_file
-from src.clean_score.utils import per_system as ps
+from src.clean_score.utils import per_system
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
 Logger = Callable[[str], None]
@@ -76,50 +76,28 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
     return target
 
 
-def cache_key(mscx_path: str) -> str:
-    """The .persystem_cache.json key clean_score uses (input basename, no ext)."""
-    return os.path.splitext(os.path.basename(mscx_path))[0]
-
-
 def system_grid(mscx_path: str) -> List[Dict]:
     """Per-system staff layout for the clean-stage grid form.
 
     Returns one entry per printed system: measure range + each note-bearing staff's
-    id, voice count and a short content summary. Pre-fills answers from the cache.
+    id, voice count and a short content summary, prefilled with any saved answer.
     """
-    with open(mscx_path, "r", encoding="utf-8") as f:
-        root = etree.fromstring(f.read().encode("utf-8"))
-    score = root if root.tag == "Score" else root.find(".//Score")
-    staves = score.findall("Staff")
-    systems = ps.find_systems(root)
-    cache = ps.load_answer_cache(cache_key(mscx_path)) or {}
-
-    grid: List[Dict] = []
-    for sidx, (a, b) in enumerate(systems):
-        rows = []
-        for staff in staves:
-            sid = int(staff.get("id", "0"))
-            nv = ps._max_voices_in_range(staff, a, b)
-            if nv == 0:
-                continue
-            rows.append({
-                "staff_id": sid,
-                "voices": nv,
-                "summary": ps._first_nonempty_summary(staff, a, b),
-                "answer": cache.get(sidx, {}).get(sid, ""),
-            })
-        grid.append({
-            "system": sidx,
-            "measure_start": a + 1,
-            "measure_end": b + 1,
-            "staves": rows,
-        })
-    return grid
+    return [layout.to_dict() for layout in per_system.layout_for_file(mscx_path)]
 
 
 def save_system_answers(mscx_path: str, answers: Dict[int, Dict[int, str]]) -> None:
-    """Persist the grid answers to .persystem_cache.json so clean can run headless."""
-    ps.save_answer_cache(cache_key(mscx_path), answers)
+    """Record the grid answers for this score so cleaning can run headless."""
+    per_system.save_answers(mscx_path, answers)
+
+
+def has_system_answers(input_path: str) -> bool:
+    """True if this score has a recorded per-system answer set (so it is per-system)."""
+    return per_system.has_answers(input_path)
+
+
+def system_ranges(root: etree._Element) -> List[per_system.SystemRange]:
+    """The score's printed systems as 1-based measure spans (for the lyric grid)."""
+    return per_system.system_ranges(root)
 
 
 def run_clean(
