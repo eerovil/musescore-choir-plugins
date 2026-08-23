@@ -1342,13 +1342,21 @@ def place_lyrics(
 _NON_LYRIC_PART_WORDS = ("drum", "click", "rest")
 
 
-def editor_grid(score_root: etree._Element) -> EditorGrid:
+def editor_grid(
+    score_root: etree._Element,
+    systems: Optional[List[Tuple[int, int]]] = None,
+) -> EditorGrid:
     """The manual editor's projection: one text cell per (printed system, output part).
 
     Parts come from the score's own track names (click/spacer staves excluded), systems
     from the printed line breaks, and each cell is prefilled with the lyrics already in
     the score for that part over that system's measures — the same syllable rules the
     TXT export uses, so what the editor shows round-trips back through `place_lyrics`.
+
+    `systems` overrides the line breaks with explicit (start, end) measure ranges. It is
+    needed because normal-mode cleaning strips layout breaks, so the cleaned score has
+    no systems left to find and the whole piece collapses into one cell per part. The
+    printed systems still exist -- on the page -- and are supplied from there.
     """
     score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
     parts: List[EditorPart] = []
@@ -1361,8 +1369,13 @@ def editor_grid(score_root: etree._Element) -> EditorGrid:
         parts.append(EditorPart(id=sid, name=name or f"staff {sid}"))
     parts.sort(key=lambda p: p.id)
 
-    systems = [EditorSystem(index=r.index, start=r.start, end=r.end)
-               for r in system_ranges(score_root)]
+    if systems:
+        ranges = [EditorSystem(index=i, start=a, end=b)
+                  for i, (a, b) in enumerate(systems)]
+    else:
+        ranges = [EditorSystem(index=r.index, start=r.start, end=r.end)
+                  for r in system_ranges(score_root)]
+    systems = ranges
     by_measure = _lyrics_by_measure_staff(score_root)
     cells: Dict[int, Dict[str, str]] = {}
     for system in systems:

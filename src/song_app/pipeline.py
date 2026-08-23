@@ -270,14 +270,31 @@ def render_score_pdf(mscx_path: str) -> str:
     return out
 
 
-def lyric_grid(mscx_path: str) -> Dict:
+def _printed_systems(song_dir: str) -> Optional[List[Tuple[int, int]]]:
+    """Measure ranges of the printed systems, from the bounds read off the scan.
+
+    Normal-mode cleaning strips layout breaks, so the cleaned score has no systems
+    left to find and the lyric editor would offer one cell per part for the whole
+    piece. The printed systems still exist on the page; these are them.
+    """
+    if not song_dir:
+        return None
+    bounds = [b for b in pdf_systems.load_bounds(song_dir) if b.measure_start]
+    if not bounds:
+        return None
+    return [(b.measure_start, b.measure_end) for b in bounds]
+
+
+def lyric_grid(mscx_path: str, song_dir: str = "") -> Dict:
     """The manual editor's projection of a score: parts x printed systems, prefilled."""
-    return lyric_txt.editor_grid(etree.parse(mscx_path).getroot()).to_dict()
+    root = etree.parse(mscx_path).getroot()
+    return lyric_txt.editor_grid(root, systems=_printed_systems(song_dir)).to_dict()
 
 
-def lyric_blocks(mscx_path: str, cells: Dict) -> List[Dict]:
+def lyric_blocks(mscx_path: str, cells: Dict, song_dir: str = "") -> List[Dict]:
     """The editor's typed cells as lyric JSON blocks, addressed by part name."""
-    grid = lyric_txt.editor_grid(etree.parse(mscx_path).getroot())
+    root = etree.parse(mscx_path).getroot()
+    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir))
     return lyric_txt.blocks_from_cells(grid, cells)
 
 

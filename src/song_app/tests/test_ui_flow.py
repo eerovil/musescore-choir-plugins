@@ -290,3 +290,28 @@ def test_removing_a_system_stops_the_measure_labelling(page, live_app, bounds_so
     saved = stored()
     assert len(saved) == 14
     assert all(b["measure_start"] == 0 for b in saved)
+
+
+def test_the_lyrics_grid_shows_the_printed_system_it_is_asking_about(page, live_app, bounds_song):
+    """Typing lyrics against a whole page is unreadable; each block gets its crop."""
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    page.locator(".step", has_text="Lyrics").first.click()
+    page.get_by_role("button", name="Type by system").click()
+
+    first = page.locator(".sysblock").first
+    expect(first.locator(".syspeek img")).to_be_visible(timeout=60_000)
+    page.wait_for_function(
+        "() => { const i = document.querySelector('.syspeek img');"
+        "        return i && i.complete && i.naturalWidth > 100; }", timeout=60_000)
+
+    # The crop shown is the one whose measures the block is asking about.
+    heading = first.locator("h4").inner_text()
+    src = first.locator(".syspeek img").get_attribute("src")
+    assert "measures 1–3" in heading
+    assert "/system/1?" in src, f"expected system 1 for {heading}, got {src}"
+
+    page.get_by_role("button", name="Hide the score").click()
+    expect(page.locator(".syspeek")).to_have_count(0)
+    page.get_by_role("button", name="Show the score").click()
+    expect(page.locator(".syspeek").first).to_be_visible()

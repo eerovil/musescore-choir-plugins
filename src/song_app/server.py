@@ -426,7 +426,7 @@ def api_lyric_grid(slug: str) -> Dict:
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         raise HTTPException(400, "Clean the score first")
-    return pipeline.lyric_grid(cleaned)
+    return pipeline.lyric_grid(cleaned, song.dir)
 
 
 @app.get("/api/songs/{slug}/lyrics-json")
@@ -449,7 +449,7 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     body = body or {}
     cells = body.get("cells")
     if cells:
-        blocks = pipeline.lyric_blocks(cleaned, cells)
+        blocks = pipeline.lyric_blocks(cleaned, cells, song.dir)
         if not blocks:
             raise HTTPException(400, "Nothing typed yet")
         json_text = json.dumps(blocks, ensure_ascii=False, indent=2)

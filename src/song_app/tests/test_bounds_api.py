@@ -95,3 +95,32 @@ def test_the_grid_overlay_is_available_for_reading_bounds_off(client):
     plain = client.get(f"/api/songs/{SLUG}/page/1?dpi=100").content
     grid = client.get(f"/api/songs/{SLUG}/page/1?dpi=100&grid=true").content
     assert grid != plain and len(grid) > 0
+
+
+def test_the_lyric_grid_asks_per_printed_system_not_per_score(client):
+    """Normal-mode cleaning strips layout breaks, so the score has no systems left.
+
+    Without the bounds the editor offers one cell per part for all 52 measures,
+    which is not an editor. With them it asks system by system, as printed.
+    """
+    grid = client.get(f"/api/songs/{SLUG}/lyric-grid").json()
+    assert len(grid["systems"]) == 15
+    assert [p["name"] for p in grid["parts"]] == ["T1", "T2", "B1", "B2"]
+    assert grid["systems"][0]["start"] == 1 and grid["systems"][0]["end"] == 3
+
+    from src.song_app import state
+    os.remove(os.path.join(state.SONGS_DIR, SLUG, pdf_systems.BOUNDS_FILE))
+    bare = client.get(f"/api/songs/{SLUG}/lyric-grid").json()
+    assert len(bare["systems"]) == 1
+    assert bare["systems"][0]["end"] == 52
+
+
+def test_unlabelled_bounds_are_not_used_for_the_lyric_grid(client):
+    """Bounds whose count disagrees with the score carry no measure numbers, so
+    they cannot say which measures a cell covers and must not be used."""
+    bands = client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]
+    fewer = [{"page": b["page"], "top": b["top"], "bottom": b["bottom"]} for b in bands[:-1]]
+    client.put(f"/api/songs/{SLUG}/bounds", json={"systems": fewer})
+
+    grid = client.get(f"/api/songs/{SLUG}/lyric-grid").json()
+    assert len(grid["systems"]) == 1        # fell back to the score

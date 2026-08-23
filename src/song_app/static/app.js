@@ -755,12 +755,32 @@ async function lyricsPaste(panel, song, P, refresh) {
 
 async function lyricsManual(panel, song, P, refresh) {
   panel.append(el("p", { className: "sub" }, "Type the lyrics for each part, per system. Hyphenate syllables (e.g. \"lau-lun ai-ka\")."));
+  const toggle = el("button", { className: "vtab" }, "");
+  toggle.onclick = () => {
+    showScore = !showScore;
+    localStorage.setItem("lyricScore", showScore ? "1" : "0");
+    lyricScroll = panel.scrollTop;
+    refresh();
+  };
+  panel.append(toggle);
   const holder = el("div", {}, el("p", { className: "hint" }, "Loading…"));
   panel.append(holder, makeLog());
 
   let grid;
   try { grid = await getJSON(`${P}/lyric-grid`); }
   catch (e) { holder.replaceChildren(el("p", { className: "err" }, e.message)); return; }
+
+  // The printed system, cropped from the scan, shown beside the cells for it.
+  // Typing lyrics against a whole page is the resolution problem all over again:
+  // a slur or a lyric line under the lower staff is not legible at page scale.
+  // Matched by measure range, not by position, so a bounds file that disagrees
+  // with the score attaches nothing rather than the wrong picture.
+  let byStart = {};
+  try {
+    const b = await getJSON(`${P}/bounds`);
+    for (const s of b.systems || []) if (s.measure_start) byStart[s.measure_start] = s.index;
+  } catch { /* no PDF, or none stored yet — the cells work regardless */ }
+  let showScore = localStorage.getItem("lyricScore") !== "0";
   const { parts, systems, cells } = grid;
   const cellText = (si, name) => (cells?.[si]?.[name]) || "";
   const warns = lyricMismatches(song);
@@ -769,9 +789,19 @@ async function lyricsManual(panel, song, P, refresh) {
   const cellWarns = (sys, p) => warns.filter((w) =>
     (w.staff_ids || []).includes(p.id) && w.measure_start >= sys.start && w.measure_start <= sys.end);
 
+  const scoreFor = (sys) => {
+    const idx = byStart[sys.start];
+    if (!idx || !showScore) return [];
+    return [el("a", { className: "syspeek", href: `${P}/system/${idx}?dpi=400`,
+                      target: "_blank", title: "open at full resolution" },
+      el("img", { src: `${P}/system/${idx}?dpi=200`, loading: "lazy",
+                  alt: `system ${idx}` }))];
+  };
+
   holder.replaceChildren(...systems.map((sys) =>
     el("div", { className: "sysblock" },
       el("h4", {}, `System ${sys.index + 1} — measures ${sys.start}–${sys.end}`),
+      ...scoreFor(sys),
       ...parts.map((p) => {
         const ta = el("textarea", { rows: 1, value: cellText(sys.index, p.name),
           "data-sys": sys.index, "data-part": p.name });
@@ -783,6 +813,10 @@ async function lyricsManual(panel, song, P, refresh) {
             + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
             + `${w.message.split("): ").pop()}`)));
       }))));
+  toggle.textContent = Object.keys(byStart).length
+    ? (showScore ? "Hide the score" : "Show the score")
+    : "";
+  toggle.style.display = Object.keys(byStart).length ? "" : "none";
   holder.querySelectorAll("textarea").forEach(autoGrow); // size to content (no scroll)
   if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after re-import
 
