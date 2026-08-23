@@ -355,6 +355,21 @@ state model are in `DESIGN.md`.
   whole page scrolls and the viewer is carried off-screen. Grid and flex items need
   the explicit `min-height: 0`, or they refuse to shrink below their content and
   `overflow: auto` never fires.
+- `static/` **on a phone**: the three panes cannot share a 390px screen, so below the
+  breakpoint one is shown at a time and a bar at the bottom of the workspace switches
+  between them (Stages · the current stage · Score). The bar is in the DOM at every
+  width and the stylesheet hides it above the breakpoint — there is no width-sniffing
+  in `app.js` that could disagree with the media query, and every mobile rule is
+  additive, so the desktop layout is untouched. The breakpoint is
+  `max-width: 840px, max-height: 500px`; the second condition catches a phone held
+  sideways, which is wider than the breakpoint but nothing like tall enough. Two
+  things had to change beyond CSS: the viewer's "wait for layout" retry now stops
+  while its pane is off-screen (an offscreen pane never gains width, so it was an
+  endless `requestAnimationFrame` loop on a battery) and wakes via `_wake()` when the
+  pane comes back; and the Systems editor's band drag moved from mouse events to
+  **pointer** events with capture, so a finger can drag a boundary — that path is
+  otherwise unreachable on a phone. `src/song_app/tests/test_mobile_ui.py` drives it
+  at 390x844.
 - `static/` is a dependency-free vanilla-JS SPA: a library view and a 3-pane
   workspace (stage rail · per-stage panel · document viewer, controls clustered
   left, previews right). The viewer tabs

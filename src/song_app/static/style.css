@@ -165,7 +165,10 @@ table.grid input.unset { border-color: var(--warn); }
 .sysdel { position: absolute; right: 2px; top: 2px; line-height: 1;
           border: 0; background: rgba(170, 40, 40, .85); color: #fff;
           border-radius: 2px; cursor: pointer; font-size: .75rem; padding: 0 .3rem; }
-.sysgrip { position: absolute; left: 0; right: 0; height: 9px; cursor: ns-resize; }
+/* touch-action: the grip is dragged with a finger too, and without this the browser
+   claims the gesture as a page scroll and the band never moves. */
+.sysgrip { position: absolute; left: 0; right: 0; height: 9px; cursor: ns-resize;
+           touch-action: none; }
 .sysgrip.top { top: -5px; }
 .sysgrip.bottom { bottom: -5px; }
 .sysgrip:hover { background: rgba(30, 110, 200, .45); }
@@ -207,3 +210,79 @@ table.grid input.unset { border-color: var(--warn); }
 .cmplabel { font-size: .7rem; color: #888; text-transform: uppercase;
             letter-spacing: .05em; margin: .3rem 0 .1rem; }
 .cmprow.cmpon { background: #eef4ff; box-shadow: 0 0 0 3px #cddffb; border-radius: 4px; }
+
+/* ---- Phone ---------------------------------------------------------------
+   The bar that switches panes is in the DOM at every width; here is the only
+   place it exists. Everything below the breakpoint is additive: not one rule
+   above this line changes, so the desktop layout and its browser tests are
+   untouched.
+
+   The second condition catches a phone held sideways — 844x390 is wider than the
+   breakpoint but has nowhere near the height the three-pane layout needs. A
+   desktop window under 500px tall is not a case worth protecting. */
+.mobilebar { display: none; }
+
+@media (max-width: 840px), (max-height: 500px) {
+  /* The window, not the document, is the frame — 100dvh so an iOS URL bar sliding
+     away doesn't leave the tab bar hanging below the fold. */
+  html, body { height: 100dvh; }
+  header { padding: 8px 12px; gap: 8px; }
+  .brand { font-size: 15px; }
+  #crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* One pane at a time, the bar underneath it. `.wide` is a desktop-only mode and
+     its column rule would otherwise win on specificity and drop the bar's row. */
+  .ws, .ws.wide { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .ws > .stagebar, .ws > .panel, .ws > .viewer,
+  .ws.wide > .stagebar, .ws.wide > .panel {
+    grid-row: 1; grid-column: 1; display: none; border-right: 0;
+  }
+  .ws.m-stages > .stagebar { display: block; }
+  .ws.m-panel > .panel { display: block; }
+  .ws.m-viewer > .viewer { display: flex; }
+  .ws > .widetoggle { display: none; }   /* hiding the panel is what the bar is for */
+
+  .mobilebar {
+    grid-row: 2; grid-column: 1; display: flex; gap: 6px; padding: 6px;
+    border-top: 1px solid var(--line); background: var(--panel);
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+  }
+  .mtab { flex: 1; min-height: 44px; overflow: hidden; text-overflow: ellipsis; }
+  .mtab.active { background: var(--accent); color: #0c1320; border-color: var(--accent); font-weight: 600; }
+
+  /* Thumbs, not a mouse pointer: 44px targets, and 16px text in fields because
+     anything smaller makes iOS Safari zoom the page on focus. */
+  button, .ailink { min-height: 44px; }
+  input, textarea, select { font-size: 16px; }
+  input[type=checkbox], input[type=radio] { width: 22px; height: 22px; }
+  .stagebar { padding: 8px; }
+  .stagebar .step { min-height: 46px; font-size: 15px; }
+
+  .panel { padding: 14px 12px; }
+  .lib { padding: 14px 12px; }
+  .lib-head { flex-wrap: wrap; gap: 10px; }
+  .cards { grid-template-columns: 1fr; }
+
+  /* The tab row scrolls sideways rather than wrapping onto three lines — vertical
+     space is the scarce one, and the viewer is what should have it. */
+  .viewtabs { flex-wrap: nowrap; overflow-x: auto; }
+  .viewtabs .spacer { display: none; }
+  .vtab.split { display: none; }         /* two documents side by side on a phone: no */
+  .viewer { flex-direction: column; }    /* if a split is already open, stack it */
+  .vslot { border-left: 0; border-top: 1px solid var(--line); }
+  .vslot:first-child { border-top: 0; }
+
+  /* The clean grid is four columns of a table on a 390px screen. One card per staff
+     instead, header row dropped — the cells label themselves. */
+  table.grid, table.grid tr, table.grid td { display: block; width: 100%; }
+  table.grid tr:first-child { display: none; }
+  table.grid tr { border: 1px solid var(--line); border-radius: 9px;
+                  padding: 8px; margin-bottom: 8px; }
+  table.grid td { border: 0; padding: 2px 0; }
+  /* The voice count is a bare number once its column header is gone, and "2" on its
+     own line says nothing. The other two cells label themselves ("staff 1", the note
+     list), so only this one needs it. */
+  table.grid td:nth-child(2)::before { content: "voices: "; color: var(--muted); }
+
+  .log { max-height: 160px; }
+}

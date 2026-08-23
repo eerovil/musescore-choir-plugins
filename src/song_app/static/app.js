@@ -146,8 +146,9 @@ async function renderWorkspace(slug) {
   const wsGrid = el("div", { className: "ws" }, stagebarEl, panelEl, viewerEl);
   // Reviewing means reading two scores side by side; the rail and panel are just
   // in the way then. Remembered, because it is a mode you stay in.
+  // classList rather than className: the phone layout keeps its own class here too.
   const setWide = (on) => {
-    wsGrid.className = on ? "ws wide" : "ws";
+    wsGrid.classList.toggle("wide", on);
     localStorage.setItem("wsWide", on ? "1" : "0");
     wideBtn.textContent = on ? "❯ Show panel" : "❮ Hide panel";
     wideBtn.title = on ? "show the stage panel" : "hide the stage panel for more room";
@@ -155,8 +156,29 @@ async function renderWorkspace(slug) {
   const wideBtn = el("button", { className: "widetoggle",
     onclick: () => setWide(!wsGrid.classList.contains("wide")) });
   wsGrid.append(wideBtn);
+
+  // On a phone the three panes cannot share the screen, so one is shown at a time and
+  // this bar switches between them. It is in the DOM at every width — the stylesheet
+  // hides it above the breakpoint, so the desktop layout is untouched and there is no
+  // width-sniffing in here to disagree with the media query.
+  const paneBtns = {};
+  let pane = "panel";
+  const showPane = (p) => {
+    pane = p;
+    for (const k of ["stages", "panel", "viewer"]) wsGrid.classList.toggle("m-" + k, k === p);
+    for (const k in paneBtns) paneBtns[k].className = "mtab" + (k === p ? " active" : "");
+    // A pane that was hidden has no width, so its PDF could not render while it was
+    // away; now that it is on screen, let it.
+    if (p === "viewer") viewerEl._wake();
+  };
+  const mobilebar = el("div", { className: "mobilebar" },
+    [["stages", "Stages"], ["panel", "Panel"], ["viewer", "Score"]].map(([k, label]) =>
+      (paneBtns[k] = el("button", { className: "mtab", onclick: () => showPane(k) }, label))));
+  wsGrid.append(mobilebar);
+
   app.replaceChildren(wsGrid);
   setWide(localStorage.getItem("wsWide") === "1");
+  showPane("panel");
 
   function drawStagebar() {
     const rec = song.record || {};
@@ -166,8 +188,11 @@ async function renderWorkspace(slug) {
       i < song.stage_index || (st === "record" && recorded) || (st === "upload" && uploaded);
     stagebarEl.replaceChildren(...song.stages.map((st, i) => el("div", {
       className: "step " + (st === view ? "active " : "") + (done(st, i) ? "done" : ""),
-      onclick: () => { view = st; drawStagebar(); drawPanel(); },
+      // Picking a stage on a phone means "take me to it", so the panel comes forward.
+      onclick: () => { view = st; drawStagebar(); drawPanel(); showPane("panel"); },
     }, STAGE_LABEL[st] || st)));
+    // The middle button names the stage it will show, so the bar says where you are.
+    paneBtns.panel.textContent = STAGE_LABEL[view] || view;
   }
 
   function drawPanel() {
@@ -437,7 +462,7 @@ async function systemsEditor(view, slug) {
         for (const edge of ["top", "bottom"]) {
           box.append(el("div", {
             className: `sysgrip ${edge}`,
-            onmousedown: (ev) => startDrag(ev, img, b, edge, box),
+            onpointerdown: (ev) => startDrag(ev, img, b, edge, box),
           }));
         }
         return box;
@@ -445,10 +470,14 @@ async function systemsEditor(view, slug) {
     }
   }
 
+  // Pointer events, not mouse: the same handler then serves a finger on the phone and
+  // a mouse on the desktop, and capturing the pointer keeps a drag that wanders off
+  // the grip (or off the window) attached to the band it started on.
   function startDrag(ev, img, band, edge, box) {
     ev.preventDefault(); ev.stopPropagation();
     const rect = img.getBoundingClientRect();
     if (!rect.height) return;                        // image not laid out yet
+    ev.target.setPointerCapture?.(ev.pointerId);
     const move = (e) => {
       const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
       if (edge === "top") band.top = Math.min(y, band.bottom - 0.01);
@@ -459,12 +488,14 @@ async function systemsEditor(view, slug) {
       box.style.height = `${(band.bottom - band.top) * 100}%`;
     };
     const up = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
       drawBands();                                   // re-label and re-order once
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   }
 
   view.replaceChildren(
@@ -489,6 +520,7 @@ function viewer(song, slug, panes, rebuild) {
   const keys = tabs.map(([k]) => k);
   for (let i = 0; i < panes.length; i++) if (!keys.includes(panes[i])) panes[i] = keys[0];
   const refreshers = [];
+  const wakers = [];
 
   const slot = (i) => {
     const frames = {};                  // doc -> scrollable pdfview div (kept alive)
@@ -500,7 +532,12 @@ function viewer(song, slug, panes, rebuild) {
       if (v._url === v._renderedUrl) return;
       if (v.style.display === "none") return;      // render when shown
       if (v.clientWidth > 0) mountPdf(v, v._url);
-      else requestAnimationFrame(() => ensureRendered(doc)); // wait for layout (e.g. after split)
+      // Wait for layout (e.g. right after a split) — but only while the pane is
+      // actually on screen. On a phone the whole viewer is hidden behind the pane
+      // switch, and an offscreen pane never gains width, so this would otherwise be
+      // a requestAnimationFrame loop spinning forever on a battery. `_wake` picks it
+      // up again when the pane comes back.
+      else if (v.offsetParent) requestAnimationFrame(() => ensureRendered(doc));
     };
     const show = (doc) => {
       panes[i] = doc;
@@ -559,6 +596,7 @@ function viewer(song, slug, panes, rebuild) {
 
     const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), ctrl);
     show(panes[i]);
+    wakers.push(() => ensureRendered(panes[i]));
     // Re-render only the cleaned previews; their scroll is preserved by renderPdf.
     refreshers.push((fp) => {
       for (const d in frames)
@@ -572,6 +610,7 @@ function viewer(song, slug, panes, rebuild) {
 
   const root = el("div", { className: "viewer" }, panes.map((_, i) => slot(i)));
   root._refreshFp = (fp) => refreshers.forEach((f) => f(fp));
+  root._wake = () => wakers.forEach((f) => f());
   return root;
 }
 
