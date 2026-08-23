@@ -10,7 +10,9 @@ Validation only; never mutates the score. Findings:
     finding that does not compare the score against itself — every other check
     here can be satisfied by a wrong answer that is merely self-consistent. It
     exists because a repair pass once "fixed" a 4/4 bar by padding every voice to
-    9/8 and passed everything.
+    9/8 and passed everything. It stays out of music that has no meter to violate:
+    scores carrying an oversized nominal instead of a signature, and scores whose
+    bars mostly declare their own length (mixed or free meter).
 
 Missing notes that *do* fill the bar (a half-rest standing in for lost notes)
 aren't tick-detectable; they surface as lyric syllable overflow at import time.
@@ -34,6 +36,18 @@ _DUR = {
     "64th": Fraction(1, 64), "128th": Fraction(1, 128), "256th": Fraction(1, 256),
 }
 _DOT_MULT = {0: Fraction(1), 1: Fraction(3, 2), 2: Fraction(7, 4), 3: Fraction(15, 8)}
+
+# Longest bar a printed time signature plausibly asks for (4/2, 8/4, 12/8 all fit).
+# Anything longer is not a meter: music printed without one is carried in MuseScore
+# as an oversized nominal — one score here declares 16/2, eight whole notes — with
+# each phrase given its own length. There is no meter to violate, so the
+# unprinted-meter rule stays silent under one.
+_PLAUSIBLE_METER = Fraction(2)
+
+# A score where most bars declare their own length is not in a fixed meter -- it is
+# mixed or free, and MuseScore is carrying the length bar by bar. One score here has
+# an override on 20 of 25 bars. There is no meter to violate, so the rule stays out.
+_FREE_METER_SHARE = 0.5
 
 
 def _parse_fraction(text: Optional[str]) -> Optional[Fraction]:
@@ -105,6 +119,11 @@ def scan(cleaned_path: str) -> List[Dict]:
         for st in part.findall("Staff"):
             staff_name[int(st.get("id", "0"))] = name.strip()
 
+    # Is this score in a fixed meter at all? Decided once, for the whole score.
+    all_measures = score.findall(".//Staff/Measure")
+    overridden = sum(1 for m in all_measures if m.get("len"))
+    fixed_meter = bool(all_measures) and overridden / len(all_measures) <= _FREE_METER_SHARE
+
     issues: List[Dict] = []
     for staff in score.findall("Staff"):
         sid = int(staff.get("id", "0"))
@@ -150,7 +169,8 @@ def scan(cleaned_path: str) -> List[Dict]:
             # Only when the bar is otherwise sound: an uneven bar is already
             # reported, and this is about the case nothing else can see -- every
             # voice agreeing on a meter that was never printed.
-            if mi > 1 and ts is None and not uneven:
+            if (fixed_meter and mi > 1 and ts is None and not uneven
+                    and sig <= _PLAUSIBLE_METER):
                 agreed = {t for t, has, _ in
                           (_voice_length(v, nominal) for v in voices) if has}
                 if len(agreed) == 1 and agreed != {sig}:

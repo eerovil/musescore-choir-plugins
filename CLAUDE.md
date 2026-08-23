@@ -256,7 +256,14 @@ state model are in `DESIGN.md`.
   a repair pass once "fixed" a 4/4 bar by padding every voice to 9/8, and health,
   the lyric arithmetic and the tests were all happy. Measure 1 is exempt (an
   anacrusis prints no signature) and an already-uneven bar is left to
-  `malformed-measure` rather than reported twice. Missing notes that still fill the bar (a
+  `malformed-measure` rather than reported twice. It also stays out of music with
+  no meter to violate: a score carrying an oversized nominal in place of a
+  signature (one here declares 16/2 — eight whole notes — for music printed
+  without a meter), and a score where most bars declare their own length (one
+  overrides 20 of 25). Across the 35 cleaned songs in `songs/` it reports ~35
+  bars, concentrated in five scores; spot-checked, they are real — including a
+  mixed-meter piece that silently changes bar length 16 times, i.e. dropped time
+  signatures. Missing notes that still fill the bar (a
   half-rest standing in for lost notes, e.g. the m18 case) are **not**
   tick-detectable — they surface as lyric syllable overflow at import. Missing
   slurs are undetectable and stay manual. `merge_issues` carries over `dismissed`

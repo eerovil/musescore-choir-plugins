@@ -81,6 +81,32 @@ def test_an_uneven_bar_is_left_to_the_malformed_check(tmp_path):
     assert not _kinds(path, "unprinted-meter")
 
 
+def test_music_printed_without_a_meter_is_not_judged(tmp_path):
+    """An oversized nominal is MuseScore carrying unmetered music, not a meter.
+
+    One score here declares 16/2 — eight whole notes — and gives each phrase its
+    own length. There is nothing for a bar to disagree with.
+    """
+    path = _score(tmp_path, [[8], [9, 9]], sig=(16, 2), lens=[None, "9/8"])
+    assert not _kinds(path, "unprinted-meter")
+
+
+def test_a_score_whose_bars_all_declare_their_own_length_is_not_judged(tmp_path):
+    """Mixed or free meter: the length is per bar by construction.
+
+    One score here overrides 20 of 25 bars. Judging those against a carried-forward
+    signature would flag most of the piece for being what it is.
+    """
+    bars = [[8]] + [[9, 9]] * 4
+    lens = [None] + ["9/8"] * 4                     # 4 of 5 bars overridden
+    assert not _kinds(_score(tmp_path, bars, lens=lens), "unprinted-meter")
+
+    # The same shape with only one override is an ordinary score, and is judged.
+    bars = [[8]] + [[8]] * 3 + [[9, 9]]
+    lens = [None, None, None, None, "9/8"]
+    assert _kinds(_score(tmp_path, bars, lens=lens), "unprinted-meter")
+
+
 def test_the_fixture_is_not_flagged(tmp_path):
     """m26 is uneven, so it is reported as malformed and not twice over."""
     import os
