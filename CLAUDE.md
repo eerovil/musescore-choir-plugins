@@ -222,6 +222,10 @@ state model are in `DESIGN.md`.
   back onto the matching system/part cell; lyric-panel scroll is preserved across
   the refresh. Blank cells are omitted, so this editor expresses a lyric line
   starting in a system, not an instruction to clear one isolated cell.
+- The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
+  inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
+  staff silent from there on, clearing the carry — both cleared and never-named slots are
+  flagged `unset` and listed in the "will be DROPPED" confirm before cleaning.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
@@ -308,8 +312,8 @@ A staff left blank in a system inherits its previous system's answer (`-` =
 `per_system.CLEARED` declares nothing and stops that inheritance); the
 prompt offers the recorded answer as a `[default]` (Enter reuses it). Answers are
 recorded per input file (basename, no extension) in `.persystem_cache.json` at the repo
-root (gitignored) via `save_answers`/`saved_answers`/`has_answers`; the store itself is
-internal (`JsonAnswerStore`, swappable in tests through `use_answer_store`). A complete
+root (gitignored) via `save_answers`/`saved_answers`/`has_answers`; the file itself is
+internal (swap it in tests with `use_answer_file(path)`). A complete
 answer set lets per-system mode run **non-interactively** (no TTY) — that is how the web
 app cleans headless after the grid is submitted, and how the tests drive it. `main()`
 handles per-system mode in an early branch: it calls `clean_per_system` (handing it the

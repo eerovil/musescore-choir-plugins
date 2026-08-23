@@ -415,6 +415,9 @@ async function panelClean(panel, song, slug, P, refresh) {
 
       // Roll a staff's answer forward: an empty field shows the previous system's
       // answer for the same staff as a faint placeholder (and inherits it at clean).
+      // A cell holding "-" says the staff is silent from there on, so it clears the
+      // carry instead of setting it — same rule the backend applies (per_system.CLEARED).
+      const CLEARED = "-";
       const inputs = [...holder.querySelectorAll("input[data-sys]")];
       const byStaff = () => {
         const m = {};
@@ -427,10 +430,11 @@ async function panelClean(panel, song, slug, P, refresh) {
           let carry = "";
           for (const inp of list) {
             const v = inp.value.trim();
-            if (v) carry = v;
+            if (v === CLEARED) carry = "";
+            else if (v) carry = v;
             else inp.placeholder = carry || inp.dataset.hint;
-            // flag staves that will be dropped (no value and nothing to inherit)
-            inp.classList.toggle("unset", !v && !carry);
+            // flag staves that will be dropped (cleared, or no value and nothing to inherit)
+            inp.classList.toggle("unset", (!v || v === CLEARED) && !carry);
           }
         }
       };
@@ -441,8 +445,10 @@ async function panelClean(panel, song, slug, P, refresh) {
           let carry = "";
           for (const inp of list) {
             const v = inp.value.trim();
-            if (v) carry = v;
-            else if (!carry) out.push(`staff ${inp.dataset.staff} · system ${+inp.dataset.sys + 1}`);
+            if (v === CLEARED) carry = "";
+            else if (v) carry = v;
+            if ((!v || v === CLEARED) && !carry)
+              out.push(`staff ${inp.dataset.staff} · system ${+inp.dataset.sys + 1}`);
           }
         }
         return out;
@@ -502,9 +508,9 @@ function sysBlock(sys) {
       el("td", {}, String(st.voices)),
       el("td", { className: "stsum" }, st.summary),
       el("td", {}, el("input", {
-        value: st.answer || "", placeholder: st.voices > 1 ? "e.g. T1, T2 (type to set)" : "e.g. T1 (type to set)",
+        value: st.answer || "", placeholder: st.voices > 1 ? "e.g. T1, T2 (- = silent)" : "e.g. T1 (- = silent)",
         "data-sys": sys.system, "data-staff": st.staff_id,
-        "data-hint": st.voices > 1 ? "e.g. T1, T2 (type to set)" : "e.g. T1 (type to set)",
+        "data-hint": st.voices > 1 ? "e.g. T1, T2 (- = silent)" : "e.g. T1 (- = silent)",
       }))));
   return el("div", { className: "sysblock" },
     el("h4", {}, `System ${sys.system + 1} — measures ${sys.measure_start}–${sys.measure_end}`),

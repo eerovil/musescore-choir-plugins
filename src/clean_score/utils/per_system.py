@@ -141,64 +141,37 @@ AnswerSource = Callable[[List[SystemLayout]], Answers]
 
 
 # --------------------------------------------------------------------------- #
-# Answer persistence (internal, substitutable for tests)
+# Answer persistence (internal; the file is swappable for tests)
 # --------------------------------------------------------------------------- #
 
-class JsonAnswerStore:
-    """Answers for many scores in one JSON file, keyed by input file name."""
-
-    def __init__(self, path: str):
-        self.path = path
-
-    def load(self, key: str) -> Optional[Answers]:
-        if not key or not os.path.exists(self.path):
-            return None
-        try:
-            with open(self.path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-        except (OSError, ValueError):
-            return None
-        entry = raw.get(key)
-        if not entry:
-            return None
-        return {int(sidx): {int(sid): ans for sid, ans in staves.items()}
-                for sidx, staves in entry.items()}
-
-    def save(self, key: str, answers: Answers) -> None:
-        if not key:
-            return
-        raw: Dict[str, Dict[str, Dict[str, str]]] = {}
-        if os.path.exists(self.path):
-            try:
-                with open(self.path, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
-            except (OSError, ValueError):
-                raw = {}
-        raw[key] = {str(sidx): {str(sid): ans for sid, ans in staves.items()}
-                    for sidx, staves in answers.items()}
-        try:
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(raw, f, indent=2, ensure_ascii=False)
-        except OSError as exc:
-            logger.warning("Could not write per-system answers: %s", exc)
-
-
-# Repo-root store; lets you re-run the same score without retyping (and lets the
-# song app clean headless after its grid is submitted).
-_STORE: JsonAnswerStore = JsonAnswerStore(os.path.normpath(
+# Answers for every score live in one JSON file at the repo root, keyed by the input
+# score's file name. That is what lets you re-run a score without retyping, and lets
+# the song app clean headless after its grid is submitted.
+_ANSWER_FILE = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", ".persystem_cache.json")
-))
+)
 
 
 @contextlib.contextmanager
-def use_answer_store(store) -> Iterator[None]:
-    """Swap the answer store for the duration of the block (tests, alternate hosts)."""
-    global _STORE
-    previous, _STORE = _STORE, store
+def use_answer_file(path: str) -> Iterator[None]:
+    """Record answers in `path` for the duration of the block (tests, alternate hosts)."""
+    global _ANSWER_FILE
+    previous, _ANSWER_FILE = _ANSWER_FILE, path
     try:
         yield
     finally:
-        _STORE = previous
+        _ANSWER_FILE = previous
+
+
+def _read_answer_file() -> Dict[str, Dict[str, Dict[str, str]]]:
+    """The whole answer file, or an empty mapping if it is missing or unreadable."""
+    if not os.path.exists(_ANSWER_FILE):
+        return {}
+    try:
+        with open(_ANSWER_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
 
 
 def _key_for(input_path: Optional[str]) -> str:
@@ -210,7 +183,12 @@ def _key_for(input_path: Optional[str]) -> str:
 
 def saved_answers(input_path: Optional[str]) -> Optional[Answers]:
     """Return the answers previously recorded for this input score, or None."""
-    return _STORE.load(_key_for(input_path))
+    key = _key_for(input_path)
+    entry = _read_answer_file().get(key) if key else None
+    if not entry:
+        return None
+    return {int(sidx): {int(sid): ans for sid, ans in staves.items()}
+            for sidx, staves in entry.items()}
 
 
 def has_answers(input_path: Optional[str]) -> bool:
@@ -220,7 +198,17 @@ def has_answers(input_path: Optional[str]) -> bool:
 
 def save_answers(input_path: Optional[str], answers: Answers) -> None:
     """Record answers for this input score so a later rebuild needs no prompting."""
-    _STORE.save(_key_for(input_path), answers)
+    key = _key_for(input_path)
+    if not key:
+        return
+    raw = _read_answer_file()
+    raw[key] = {str(sidx): {str(sid): ans for sid, ans in staves.items()}
+                for sidx, staves in answers.items()}
+    try:
+        with open(_ANSWER_FILE, "w", encoding="utf-8") as f:
+            json.dump(raw, f, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        logger.warning("Could not write per-system answers: %s", exc)
 
 
 # --------------------------------------------------------------------------- #

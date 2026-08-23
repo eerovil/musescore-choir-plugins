@@ -14,7 +14,7 @@ import pytest
 from lxml import etree
 
 from src.clean_score.tests.test_per_system import ANSWERS  # the fixture's reading
-from src.clean_score.utils.per_system import JsonAnswerStore, use_answer_store
+from src.clean_score.utils.per_system import use_answer_file
 from src.song_app import pipeline
 
 FIXTURE = os.path.join(
@@ -25,11 +25,11 @@ FIXTURE = os.path.join(
 
 @pytest.fixture
 def song_dir(tmp_path):
-    """A song folder holding the fixture, with an answer store of its own."""
+    """A song folder holding the fixture, with an answer file of its own."""
     d = tmp_path / "song"
     d.mkdir()
     shutil.copy2(FIXTURE, d / "laulun_aika.mscx")
-    with use_answer_store(JsonAnswerStore(str(tmp_path / "answers.json"))):
+    with use_answer_file(str(tmp_path / "answers.json")):
         yield str(d)
 
 
