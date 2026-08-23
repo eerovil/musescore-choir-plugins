@@ -20,11 +20,12 @@ One module, two consumers: the web app draws the boundaries over the page and le
 them be dragged, and an agent reads the same crops off disk.
 """
 import json
+import math
 import os
 import subprocess
 import threading
 from dataclasses import dataclass, asdict, replace
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PIL import Image, ImageDraw
 
@@ -134,21 +135,48 @@ def _with_grid(page_png: str) -> str:
     return out
 
 
+def _page_size_px(pdf_path: str, dpi: int) -> Tuple[int, int]:
+    """Page size in pixels at `dpi`, from the PDF's own point size."""
+    out = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True)
+    for line in out.stdout.splitlines():
+        if line.startswith("Page size:"):
+            parts = line.split()
+            w_pt, h_pt = float(parts[2]), float(parts[4])
+            # ceil, to match how pdftoppm itself sizes the raster: truncating
+            # loses a pixel and the crop no longer matches the rendered page.
+            return math.ceil(w_pt * dpi / 72), math.ceil(h_pt * dpi / 72)
+    raise RuntimeError(f"Could not read the page size of {pdf_path}")
+
+
 def crop_systems(
     pdf_path: str,
     bounds: List[SystemBounds],
     out_dir: str,
     dpi: int = DPI,
 ) -> List[SystemImage]:
-    """Render each band to its own PNG at `dpi`."""
+    """Render each band to its own PNG at `dpi`.
+
+    Only the band is rasterised, not the page it sits on. A full A4 at 400 dpi
+    takes seconds; a system is a fifth of that, and this is on the path where
+    someone clicks a lyric cell and waits to see the music.
+    """
     os.makedirs(out_dir, exist_ok=True)
+    width, height = _page_size_px(pdf_path, dpi)
     images = []
     for b in bounds:
-        page = Image.open(render_page(pdf_path, b.page, dpi, out_dir))
-        h = page.height
-        box = (0, max(0, int(h * b.top)), page.width, min(h, int(h * b.bottom)))
-        path = os.path.join(out_dir, f"system-{b.index:02d}.png")
-        page.crop(box).save(path)
+        top = max(0, min(height - 1, int(height * b.top)))
+        band = max(1, min(height - top, int(height * b.bottom) - top))
+        path = os.path.join(out_dir, f"system-{b.index:02d}@{dpi}.png")
+        if not os.path.exists(path):
+            stem = os.path.join(
+                out_dir, f".tmp-{os.getpid()}-{threading.get_ident()}-s{b.index}@{dpi}")
+            subprocess.run(
+                ["pdftoppm", "-r", str(dpi), "-f", str(b.page), "-l", str(b.page),
+                 "-x", "0", "-y", str(top), "-W", str(width), "-H", str(band),
+                 "-png", "-singlefile", pdf_path, stem],
+                check=True, capture_output=True,
+            )
+            os.replace(stem + ".png", path)
         images.append(SystemImage(bounds=b, path=path))
     return images
 

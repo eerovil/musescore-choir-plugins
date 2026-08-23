@@ -300,6 +300,8 @@ def test_the_lyrics_grid_shows_the_printed_system_it_is_asking_about(page, live_
     page.get_by_role("button", name="Type by system").click()
 
     first = page.locator(".sysblock").first
+    expect(page.locator(".syspeek")).to_have_count(0)      # off by default now
+    page.get_by_role("button", name="Show the score").click()
     expect(first.locator(".syspeek img")).to_be_visible(timeout=60_000)
     page.wait_for_function(
         "() => { const i = document.querySelector('.syspeek img');"
@@ -313,5 +315,21 @@ def test_the_lyrics_grid_shows_the_printed_system_it_is_asking_about(page, live_
 
     page.get_by_role("button", name="Hide the score").click()
     expect(page.locator(".syspeek")).to_have_count(0)
-    page.get_by_role("button", name="Show the score").click()
-    expect(page.locator(".syspeek").first).to_be_visible()
+
+
+def test_focusing_a_lyric_cell_shows_that_system_in_the_viewer(page, live_app, bounds_song):
+    """The sidebar is too narrow to read a system in; the viewer is the space."""
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    page.locator(".step", has_text="Lyrics").first.click()
+    page.get_by_role("button", name="Type by system").click()
+    expect(page.locator(".sysblock").first).to_be_visible(timeout=30_000)
+
+    blocks = page.locator(".sysblock")
+    blocks.nth(7).locator("textarea").first.focus()        # system 8, measures 27-30
+    expect(page.locator(".onesystem")).to_be_visible(timeout=30_000)
+    expect(page.locator(".onesystem .muted")).to_have_text("Printed system 8")
+    assert "/system/8?" in page.locator(".onesystem img").get_attribute("src")
+
+    blocks.nth(0).locator("textarea").first.focus()        # and it follows the cursor
+    expect(page.locator(".onesystem .muted")).to_have_text("Printed system 1")

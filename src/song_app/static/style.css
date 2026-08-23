@@ -156,3 +156,8 @@ table.grid input.unset { border-color: var(--warn); }
 .syspeek { display: block; margin: .3rem 0 .5rem; background: #fff;
            border: 1px solid #ccc; border-radius: 3px; overflow: hidden; }
 .syspeek img { display: block; width: 100%; }
+
+/* One printed system, shown large in the viewer while its cell is being typed. */
+.onesystem { padding: .5rem; background: #fff; }
+.onesystem img { width: 100%; display: block; }
+.onesystem .muted { color: #666; font-size: .8rem; margin-bottom: .3rem; }

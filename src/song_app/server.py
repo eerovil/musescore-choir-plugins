@@ -15,7 +15,7 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import health, pipeline, state
+from . import health, pdf_systems, pipeline, state
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -123,6 +123,9 @@ def _derived(song: state.Song) -> Dict:
         "stage_index": state.STAGES.index(song.stage) if song.stage in state.STAGES else 0,
         "has_pdf": bool(pdf and os.path.exists(pdf)),
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
+        # Printed-system bounds, labelled with the measures they cover: what lets
+        # the viewer show one system and the lyric editor ask per system.
+        "systems": len([b for b in pdf_systems.load_bounds(song.dir) if b.measure_start]),
         "open_issues": [i for i in issues if i.get("status") == "open"],
         "recording": is_recording(song),
         "media": _media_list(song),

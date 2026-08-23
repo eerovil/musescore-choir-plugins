@@ -194,6 +194,7 @@ function viewerTabs(song) {
   const tabs = [];
   if (song.has_pdf) tabs.push(["pdf", "Original PDF"]);
   if (song.has_pdf) tabs.push(["systems", "Systems"]);
+  if (song.systems) tabs.push(["system", "One system"]);
   tabs.push(["original", "Original XML"]);
   if (song.has_cleaned) {
     tabs.push(["cleaned_nolyrics", "Cleaned MSCX"]);
@@ -261,6 +262,12 @@ async function mountPdf(view, url) {
   }
 }
 
+
+// Focusing a lyric cell asks the viewer to show that printed system, full width.
+// The sidebar is too narrow to read a system in; the viewer is the space for it.
+const SYSTEM_EVENT = "song-system";
+const showSystem = (index) =>
+  window.dispatchEvent(new CustomEvent(SYSTEM_EVENT, { detail: { index } }));
 
 // ---- Systems: the printed-system boundaries, drawn over the page and draggable ----
 // An AI proposes these off the scan; this is where they get corrected. Bounds are
@@ -425,6 +432,18 @@ function viewer(song, slug, panes, rebuild) {
         frames[doc] = v;
         body.append(v);
         if (doc === "systems") { v._systems = true; systemsEditor(v, slug); }
+        else if (doc === "system") {
+          v._systems = true;                       // draws itself, not a PDF
+          v.className = "pdfview onesystem";
+          v._setSystem = (n) => {
+            v._n = n;
+            v.replaceChildren(
+              el("div", { className: "muted" }, `Printed system ${n}`),
+              el("img", { src: `/api/songs/${encodeURIComponent(slug)}/system/${n}?dpi=400` }),
+            );
+          };
+          v._setSystem(v._n || 1);
+        }
         else v._url = docUrl(slug, doc, song.cleaned_fingerprint);
       }
       for (const d in frames) frames[d].style.display = d === doc ? "" : "none";
@@ -434,6 +453,20 @@ function viewer(song, slug, panes, rebuild) {
     const tabRow = tabs.map(([k, label]) => (btns[k] = el("button", {
       className: "vtab", onclick: () => show(k),
     }, label)));
+
+    if (keys.includes("system")) {
+      const onAsk = (ev) => {
+        const n = ev.detail && ev.detail.index;
+        if (!n) return;
+        // Only the first pane follows the cursor, so a split can keep a second
+        // document in view while the other tracks what is being typed.
+        if (i !== 0) return;
+        show("system");
+        frames.system._setSystem(n);
+      };
+      window.addEventListener(SYSTEM_EVENT, onAsk);
+      body._cleanup = () => window.removeEventListener(SYSTEM_EVENT, onAsk);
+    }
 
     const ctrl = panes.length === 1
       ? el("button", { className: "vtab split", title: "Split view",
@@ -780,7 +813,8 @@ async function lyricsManual(panel, song, P, refresh) {
     const b = await getJSON(`${P}/bounds`);
     for (const s of b.systems || []) if (s.measure_start) byStart[s.measure_start] = s.index;
   } catch { /* no PDF, or none stored yet — the cells work regardless */ }
-  let showScore = localStorage.getItem("lyricScore") !== "0";
+  // Off by default now that focusing a cell shows the system in the viewer.
+  let showScore = localStorage.getItem("lyricScore") === "1";
   const { parts, systems, cells } = grid;
   const cellText = (si, name) => (cells?.[si]?.[name]) || "";
   const warns = lyricMismatches(song);
@@ -806,6 +840,8 @@ async function lyricsManual(panel, song, P, refresh) {
         const ta = el("textarea", { rows: 1, value: cellText(sys.index, p.name),
           "data-sys": sys.index, "data-part": p.name });
         ta.oninput = () => autoGrow(ta);
+        const shown = byStart[sys.start];
+        if (shown) ta.onfocus = () => showSystem(shown);
         return el("div", { className: "lyrow" },
           el("label", {}, p.name), ta,
           ...cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
