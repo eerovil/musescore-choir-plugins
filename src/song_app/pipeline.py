@@ -152,20 +152,71 @@ def strip_lyrics_copy(mscx_path: str) -> str:
 SPATIUM_SCALE = float(os.getenv("RENDER_SPATIUM_SCALE", "0.65"))
 
 
-def _scaled_staff_mscx(mscx_path: str) -> Optional[str]:
-    """Write a temp copy of the score with the staff size reduced by SPATIUM_SCALE.
+def line_break_measures(mscx_path: str) -> List[int]:
+    """0-based measure indices carrying a printed line break, from the first staff
+    that has any. Empty when the score has none -- not every source does."""
+    if not mscx_path or not os.path.exists(mscx_path):
+        return []
+    try:
+        root = etree.parse(mscx_path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return []
+    for staff in root.findall(".//Score/Staff"):
+        measures = staff.findall("Measure")
+        found = [i for i, m in enumerate(measures)
+                 if any((lb.findtext("subtype") or "").strip() == "line"
+                        for lb in m.findall("LayoutBreak"))]
+        if found:
+            return found
+    return []
 
-    Returns the temp path, or None if no scaling is needed/possible (caller then
+
+def _apply_line_breaks(root: etree._Element, indices: List[int]) -> int:
+    """Put line breaks on the top staff at `indices`. Returns how many were added.
+
+    Nothing is added unless the score has the same number of measures as the one
+    the indices came from: applied to a score of a different length they would put
+    the systems in the wrong places, which is worse than not applying them.
+    """
+    staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
+    if not staves or not indices:
+        return 0
+    top = staves[0].findall("Measure")
+    if max(indices) >= len(top):
+        return 0
+    added = 0
+    for i in indices:
+        if any((lb.findtext("subtype") or "").strip() == "line"
+               for lb in top[i].findall("LayoutBreak")):
+            continue
+        lb = etree.SubElement(top[i], "LayoutBreak")
+        etree.SubElement(lb, "subtype").text = "line"
+        added += 1
+    return added
+
+
+def _scaled_staff_mscx(mscx_path: str, breaks: Optional[List[int]] = None) -> Optional[str]:
+    """Write a temp copy of the score for rendering: staff size reduced by
+    SPATIUM_SCALE, and the printed line breaks put back if `breaks` is given.
+
+    Returns the temp path, or None if there is nothing to change (caller then
     renders the original). Caller must delete the temp file.
     """
-    if SPATIUM_SCALE >= 1.0:
+    if SPATIUM_SCALE >= 1.0 and not breaks:
         return None
     with open(mscx_path, "r", encoding="utf-8") as f:
         root = etree.fromstring(f.read().encode("utf-8"))
     score = root if root.tag == "Score" else root.find(".//Score")
+    added = _apply_line_breaks(root, breaks or [])
     style = score.find("Style") if score is not None else None
     if style is None:
-        return None
+        if not added:
+            return None
+        fd, tmp = tempfile.mkstemp(suffix=".mscx")
+        os.close(fd)
+        with open(tmp, "wb") as f:
+            f.write(etree.tostring(root, encoding="UTF-8"))
+        return tmp
     sp = style.find("Spatium")
     if sp is None:
         sp = etree.SubElement(style, "Spatium")
@@ -245,18 +296,24 @@ def system_crop(song_dir: str, pdf_path: str, index: int, dpi: int) -> str:
     return images[0].path
 
 
-def render_score_pdf(mscx_path: str) -> str:
+def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None) -> str:
     """Render a .mscx to a PDF via the MuseScore CLI (cached; re-renders if stale).
 
     Returns the rendered PDF path. The render lives next to the score as
     <base>.render.pdf and is regenerated whenever the source score is newer. The
     staff is shrunk (SPATIUM_SCALE) so the score's own system breaks fit the page.
+
+    `breaks` puts the printed line breaks back for the render. Normal-mode cleaning
+    strips them, so without this the preview reflows into MuseScore's own systems
+    and cannot be read against the page it came from. Rendered to its own cache
+    file, so the two versions do not overwrite each other.
     """
-    out = os.path.splitext(mscx_path)[0] + ".render.pdf"
+    stem = os.path.splitext(mscx_path)[0]
+    out = f"{stem}.breaks.render.pdf" if breaks else f"{stem}.render.pdf"
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(mscx_path):
         return out
     cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
-    src = _scaled_staff_mscx(mscx_path) or mscx_path
+    src = _scaled_staff_mscx(mscx_path, breaks) or mscx_path
     try:
         result = subprocess.run([cli, src, "-o", out], capture_output=True, text=True)
     finally:

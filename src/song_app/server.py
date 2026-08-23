@@ -586,6 +586,7 @@ def api_render(slug: str, doc: str = "cleaned"):
     """
     song = _require(slug)
     try:
+        breaks = None
         if doc == "original":
             xml = song.source_path("xml")
             if not xml or not os.path.exists(xml):
@@ -596,7 +597,14 @@ def api_render(slug: str, doc: str = "cleaned"):
             if not cleaned or not os.path.exists(cleaned):
                 raise HTTPException(404, "No cleaned score yet")
             mscx = pipeline.strip_lyrics_copy(cleaned) if doc == "cleaned_nolyrics" else cleaned
-        rendered = pipeline.render_score_pdf(mscx)
+            # Lay the cleaned score out like the page it came from, so the two can
+            # be read side by side. The breaks come from the converted input, which
+            # usually has them -- when it does not, the render is unchanged.
+            xml = song.source_path("xml")
+            if xml and os.path.exists(xml):
+                breaks = pipeline.line_break_measures(
+                    pipeline.convert_to_mscx(xml, song.dir)) or None
+        rendered = pipeline.render_score_pdf(mscx, breaks)
     except HTTPException:
         raise
     except Exception as exc:

@@ -232,7 +232,15 @@ state model are in `DESIGN.md`.
   mtime) so scores can be shown in-browser next to the original PDF — it renders
   from a temp copy with the staff size (`<Spatium>`) shrunk by `SPATIUM_SCALE`
   (env `RENDER_SPATIUM_SCALE`, default 0.65) so the score's own system breaks fit
-  the page instead of MuseScore adding extra ones;
+  the page instead of MuseScore adding extra ones. For the cleaned previews it
+  also **puts the printed line breaks back** (`line_break_measures` reads them off
+  the converted input, `_apply_line_breaks` writes them onto the top staff), because
+  normal-mode cleaning strips them and the preview otherwise reflows into
+  MuseScore's own systems and cannot be read against the page. On the fixture this
+  takes the render from 6 pages to the scan's 4, system for system. Not every
+  source has breaks; without them the render is unchanged. They are applied by
+  measure index, so nothing is applied unless the score is long enough, and the
+  two variants cache to separate files (`.render.pdf` / `.breaks.render.pdf`);
   `strip_lyrics_copy` writes a lyrics-removed copy (cached) so the "Cleaned MSCX"
   (no-lyrics) view always reflects the live structure rather than a stale snapshot.
 - `pdf_systems.py` cuts the **original PDF** into one image per printed system, so
