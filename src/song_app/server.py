@@ -160,9 +160,9 @@ def _import_one(name: str) -> bool:
     if not (inp or cleaned or outputs):
         return False  # not a recognisable song folder
 
-    # per-system if a cached answer set exists for this input basename
-    key = os.path.splitext(inp)[0] if inp else (cleaned[: -len("_cleaned.mscx")] if cleaned else "")
-    mode = "per-system" if pipeline.ps.load_answer_cache(key) else "normal"
+    # per-system if an answer set was recorded for this input score
+    src_name = inp or (cleaned[: -len("_cleaned.mscx")] + ".mscx" if cleaned else "")
+    mode = "per-system" if pipeline.has_system_answers(src_name) else "normal"
 
     try:
         created = os.path.getmtime(d)
@@ -438,21 +438,21 @@ def api_lyric_grid(slug: str) -> Dict:
             continue
         parts.append({"name": name or f"staff {sid}", "id": sid})
     parts.sort(key=lambda x: x["id"])
-    sys_ranges = pipeline.ps.find_systems(root)
-    systems = [{"index": i, "start": a + 1, "end": b + 1} for i, (a, b) in enumerate(sys_ranges)]
+    sys_ranges = pipeline.system_ranges(root)
+    systems = [{"index": r.index, "start": r.start, "end": r.end} for r in sys_ranges]
 
     # Prefill: the lyrics already in the score, as hyphenated text per (system, part).
     from src.clean_score.lyric_txt import lyrics_by_measure_staff, _merge_tokens
     bms = lyrics_by_measure_staff(root)
     prefill: Dict[str, Dict[str, str]] = {}
-    for i, (a, b) in enumerate(sys_ranges):
+    for r in sys_ranges:
         for part in parts:
             toks = []
-            for mi in range(a, b + 1):
+            for mi in range(r.start - 1, r.end):
                 toks += [t for t in bms.get(mi, {}).get(part["id"], []) if t != "_"]
             text = _merge_tokens(toks).strip()
             if text:
-                prefill.setdefault(str(i), {})[part["name"]] = text
+                prefill.setdefault(str(r.index), {})[part["name"]] = text
     return {"parts": parts, "systems": systems, "prefill": prefill}
 
 

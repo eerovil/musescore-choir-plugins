@@ -194,7 +194,7 @@ measure→coordinate map.** It's the original engraving; the OCR'd XML doesn't
 reliably retain printed layout. Pixel-accurate jumping would need PDF layout
 analysis (OCR bounding boxes) we don't currently produce.
 
-What we *do* know: in per-system mode, `find_systems` gives **system →
+What we *do* know: in per-system mode, `per_system.system_ranges` gives **system →
 measure-range**, so we can locate a measure to its *system*, not a pixel.
 
 - **v1 (recommended):** side-by-side PDF with **page/system-level** navigation.
