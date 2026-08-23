@@ -214,6 +214,7 @@ function viewerTabs(song) {
   if (song.has_pdf) tabs.push(["pdf", "Original PDF"]);
   if (song.has_pdf) tabs.push(["systems", "Systems"]);
   if (song.systems) tabs.push(["system", "One system"]);
+  if (song.systems && song.has_cleaned) tabs.push(["compare", "Compare"]);
   tabs.push(["original", "Original XML"]);
   if (song.has_cleaned) {
     tabs.push(["cleaned_nolyrics", "Cleaned MSCX"]);
@@ -289,6 +290,39 @@ async function mountPdf(view, url) {
 const SYSTEM_EVENT = "song-system";
 const showSystem = (index) =>
   window.dispatchEvent(new CustomEvent(SYSTEM_EVENT, { detail: { index } }));
+
+// ---- Compare: each printed system above the same system of the cleaned score ----
+// Reviewing means checking one against the other, and they cannot simply be laid
+// side by side: the cleaned score has twice the staves, so its systems are far
+// taller. Cut both into systems and pair them up and the comparison is per line.
+async function compareView(view, slug) {
+  const P = `/api/songs/${encodeURIComponent(slug)}`;
+  view.replaceChildren(el("p", { className: "muted" }, "Pairing systems…"));
+  let data;
+  try {
+    data = await (await fetch(`${P}/compare`)).json();
+  } catch {
+    view.replaceChildren(el("p", { className: "warn" }, "Could not pair the systems."));
+    return;
+  }
+  const rows = data.systems || [];
+  if (!rows.length) {
+    view.replaceChildren(el("p", { className: "warn" },
+      "The scan's systems and the cleaned score's do not correspond, so there is "
+      + "nothing to compare. Check the boundaries in the Systems tab."));
+    return;
+  }
+  view.replaceChildren(...rows.map((r) => el("div", { className: "cmprow" },
+    el("div", { className: "cmphead" },
+      `System ${r.index} — measures ${r.measure_start}–${r.measure_end}`),
+    el("div", { className: "cmplabel" }, "scan"),
+    el("img", { className: "cmpimg", loading: "lazy",
+                src: `${P}/system/${r.index}?dpi=300`, alt: `printed system ${r.index}` }),
+    el("div", { className: "cmplabel" }, "cleaned"),
+    el("img", { className: "cmpimg", loading: "lazy",
+                src: `${P}/cleaned-system/${r.index}?dpi=300`, alt: `cleaned system ${r.index}` }),
+  )));
+}
 
 // ---- Systems: the printed-system boundaries, drawn over the page and draggable ----
 // An AI proposes these off the scan; this is where they get corrected. Bounds are
@@ -453,6 +487,7 @@ function viewer(song, slug, panes, rebuild) {
         frames[doc] = v;
         body.append(v);
         if (doc === "systems") { v._systems = true; systemsEditor(v, slug); }
+        else if (doc === "compare") { v._systems = true; v.className = "pdfview compare"; compareView(v, slug); }
         else if (doc === "system") {
           v._systems = true;                       // draws itself, not a PDF
           v.className = "pdfview onesystem";

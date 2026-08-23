@@ -96,3 +96,65 @@ def test_the_two_renders_do_not_share_a_cache_file(tmp_path):
     plain = os.path.splitext(str(copy))[0] + ".render.pdf"
     withb = os.path.splitext(str(copy))[0] + ".breaks.render.pdf"
     assert plain != withb
+
+
+def _musescore() -> bool:
+    cli = os.getenv("MUSESCORE_CLI_PATH", "")
+    return bool(cli) and os.path.exists(cli)
+
+
+def test_bands_refuse_when_the_staves_do_not_divide_into_systems(tmp_path, monkeypatch):
+    """The count is the check. Staves that do not divide evenly by the number a
+    system has means the render did not come out as expected, and pairing it with
+    the scan would line the wrong things up."""
+    from src.song_app import pdf_systems
+
+    class FakePage:
+        height = 1000
+        def convert(self, _mode):
+            return self
+
+    monkeypatch.setattr(pdf_systems, "page_count", lambda p: 1)
+    monkeypatch.setattr(pdf_systems, "render_page", lambda *a, **k: "x.png")
+    monkeypatch.setattr(pdf_systems.Image, "open", lambda p: FakePage())
+    monkeypatch.setattr(pdf_systems, "_staff_rows", lambda page: [[1], [2], [3]])
+
+    assert pdf_systems.rendered_system_bands("x.pdf", 4, str(tmp_path)) == []
+    assert pdf_systems.rendered_system_bands("x.pdf", 0, str(tmp_path)) == []
+
+
+@pytest.mark.skipif(not os.path.exists(CLEANED), reason="prototyping fixture not present")
+@pytest.mark.skipif(not _musescore(), reason="MUSESCORE_CLI_PATH is not set to a real binary")
+def test_the_render_keeps_the_printed_systems_and_pairs_with_the_scan(tmp_path):
+    """End to end: the render is checked to have the same systems as the page, and
+    each one pairs with the scan's crop of the same measures."""
+    import shutil
+
+    from src.song_app import pdf_systems
+
+    song = tmp_path / "song"
+    song.mkdir()
+    # Through 20-lyrics on purpose: lyrics widen the spacing, and a system that
+    # fits the page without them can be pushed over the edge with them. Tested on
+    # the score without lyrics, a render that ignores the system count passes.
+    for stage in ("00-registered", "10-cleaned", "20-lyrics"):
+        for name in os.listdir(os.path.join(FIXTURE, stage)):
+            shutil.copyfile(os.path.join(FIXTURE, stage, name), song / name)
+    cleaned = str(song / "Virta-venhetta-vie_cleaned.mscx")
+    assert etree.parse(cleaned).getroot().findall(".//Lyrics"), "premise: it has lyrics"
+
+    breaks = pipeline.line_break_measures(str(song / "Virta-venhetta-vie.mscx"))
+    assert len(breaks) == 14
+
+    rendered = pipeline.render_score_pdf(cleaned, breaks)
+    staves = pipeline.score_staff_count(cleaned)
+    assert staves == 4
+    bands = pdf_systems.rendered_system_bands(rendered, staves, str(song / ".pages"))
+    assert len(bands) == len(breaks) + 1, "the render lost the printed systems"
+
+    pairs = pipeline.compare_systems(str(song), cleaned, breaks)
+    assert len(pairs) == 15
+    assert pairs[0]["measure_start"] == 1 and pairs[0]["measure_end"] == 3
+
+    crop = pipeline.cleaned_system_crop(str(song), cleaned, breaks, 1, 150)
+    assert os.path.getsize(crop) > 0

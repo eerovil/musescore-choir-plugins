@@ -553,6 +553,46 @@ def api_page(slug: str, page: int, dpi: int = 150, grid: bool = False):
     return FileResponse(path, media_type="image/png")
 
 
+def _cleaned_breaks(song) -> tuple:
+    """(cleaned .mscx, printed line breaks) for the compare view, or (None, [])."""
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        return None, []
+    return cleaned, pipeline.line_break_measures(_bounds_score(song))
+
+
+@app.get("/api/songs/{slug}/compare")
+def api_compare(slug: str) -> Dict:
+    """Printed systems paired with the same systems of the cleaned score."""
+    song = _require(slug)
+    _song_pdf(song)
+    cleaned, breaks = _cleaned_breaks(song)
+    if not cleaned:
+        raise HTTPException(400, "Clean the score first")
+    try:
+        systems = pipeline.compare_systems(song.dir, cleaned, breaks)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return {"systems": systems}
+
+
+@app.get("/api/songs/{slug}/cleaned-system/{index}")
+def api_cleaned_system(slug: str, index: int, dpi: int = 200):
+    """One system of the cleaned score, cropped from its render."""
+    song = _require(slug)
+    cleaned, breaks = _cleaned_breaks(song)
+    if not cleaned:
+        raise HTTPException(404, "No cleaned score yet")
+    try:
+        path = pipeline.cleaned_system_crop(
+            song.dir, cleaned, breaks, index, max(50, min(dpi, 600)))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return FileResponse(path, media_type="image/png")
+
+
 @app.get("/api/songs/{slug}/system/{index}")
 def api_system_image(slug: str, index: int, dpi: int = 400):
     """One printed system, cropped from the stored bounds."""

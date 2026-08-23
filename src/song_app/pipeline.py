@@ -150,6 +150,9 @@ def strip_lyrics_copy(mscx_path: str) -> str:
 # Shrink the staff for the rendered previews so the score's own system breaks fit on
 # the page (otherwise MuseScore adds extra breaks). Tunable via .env.
 SPATIUM_SCALE = float(os.getenv("RENDER_SPATIUM_SCALE", "0.65"))
+# Staff sizes to try when the printed line breaks are being kept, largest first.
+# Larger is more legible; too large and a wide system gets split anyway.
+BREAK_SCALES = (0.85, 0.75, 0.65)
 
 
 def line_break_measures(mscx_path: str) -> List[int]:
@@ -195,35 +198,39 @@ def _apply_line_breaks(root: etree._Element, indices: List[int]) -> int:
     return added
 
 
-def _scaled_staff_mscx(mscx_path: str, breaks: Optional[List[int]] = None) -> Optional[str]:
+def score_staff_count(mscx_path: str) -> int:
+    """How many note-bearing staves the score has (a system's height, in staves)."""
+    try:
+        root = etree.parse(mscx_path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return 0
+    return len([st for st in root.findall(".//Score/Staff") if st.find("Measure") is not None])
+
+
+def _scaled_staff_mscx(mscx_path: str, breaks: Optional[List[int]] = None,
+                       scale: Optional[float] = None) -> Optional[str]:
     """Write a temp copy of the score for rendering: the printed line breaks put
     back if `breaks` is given, and otherwise the staff size reduced by
     SPATIUM_SCALE.
 
-    The two are alternatives, not companions. The shrink exists only to stop
-    MuseScore reflowing a score into more systems than the page has; when the real
-    breaks are supplied they decide the layout, so the staff is left full size and
-    the music is legible. That costs pages -- the fixture renders 6 instead of 4 --
-    which is the right trade for a preview meant to be read.
+Breaks alone are not enough to keep the printed layout: at full size a system
+    that does not fit the page width gets split anyway, and MuseScore quietly adds
+    its own break. The caller therefore renders at a scale and checks the result;
+    `scale` is which one to use, defaulting to SPATIUM_SCALE.
 
     Returns the temp path, or None if there is nothing to change (caller then
     renders the original). Caller must delete the temp file.
     """
-    if SPATIUM_SCALE >= 1.0 and not breaks:
+    if scale is None:
+        scale = SPATIUM_SCALE
+    if scale >= 1.0 and not breaks:
         return None
     with open(mscx_path, "r", encoding="utf-8") as f:
         root = etree.fromstring(f.read().encode("utf-8"))
     score = root if root.tag == "Score" else root.find(".//Score")
     added = _apply_line_breaks(root, breaks or [])
-    if added:
-        # Breaks decide the layout now; shrinking as well only makes it unreadable.
-        fd, tmp = tempfile.mkstemp(suffix=".mscx")
-        os.close(fd)
-        with open(tmp, "wb") as f:
-            f.write(etree.tostring(root, encoding="UTF-8"))
-        return tmp
     style = score.find("Style") if score is not None else None
-    if style is None:
+    if style is None or scale >= 1.0:
         if not added:
             return None
         fd, tmp = tempfile.mkstemp(suffix=".mscx")
@@ -240,7 +247,7 @@ def _scaled_staff_mscx(mscx_path: str, breaks: Optional[List[int]] = None) -> Op
             base = float(sp.text)
         except (TypeError, ValueError):
             base = 1.74978
-    sp.text = f"{base * SPATIUM_SCALE:.5f}"
+    sp.text = f"{base * scale:.5f}"
     fd, tmp = tempfile.mkstemp(suffix=".mscx")
     os.close(fd)
     with open(tmp, "wb") as f:
@@ -300,6 +307,40 @@ def page_count(pdf_path: str) -> int:
     return pdf_systems.page_count(pdf_path)
 
 
+def compare_systems(song_dir: str, mscx_path: str, breaks: List[int]) -> List[Dict]:
+    """The printed systems, paired with where they sit in the cleaned render.
+
+    Empty when the two do not correspond — no bounds stored for the scan, or the
+    render did not come out with the expected number of systems. Showing a
+    mismatched pair side by side would be worse than showing nothing.
+    """
+    stored = [b for b in pdf_systems.load_bounds(song_dir) if b.measure_start]
+    if not stored or not breaks:
+        return []
+    pdf = render_score_pdf(mscx_path, breaks)
+    staves = score_staff_count(mscx_path)
+    bands = pdf_systems.rendered_system_bands(pdf, staves, _page_cache(song_dir))
+    if len(bands) != len(stored):
+        return []
+    return [{"index": b.index, "measure_start": b.measure_start,
+             "measure_end": b.measure_end} for b in stored]
+
+
+def cleaned_system_crop(song_dir: str, mscx_path: str, breaks: List[int],
+                        index: int, dpi: int) -> str:
+    """One system of the cleaned render, cropped."""
+    pdf = render_score_pdf(mscx_path, breaks)
+    staves = score_staff_count(mscx_path)
+    cache = _page_cache(song_dir)
+    bands = pdf_systems.rendered_system_bands(pdf, staves, cache)
+    match = [b for b in bands if b.index == index]
+    if not match:
+        raise ValueError(f"the cleaned render has no system {index}")
+    # Its own folder: crop names are by index, and the scan's crops live next door.
+    out = os.path.join(cache, "cleaned")
+    return pdf_systems.crop_systems(pdf, match, out, dpi=dpi)[0].path
+
+
 def system_crop(song_dir: str, pdf_path: str, index: int, dpi: int) -> str:
     """One printed system, cropped from the stored bounds."""
     bounds = pdf_systems.load_bounds(song_dir)
@@ -326,6 +367,36 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None) -> str:
     out = f"{stem}.breaks.render.pdf" if breaks else f"{stem}.render.pdf"
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(mscx_path):
         return out
+    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+
+    # Without breaks there is one render at the configured scale. With them, the
+    # scale has to be one the score actually fits at: at full size a wide system
+    # is split anyway and MuseScore adds a break the page never had, so the
+    # result is checked against the number of systems expected and the largest
+    # staff that keeps them is used.
+    want = (len(breaks) + 1) if breaks else 0
+    staves = score_staff_count(mscx_path) if breaks else 0
+    scales = BREAK_SCALES if breaks else (SPATIUM_SCALE,)
+    cache = os.path.join(os.path.dirname(mscx_path) or ".", ".pages")
+
+    for i, scale in enumerate(scales):
+        src = _scaled_staff_mscx(mscx_path, breaks, scale) or mscx_path
+        try:
+            result = subprocess.run([cli, src, "-o", out], capture_output=True, text=True)
+        finally:
+            if src != mscx_path and os.path.exists(src):
+                os.remove(src)
+        if result.returncode != 0 or not os.path.exists(out):
+            raise RuntimeError(
+                "MuseScore CLI render failed. Check MUSESCORE_CLI_PATH.\n"
+                + (result.stderr or result.stdout or "")
+            )
+        if not want or not staves or i == len(scales) - 1:
+            break
+        got = len(pdf_systems.rendered_system_bands(out, staves, cache))
+        if got == want:
+            break
+    return out
     cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
     src = _scaled_staff_mscx(mscx_path, breaks) or mscx_path
     try:

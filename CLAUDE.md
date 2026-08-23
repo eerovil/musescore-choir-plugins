@@ -237,11 +237,14 @@ state model are in `DESIGN.md`.
   the converted input, `_apply_line_breaks` writes them onto the top staff), because
   normal-mode cleaning strips them and the preview otherwise reflows into
   MuseScore's own systems and cannot be read against the page. On the fixture this
-  renders the fixture's systems exactly as printed. The staff is left **full size**
-  when breaks are applied — the shrink exists only to stop MuseScore reflowing into
-  more systems than the page has, and once the real breaks decide the layout it just
-  makes the music unreadable (it costs pages: 6 instead of 4, which is the right
-  trade for something meant to be read). Not every
+  renders the fixture's systems exactly as printed. Breaks alone are not enough to
+  guarantee that: at full staff size a system too wide for the page is split anyway
+  and MuseScore adds a break the page never had — the fixture's lyric-applied score
+  comes out as 17 systems instead of 15. So the render **tries the scales in
+  `BREAK_SCALES` (0.85, 0.75, 0.65) largest first and checks the result**, using the
+  biggest staff that keeps the printed system count. Lyrics matter to that: they
+  widen the spacing, so a score that fits at full size without them may not with
+  them. Not every
   source has breaks; without them the render is unchanged. They are applied by
   measure index, so nothing is applied unless the score is long enough, and the
   two variants cache to separate files (`.render.pdf` / `.breaks.render.pdf`);

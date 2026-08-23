@@ -400,3 +400,13 @@ def test_the_panel_can_be_hidden_to_read_the_scores(page, live_app, bounds_song)
 
     page.get_by_role("button", name="Show panel").click()
     expect(page.locator(".panel")).to_be_visible()
+
+def test_compare_says_so_when_it_cannot_pair(page, live_app, bounds_song):
+    """Pairing needs the cleaned score rendered, which needs MuseScore — absent
+    here on purpose. It must say the systems do not correspond rather than sit
+    empty, which is the same message a real mismatch produces."""
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    page.get_by_role("button", name="Compare").first.click()
+    expect(page.locator(".compare .warn")).to_contain_text("do not correspond", timeout=60_000)
+    assert page.locator(".cmprow").count() == 0
