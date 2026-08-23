@@ -333,3 +333,26 @@ def test_focusing_a_lyric_cell_shows_that_system_in_the_viewer(page, live_app, b
 
     blocks.nth(0).locator("textarea").first.focus()        # and it follows the cursor
     expect(page.locator(".onesystem .muted")).to_have_text("Printed system 1")
+
+
+def test_clicking_empty_page_adds_a_system(page, live_app, bounds_song):
+    """Adding a band by clicking the page, which is how a song with no proposal
+    gets its boundaries at all. The overlay spans the page, so it has to let
+    clicks through or this silently does nothing."""
+    slug, _, stored = bounds_song
+    _open_systems_tab(page, live_app, slug)
+    assert page.locator(".sysband").count() == 15
+
+    # Empty page above the first system (the title area). Kept near the top of
+    # the page on purpose: further down is below the fold, and a click there goes
+    # nowhere — which is a fact about the test window, not about the editor.
+    img = page.locator(".syspage img").first
+    box = img.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.05)
+
+    assert page.locator(".sysband").count() == 16
+    expect(page.locator(".sysstatus")).to_contain_text("the score declares 15")
+
+    page.get_by_role("button", name="Save boundaries").click()
+    expect(page.locator(".sysstatus")).not_to_contain_text("unsaved")
+    assert len(stored()) == 16

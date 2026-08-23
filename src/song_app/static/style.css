@@ -150,7 +150,11 @@ table.grid input.unset { border-color: var(--warn); }
 .sysgrip.top { top: -5px; }
 .sysgrip.bottom { bottom: -5px; }
 .sysgrip:hover { background: rgba(30, 110, 200, .45); }
-.sysoverlay { position: absolute; inset: 0; }
+/* Click-through: the overlay spans the whole page, so without this it swallows
+   every click on empty page area and a new system can never be added. The bands
+   themselves take pointer events back. */
+.sysoverlay { position: absolute; inset: 0; pointer-events: none; }
+.sysband { pointer-events: auto; }
 
 /* The printed system shown above its lyric cells. */
 .syspeek { display: block; margin: .3rem 0 .5rem; background: #fff;
