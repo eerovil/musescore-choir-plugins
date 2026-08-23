@@ -888,22 +888,32 @@ function panelReview(panel, song, P, refresh) {
 }
 
 function panelRecord(panel, song, P, refresh) {
-  panel.append(el("h2", {}, "Record"),
-    el("p", { className: "sub" }, "Export per-voice audio, record + merge the play-along video. macOS only."));
-
   const rec = song.record || {};
   const recording = song.recording;
   const recorded = !!(rec.outputs && rec.outputs.length);
+  // Two ways to make the videos. The scrolling renderer draws them from the score
+  // and is the default; the screen recorder drives MuseScore and needs macOS.
+  let renderer = rec.renderer || "scroll";
+
+  panel.append(el("h2", {}, "Record"));
+  const sub = el("p", { className: "sub" }, "");
+  panel.append(sub);
 
   if (recording) {
-    panel.append(el("div", { className: "banner" }, "● Recording in progress… leave this running."));
+    panel.append(el("div", { className: "banner" }, "● Rendering… leave this running."));
   } else if (recorded) {
-    panel.append(el("div", { className: "banner good" }, "✓ Recorded."));
+    panel.append(el("div", { className: "banner good" },
+      "✓ Ready" + (rec.renderer === "screen" ? " (screen recording)." : ".")));
   }
   if (rec.error) {
     panel.append(el("div", { className: "banner err" }, "Last run failed: " + rec.error));
   }
 
+  const scrollRadio = el("input", { type: "radio", name: "renderer", checked: renderer === "scroll" });
+  const screenRadio = el("input", { type: "radio", name: "renderer", checked: renderer === "screen" });
+  const quality = el("select", {},
+    el("option", { value: "4k", selected: (rec.quality || "4k") === "4k" }, "4K, 60fps"),
+    el("option", { value: "1080p", selected: rec.quality === "1080p" }, "1080p, 30fps (faster)"));
   const delay = el("input", { type: "number", value: rec.audio_delay_ms ?? 1300, step: 50, style: "width:120px" });
   const redoMp3 = el("input", { type: "checkbox" });
   const redoVideo = el("input", { type: "checkbox" });
@@ -911,25 +921,59 @@ function panelRecord(panel, song, P, refresh) {
   const post = async (extra, msg) => {
     appendLog(msg);
     try {
-      await postJSON(`${P}/record`, { audio_delay_ms: Number(delay.value) || 1300, ...extra });
+      await postJSON(`${P}/record`, { renderer, ...extra });
       refresh();
     } catch (e) { appendLog(e.message, true); }
   };
 
-  const runBtn = el("button", { className: "primary", disabled: recording,
-    onclick: () => post({ redo_mp3: redoMp3.checked, redo_video: redoVideo.checked }, "Starting…") },
-    "Run recording");
-  const remergeBtn = el("button", { disabled: recording,
-    onclick: () => post({ merge_only: true }, "Re-merging with new offset…") },
-    "Re-merge only (apply offset)");
+  const runBtn = el("button", { className: "primary", disabled: recording, onclick: () =>
+    renderer === "scroll"
+      ? post({ quality: quality.value }, "Rendering the scrolling video…")
+      : post({ audio_delay_ms: Number(delay.value) || 1300,
+               redo_mp3: redoMp3.checked, redo_video: redoVideo.checked }, "Starting…") }, "");
+  const remergeBtn = el("button", { disabled: recording, onclick: () =>
+    post({ merge_only: true, audio_delay_ms: Number(delay.value) || 1300 },
+         "Re-merging with new offset…") }, "Re-merge only (apply offset)");
 
-  panel.append(
+  const scrollOpts = el("div", {},
+    el("label", {}, "Size"),
+    el("div", { className: "row" }, quality,
+      el("span", { className: "hint" }, "4K takes about a minute of CPU per minute of music")));
+  const screenOpts = el("div", {},
     el("label", {}, "Audio sync offset (ms)"),
-    el("div", { className: "row" }, delay, el("span", { className: "hint" }, "shift audio vs. video; re-merge to apply")),
+    el("div", { className: "row" }, delay,
+      el("span", { className: "hint" }, "shift audio vs. video; re-merge to apply")),
     el("div", { className: "row" }, redoMp3, el("span", {}, "Re-export MP3")),
     el("div", { className: "row" }, redoVideo, el("span", {}, "Re-record video")),
-    el("div", { className: "row" }, runBtn, remergeBtn),
+    el("div", { className: "row" }, remergeBtn));
+
+  const applyRenderer = () => {
+    scrollRadio.checked = renderer === "scroll";
+    screenRadio.checked = renderer === "screen";
+    scrollOpts.style.display = renderer === "scroll" ? "" : "none";
+    screenOpts.style.display = renderer === "screen" ? "" : "none";
+    runBtn.textContent = renderer === "scroll" ? "Render videos" : "Run recording";
+    sub.textContent = renderer === "scroll"
+      ? "Draw the scrolling score straight from the notes — nothing on screen, runs unattended."
+      : "Export per-voice audio, record + merge the play-along video. macOS only.";
+  };
+  const choose = (which) => { renderer = which; applyRenderer(); };
+
+  panel.append(
+    el("label", {}, "How to make the videos"),
+    el("div", { className: "row" }, scrollRadio,
+      el("span", { onclick: () => choose("scroll") }, "Scrolling score "),
+      el("span", { className: "hint" }, "(default)")),
+    el("div", { className: "row" }, screenRadio,
+      el("span", { onclick: () => choose("screen") }, "Screen recording "),
+      el("span", { className: "hint" }, "(MuseScore + QuickRecorder, macOS)")),
+    scrollOpts, screenOpts,
+    el("div", { className: "row" }, runBtn),
     makeLog());
+
+  scrollRadio.onclick = () => choose("scroll");
+  screenRadio.onclick = () => choose("screen");
+  applyRenderer();
 
   // --- results review ---
   const merged = (song.media || []).filter((m) => m.merged);

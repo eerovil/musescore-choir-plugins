@@ -381,18 +381,25 @@ def export_mp3_from_musescore(song_dir, redo=False):
 
 
 def find_merged_outputs(song_dir):
-    """Existing merged per-voice videos ("<song> <part>.mov"), for upload."""
+    """Existing per-voice videos ("<song> <part>.mov" / ".mp4"), for upload.
+
+    .mp4 as well as .mov because the scrolling renderer (src/scrollvideo) writes
+    its videos here too, under the same "<song> <part>" naming.
+    """
     media_dir = Path(song_dir) / "media"
     song_name = os.path.basename(song_dir)
     video_dir = media_dir / "video"
     mp3_files = list(media_dir.glob("*.mp3")) if media_dir.exists() else []
-    expected = {f"{song_name} {mp3.stem.split(' ')[-1]}.mov" for mp3 in mp3_files}
+    expected = {f"{song_name} {mp3.stem.split(' ')[-1]}{ext}"
+                for mp3 in mp3_files for ext in (".mov", ".mp4")}
     if not video_dir.exists():
         return []
-    # Prefer the named merge outputs; fall back to any "<song> *.mov".
-    out = [p for p in video_dir.glob("*.mov") if p.name in expected]
+    # Prefer the named merge outputs; fall back to any "<song> *".
+    out = [p for p in video_dir.iterdir()
+           if p.suffix.lower() in (".mov", ".mp4") and p.name in expected]
     if not out:
-        out = [p for p in video_dir.glob(f"{song_name} *.mov")]
+        out = [p for p in video_dir.iterdir()
+               if p.suffix.lower() in (".mov", ".mp4") and p.name.startswith(song_name + " ")]
     return sorted(out)
 
 

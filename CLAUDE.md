@@ -134,7 +134,7 @@ trusting a tidy-looking diagnosis of a scanned score.
 
 ```bash
 .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
-# 171 passed              — with poppler, Playwright and MUSESCORE_CLI_PATH all set
+# 180 passed              — with poppler, Playwright and MUSESCORE_CLI_PATH all set
 # fewer                   — without Playwright the browser tests skip; without
 #                           poppler the pdf_systems and bounds tests skip; without
 #                           a MuseScore CLI the scrollvideo sync tests skip too
@@ -254,7 +254,9 @@ state model are in `DESIGN.md`.
   status and marks vanished open issues `fixed` across re-scans (ids are stable:
   `malformed-m18-s2-v1`).
 - `server.py`: REST routes under `/api/songs/...`, a per-slug WebSocket (`/ws/{slug}`)
-  for streamed progress logs + `state` pings, long tasks (clean/record) run in a
+  for streamed progress logs + `state` pings — `hub.emit` **never raises**, because a
+  render runs for minutes in a worker thread while the browser may come and go, and a
+  closed loop surfacing there used to abort work that was going fine — long tasks (clean/record) run in a
   thread executor with a thread-safe `hub.emit`. Recording is guarded by a
   **lock file** (`.recording.lock`, holding the server pid) so a second start
   (e.g. after a page refresh) gets a 409 instead of clashing with the running
@@ -329,6 +331,17 @@ state model are in `DESIGN.md`.
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are
   flagged `unset` and listed in the "will be DROPPED" confirm before cleaning.
+- The **Record stage has two renderers**, and defaults to the scrolling one
+  (`src/scrollvideo`, see its own section): it draws the video from the score, needs
+  no GUI and runs unattended. The old screen recorder (`src/stemmanauha`, MuseScore +
+  QuickRecorder, macOS) is still there, one radio button away. Both write
+  `media/video/<slug> <part>.<ext>`, which is the whole integration: `_media_list`,
+  `create_video.find_merged_outputs` and the YouTube titles all read the part out of
+  that name, so **review, upload, retitling and delete do not know which renderer
+  ran**. `pipeline.run_scroll_video` is the glue (it passes the slug as
+  `build_videos(basename=...)` so the names come out right); `server._run_record`
+  branches on `renderer` and records which one it used in `record.renderer`.
+  `find_merged_outputs` matches `.mp4` as well as `.mov` for the same reason.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
@@ -717,6 +730,13 @@ without it, like the browser tests:
   of the stem, marking paints the head via an inline style but leaves the stem and the
   lyric alone, and coverage marks strictly less than all the ink. `test_video.py` pins that colour lands only where
   the glyph is — a leak outside it means someone reintroduced the box.
+- `src/song_app/tests/test_record_renderers.py` — the Record stage routes to the
+  scrolling renderer by default, passes the size choice through, still reaches the
+  screen recorder on request, refuses to render without a cleaned score, names the
+  files so review and upload find them, and cannot be killed by progress reporting.
+- `src/song_app/tests/test_record_panel_ui.py` — the same choice in a real browser:
+  both renderers offered, scrolling preselected, controls swap, and the run button
+  actually posts `renderer` (browser-marked, skips without Playwright).
 - `test_spacing.py` — rest slots per measure follow its length (a chord does not
   lengthen one), the subdivision scales them, the singing parts come back untouched,
   an impossible subdivision gives up rather than guessing, and where the crop falls.

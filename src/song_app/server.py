@@ -50,10 +50,19 @@ class Hub:
                 self.disconnect(slug, ws)
 
     def emit(self, slug: str, msg: Dict) -> None:
-        """Thread-safe broadcast (callable from worker threads)."""
-        if self.loop is None:
+        """Thread-safe broadcast (callable from worker threads).
+
+        Never raises. Progress reporting must not be able to kill the work it is
+        reporting on: a closed loop (the server restarted, or the browser went
+        away mid-render) would otherwise surface inside the worker thread and
+        abort a render that was going perfectly well.
+        """
+        if self.loop is None or self.loop.is_closed():
             return
-        asyncio.run_coroutine_threadsafe(self._send(slug, msg), self.loop)
+        try:
+            asyncio.run_coroutine_threadsafe(self._send(slug, msg), self.loop)
+        except RuntimeError:
+            self.loop = None
 
 
 hub = Hub()
@@ -633,9 +642,32 @@ def _run_record(slug: str, opts: Dict) -> None:
         hub.emit(slug, {"type": "state"})
 
     try:
-        from src.stemmanauha.create_video import run
         merge_only = bool(opts.get("merge_only"))
         upload_only = bool(opts.get("upload_only"))
+
+        # Two renderers write the same "<slug> <part>" files into media/video, so
+        # everything downstream (review, upload, retitling) is renderer-agnostic.
+        # "scroll" renders from the score; "screen" drives MuseScore and records it.
+        if (opts.get("renderer") or "scroll") == "scroll" and not (merge_only or upload_only):
+            cleaned = song.cleaned_path()
+            if not cleaned or not os.path.exists(cleaned):
+                raise FileNotFoundError("No cleaned score yet — clean the song first.")
+            quality = opts.get("quality") or "4k"
+            log(f"Rendering the scrolling video ({quality})…")
+            outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
+                                                quality=quality, log=log)
+            rec = song.data.setdefault("record", {})
+            rec["exported"] = True
+            rec["renderer"] = "scroll"
+            rec["quality"] = quality
+            rec["outputs"] = [os.path.basename(p) for p in outputs]
+            rec["error"] = None
+            song.set_stage("upload")
+            song.save()
+            log(f"Done. {len(outputs)} video(s) ready.")
+            return
+
+        from src.stemmanauha.create_video import run
         youtube = bool(opts.get("youtube")) or upload_only
         if youtube:  # fresh upload run — clear any stale record of prior uploads
             song.data.setdefault("record", {})["uploads"] = []
@@ -660,6 +692,7 @@ def _run_record(slug: str, opts: Dict) -> None:
         rec = song.data.setdefault("record", {})
         if not upload_only:
             rec["exported"] = True
+            rec["renderer"] = "screen"
             rec["audio_delay_ms"] = int(opts.get("audio_delay_ms", 1300))
             rec["outputs"] = [os.path.basename(str(r)) for r in (results or [])]
         rec["error"] = None
@@ -700,7 +733,8 @@ def api_media(slug: str, name: str):
     path = song.path("media", "video", safe)
     if not os.path.exists(path):
         raise HTTPException(404, "No such media")
-    return FileResponse(path, media_type="video/quicktime")
+    kind = "video/mp4" if safe.lower().endswith(".mp4") else "video/quicktime"
+    return FileResponse(path, media_type=kind)
 
 
 @app.post("/api/songs/{slug}/youtube-delete")

@@ -195,3 +195,8 @@ video is not a thing that can happen.
 
 Note this produces a *scrolling score* video, not a play-along recording of a
 MuseScore window; if you want the latter, `record_stemmanauha` is still there.
+
+The song web app's **Record** stage offers both and defaults to this one — pick
+"Screen recording" there to get the old behaviour. Either way the videos land in
+`songs/<song>/media/video/` under the same names, so the Upload stage does not
+care which one made them.

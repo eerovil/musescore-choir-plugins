@@ -91,6 +91,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  emphasise: bool = False,
                  spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
                  smooth_seconds: float = SMOOTH_SECONDS,
+                 basename: Optional[str] = None,
                  log: Logger = _noop) -> List[str]:
     """Render a scrolling video per voice. Returns the paths written.
 
@@ -109,7 +110,9 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
             "does not, so the video would drift out of sync. Section repeats and voltas "
             "are supported; write the jump out in full first.")
 
-    base = os.path.splitext(os.path.basename(mscx_path))[0]
+    # Outputs are named "<base> <part>": the song app passes its slug so the files
+    # match what the review and upload stages already look for.
+    base = basename or os.path.splitext(os.path.basename(mscx_path))[0]
     os.makedirs(out_dir, exist_ok=True)
     written: List[str] = []
 

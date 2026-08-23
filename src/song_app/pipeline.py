@@ -298,6 +298,28 @@ def lyric_blocks(mscx_path: str, cells: Dict, song_dir: str = "") -> List[Dict]:
     return lyric_txt.blocks_from_cells(grid, cells)
 
 
+# Scrolling-video sizes offered by the Record stage. 4K60 is the default because
+# the picture pans sideways the whole time, which is what judders at 30fps; the
+# smaller preset trades that for roughly a quarter of the render time.
+SCROLL_QUALITY = {"4k": (3840, 2160, 60), "1080p": (1920, 1080, 30)}
+
+
+def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
+                     quality: str = "4k", log: Logger = _noop) -> List[str]:
+    """Render one scrolling practice video per voice into media/video.
+
+    Files are named "<name> <part>.mp4" — the same shape `record_stemmanauha`
+    produces — so the review and upload stages find them without knowing which
+    renderer made them.
+    """
+    from src.scrollvideo import build_videos
+
+    width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
+    out_dir = os.path.join(song_dir, "media", "video")
+    return build_videos(cleaned_path, out_dir, basename=name,
+                        width=width, height=height, fps=fps, log=log)
+
+
 def run_lyric_import(
     json_path: str, cleaned_path: str, replace: bool = True
 ) -> LyricImport:
