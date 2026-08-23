@@ -165,3 +165,15 @@ table.grid input.unset { border-color: var(--warn); }
 .onesystem { padding: .5rem; background: #fff; }
 .onesystem img { width: 100%; display: block; }
 .onesystem .muted { color: #666; font-size: .8rem; margin-bottom: .3rem; }
+
+/* Hide the stage rail and panel to read two scores side by side. */
+/* display:none removes them as grid items, so the viewer becomes the first one --
+   the column list has to shrink to match or the viewer lands in a 0-width column. */
+.ws.wide { grid-template-columns: 1fr; }
+.ws.wide > .stagebar, .ws.wide > .panel { display: none; }
+.widetoggle { position: fixed; left: .35rem; bottom: .35rem; z-index: 20;
+              background: #222; color: #ddd; border: 1px solid #444;
+              border-radius: 3px; font-size: .75rem; padding: .2rem .45rem;
+              cursor: pointer; opacity: .75; }
+.widetoggle:hover { opacity: 1; }
+.ws.wide .widetoggle { left: .35rem; }

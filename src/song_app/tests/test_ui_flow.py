@@ -380,3 +380,45 @@ def test_the_lyrics_view_is_offered_only_once_there_are_lyrics(page, live_app, b
     page.get_by_role("button", name="Import lyrics").click()
     expect(page.get_by_role("button", name="Cleaned MSCX with lyrics")).to_be_visible(
         timeout=60_000)
+
+
+def test_the_panel_can_be_hidden_to_read_the_scores(page, live_app, bounds_song):
+    """Reviewing is reading two scores side by side; the rail and panel are in the
+    way. Hiding them must actually give the viewer the width, which is where the
+    first attempt went wrong: `display:none` drops them as grid items, so the
+    viewer slid into a zero-width column."""
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    viewer = page.locator(".vbody").first
+    expect(page.locator(".panel")).to_be_visible()
+    before = viewer.bounding_box()["width"]
+
+    page.get_by_role("button", name="Hide panel").click()
+    expect(page.locator(".panel")).not_to_be_visible()
+    after = viewer.bounding_box()["width"]
+    assert after > before + 300, f"viewer did not gain the space ({before} -> {after})"
+
+    page.get_by_role("button", name="Show panel").click()
+    expect(page.locator(".panel")).to_be_visible()
+
+
+def test_the_pdf_can_be_zoomed(page, live_app, bounds_song):
+    """Rendered at container width, the music is too small to check note by note."""
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    page.get_by_role("button", name="Original PDF").first.click()
+    canvas = page.locator(".pdfview canvas").first
+    expect(canvas).to_be_visible(timeout=60_000)
+    before = canvas.bounding_box()["width"]
+
+    page.get_by_role("button", name="+", exact=True).first.click()
+    page.wait_for_function(
+        "w => { const c = document.querySelector('.pdfview canvas');"
+        "       return c && c.getBoundingClientRect().width > w + 20; }",
+        arg=before, timeout=60_000)
+
+    page.get_by_role("button", name="−", exact=True).first.click()
+    page.wait_for_function(
+        "w => { const c = document.querySelector('.pdfview canvas');"
+        "       return c && Math.abs(c.getBoundingClientRect().width - w) < 5; }",
+        arg=before, timeout=60_000)

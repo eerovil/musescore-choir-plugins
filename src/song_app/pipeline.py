@@ -196,8 +196,15 @@ def _apply_line_breaks(root: etree._Element, indices: List[int]) -> int:
 
 
 def _scaled_staff_mscx(mscx_path: str, breaks: Optional[List[int]] = None) -> Optional[str]:
-    """Write a temp copy of the score for rendering: staff size reduced by
-    SPATIUM_SCALE, and the printed line breaks put back if `breaks` is given.
+    """Write a temp copy of the score for rendering: the printed line breaks put
+    back if `breaks` is given, and otherwise the staff size reduced by
+    SPATIUM_SCALE.
+
+    The two are alternatives, not companions. The shrink exists only to stop
+    MuseScore reflowing a score into more systems than the page has; when the real
+    breaks are supplied they decide the layout, so the staff is left full size and
+    the music is legible. That costs pages -- the fixture renders 6 instead of 4 --
+    which is the right trade for a preview meant to be read.
 
     Returns the temp path, or None if there is nothing to change (caller then
     renders the original). Caller must delete the temp file.
@@ -208,6 +215,13 @@ def _scaled_staff_mscx(mscx_path: str, breaks: Optional[List[int]] = None) -> Op
         root = etree.fromstring(f.read().encode("utf-8"))
     score = root if root.tag == "Score" else root.find(".//Score")
     added = _apply_line_breaks(root, breaks or [])
+    if added:
+        # Breaks decide the layout now; shrinking as well only makes it unreadable.
+        fd, tmp = tempfile.mkstemp(suffix=".mscx")
+        os.close(fd)
+        with open(tmp, "wb") as f:
+            f.write(etree.tostring(root, encoding="UTF-8"))
+        return tmp
     style = score.find("Style") if score is not None else None
     if style is None:
         if not added:
