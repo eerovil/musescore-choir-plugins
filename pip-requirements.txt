@@ -8,3 +8,5 @@ pyautogui
 fastapi
 uvicorn[standard]
 python-multipart
+# Browser tests only (src/song_app/tests/test_ui_flow.py); they skip when it is absent:
+#   pip install pytest-playwright && playwright install chromium
