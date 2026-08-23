@@ -14,6 +14,12 @@ copylyrics.qml copies topmost lyrics to bottom staves
 
 add_rest_track adds a new staff that contains 16th rests. This makes all measures about evenly spaced
 
+# Setting up on a new machine
+
+See **[SETUP.md](SETUP.md)**. The short version: the songs are copyrighted, so
+they live in a separate private repo cloned into `songs/`, and you need
+MuseScore 3, `brew install ffmpeg poppler`, and a `.venv`.
+
 # song.py — the web app (start here)
 
 `song.py` is a local web app that ties the whole workflow together behind one
