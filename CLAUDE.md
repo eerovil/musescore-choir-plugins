@@ -35,6 +35,7 @@ record_stemmanauha.py    CLI wrapper → src/stemmanauha (record practice video)
 src/song_app/            Local web app tying the workflow together (see DESIGN.md)
   state.py               Song state machine (.song.json), slug, stages
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
+  pdf_systems.py         Crop the source PDF into one image per printed system
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
@@ -48,6 +49,7 @@ src/stemmanauha/         Audio/video recording automation (macOS, AppleScript + 
   create_video.py        Orchestrates mp3 export -> video record -> merge -> upload
   upload_to_youtube.py   YouTube Data API upload
   *.scpt                 AppleScript files driving MuseScore + QuickRecorder
+fixtures/                In-repo prototyping song (see fixtures/*/README.md, STEPS.md)
 songs/                   Per-song working dirs (gitignored, output lives here)
 backup/                  Gitignored .mscz backups (created by backup.sh)
 *.txt prompts            lyric_json_prompt.txt, lyrics_txt_prompt.txt (LLM prompts for lyric fixing)
@@ -96,15 +98,37 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ./backup.sh
 ```
 
+### The prototyping fixture
+
+`fixtures/virta-venhetta-vie/` is a real public-domain song (Kuula/Leino, TTBB,
+scanned + OCR'd) kept at three stages, so a change can meet real OCR damage
+immediately instead of a synthetic score. **Not** a unit-test fixture in the usual
+sense — though `test_pdf_systems.py`, `test_bounds_api.py` and the browser tests do
+read it — and it is free to change shape as the app does.
+
+```bash
+fixtures/virta-venhetta-vie/reset.sh        # drop it into songs/ at the furthest stage
+fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clean
+.venv/bin/python fixtures/virta-venhetta-vie/build.py   # regenerate the derived stages
+```
+
+Stages are overlays holding only what they add, so the 745 KB scan is stored once.
+It stops at stage `fix` on purpose: one unfixable over-full measure (m26 arrives with
+`len="9/8"`) and 8 lyric mismatches, all `too_few`. `STEPS.md` records how each stage
+was produced, including a wrong conclusion and its correction — worth reading before
+trusting a tidy-looking diagnosis of a scanned score.
+
 ### Tests
 
 ```bash
 .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q
-# 82 passed, 1 skipped   — a fresh checkout (the browser tests skip)
-# 84 passed              — once Playwright is installed
+# 105 passed              — with poppler and Playwright both installed
+# 99 passed, 6 deselected — the same run with -m "not browser"
+# fewer                   — without Playwright the browser tests skip; without
+#                           poppler the pdf_systems and bounds tests skip too
 ```
 
-The two extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
+The six extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
 marked `browser`. They need a two-step install, and the module skips unless **both**
 steps are done — the pip package alone is not enough, so a half install still skips
 rather than erroring:
@@ -186,6 +210,28 @@ state model are in `DESIGN.md`.
   the page instead of MuseScore adding extra ones;
   `strip_lyrics_copy` writes a lyrics-removed copy (cached) so the "Cleaned MSCX"
   (no-lyrics) view always reflects the live structure rather than a stale snapshot.
+- `pdf_systems.py` cuts the **original PDF** into one image per printed system, so
+  the score can be read at a resolution where a slur or a lyric line under the lower
+  staff is actually visible; a whole A4 rendered small enough to look at is not.
+  Shells out to poppler (`pdftoppm`, `pdfinfo`) — not a pip dependency, so the
+  Systems tab and the lyric crops are simply unavailable without it (tests skip).
+  **Where the boundaries come from is deliberately not decided here.** Detecting
+  them from the image was tried and removed: staff-line detection died at 0.5° of
+  skew and 20% ink dropout, and grouping staves into systems relied on a
+  left-margin bracket only some editions print — across nine real songs it agreed
+  with the score twice. Instead an AI reads them off the page
+  (`page_images(grid=True)` overlays a labelled percentage scale, which turns
+  estimating coordinates into reading them) and a person corrects them by dragging
+  in the **Systems** viewer tab. They live in `.systems.json` beside the song as
+  fractions of page height, so they survive any change of resolution, and the app
+  and an agent read the same file. `crop_systems` rasterises **only the band**
+  (`pdftoppm -x -y -W -H`): a page at 400 dpi takes ~7s, one system 0.9s, and this
+  is on the path where someone clicks a lyric cell and waits. `label()` attaches
+  each band's measure range from a score that still has its line breaks — the
+  converted input, since normal-mode cleaning strips them — and **refuses when the
+  counts disagree**, because a silently wrong alignment puts lyrics on the wrong
+  measures while a missing one is visible at once. The server, never the browser,
+  assigns indices and labels on save.
 - `health.py` is **validation only** (never mutates): per voice it sums note/rest
   durations as exact whole-note `Fraction`s (so tuplets don't round-off) and flags
   `malformed-measure` (voice doesn't fill the bar) and `extra-voices` (a staff
@@ -243,6 +289,14 @@ state model are in `DESIGN.md`.
   import the cleaned preview re-renders in place and restores `scrollTop`); falls
   back to a native `<iframe>` if pdf.js can't load (offline). **PDF measure-locating
   is page-level only** (no bounding boxes) — see DESIGN.md.
+- The Lyrics panel's **Type by system** mode divides by the *printed* systems from
+  `.systems.json`, not by the score's line breaks: normal-mode cleaning strips those,
+  so the editor used to offer one cell per part covering the whole piece and only
+  ever worked for per-system scores. `editor_grid(root, systems=[(start, end), ...])`
+  takes the ranges; unlabelled bounds are refused and it falls back to the score.
+  Focusing a cell shows that system in the viewer's **One system** tab (only the
+  first pane follows the cursor, so a split can keep another document in view); a
+  small inline crop above each block is available too, off by default.
 - The Lyrics panel has two client-side modes (remembered in `localStorage`):
   **Paste from AI** keeps the prompt/JSON round-trip, while **Type by system**
   fetches `/lyric-grid` (`lyric_txt.editor_grid(...).to_dict()`) and renders a

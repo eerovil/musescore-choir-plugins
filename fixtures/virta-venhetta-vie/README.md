@@ -1,9 +1,14 @@
 # Fixture: Virta venhettä vie
 
-A real, complete song for **prototyping** the workflow end to end. Not a unit-test
-fixture — nothing in `src/*/tests/` reads it, and it is free to change shape as the
-app does. The point is to have one song that can be dropped into `songs/` at a known
-stage, in seconds, so a new feature meets real OCR damage on the first run.
+A real, complete song for **prototyping** the workflow end to end. The point is to
+have one song that can be dropped into `songs/` at a known stage, in seconds, so a
+new feature meets real OCR damage on the first run.
+
+It is not a golden-file fixture — it is free to change shape as the app does — but
+it is no longer read only by hand: `src/song_app/tests/test_pdf_systems.py`,
+`test_bounds_api.py` and the browser tests in `test_ui_flow.py` all run against it,
+and `10-cleaned/.systems.json` in particular is what those assert about. Changing a
+stage means running those.
 
 ```bash
 fixtures/virta-venhetta-vie/reset.sh        # drop it into songs/ at the furthest stage
