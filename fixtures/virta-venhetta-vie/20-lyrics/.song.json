@@ -8,9 +8,9 @@
     "pdf": "Virta venhettä vie.pdf"
   },
   "created_at": 1787475359.460669,
-  "updated_at": 1787481085.018699,
+  "updated_at": 1787488248.637781,
   "cleaned": "Virta-venhetta-vie_cleaned.mscx",
-  "cleaned_fingerprint": "sha1:c9d07363343e355f5afce628b63fdd2cb484e212",
+  "cleaned_fingerprint": "sha1:8047be96b826e9c7fd2214dd10ae9e29b398f10c",
   "health": {
     "checked_against": "sha1:12fbff6905f69994c251c5ca743cc1ccb296dae2",
     "issues": [
@@ -26,7 +26,7 @@
   },
   "lyrics": {
     "json": "lyrics.json",
-    "imported_against": "sha1:c9d07363343e355f5afce628b63fdd2cb484e212",
+    "imported_against": "sha1:8047be96b826e9c7fd2214dd10ae9e29b398f10c",
     "warnings": [
       {
         "kind": "too_few",
@@ -41,50 +41,6 @@
       },
       {
         "kind": "too_few",
-        "message": "Measures 8-10 (staffs 3): too few tokens (10 syllables, 15 slots); some slots will be empty.",
-        "measure_start": 8,
-        "measure_end": 10,
-        "staff_ids": [
-          3
-        ],
-        "syllables": 10,
-        "slots": 15
-      },
-      {
-        "kind": "too_few",
-        "message": "Measures 27-30 (staffs 4): too few tokens (7 syllables, 12 slots); some slots will be empty.",
-        "measure_start": 27,
-        "measure_end": 30,
-        "staff_ids": [
-          4
-        ],
-        "syllables": 7,
-        "slots": 12
-      },
-      {
-        "kind": "too_few",
-        "message": "Measures 27-30 (staffs 3): too few tokens (8 syllables, 13 slots); some slots will be empty.",
-        "measure_start": 27,
-        "measure_end": 30,
-        "staff_ids": [
-          3
-        ],
-        "syllables": 8,
-        "slots": 13
-      },
-      {
-        "kind": "too_few",
-        "message": "Measures 27-30 (staffs 1): too few tokens (10 syllables, 15 slots); some slots will be empty.",
-        "measure_start": 27,
-        "measure_end": 30,
-        "staff_ids": [
-          1
-        ],
-        "syllables": 10,
-        "slots": 15
-      },
-      {
-        "kind": "too_few",
         "message": "Measures 31-34 (staffs 4): too few tokens (17 syllables, 18 slots); some slots will be empty.",
         "measure_start": 31,
         "measure_end": 34,
@@ -96,24 +52,13 @@
       },
       {
         "kind": "too_few",
-        "message": "Measures 44-46 (staffs 1): too few tokens (10 syllables, 13 slots); some slots will be empty.",
-        "measure_start": 44,
-        "measure_end": 46,
-        "staff_ids": [
-          1
-        ],
-        "syllables": 10,
-        "slots": 13
-      },
-      {
-        "kind": "too_few",
-        "message": "Measures 50-52 (staffs 3): too few tokens (9 syllables, 14 slots); some slots will be empty.",
+        "message": "Measures 50-52 (staffs 3): too few tokens (13 syllables, 14 slots); some slots will be empty.",
         "measure_start": 50,
         "measure_end": 52,
         "staff_ids": [
           3
         ],
-        "syllables": 9,
+        "syllables": 13,
         "slots": 14
       }
     ]

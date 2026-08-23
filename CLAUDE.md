@@ -114,7 +114,7 @@ fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clea
 
 Stages are overlays holding only what they add, so the 745 KB scan is stored once.
 It stops at stage `fix` on purpose: one unfixable over-full measure (m26 arrives with
-`len="9/8"`) and 8 lyric mismatches, all `too_few`. `STEPS.md` records how each stage
+`len="9/8"`) and 3 lyric mismatches, each exactly one note over — one dropped melisma slur apiece. `STEPS.md` records how each stage
 was produced, including a wrong conclusion and its correction — worth reading before
 trusting a tidy-looking diagnosis of a scanned score.
 
