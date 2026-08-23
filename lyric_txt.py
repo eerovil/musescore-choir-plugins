@@ -93,9 +93,12 @@ def main() -> None:
             except ValueError:
                 sys.exit("--split must be comma-separated part numbers (e.g. 3,4)")
         result = import_file(txt_path, mscx_in, out, split=split, replace=args.replace)
+        kinds = set()
         for mismatch in result.mismatches:
             print(f"Warning: {mismatch.message}", file=sys.stderr)
-        if result.filled_measure_starts:
+            kinds.add(mismatch.kind)
+        # The block-count warning already says how many were filled; don't say it twice.
+        if result.filled_measure_starts and "block_count" not in kinds:
             print(f"Note: auto-filled {len(result.filled_measure_starts)} null measure_start "
                   f"value(s) from the score's systems.", file=sys.stderr)
         print(f"Imported to {out}")

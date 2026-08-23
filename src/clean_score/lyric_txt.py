@@ -40,6 +40,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
+from .utils.per_system import system_ranges
+
 # --------------------------------------------------------------------------- #
 # What a caller gets back
 # --------------------------------------------------------------------------- #
@@ -86,12 +88,6 @@ class LyricImport:
     def ok(self) -> bool:
         return not self.mismatches
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "mismatches": [m.to_dict() for m in self.mismatches],
-            "filled_measure_starts": list(self.filled_measure_starts),
-        }
-
 
 @dataclass(frozen=True)
 class EditorPart:
@@ -126,7 +122,7 @@ class EditorGrid:
             "parts": [{"name": p.name, "id": p.id} for p in self.parts],
             "systems": [{"index": s.index, "start": s.start, "end": s.end}
                         for s in self.systems],
-            "prefill": {str(si): dict(cells) for si, cells in self.cells.items()},
+            "cells": {str(si): dict(cells) for si, cells in self.cells.items()},
         }
 
 # Default mapping from JSON part keys (e.g. S1, A2) to staff id. Overridable.
@@ -1189,7 +1185,6 @@ def _fill_missing_measure_starts(
     if not any(b.get("measure_start") is None for b in blocks):
         return json_str, [], []  # nothing to infer
 
-    from .utils.per_system import system_ranges
     starts = [r.start for r in system_ranges(score_root)]
     if not starts:
         return json_str, [Mismatch(
@@ -1329,6 +1324,9 @@ def place_lyrics(
     verse-1 lyric first (a full replace); without it, measures and staves the source
     does not name keep what they have. `split` duplicates a part onto two staves
     (JSON only). Returns the mismatches — nothing is written to stdout or stderr.
+
+    Only the JSON path measures syllables against chords, so a TXT import always
+    reports an empty result (TXT is written per measure, so it cannot drift).
     """
     if fmt is None:
         fmt = "txt" if isinstance(source, str) and not source.lstrip().startswith("[") else "json"
@@ -1352,8 +1350,6 @@ def editor_grid(score_root: etree._Element) -> EditorGrid:
     the score for that part over that system's measures — the same syllable rules the
     TXT export uses, so what the editor shows round-trips back through `place_lyrics`.
     """
-    from .utils.per_system import system_ranges
-
     score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
     parts: List[EditorPart] = []
     for p in score.findall("Part"):

@@ -72,7 +72,11 @@ state file *is* the UX; the user never tracks any of this in their head.
     ]
   },
   "lyrics": { "json": "laulun_aika.json", "imported_against": "sha1:…",
-              "warnings": ["m16-19: 11 syllables / 9 slots"] },
+              // one record per mismatch, as fields (older songs hold the sentence
+              // as a plain string; the UI reads the fields back out of it)
+              "warnings": [{ "kind": "too_many", "measure_start": 16, "measure_end": 19,
+                             "staff_ids": [1, 2], "syllables": 11, "slots": 9,
+                             "message": "Measures 16-19 (staffs 1, 2): too many …" }] },
   "record": { "exported": false, "youtube_id": null }
 }
 ```

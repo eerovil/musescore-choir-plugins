@@ -551,11 +551,22 @@ async function panelLyrics(panel, song, P, refresh) {
 }
 
 // Import mismatches come from the server as fields (kind, measure range, staff ids,
-// syllables, slots, message). Songs imported before that shipped hold plain strings;
-// they still render as text, they just can't be attached to a cell.
+// syllables, slots, message). Songs imported before that shipped hold the sentence as
+// a plain string; read the fields back out of it so those keep their cell markers too.
+const LEGACY_WARN = /^Measures (\d+)-(\d+) \(staffs ([\d,\s]+)\): (too many|too few) tokens \((\d+) syllables, (\d+) slots\)/;
+
 function lyricMismatches(song) {
-  return (song.lyrics?.warnings || []).map((w) =>
-    typeof w === "string" ? { message: w, staff_ids: [] } : w);
+  return (song.lyrics?.warnings || []).map((w) => {
+    if (typeof w !== "string") return w;
+    const m = w.match(LEGACY_WARN);
+    if (!m) return { message: w, staff_ids: [] };
+    return {
+      kind: m[4] === "too many" ? "too_many" : "too_few", message: w,
+      measure_start: +m[1], measure_end: +m[2],
+      staff_ids: m[3].split(",").map((s) => +s.trim()).filter(Number.isFinite),
+      syllables: +m[5], slots: +m[6],
+    };
+  });
 }
 
 function autoGrow(ta) {
@@ -612,8 +623,8 @@ async function lyricsManual(panel, song, P, refresh) {
   let grid;
   try { grid = await getJSON(`${P}/lyric-grid`); }
   catch (e) { holder.replaceChildren(el("p", { className: "err" }, e.message)); return; }
-  const { parts, systems, prefill } = grid;
-  const cellText = (si, name) => (prefill?.[si]?.[name]) || "";
+  const { parts, systems, cells } = grid;
+  const cellText = (si, name) => (cells?.[si]?.[name]) || "";
   const warns = lyricMismatches(song);
   // Attach a mismatch to the system where its line STARTS (a line can span several
   // systems if the part is blank in later ones); show the full measure range.
@@ -632,8 +643,7 @@ async function lyricsManual(panel, song, P, refresh) {
           ...cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
             `⚠ m${w.measure_start}–${w.measure_end}`
             + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
-            + `${w.kind === "too_many" ? "too many" : "too few"} syllables `
-            + `(${w.syllables} for ${w.slots} note${w.slots === 1 ? "" : "s"})`)));
+            + `${w.message.split("): ").pop()}`)));
       }))));
   holder.querySelectorAll("textarea").forEach(autoGrow); // size to content (no scroll)
   if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after re-import

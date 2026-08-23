@@ -78,8 +78,8 @@ def test_export_spanner_matches_result_file():
 
 
 def test_new_json_routes_each_printed_line_to_its_output_staves():
-    """new_json.json's (staff_number, position) lines must land on the staves the
-    converted fixture names — asserted through import + export, not the converter."""
+    """Every line of new_json.json must land, in full, on the staves that
+    new_json_converted.json names — asserted through import + export, not the converter."""
     with open(NEW_JSON, "r", encoding="utf-8") as f:
         new_content = f.read()
     with open(NEW_JSON_CONVERTED, "r", encoding="utf-8") as f:
@@ -89,8 +89,13 @@ def test_new_json_routes_each_printed_line_to_its_output_staves():
     place_lyrics(root, new_content, replace=True)
     by_measure = _staff_lines(export_lyrics(root))
 
-    # Each line the conversion fixture names must land on that staff, inside the block's
-    # measure range (a line starts at the first measure of the range that has chords).
+    # Every line the conversion fixture names must land on that staff, in full and in
+    # order. Compared as the bare syllable sequence: the TXT export re-hyphenates at
+    # barlines (a word split across a measure exports as "o-li- si"), which is a
+    # formatting detail of the export, not of the routing this test is about.
+    def syllables(text):
+        return "".join(str(text).split()).replace("-", "")
+
     starts = [b["measure_start"] for b in expected_blocks]
     checked = 0
     for i, block in enumerate(expected_blocks):
@@ -102,12 +107,13 @@ def test_new_json_routes_each_printed_line_to_its_output_staves():
             placed = " ".join(
                 by_measure.get(m, {}).get(int(key), "") for m in range(first_m, last_m + 1)
             )
-            head = str(text).split()[0].split("-")[0]
-            assert head in placed, (
-                f"Measures {first_m}-{last_m} staff {key} should carry {text!r}; got {placed!r}"
+            placed = " ".join(t for t in placed.split() if t != "_")
+            assert syllables(placed) == syllables(text), (
+                f"Measures {first_m}-{last_m} staff {key} should carry exactly {text!r}; "
+                f"got {placed!r}"
             )
             checked += 1
-    assert checked, "fixture should name at least one (measure, staff) line"
+    assert checked == 15, f"fixture should pin 15 (block, staff) lines, compared {checked}"
 
 
 def _mscx_has_end_man_followed_by_begin_vi(root: etree._Element) -> bool:

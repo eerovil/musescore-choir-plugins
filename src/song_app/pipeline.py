@@ -16,6 +16,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from lxml import etree
 
 from src.clean_score.main import main as clean_main
+from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
 
@@ -204,6 +205,17 @@ def render_score_pdf(mscx_path: str) -> str:
             + (result.stderr or result.stdout or "")
         )
     return out
+
+
+def lyric_grid(mscx_path: str) -> Dict:
+    """The manual editor's projection of a score: parts x printed systems, prefilled."""
+    return lyric_txt.editor_grid(etree.parse(mscx_path).getroot()).to_dict()
+
+
+def lyric_blocks(mscx_path: str, cells: Dict) -> List[Dict]:
+    """The editor's typed cells as lyric JSON blocks, addressed by part name."""
+    grid = lyric_txt.editor_grid(etree.parse(mscx_path).getroot())
+    return lyric_txt.blocks_from_cells(grid, cells)
 
 
 def run_lyric_import(

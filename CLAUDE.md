@@ -230,7 +230,9 @@ state model are in `DESIGN.md`.
   importer as the paste mode. Mismatches come back as **fields** (`kind`,
   `measure_start`, `measure_end`, `staff_ids`, `syllables`, `slots`, `message`) and
   are attached to the matching system/part cell by comparing those fields — the
-  browser no longer parses warning prose. Lyric-panel scroll is preserved across the
+  browser no longer parses warning prose (a song whose `.song.json` predates this holds
+  the sentence as a string; the panel reads the fields back out of it). Lyric-panel
+  scroll is preserved across the
   refresh. Blank cells are omitted, so this editor expresses a lyric line starting in
   a system, not an instruction to clear one isolated cell.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
@@ -339,7 +341,7 @@ measure-range, `printed_no -> [output staff ids]`) in addition to an identity
 share a source staff into one printed staff (divisi: voice 0 → 'above', voice 1 →
 'below') and ordering printed staves by **musical rank** (S<A<T<B, then number) — not
 by the OCR's source-staff order, which can be shuffled. `lyric_txt.py` import reads it
-(`read_lyrics_system_map`) and resolves each JSON block via the map for the system
+(`_read_lyrics_system_map`) and resolves each JSON block via the map for the system
 covering its `measure_start`. Tested against `tests/test_files/laulun_aika.mscx` (a
 real converted score kept as a fixture).
 Caveat: the musical-rank ordering is wrong when an ossia/extra voice is *printed on top*
@@ -404,26 +406,26 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
   PDF-derived format has a `lyrics` array of `{text, staff_number, position,
   verse, parts}`. `staff_number` is the printed staff (top=1); `position` is
   `above`/`below`. These are mapped to **output staff ids** via the
-  `lyricsStaffMap` metaTag that `clean_score` writes (`read_lyrics_staff_map`):
+  `lyricsStaffMap` metaTag that `clean_score` writes (`_read_lyrics_staff_map`):
   a printed staff that split into two voices gets the line on both voices when
   only one position appears *in that block* (unison), or split upper/lower when
   both positions appear (divisi is decided **per block**, not globally). An
   explicit `parts` on a lyric overrides the staff_number/position mapping (manual fix
   for the ~inevitable LLM errors). `parts` accepts output staff **ids** *and/or part
   **names*** (`["T1","T2"]`, also a scalar `part`); names resolve via the score's
-  trackNames (`read_part_name_map`). Names are the robust override — immune to
+  trackNames (`_read_part_name_map`). Names are the robust override — immune to
   printed-staff order (e.g. an ossia T3 printed on top), which staff_number cannot
   handle. The current `lyric_json_prompt.txt` has the LLM emit `"parts": []` (empty)
   in **every** lyric so manual overriding is just dropping ids/names into the existing
   array; empty → auto-map by staff_number/position. (An empty list is falsy, so the
-  `if parts:` check falls through to the staff_number path — same as omitting it.) Legacy numeric/`DEFAULT_PART_TO_STAFF` part keys still work. `--split`
+  `if parts:` check falls through to the staff_number path — same as omitting it.) Legacy numeric/`_DEFAULT_PART_TO_STAFF` part keys still work. `--split`
   duplicates a part into two staves. When a lyric has no `parts`, import falls back to
   staff_number/position: for `--per-system` scores the printed numbering shifts per
-  system, so it uses the per-system `lyricsSystemMap` (`read_lyrics_system_map`) for the
+  system, so it uses the per-system `lyricsSystemMap` (`_read_lyrics_system_map`) for the
   block's `measure_start`, else the single `lyricsStaffMap`. Resolution priority per
   lyric: explicit `parts` (ids/names) → staff_number+position via system/staff map.
   A null `measure_start` (the LLM emits null when no measure number is printed at the
-  start of a line) is auto-filled by `_fill_missing_measure_starts`: blocks are one
+  start of a line) is auto-filled by `_fill_missing_measure_starts` (reported as `filled_measure_starts`): blocks are one
   per printed system in order, so each null block takes the start measure of the
   system at its position (`per_system.system_ranges`); explicit values are left alone, and a
   block-count vs system-count mismatch is warned (so the user verifies alignment).
