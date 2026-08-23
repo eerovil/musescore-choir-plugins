@@ -550,15 +550,23 @@ async function panelLyrics(panel, song, P, refresh) {
   return lyricsPaste(panel, song, P, refresh);
 }
 
-// Parse an import warning like "Measures 16-19 (staffs 1, 2): too many tokens …".
-function parseLyricWarning(w) {
-  const m = w.match(/^Measures (\d+)-(\d+) \(staffs ([\d,\s]+)\): (.+)$/);
-  if (!m) return null;
-  return {
-    mStart: +m[1], mEnd: +m[2],
-    staffIds: m[3].split(",").map((s) => +s.trim()).filter(Number.isFinite),
-    msg: m[4],
-  };
+// Import mismatches come from the server as fields (kind, measure range, staff ids,
+// syllables, slots, message). Songs imported before that shipped hold the sentence as
+// a plain string; read the fields back out of it so those keep their cell markers too.
+const LEGACY_WARN = /^Measures (\d+)-(\d+) \(staffs ([\d,\s]+)\): (too many|too few) tokens \((\d+) syllables, (\d+) slots\)/;
+
+function lyricMismatches(song) {
+  return (song.lyrics?.warnings || []).map((w) => {
+    if (typeof w !== "string") return w;
+    const m = w.match(LEGACY_WARN);
+    if (!m) return { message: w, staff_ids: [] };
+    return {
+      kind: m[4] === "too many" ? "too_many" : "too_few", message: w,
+      measure_start: +m[1], measure_end: +m[2],
+      staff_ids: m[3].split(",").map((s) => +s.trim()).filter(Number.isFinite),
+      syllables: +m[5], slots: +m[6],
+    };
+  });
 }
 
 function autoGrow(ta) {
@@ -567,10 +575,10 @@ function autoGrow(ta) {
 }
 
 async function lyricsPaste(panel, song, P, refresh) {
-  const warns = song.lyrics?.warnings || [];
+  const warns = lyricMismatches(song);
   if (warns.length) {
     panel.append(el("p", { className: "sub" }, "Mismatches (often a note problem — check the measure in MuseScore):"),
-      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w))));
+      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w.message))));
   }
   panel.append(el("p", { className: "sub" }, "No API key needed — your AI does the reading, this catches the result."));
   const ta = el("textarea", { rows: 12, placeholder: "Paste the lyric JSON from your AI chat here…" });
@@ -615,13 +623,13 @@ async function lyricsManual(panel, song, P, refresh) {
   let grid;
   try { grid = await getJSON(`${P}/lyric-grid`); }
   catch (e) { holder.replaceChildren(el("p", { className: "err" }, e.message)); return; }
-  const { parts, systems, prefill } = grid;
-  const cellText = (si, name) => (prefill?.[si]?.[name]) || "";
-  const warns = (song.lyrics?.warnings || []).map(parseLyricWarning).filter(Boolean);
-  // Attach a warning to the system where its line STARTS (a line can span several
+  const { parts, systems, cells } = grid;
+  const cellText = (si, name) => (cells?.[si]?.[name]) || "";
+  const warns = lyricMismatches(song);
+  // Attach a mismatch to the system where its line STARTS (a line can span several
   // systems if the part is blank in later ones); show the full measure range.
   const cellWarns = (sys, p) => warns.filter((w) =>
-    w.staffIds.includes(p.id) && w.mStart >= sys.start && w.mStart <= sys.end);
+    (w.staff_ids || []).includes(p.id) && w.measure_start >= sys.start && w.measure_start <= sys.end);
 
   holder.replaceChildren(...systems.map((sys) =>
     el("div", { className: "sysblock" },
@@ -633,7 +641,9 @@ async function lyricsManual(panel, song, P, refresh) {
         return el("div", { className: "lyrow" },
           el("label", {}, p.name), ta,
           ...cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
-            `⚠ m${w.mStart}–${w.mEnd}${w.mEnd > sys.end ? " (spans later systems)" : ""}: ${w.msg}`)));
+            `⚠ m${w.measure_start}–${w.measure_end}`
+            + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
+            + `${w.message.split("): ").pop()}`)));
       }))));
   holder.querySelectorAll("textarea").forEach(autoGrow); // size to content (no scroll)
   if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after re-import
@@ -643,21 +653,14 @@ async function lyricsManual(panel, song, P, refresh) {
     panel.querySelectorAll("textarea[data-sys]").forEach((t) => {
       (map[t.dataset.sys] ||= {})[t.dataset.part] = t.value.trim();
     });
-    const data = [];
-    for (const sys of systems) {
-      const lyrics = [];
-      for (const p of parts) {
-        const t = map[sys.index]?.[p.name];
-        if (t) lyrics.push({ parts: [p.name], text: t });
-      }
-      if (lyrics.length) data.push({ measure_start: sys.start, lyrics });
+    if (!Object.values(map).some((row) => Object.values(row).some((t) => t))) {
+      appendLog("Nothing typed yet.", true); return;
     }
-    if (!data.length) { appendLog("Nothing typed yet.", true); return; }
     btn.disabled = true;
     lyricScroll = panel.scrollTop; // preserve scroll across the re-render
     appendLog("Importing lyrics…");
     try {
-      const fresh = await postJSON(`${P}/lyrics`, { json: JSON.stringify(data) });
+      const fresh = await postJSON(`${P}/lyrics`, { cells: map });
       Object.assign(song, fresh);
       const w = song.lyrics?.warnings || [];
       appendLog(w.length ? `Imported with ${w.length} warning(s).` : "Imported cleanly. Ready for review.");
