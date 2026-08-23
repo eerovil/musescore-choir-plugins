@@ -93,3 +93,84 @@ def test_the_fixtures_recorded_fix_still_applies():
     m26 = staff.findall("Measure")[25]
     v = m26.find("voice") if m26.find("voice") is not None else m26
     assert _voice_len(v) == Fraction(1)       # 4/4, like the other three voices
+
+
+# --------------------------------------------------------------------------- #
+# Writing a bar: the edits undot and slur cannot express
+# --------------------------------------------------------------------------- #
+
+def _tokens(root):
+    from src.clean_score.utils.score_fixes import _bar_tokens
+    return _bar_tokens(root.find(".//Measure"))
+
+
+def test_append_leaves_the_start_of_the_bar_alone():
+    """What the tokens cannot say — a triplet bracket, a tie — has to survive."""
+    root = _score([("quarter", 0, 60)])
+    voice = root.find(".//voice")
+    etree.SubElement(voice, "Tuplet")
+    apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
+                        "from": ["quarter:60", "[tuplet"], "add": ["quarter:57"],
+                        "why": "x"}])
+    assert _tokens(root) == ["quarter:60", "[tuplet", "quarter:57"]
+    assert voice.find("Tuplet") is not None
+
+
+def test_a_triplet_bracket_is_part_of_what_the_bar_reads():
+    """Two bars differing only by a bracket are different bars; the fix must not apply."""
+    root = _score([("quarter", 0, 60)])
+    etree.SubElement(root.find(".//voice"), "Tuplet")
+    with pytest.raises(FixError):
+        apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
+                            "from": ["quarter:60"], "add": ["quarter:57"], "why": "x"}])
+
+
+def test_append_can_drop_the_padding_the_scan_left():
+    """A scan that loses notes pads with a rest; appending alone overfills the bar."""
+    root = _score([("quarter", 0, 60)])
+    etree.SubElement(etree.SubElement(root.find(".//voice"), "Rest"),
+                     "durationType").text = "half"
+    apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
+                        "from": ["quarter:60", "half:R"], "drop": 1,
+                        "add": ["quarter:59", "quarter:57"], "why": "x"}])
+    assert _tokens(root) == ["quarter:60", "quarter:59", "quarter:57"]
+
+
+def test_drop_refuses_to_take_a_note_off():
+    """Removing a note is a musical decision, and can strand a tie or a bracket."""
+    root = _score([("quarter", 0, 60), ("quarter", 0, 62)])
+    with pytest.raises(FixError):
+        apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
+                            "from": ["quarter:60", "quarter:62"], "drop": 1,
+                            "add": ["quarter:59"], "why": "x"}])
+    assert _tokens(root) == ["quarter:60", "quarter:62"]
+
+
+def test_a_bar_that_no_longer_reads_as_recorded_raises():
+    """A pipeline change that moves this bar must fail the build, not overwrite it."""
+    root = _score([("quarter", 0, 60)])
+    with pytest.raises(FixError) as caught:
+        apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
+                            "from": ["half:60"], "add": ["quarter:60"], "why": "x"}])
+    assert "staff 3 m1" in str(caught.value)      # says which entry, not just what
+    assert _tokens(root) == ["quarter:60"]        # and nothing was written
+
+
+def test_the_spelling_is_derived_from_the_pitch():
+    """Hand-written spellings were wrong three times out of four, so there is no field."""
+    root = _score([("quarter", 0, 60)])
+    apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
+                        "from": ["quarter:60"],
+                        "add": ["quarter:57", "quarter:59"], "why": "x"}])
+    tpcs = [n.findtext("tpc") for n in root.findall(".//Note")]
+    assert tpcs[1:] == ["17", "19"]               # A and B, not G and A
+
+
+def test_a_whole_bar_rest_can_be_read_but_not_written():
+    """It needs the bar's own length, which a recorded fix has no way to know."""
+    root = _score([])
+    etree.SubElement(etree.SubElement(root.find(".//voice"), "Rest"),
+                     "durationType").text = "measure"
+    with pytest.raises(FixError):
+        apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
+                            "from": ["measure:R"], "add": ["measure:R"], "why": "x"}])

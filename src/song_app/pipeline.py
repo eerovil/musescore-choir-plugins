@@ -6,6 +6,7 @@ non-interactively. No musical logic lives here; this only orchestrates.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
+from src.clean_score.utils.score_fixes import FixError, apply_fixes
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
 Logger = Callable[[str], None]
@@ -116,17 +118,75 @@ def run_clean(
     base = os.path.splitext(os.path.basename(mscx_path))[0]
     cleaned = os.path.join(out_dir, base + "_cleaned.mscx")
     log("Cleaning score" + (" (per-system)" if per_system else ""))
+    # Build beside the real file and move it in only once the recorded fixes have
+    # gone back on. A fix that no longer matches then leaves the previous cleaned
+    # score exactly where it was, instead of a freshly rebuilt one with the
+    # page-verified edits missing and nothing on disk saying so.
+    building = cleaned + ".building"
     clean_main(
-        mscx_path, cleaned,
+        mscx_path, building,
         add_staffs=add_staffs or "",
         interactive=False,
         per_system=per_system,
         voicing=voicing,
     )
-    if not os.path.exists(cleaned):
+    if not os.path.exists(building):
         raise RuntimeError("Cleaning produced no output (no parts declared?).")
+    try:
+        apply_recorded_fixes(building, out_dir, log)
+    except Exception:
+        os.remove(building)
+        raise
+    os.replace(building, cleaned)
     log("Cleaned score written.")
     return cleaned, mscx_path
+
+
+def apply_recorded_fixes(cleaned_path: str, song_dir: str, log: Logger = _noop) -> int:
+    """Re-apply the song's authorised score edits (`fixes.json`). Returns how many.
+
+    Cleaning rebuilds the score from the source, so a hand edit made after the last
+    clean is gone the moment anyone cleans again — which is how three page-verified
+    rests had to be typed in twice on Kaksi laulua krapulasta. A recorded fix is a
+    judgement someone already made about the printed page, so replaying it is not
+    the pipeline guessing; it is the pipeline not forgetting.
+
+    Strict on purpose: if a fix no longer matches the bar it was recorded against,
+    this raises rather than skipping it. A silently dropped fix leaves a score
+    looking repaired when it is not, and the whole point of the file is that nothing
+    downstream can tell the difference.
+    """
+    path = os.path.join(song_dir, "fixes.json")
+    if not os.path.exists(path):
+        return 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            entries = json.load(f)
+    except ValueError as exc:
+        raise RuntimeError(f"fixes.json is not valid JSON: {exc}") from exc
+    if not entries:
+        return 0
+    # Every entry has to be applicable. Skipping the ones that are not would leave a
+    # score looking repaired when it is not — which is the failure this file exists
+    # to prevent — and an entry with a mistyped key would vanish in silence.
+    unusable = [e for e in entries if not isinstance(e, dict) or not e.get("kind")]
+    if unusable:
+        raise RuntimeError(
+            f"{len(unusable)} entry/entries in fixes.json have no 'kind' and cannot be "
+            f"applied: {unusable[:1]}. Give each one a kind, or take it out of the file.")
+    tree = etree.parse(cleaned_path)
+    try:
+        lines = apply_fixes(tree.getroot(), entries)
+    except FixError as exc:
+        raise RuntimeError(
+            f"A recorded fix in fixes.json no longer matches the score: {exc}. "
+            "Re-read the page and update (or remove) that entry before cleaning again."
+        ) from exc
+    tree.write(cleaned_path, encoding="UTF-8", xml_declaration=True)
+    log(f"Re-applied {len(lines)} recorded fix(es) from fixes.json")
+    for line in lines:
+        log("  " + line[:120])
+    return len(lines)
 
 
 def strip_lyrics_copy(mscx_path: str) -> str:
