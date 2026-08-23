@@ -95,53 +95,126 @@ counts alone — in system 2 the score has 11 eligible notes under T1 where the
 printed page shows only "tie?", because both tenors converge on "Lyö kuo-hut pur-ren
 puu-ta ja tal-kaa." after the imitative entry. Adding that tail made T1 fit exactly
 (11 = 11), and the same reading resolved B1 (11) and B2 (13, taking the extra
-"Mi-kä" that is printed once, under the lower voice).
+"Mi-kä" that is printed once, under the lower voice). That left **12**.
 
-Second pass: **12 mismatches**, and this is what they are:
+The remaining twelve were all `too_few` — the score offering *more* eligible notes
+than the page shows syllables — and were first written off as OCR-dropped melisma
+slurs. Re-reading the scan at 400 dpi (`pdftoppm -r 400`, cropped per system; the
+whole-page renders used earlier are far too coarse to see a slur) showed that was
+mostly wrong. The dominant cause is **text sharing between staves**:
+
+> A voice whose own printed line covers only *part* of a system sings the other
+> staff's words for the rest of it.
+
+It is visible directly — in m38–40 the bass staff has two measures of notes with no
+text under them before "Vai-ko val-het-ta…" begins — and it checks out
+arithmetically every time:
+
+| | slots | reading | total |
+|---|---|---|---|
+| m31–34 B1 | 15 | the whole tenor line | 15 |
+| m38–40 B1 | 21 | the whole tenor line | 21 |
+| m38–40 B2 | 20 | tenor line to "koi;" (12) + its own "Vai-ko val-het-ta, val-het-ta," (8) | 20 |
+| m41–43 B1 | 18 | tenor line to "hen-kää," (10) + its own "Vai-ko val-het-ta lie? Vai-ko" (8) | 18 |
+
+All four land exactly, and the placed result reads correctly back out of the score:
+B1 sings the tenors' words through m41, then diverges at "hen-kää, Vai-ko"; B2
+diverges a measure earlier, at m39. Encoding that dropped the count from **12 to 8**,
+and the notes left without a syllable from **87 to 30**.
+
+The earlier reading was not applied widely enough: text sharing was assumed only for
+systems 4, 5, 6 and 10, where the bass has *no* printed text at all. The rule is
+more general — a bass line can share for two measures and then break away.
+
+### The second pass, with the crops
+
+The first eight were re-read from `pdf_systems` crops at 400 dpi -- the tooling
+built for exactly this -- against the score's own per-measure note counts. Five
+more resolved, all the same rule, and the counts landed exactly every time:
+
+| | slots | reading | total |
+|---|---|---|---|
+| m8–10 B1 | 15 | the tenor line (its notes are `[4,7,4]`, identical to theirs) | 15 |
+| m27–30 T1 | 15 | its own line (10) + "Me-ri, tai-vas ja" (5) | 15 |
+| m27–30 B1 | 13 | its own line (8) + the same five | 13 |
+| m27–30 B2 | 12 | its own line (7) + the same five | 12 |
+| m44–46 T1 | 13 | T2's "hen-kää, ja" (3) + its own line from m45 (10) | 13 |
+| m50–52 B1 | 14 | the tenor line (13), one note over | 13 |
+
+Two things the crops made obvious that the page renders had not:
+
+**The upper bass voice doubles the tenor rhythm.** In m8–10 and m50–52 the bass
+staff's upper voice moves in the tenors' dotted-eighths and triplets while the
+lower voice carries the printed bass line on long notes. So B1 sings the tenors'
+words and B2 the printed ones -- visible at a glance in the crop, invisible at page
+scale, and confirmed by B1's note counts matching the tenors' exactly.
+
+**The choir converges in unison at "Me-ri, tai-vas ja"** (m30), printed once on the
+T2 line. Every voice has exactly 5 notes in that measure. Three lines were short by
+exactly 5.
+
+That took the mismatches from **8 to 3** and the notes without a syllable from
+**30 to 3**.
+
+### What is left, and why
 
 ```
-[too_few] m8-10   B1:  10 syllables for 15 slots     gap +5
-[too_few] m8-10   B2:  10 syllables for 11 slots     gap +1
-[too_few] m27-30  T1:  10 syllables for 15 slots     gap +5
-[too_few] m27-30  B1:   8 syllables for 13 slots     gap +5
-[too_few] m27-30  B2:   7 syllables for 12 slots     gap +5
-[too_few] m31-34  B1:   5 syllables for 15 slots     gap +10
-[too_few] m31-34  B2:   5 syllables for 18 slots     gap +13
-[too_few] m38-40  B1:   8 syllables for 21 slots     gap +13
-[too_few] m38-40  B2:   8 syllables for 20 slots     gap +12
-[too_few] m41-43  B1:   8 syllables for 18 slots     gap +10
-[too_few] m44-46  T1:  10 syllables for 13 slots     gap +3
-[too_few] m50-52  B1:   9 syllables for 14 slots     gap +5
+[too_few] m31-34  B2:  17 syllables for 18 slots     gap +1
+[too_few] m50-52  B1:  13 syllables for 14 slots     gap +1
 ```
 
-**Every one is `too_few`. Not a single `too_many`.** That one-sidedness is the whole
-finding. If the transcription were wrong — a misread word, a line on the wrong voice
-— the errors would fall on both sides. A score that consistently offers *more*
-eligible notes than the page shows syllables means the notes that should be melisma
-continuations are not marked as such: the OCR dropped the slurs.
+A third residual turned out **not** to be a slur at all. m8–10 B2 had 11 slots for
+its 10 printed syllables, and the obvious reading was a lost melisma — but the XML
+shows the tie is present and intact:
 
-That matches what the codebase already says about slurs — they connect different
-pitches, so unlike ties they cannot be pitch-checked and are never auto-mirrored;
-CLAUDE.md calls them "fixed by hand in the score". The gaps say *where*: the largest
-are in the bass under sustained figures (m31–34, m38–40, m41–43), which is exactly
-where a male-choir bass line holds long notes against a moving tenor.
+```
+m9:  quarter/p48  eighth/p46  eighth/p45  half/p46+Tie
+m10: quarter/p46+Tie  rest/eighth  eighth/p46
+```
 
-So the lyric mismatch report doubles as **the closest thing the toolkit has to a
-missing-slur detector** — worth remembering as a possible feature, and a good reason
-to keep this fixture around in its unfixed state.
+The uncounted note is the lone eighth *after the rest*, aligned with where the
+tenors sing "ja" — the convergence into the next shared phrase, not a melisma.
+Adding "ja" made it 11 for 11. **Check the XML before calling something a missing
+slur**; a gap of one looks the same either way from the counts alone.
+
+The two that remain are melismas, and both are visible as such:
+
+* **m31–34 B2** — from m32 both bass voices move with the tenors, and B2 has three
+  notes against their four, one of them a half-note sustained while the others move.
+* **m50–52 B1** — one note more than the tenor line it doubles, in m50. m51 has its
+  slurs; m50 does not.
+
+Neither is a lyric error. The text is right and the score is missing two slurs, so
+the fix is a spanner in the `.mscx` — by hand in MuseScore, or written in — not an
+edit to `lyrics.json`.
 
 ## Step 4 — Where the AI stops
 
-The song stays at stage `fix` with 12 mismatches and 1 health issue, deliberately.
-Both remaining problems need the same thing: **someone looking at the score in
-MuseScore**, comparing it against the scan, and drawing in what the OCR lost.
+The song stays at stage `fix` with 2 lyric mismatches and 1 health issue, and both
+are now localised to single notes:
 
 - **m26 (`len="9/8"`)** — the measure is over-full. Which note is spurious is a
   judgement about what the engraver wrote; a pass that guessed would corrupt scores.
-- **the dropped slurs** — an AI can say a slur is missing somewhere in m38–40 in the
-  bass, and roughly how many notes it should cover. It cannot say which notes without
-  reading the noteheads off the scan at a precision this render does not support.
+- **two dropped slurs** — m31–34 B2 (the sustained note in m32) and m50–52 B1 (in
+  m50). Writing a slur into the score is the first edit here that changes the
+  *music* rather than the text about it, which is why it stopped for a decision
+  rather than proceeding.
 
-Fix either one and re-run the health check / lyric import, and the counts should
-fall. That is the natural next experiment, and the fixture is set up so it costs
-nothing to try and nothing to undo.
+## A note on method
+
+The single biggest lever in this whole exercise was **resolution**. Reading the
+score as whole rendered pages produced a confident, tidy and substantially wrong
+conclusion -- "all `too_few`, therefore missing slurs" -- when the real cause was
+mostly voices sharing the other staff's words. The same score cropped per system at
+400 dpi overturned it in minutes, and a second pass with the crops resolved six more
+lines that page-scale reading could not.
+
+Three rules worth carrying to any scanned score:
+
+* **Crop and zoom before concluding anything.** A whole A4 rendered small enough to
+  look at cannot show a slur or a notehead.
+* **Let the arithmetic check the reading.** Every correction above was predicted by
+  the slot counts before it was encoded, and landed exactly. A reading that needs the
+  numbers bent to fit is wrong.
+* **Read the XML before blaming the OCR.** The one gap confidently called a missing
+  slur had its tie present all along.

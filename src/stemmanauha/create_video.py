@@ -381,19 +381,35 @@ def export_mp3_from_musescore(song_dir, redo=False):
 
 
 def find_merged_outputs(song_dir):
-    """Existing merged per-voice videos ("<song> <part>.mov"), for upload."""
+    """Existing per-voice videos ("<song> <part>.mov" / ".mp4"), for upload.
+
+    .mp4 as well as .mov because the scrolling renderer (src/scrollvideo) writes
+    its videos here too, under the same "<song> <part>" naming.
+    """
     media_dir = Path(song_dir) / "media"
     song_name = os.path.basename(song_dir)
     video_dir = media_dir / "video"
     mp3_files = list(media_dir.glob("*.mp3")) if media_dir.exists() else []
-    expected = {f"{song_name} {mp3.stem.split(' ')[-1]}.mov" for mp3 in mp3_files}
+    expected = {f"{song_name} {mp3.stem.split(' ')[-1]}{ext}"
+                for mp3 in mp3_files for ext in (".mov", ".mp4")}
     if not video_dir.exists():
         return []
-    # Prefer the named merge outputs; fall back to any "<song> *.mov".
-    out = [p for p in video_dir.glob("*.mov") if p.name in expected]
+    videos = [p for p in video_dir.iterdir() if p.suffix.lower() in (".mov", ".mp4")]
+    # Prefer the named merge outputs; fall back to any "<song> *".
+    out = [p for p in videos if p.name in expected]
     if not out:
-        out = [p for p in video_dir.glob(f"{song_name} *.mov")]
-    return sorted(out)
+        out = [p for p in videos if p.name.startswith(song_name + " ")]
+
+    # One video per voice, newest wins. Both renderers write "<song> <part>" here
+    # and neither clears the other's files, so a song recorded with one and then
+    # re-rendered with the other would otherwise upload the stale take as well.
+    newest = {}
+    for path in out:
+        stem = path.stem
+        part = stem[len(song_name) + 1:] if stem.startswith(song_name + " ") else stem
+        if part not in newest or path.stat().st_mtime > newest[part].stat().st_mtime:
+            newest[part] = path
+    return sorted(newest.values())
 
 
 def run(song_dir=None, youtube=False, extra_playlist_id=None,

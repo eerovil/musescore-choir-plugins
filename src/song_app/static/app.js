@@ -193,6 +193,8 @@ async function renderWorkspace(slug) {
 function viewerTabs(song) {
   const tabs = [];
   if (song.has_pdf) tabs.push(["pdf", "Original PDF"]);
+  if (song.has_pdf) tabs.push(["systems", "Systems"]);
+  if (song.systems) tabs.push(["system", "One system"]);
   tabs.push(["original", "Original XML"]);
   if (song.has_cleaned) {
     tabs.push(["cleaned_nolyrics", "Cleaned MSCX"]);
@@ -260,6 +262,147 @@ async function mountPdf(view, url) {
   }
 }
 
+
+// Focusing a lyric cell asks the viewer to show that printed system, full width.
+// The sidebar is too narrow to read a system in; the viewer is the space for it.
+const SYSTEM_EVENT = "song-system";
+const showSystem = (index) =>
+  window.dispatchEvent(new CustomEvent(SYSTEM_EVENT, { detail: { index } }));
+
+// ---- Systems: the printed-system boundaries, drawn over the page and draggable ----
+// An AI proposes these off the scan; this is where they get corrected. Bounds are
+// fractions of page height, so they hold at any zoom. Indices and measure ranges
+// are assigned by the server on save, never by this editor.
+async function systemsEditor(view, slug) {
+  const P = `/api/songs/${encodeURIComponent(slug)}`;
+  view.replaceChildren(el("p", { className: "muted" }, "Loading pages…"));
+  let data;
+  try {
+    data = await (await fetch(`${P}/bounds`)).json();
+  } catch {
+    view.replaceChildren(el("p", { className: "warn" }, "Could not load the PDF."));
+    return;
+  }
+  let bands = (data.systems || []).map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+  let dirty = false;
+
+  const status = el("div", { className: "sysstatus" });
+  const redrawStatus = () => {
+    const n = bands.length;
+    const want = data.declared || 0;
+    const agree = want && n === want;
+    status.replaceChildren(
+      el("span", {}, `${n} system${n === 1 ? "" : "s"}`),
+      want ? el("span", { className: agree ? "ok" : "warn" },
+        agree ? ` — matches the score` : ` — the score declares ${want}`) : el("span"),
+      dirty ? el("span", { className: "warn" }, " — unsaved") : el("span"),
+    );
+  };
+
+  const save = async () => {
+    const res = await fetch(`${P}/bounds`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ systems: bands }),
+    });
+    if (!res.ok) { alert("Save failed: " + (await res.text())); return; }
+    const out = await res.json();
+    bands = out.systems.map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+    dirty = false;
+    drawBands();
+  };
+
+  const pagesWrap = el("div", { className: "syspages" });
+  // Pages are built once and kept. Rebuilding them per redraw recreates the <img>,
+  // which reloads it, collapses its measured height to zero and wrecks the drag
+  // geometry mid-gesture — only the overlays are redrawn.
+  const pageEls = [];
+
+  function buildPages() {
+    const kids = [];
+    for (let p = 1; p <= data.pages; p++) {
+      const img = el("img", { src: `${P}/page/${p}?dpi=150`, alt: `page ${p}` });
+      const overlay = el("div", { className: "sysoverlay" });
+      const holder = el("div", { className: "syspage" }, img, overlay);
+      holder.onclick = (ev) => {
+        if (ev.target !== img) return;              // only empty page area adds one
+        const r = img.getBoundingClientRect();
+        if (!r.height) return;
+        const y = (ev.clientY - r.top) / r.height;
+        bands.push({ page: p, top: Math.max(0, y), bottom: Math.min(1, y + 0.15) });
+        dirty = true; drawBands();
+      };
+      img.onload = drawBands;                        // positions need the real height
+      pageEls.push({ page: p, img, overlay });
+      kids.push(el("div", { className: "syspagewrap" },
+        el("div", { className: "muted" }, `Page ${p}`), holder));
+    }
+    pagesWrap.replaceChildren(...kids);
+  }
+
+  function drawBands() {
+    redrawStatus();
+    for (const { page, img, overlay } of pageEls) {
+      const mine = bands
+        .map((b, i) => ({ b, i }))
+        .filter(({ b }) => b.page === page)
+        .sort((x, y) => x.b.top - y.b.top);
+      overlay.replaceChildren(...mine.map(({ b, i }) => {
+        const box = el("div", { className: "sysband" });
+        box.style.top = `${b.top * 100}%`;
+        box.style.height = `${(b.bottom - b.top) * 100}%`;
+        const idx = bands.filter((o) => o.page < page ||
+          (o.page === page && o.top < b.top)).length + 1;
+        box.append(el("span", { className: "syslabel" }, `S${idx}`));
+        box.append(el("button", {
+          className: "sysdel", title: "remove this system",
+          onclick: (ev) => { ev.stopPropagation(); bands.splice(i, 1); dirty = true; drawBands(); },
+        }, "\u00d7"));
+        for (const edge of ["top", "bottom"]) {
+          box.append(el("div", {
+            className: `sysgrip ${edge}`,
+            onmousedown: (ev) => startDrag(ev, img, b, edge, box),
+          }));
+        }
+        return box;
+      }));
+    }
+  }
+
+  function startDrag(ev, img, band, edge, box) {
+    ev.preventDefault(); ev.stopPropagation();
+    const rect = img.getBoundingClientRect();
+    if (!rect.height) return;                        // image not laid out yet
+    const move = (e) => {
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      if (edge === "top") band.top = Math.min(y, band.bottom - 0.01);
+      else band.bottom = Math.max(y, band.top + 0.01);
+      dirty = true;
+      // Move the one element being dragged; a full redraw would drop it mid-drag.
+      box.style.top = `${band.top * 100}%`;
+      box.style.height = `${(band.bottom - band.top) * 100}%`;
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      drawBands();                                   // re-label and re-order once
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
+  view.replaceChildren(
+    el("div", { className: "sysbar" },
+      el("button", { className: "primary", onclick: save }, "Save boundaries"),
+      status,
+      el("span", { className: "muted" },
+        " Drag an edge to adjust; click the page for a new system; × removes one."),
+    ),
+    pagesWrap,
+  );
+  buildPages();
+  drawBands();
+}
+
 // `panes` is a shared mutable array; `rebuild` re-creates the viewer (split/close).
 // Each doc keeps its own scroll container mounted (lazily); switching a tab hides/shows
 // them (scroll preserved). `el._refreshFp(fp)` re-renders only the cleaned previews
@@ -276,7 +419,8 @@ function viewer(song, slug, panes, rebuild) {
     const btns = {};
     const ensureRendered = (doc) => {
       const v = frames[doc];
-      if (!v || v._url === v._renderedUrl) return;
+      if (!v || v._systems) return;                  // the systems editor draws itself
+      if (v._url === v._renderedUrl) return;
       if (v.style.display === "none") return;      // render when shown
       if (v.clientWidth > 0) mountPdf(v, v._url);
       else requestAnimationFrame(() => ensureRendered(doc)); // wait for layout (e.g. after split)
@@ -285,9 +429,22 @@ function viewer(song, slug, panes, rebuild) {
       panes[i] = doc;
       if (!frames[doc]) {
         const v = el("div", { className: "pdfview" });
-        v._url = docUrl(slug, doc, song.cleaned_fingerprint);
         frames[doc] = v;
         body.append(v);
+        if (doc === "systems") { v._systems = true; systemsEditor(v, slug); }
+        else if (doc === "system") {
+          v._systems = true;                       // draws itself, not a PDF
+          v.className = "pdfview onesystem";
+          v._setSystem = (n) => {
+            v._n = n;
+            v.replaceChildren(
+              el("div", { className: "muted" }, `Printed system ${n}`),
+              el("img", { src: `/api/songs/${encodeURIComponent(slug)}/system/${n}?dpi=400` }),
+            );
+          };
+          v._setSystem(v._n || 1);
+        }
+        else v._url = docUrl(slug, doc, song.cleaned_fingerprint);
       }
       for (const d in frames) frames[d].style.display = d === doc ? "" : "none";
       for (const k in btns) btns[k].className = k === doc ? "vtab active" : "vtab";
@@ -296,6 +453,20 @@ function viewer(song, slug, panes, rebuild) {
     const tabRow = tabs.map(([k, label]) => (btns[k] = el("button", {
       className: "vtab", onclick: () => show(k),
     }, label)));
+
+    if (keys.includes("system")) {
+      const onAsk = (ev) => {
+        const n = ev.detail && ev.detail.index;
+        if (!n) return;
+        // Only the first pane follows the cursor, so a split can keep a second
+        // document in view while the other tracks what is being typed.
+        if (i !== 0) return;
+        show("system");
+        frames.system._setSystem(n);
+      };
+      window.addEventListener(SYSTEM_EVENT, onAsk);
+      body._cleanup = () => window.removeEventListener(SYSTEM_EVENT, onAsk);
+    }
 
     const ctrl = panes.length === 1
       ? el("button", { className: "vtab split", title: "Split view",
@@ -617,12 +788,33 @@ async function lyricsPaste(panel, song, P, refresh) {
 
 async function lyricsManual(panel, song, P, refresh) {
   panel.append(el("p", { className: "sub" }, "Type the lyrics for each part, per system. Hyphenate syllables (e.g. \"lau-lun ai-ka\")."));
+  const toggle = el("button", { className: "vtab" }, "");
+  toggle.onclick = () => {
+    showScore = !showScore;
+    localStorage.setItem("lyricScore", showScore ? "1" : "0");
+    lyricScroll = panel.scrollTop;
+    refresh();
+  };
+  panel.append(toggle);
   const holder = el("div", {}, el("p", { className: "hint" }, "Loading…"));
   panel.append(holder, makeLog());
 
   let grid;
   try { grid = await getJSON(`${P}/lyric-grid`); }
   catch (e) { holder.replaceChildren(el("p", { className: "err" }, e.message)); return; }
+
+  // The printed system, cropped from the scan, shown beside the cells for it.
+  // Typing lyrics against a whole page is the resolution problem all over again:
+  // a slur or a lyric line under the lower staff is not legible at page scale.
+  // Matched by measure range, not by position, so a bounds file that disagrees
+  // with the score attaches nothing rather than the wrong picture.
+  let byStart = {};
+  try {
+    const b = await getJSON(`${P}/bounds`);
+    for (const s of b.systems || []) if (s.measure_start) byStart[s.measure_start] = s.index;
+  } catch { /* no PDF, or none stored yet — the cells work regardless */ }
+  // Off by default now that focusing a cell shows the system in the viewer.
+  let showScore = localStorage.getItem("lyricScore") === "1";
   const { parts, systems, cells } = grid;
   const cellText = (si, name) => (cells?.[si]?.[name]) || "";
   const warns = lyricMismatches(song);
@@ -631,13 +823,25 @@ async function lyricsManual(panel, song, P, refresh) {
   const cellWarns = (sys, p) => warns.filter((w) =>
     (w.staff_ids || []).includes(p.id) && w.measure_start >= sys.start && w.measure_start <= sys.end);
 
+  const scoreFor = (sys) => {
+    const idx = byStart[sys.start];
+    if (!idx || !showScore) return [];
+    return [el("a", { className: "syspeek", href: `${P}/system/${idx}?dpi=400`,
+                      target: "_blank", title: "open at full resolution" },
+      el("img", { src: `${P}/system/${idx}?dpi=200`, loading: "lazy",
+                  alt: `system ${idx}` }))];
+  };
+
   holder.replaceChildren(...systems.map((sys) =>
     el("div", { className: "sysblock" },
       el("h4", {}, `System ${sys.index + 1} — measures ${sys.start}–${sys.end}`),
+      ...scoreFor(sys),
       ...parts.map((p) => {
         const ta = el("textarea", { rows: 1, value: cellText(sys.index, p.name),
           "data-sys": sys.index, "data-part": p.name });
         ta.oninput = () => autoGrow(ta);
+        const shown = byStart[sys.start];
+        if (shown) ta.onfocus = () => showSystem(shown);
         return el("div", { className: "lyrow" },
           el("label", {}, p.name), ta,
           ...cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
@@ -645,6 +849,10 @@ async function lyricsManual(panel, song, P, refresh) {
             + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
             + `${w.message.split("): ").pop()}`)));
       }))));
+  toggle.textContent = Object.keys(byStart).length
+    ? (showScore ? "Hide the score" : "Show the score")
+    : "";
+  toggle.style.display = Object.keys(byStart).length ? "" : "none";
   holder.querySelectorAll("textarea").forEach(autoGrow); // size to content (no scroll)
   if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after re-import
 
@@ -680,22 +888,32 @@ function panelReview(panel, song, P, refresh) {
 }
 
 function panelRecord(panel, song, P, refresh) {
-  panel.append(el("h2", {}, "Record"),
-    el("p", { className: "sub" }, "Export per-voice audio, record + merge the play-along video. macOS only."));
-
   const rec = song.record || {};
   const recording = song.recording;
   const recorded = !!(rec.outputs && rec.outputs.length);
+  // Two ways to make the videos. The scrolling renderer draws them from the score
+  // and is the default; the screen recorder drives MuseScore and needs macOS.
+  let renderer = rec.renderer || "scroll";
+
+  panel.append(el("h2", {}, "Record"));
+  const sub = el("p", { className: "sub" }, "");
+  panel.append(sub);
 
   if (recording) {
-    panel.append(el("div", { className: "banner" }, "● Recording in progress… leave this running."));
+    panel.append(el("div", { className: "banner" }, "● Rendering… leave this running."));
   } else if (recorded) {
-    panel.append(el("div", { className: "banner good" }, "✓ Recorded."));
+    panel.append(el("div", { className: "banner good" },
+      "✓ Ready" + (rec.renderer === "screen" ? " (screen recording)." : ".")));
   }
   if (rec.error) {
     panel.append(el("div", { className: "banner err" }, "Last run failed: " + rec.error));
   }
 
+  const scrollRadio = el("input", { type: "radio", name: "renderer", checked: renderer === "scroll" });
+  const screenRadio = el("input", { type: "radio", name: "renderer", checked: renderer === "screen" });
+  const quality = el("select", {},
+    el("option", { value: "4k", selected: (rec.quality || "4k") === "4k" }, "4K, 60fps"),
+    el("option", { value: "1080p", selected: rec.quality === "1080p" }, "1080p, 30fps (faster)"));
   const delay = el("input", { type: "number", value: rec.audio_delay_ms ?? 1300, step: 50, style: "width:120px" });
   const redoMp3 = el("input", { type: "checkbox" });
   const redoVideo = el("input", { type: "checkbox" });
@@ -703,25 +921,59 @@ function panelRecord(panel, song, P, refresh) {
   const post = async (extra, msg) => {
     appendLog(msg);
     try {
-      await postJSON(`${P}/record`, { audio_delay_ms: Number(delay.value) || 1300, ...extra });
+      await postJSON(`${P}/record`, { renderer, ...extra });
       refresh();
     } catch (e) { appendLog(e.message, true); }
   };
 
-  const runBtn = el("button", { className: "primary", disabled: recording,
-    onclick: () => post({ redo_mp3: redoMp3.checked, redo_video: redoVideo.checked }, "Starting…") },
-    "Run recording");
-  const remergeBtn = el("button", { disabled: recording,
-    onclick: () => post({ merge_only: true }, "Re-merging with new offset…") },
-    "Re-merge only (apply offset)");
+  const runBtn = el("button", { className: "primary", disabled: recording, onclick: () =>
+    renderer === "scroll"
+      ? post({ quality: quality.value }, "Rendering the scrolling video…")
+      : post({ audio_delay_ms: Number(delay.value) || 1300,
+               redo_mp3: redoMp3.checked, redo_video: redoVideo.checked }, "Starting…") }, "");
+  const remergeBtn = el("button", { disabled: recording, onclick: () =>
+    post({ merge_only: true, audio_delay_ms: Number(delay.value) || 1300 },
+         "Re-merging with new offset…") }, "Re-merge only (apply offset)");
 
-  panel.append(
+  const scrollOpts = el("div", {},
+    el("label", {}, "Size"),
+    el("div", { className: "row" }, quality,
+      el("span", { className: "hint" }, "4K takes roughly 1.5 minutes of CPU per minute of music")));
+  const screenOpts = el("div", {},
     el("label", {}, "Audio sync offset (ms)"),
-    el("div", { className: "row" }, delay, el("span", { className: "hint" }, "shift audio vs. video; re-merge to apply")),
+    el("div", { className: "row" }, delay,
+      el("span", { className: "hint" }, "shift audio vs. video; re-merge to apply")),
     el("div", { className: "row" }, redoMp3, el("span", {}, "Re-export MP3")),
     el("div", { className: "row" }, redoVideo, el("span", {}, "Re-record video")),
-    el("div", { className: "row" }, runBtn, remergeBtn),
+    el("div", { className: "row" }, remergeBtn));
+
+  const applyRenderer = () => {
+    scrollRadio.checked = renderer === "scroll";
+    screenRadio.checked = renderer === "screen";
+    scrollOpts.style.display = renderer === "scroll" ? "" : "none";
+    screenOpts.style.display = renderer === "screen" ? "" : "none";
+    runBtn.textContent = renderer === "scroll" ? "Render videos" : "Run recording";
+    sub.textContent = renderer === "scroll"
+      ? "Draw the scrolling score straight from the notes — nothing on screen, runs unattended."
+      : "Export per-voice audio, record + merge the play-along video. macOS only.";
+  };
+  const choose = (which) => { renderer = which; applyRenderer(); };
+
+  panel.append(
+    el("label", {}, "How to make the videos"),
+    el("div", { className: "row" }, scrollRadio,
+      el("span", { onclick: () => choose("scroll") }, "Scrolling score "),
+      el("span", { className: "hint" }, "(default)")),
+    el("div", { className: "row" }, screenRadio,
+      el("span", { onclick: () => choose("screen") }, "Screen recording "),
+      el("span", { className: "hint" }, "(MuseScore + QuickRecorder, macOS)")),
+    scrollOpts, screenOpts,
+    el("div", { className: "row" }, runBtn),
     makeLog());
+
+  scrollRadio.onclick = () => choose("scroll");
+  screenRadio.onclick = () => choose("screen");
+  applyRenderer();
 
   // --- results review ---
   const merged = (song.media || []).filter((m) => m.merged);

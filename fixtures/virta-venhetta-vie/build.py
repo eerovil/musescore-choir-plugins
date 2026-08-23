@@ -81,6 +81,14 @@ def main() -> int:
     song.set_stage("fix")
     song.save()
     print(f"  {len(found)} health issue(s): {[i['id'] for i in found]}")
+
+    # System boundaries are read off the scan by an AI and corrected by hand, so
+    # like lyrics.json they are a committed artifact rather than something this
+    # script can regenerate. Carry them through into the snapshot.
+    src_bounds = os.path.join(FIXTURE, "10-cleaned", ".systems.json")
+    if os.path.exists(src_bounds):
+        shutil.copyfile(src_bounds, song.path(".systems.json"))
+        print("  carried .systems.json (15 systems)")
     registered = os.path.join(FIXTURE, "00-registered")
     snapshot(song_dir, os.path.join(FIXTURE, "10-cleaned"), [registered])
 

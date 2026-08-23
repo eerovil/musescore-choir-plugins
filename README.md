@@ -141,3 +141,63 @@ i.e. if your song is in songs/MySong, run
     ./record_stemmanauha.py MySong
 
 media files should appear in song folder. To re-record, delete files
+
+# scroll_video.py — practice videos without the GUI
+
+An alternative to `record_stemmanauha`: instead of screen-recording MuseScore's
+playback cursor, this renders the video directly from the score. No QuickRecorder,
+no AppleScript, no keyboard shortcuts, nothing on screen — so it can run
+unattended, and the audio can't drift against the picture.
+
+    ./scroll_video.py "songs/MySong/MySong_cleaned.mscx"
+    ./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 720 --no-audio
+    # --height alone picks a 16:9 width; pass --width only to override it
+
+One video per voice: the score scrolls horizontally as one long system, bar numbers
+printed above, and the notehead of every sounding note turns MuseScore blue — the head
+itself, not a box drawn over it. Click/percussion staves are left
+out (`--keep-silent` keeps them).
+
+Output is **3840x2160 at 60fps** (`--width`, `--height`, `--fps` to change it); 60fps
+because the picture pans sideways the whole time, which is what judders at 30.
+
+The picture is the same for all voices, so it is encoded once and each voice is that
+video with its own mix muxed on — the same shape as `record_stemmanauha`, where one
+recording gets four mp3s merged onto it. A 2:32 four-part score takes about 4 minutes
+for all four 4K videos (25 MB each), or about 50 seconds at `--height 1080 --fps 30`.
+`--emphasise` instead lights each voice's own notes brighter than the rest, which
+costs a full re-encode per voice.
+
+Measure width is forced to follow the number of beats rather than how many notes
+happen to be in the bar, so the scroll runs at a steady speed instead of surging
+through sparse bars and crawling through busy ones. This replaces what the
+`add_rest_track.qml` click staff used to do: a hidden staff of evenly spaced rests
+is engraved and then cropped off the picture. `--spacer 4` uses sixteenths (more
+even, less music on screen), `--spacer 0` turns it off. `--smooth SECONDS` sets how
+long the scroll speed is averaged over (default 2; 0 disables).
+
+The render is deterministic: same score in, byte-identical videos out.
+
+How it fits together:
+
+    .mscx --(MuseScore CLI)--> MusicXML --(verovio)--> engraving + note positions
+          --(MuseScore CLI)--> MIDI ---------------->  the clock (tempo map)
+          --(MuseScore CLI)--> WAV per voice -------->  the audio
+
+Needs `ffmpeg`/`ffprobe` on PATH and `MUSESCORE_CLI_PATH` set, plus the Python
+deps in `pip-requirements.txt` (verovio, cairosvg, mido, numpy).
+
+Repeats and voltas work: the section is drawn once and the scroll jumps back to
+play it again, the way your eyes do. **D.C./D.S. jumps are refused** — the
+engraving doesn't follow them, so the video would drift; write the jump out in
+full first. Every render is also checked against the exported audio before it is
+written, and refused if the highlights don't line up, so a silently out-of-sync
+video is not a thing that can happen.
+
+Note this produces a *scrolling score* video, not a play-along recording of a
+MuseScore window; if you want the latter, `record_stemmanauha` is still there.
+
+The song web app's **Record** stage offers both and defaults to this one — pick
+"Screen recording" there to get the old behaviour. Either way the videos land in
+`songs/<song>/media/video/` under the same names, so the Upload stage does not
+care which one made them.

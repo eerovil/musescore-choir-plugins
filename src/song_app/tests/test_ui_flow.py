@@ -206,3 +206,156 @@ def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
     assert dropped, "cleaning with unnamed staves must confirm first"
     assert "staff 1 · system 3" in dropped[0], dropped[0]
     assert "staff 1 · system 4" in dropped[0], dropped[0]
+
+
+BOUNDS_FIXTURE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    "fixtures", "virta-venhetta-vie",
+)
+
+
+@pytest.fixture
+def bounds_song():
+    """Drop the Virta fixture into the live app's songs folder, cleaned stage."""
+    import json
+    import shutil
+
+    from src.song_app import state
+
+    slug = "virta-venhetta-vie"
+    dest = os.path.join(state.SONGS_DIR, slug)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest)
+    for stage in ("00-registered", "10-cleaned"):
+        src = os.path.join(BOUNDS_FIXTURE, stage)
+        for name in os.listdir(src):
+            shutil.copyfile(os.path.join(src, name), os.path.join(dest, name))
+    yield slug, dest, lambda: json.load(open(os.path.join(dest, ".systems.json")))["systems"]
+    shutil.rmtree(dest, ignore_errors=True)
+
+
+def _open_systems_tab(page, base, slug):
+    """Open the Systems tab and wait for a page image to actually be laid out.
+
+    The bands are positioned as percentages of the image, and rasterising a page
+    takes a second or two, so until it has loaded there is no geometry to drag
+    against — the editor refuses the drag, exactly as it should.
+    """
+    page.goto(f"{base}/#/song/{slug}")
+    page.get_by_role("button", name="Systems").click()
+    expect(page.locator(".sysband").first).to_be_visible(timeout=30_000)
+    # Every page, not just the first: each image's load fires a redraw of the
+    # bands, and one arriving mid-drag replaces the element being dragged.
+    page.wait_for_function(
+        "() => { const i = [...document.querySelectorAll('.syspage img')];"
+        "        return i.length > 0 && i.every(x => x.complete"
+        "               && x.getBoundingClientRect().height > 50); }",
+        timeout=90_000,
+    )
+
+
+def test_system_boundaries_can_be_dragged_and_saved(page, live_app, bounds_song):
+    """The correction path: drag an edge, save, and it is what the song now holds."""
+    slug, _, stored = bounds_song
+    _open_systems_tab(page, live_app, slug)
+
+    assert page.locator(".sysband").count() == 15
+    expect(page.locator(".sysstatus")).to_contain_text("matches the score")
+    before = stored()[0]["top"]
+
+    grip = page.locator(".sysband").first.locator(".sysgrip.top")
+    box = grip.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] - 40, steps=8)
+    page.mouse.up()
+
+    page.get_by_role("button", name="Save boundaries").click()
+    expect(page.locator(".sysstatus")).not_to_contain_text("unsaved")
+
+    after = stored()[0]["top"]
+    assert after < before, "dragging the top edge upward should lower the fraction"
+    assert stored()[0]["measure_start"] == 1, "still labelled against the score"
+
+
+def test_removing_a_system_stops_the_measure_labelling(page, live_app, bounds_song):
+    """14 bands cannot be aligned to 15 systems, so the app must not pretend."""
+    slug, _, stored = bounds_song
+    _open_systems_tab(page, live_app, slug)
+
+    page.locator(".sysband").last.locator(".sysdel").click()
+    assert page.locator(".sysband").count() == 14
+    expect(page.locator(".sysstatus")).to_contain_text("the score declares 15")
+
+    page.get_by_role("button", name="Save boundaries").click()
+    expect(page.locator(".sysstatus")).not_to_contain_text("unsaved")
+
+    saved = stored()
+    assert len(saved) == 14
+    assert all(b["measure_start"] == 0 for b in saved)
+
+
+def test_the_lyrics_grid_shows_the_printed_system_it_is_asking_about(page, live_app, bounds_song):
+    """Typing lyrics against a whole page is unreadable; each block gets its crop."""
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    page.locator(".step", has_text="Lyrics").first.click()
+    page.get_by_role("button", name="Type by system").click()
+
+    first = page.locator(".sysblock").first
+    expect(page.locator(".syspeek")).to_have_count(0)      # off by default now
+    page.get_by_role("button", name="Show the score").click()
+    expect(first.locator(".syspeek img")).to_be_visible(timeout=60_000)
+    page.wait_for_function(
+        "() => { const i = document.querySelector('.syspeek img');"
+        "        return i && i.complete && i.naturalWidth > 100; }", timeout=60_000)
+
+    # The crop shown is the one whose measures the block is asking about.
+    heading = first.locator("h4").inner_text()
+    src = first.locator(".syspeek img").get_attribute("src")
+    assert "measures 1–3" in heading
+    assert "/system/1?" in src, f"expected system 1 for {heading}, got {src}"
+
+    page.get_by_role("button", name="Hide the score").click()
+    expect(page.locator(".syspeek")).to_have_count(0)
+
+
+def test_focusing_a_lyric_cell_shows_that_system_in_the_viewer(page, live_app, bounds_song):
+    """The sidebar is too narrow to read a system in; the viewer is the space."""
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    page.locator(".step", has_text="Lyrics").first.click()
+    page.get_by_role("button", name="Type by system").click()
+    expect(page.locator(".sysblock").first).to_be_visible(timeout=30_000)
+
+    blocks = page.locator(".sysblock")
+    blocks.nth(7).locator("textarea").first.focus()        # system 8, measures 27-30
+    expect(page.locator(".onesystem")).to_be_visible(timeout=30_000)
+    expect(page.locator(".onesystem .muted")).to_have_text("Printed system 8")
+    assert "/system/8?" in page.locator(".onesystem img").get_attribute("src")
+
+    blocks.nth(0).locator("textarea").first.focus()        # and it follows the cursor
+    expect(page.locator(".onesystem .muted")).to_have_text("Printed system 1")
+
+
+def test_clicking_empty_page_adds_a_system(page, live_app, bounds_song):
+    """Adding a band by clicking the page, which is how a song with no proposal
+    gets its boundaries at all. The overlay spans the page, so it has to let
+    clicks through or this silently does nothing."""
+    slug, _, stored = bounds_song
+    _open_systems_tab(page, live_app, slug)
+    assert page.locator(".sysband").count() == 15
+
+    # Empty page above the first system (the title area). Kept near the top of
+    # the page on purpose: further down is below the fold, and a click there goes
+    # nowhere — which is a fact about the test window, not about the editor.
+    img = page.locator(".syspage img").first
+    box = img.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.05)
+
+    assert page.locator(".sysband").count() == 16
+    expect(page.locator(".sysstatus")).to_contain_text("the score declares 15")
+
+    page.get_by_role("button", name="Save boundaries").click()
+    expect(page.locator(".sysstatus")).not_to_contain_text("unsaved")
+    assert len(stored()) == 16

@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from lxml import etree
 
+from . import pdf_systems
 from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
@@ -182,6 +183,68 @@ def _scaled_staff_mscx(mscx_path: str) -> Optional[str]:
     return tmp
 
 
+def _page_cache(song_dir: str) -> str:
+    return os.path.join(song_dir, ".pages")
+
+
+def system_bounds(song_dir: str) -> List[Dict]:
+    """The stored printed-system boundaries, as plain dicts for the wire."""
+    return [b.to_dict() for b in pdf_systems.load_bounds(song_dir)]
+
+
+def save_system_bounds(song_dir: str, bands: List[Dict], mscx_path: str = "") -> List[Dict]:
+    """Store boundaries, re-indexed in page order and labelled where possible.
+
+    `bands` are {page, top, bottom} as fractions of page height -- whatever the
+    editor currently shows. Indices and measure ranges are derived here rather
+    than trusted from the browser, so a drag can never invent an alignment.
+    """
+    ordered = sorted(bands, key=lambda b: (int(b["page"]), float(b["top"])))
+    bounds = [
+        pdf_systems.SystemBounds(
+            index=i, page=int(b["page"]),
+            top=max(0.0, min(1.0, float(b["top"]))),
+            bottom=max(0.0, min(1.0, float(b["bottom"]))),
+        )
+        for i, b in enumerate(ordered, 1)
+    ]
+    if mscx_path:
+        bounds = pdf_systems.label(bounds, mscx_path)
+    pdf_systems.save_bounds(song_dir, bounds)
+    return [b.to_dict() for b in bounds]
+
+
+def declared_system_count(mscx_path: str) -> int:
+    """How many printed systems the score itself declares (0 if unknown)."""
+    if not mscx_path or not os.path.exists(mscx_path):
+        return 0
+    try:
+        return len(per_system.system_ranges(etree.parse(mscx_path).getroot()))
+    except Exception:
+        return 0
+
+
+def page_image(song_dir: str, pdf_path: str, page: int, dpi: int, grid: bool = False) -> str:
+    """One rasterised page, cached under the song folder."""
+    out = _page_cache(song_dir)
+    raw = pdf_systems.render_page(pdf_path, page, dpi, out)
+    return pdf_systems._with_grid(raw) if grid else raw
+
+
+def page_count(pdf_path: str) -> int:
+    return pdf_systems.page_count(pdf_path)
+
+
+def system_crop(song_dir: str, pdf_path: str, index: int, dpi: int) -> str:
+    """One printed system, cropped from the stored bounds."""
+    bounds = pdf_systems.load_bounds(song_dir)
+    match = [b for b in bounds if b.index == index]
+    if not match:
+        raise ValueError(f"No stored bounds for system {index}")
+    images = pdf_systems.crop_systems(pdf_path, match, _page_cache(song_dir), dpi=dpi)
+    return images[0].path
+
+
 def render_score_pdf(mscx_path: str) -> str:
     """Render a .mscx to a PDF via the MuseScore CLI (cached; re-renders if stale).
 
@@ -207,15 +270,54 @@ def render_score_pdf(mscx_path: str) -> str:
     return out
 
 
-def lyric_grid(mscx_path: str) -> Dict:
+def _printed_systems(song_dir: str) -> Optional[List[Tuple[int, int]]]:
+    """Measure ranges of the printed systems, from the bounds read off the scan.
+
+    Normal-mode cleaning strips layout breaks, so the cleaned score has no systems
+    left to find and the lyric editor would offer one cell per part for the whole
+    piece. The printed systems still exist on the page; these are them.
+    """
+    if not song_dir:
+        return None
+    bounds = [b for b in pdf_systems.load_bounds(song_dir) if b.measure_start]
+    if not bounds:
+        return None
+    return [(b.measure_start, b.measure_end) for b in bounds]
+
+
+def lyric_grid(mscx_path: str, song_dir: str = "") -> Dict:
     """The manual editor's projection of a score: parts x printed systems, prefilled."""
-    return lyric_txt.editor_grid(etree.parse(mscx_path).getroot()).to_dict()
+    root = etree.parse(mscx_path).getroot()
+    return lyric_txt.editor_grid(root, systems=_printed_systems(song_dir)).to_dict()
 
 
-def lyric_blocks(mscx_path: str, cells: Dict) -> List[Dict]:
+def lyric_blocks(mscx_path: str, cells: Dict, song_dir: str = "") -> List[Dict]:
     """The editor's typed cells as lyric JSON blocks, addressed by part name."""
-    grid = lyric_txt.editor_grid(etree.parse(mscx_path).getroot())
+    root = etree.parse(mscx_path).getroot()
+    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir))
     return lyric_txt.blocks_from_cells(grid, cells)
+
+
+# Scrolling-video sizes offered by the Record stage. 4K60 is the default because
+# the picture pans sideways the whole time, which is what judders at 30fps; the
+# smaller preset trades that for roughly a quarter of the render time.
+SCROLL_QUALITY = {"4k": (3840, 2160, 60), "1080p": (1920, 1080, 30)}
+
+
+def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
+                     quality: str = "4k", log: Logger = _noop) -> List[str]:
+    """Render one scrolling practice video per voice into media/video.
+
+    Files are named "<name> <part>.mp4" — the same shape `record_stemmanauha`
+    produces — so the review and upload stages find them without knowing which
+    renderer made them.
+    """
+    from src.scrollvideo import build_videos
+
+    width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
+    out_dir = os.path.join(song_dir, "media", "video")
+    return build_videos(cleaned_path, out_dir, basename=name,
+                        width=width, height=height, fps=fps, log=log)
 
 
 def run_lyric_import(
