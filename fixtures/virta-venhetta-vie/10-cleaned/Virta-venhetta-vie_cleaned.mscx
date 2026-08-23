@@ -1,3 +1,4 @@
+<?xml version='1.0' encoding='UTF-8'?>
 <museScore version="3.02">
   <programVersion>3.6.2</programVersion>
   <programRevision>3224f34</programRevision>
@@ -5648,7 +5649,6 @@
       <Measure>
         <voice>
           <Chord>
-            <dots>1</dots>
             <durationType>quarter</durationType>
             <Note>
               <pitch>49</pitch>

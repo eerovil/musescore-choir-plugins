@@ -120,22 +120,21 @@ FIXTURE = os.path.join(
 
 @pytest.mark.skipif(not os.path.exists(FIXTURE), reason="prototyping fixture not present")
 def test_the_reference_measure():
-    """m26: a 4/4 bar the OCR gave a bogus len="9/8" and three kinds of padding.
+    """m26 end to end: a 4/4 bar the OCR gave a bogus len="9/8" and three paddings.
 
-    Three voices come out at 4/4; the fourth keeps the dot that the OCR invented,
-    because removing it is a musical judgement, and keeps all six of its notes --
-    one per syllable the page prints for it.
+    This pass strips the two that are not music (a trailing rest, a `location`
+    gap). The third -- a dot the OCR invented -- is a note edit it refuses to make,
+    and is carried instead as a recorded fix (see test_score_fixes). What the
+    snapshot must show is the result of both: four voices at 4/4, and B1 still
+    holding all six of its notes, one per syllable the page prints for it.
     """
     root = etree.parse(FIXTURE).getroot()
     staves = {s.get("id"): s for s in root.findall(".//Score/Staff")
               if s.find("Measure") is not None}
-    lengths = {}
     for sid, staff in staves.items():
         m = staff.findall("Measure")[25]
         assert m.get("len") is None                     # override gone
         v = m.find("voice") if m.find("voice") is not None else m
-        lengths[sid] = _voice_len(v)
-    assert lengths["1"] == lengths["2"] == lengths["4"] == Fraction(1)
-    assert lengths["3"] == Fraction(9, 8)               # the dot, still there
+        assert _voice_len(v) == Fraction(1), f"staff {sid} is not 4/4"
     b1 = staves["3"].findall("Measure")[25]
     assert len(b1.findall(".//Chord")) == 6             # six notes, six syllables

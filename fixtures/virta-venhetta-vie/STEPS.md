@@ -265,3 +265,36 @@ voice agrees on, at a length no printed time signature gives, is flagged. It is 
 only check here that appeals to the engraving rather than to the file, and run
 against the version that slipped through it raises four issues where that version
 raised none.
+
+
+## Step 6 — the dot, recorded rather than hand-fixed
+
+The pass leaves B1's invented dot alone by design, which left the fixture with one
+health issue and no way to clear it: editing the cleaned score by hand does not
+survive, because `build.py` regenerates it from the input.
+
+So it is recorded instead, in `10-cleaned/fixes.json`, and applied during the build
+(`utils/score_fixes.py`). Each entry names a staff, measure and chord and says
+**why** — six months on, a diff will not explain why a note lost its dot. Applying
+is strict: an entry that no longer matches raises rather than being skipped, because
+a silently ignored fix leaves the score looking repaired when it is not.
+
+The fixture now cleans with **no health issues**.
+
+### What is actually left
+
+```
+[too_few] m31-34  B2:  17 syllables for 18 slots
+[too_few] m50-52  B1:  13 syllables for 14 slots
+```
+
+One note without a syllable in each. Earlier notes here called both "dropped
+melisma slurs" — that was stated with more confidence than the evidence carries.
+Looking at m32 at 400 dpi, the bass lower voice has **three** notes (half, dotted
+quarter, eighth) against the tenors' four syllables. That is a rhythm difference,
+not necessarily a melisma, and which of the two it is decides whether the fix is a
+slur in the score or a different syllable split in the text.
+
+Both look identical from the counts. Settling them needs someone reading the two
+bass voices apart at the notehead — the same thing that settled m26, and the same
+thing that neither the health check nor the lyric arithmetic can do.

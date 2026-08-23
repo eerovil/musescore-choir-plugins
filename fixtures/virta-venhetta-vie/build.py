@@ -72,6 +72,20 @@ def main() -> int:
     xml = song.source_path("xml")
     cleaned, _ = pipeline.run_clean(xml, song.dir, per_system=(song.mode == "per-system"), log=print)
     song.data["cleaned"] = os.path.relpath(cleaned, song.dir)
+    # Score edits a person authorised, applied before the health check so the
+    # snapshot shows the score as it stands after the manual step.
+    src_fixes = os.path.join(FIXTURE, "10-cleaned", "fixes.json")
+    if os.path.exists(src_fixes):
+        from lxml import etree
+        from src.clean_score.utils.score_fixes import apply_fixes
+        with open(src_fixes, encoding="utf-8") as f:
+            entries = json.load(f)
+        tree = etree.parse(cleaned)
+        for line in apply_fixes(tree.getroot(), entries):
+            print("  fix:", line[:100])
+        tree.write(cleaned, encoding="UTF-8", xml_declaration=True)
+        shutil.copyfile(src_fixes, song.path("fixes.json"))
+
     song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
     found = health.scan(cleaned)
     song.data["health"] = {

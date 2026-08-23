@@ -1,0 +1,9 @@
+[
+  {
+    "kind": "undot",
+    "staff": 3,
+    "measure": 26,
+    "index": 0,
+    "why": "The OCR gave B1's first note a dot. On the page the bass staff's first beat is two noteheads a second apart sharing one dot, and the dot belongs to the lower voice (B2), which is a dotted quarter. B1 is a plain quarter, making its bar 8/8 like the other three. Confirmed by eye against the scan."
+  }
+]

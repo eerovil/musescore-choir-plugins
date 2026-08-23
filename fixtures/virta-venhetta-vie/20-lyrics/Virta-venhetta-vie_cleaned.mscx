@@ -5649,7 +5649,6 @@
       <Measure>
         <voice>
           <Chord>
-            <dots>1</dots>
             <durationType>quarter</durationType>
             <Note>
               <pitch>49</pitch>

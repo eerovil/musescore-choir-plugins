@@ -107,8 +107,9 @@ def test_a_score_whose_bars_all_declare_their_own_length_is_not_judged(tmp_path)
     assert _kinds(_score(tmp_path, bars, lens=lens), "unprinted-meter")
 
 
-def test_the_fixture_is_not_flagged(tmp_path):
-    """m26 is uneven, so it is reported as malformed and not twice over."""
+def test_the_fixture_is_clean(tmp_path):
+    """m26 is repaired -- two paddings stripped automatically, the dot by a
+    recorded fix -- so neither check has anything to say about it."""
     import os
     fixture = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
@@ -118,4 +119,4 @@ def test_the_fixture_is_not_flagged(tmp_path):
     if not os.path.exists(fixture):
         pytest.skip("prototyping fixture not present")
     assert not _kinds(fixture, "unprinted-meter")
-    assert len(_kinds(fixture, "malformed-measure")) == 1
+    assert not _kinds(fixture, "malformed-measure")

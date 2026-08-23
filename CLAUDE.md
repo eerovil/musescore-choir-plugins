@@ -118,6 +118,12 @@ immediately instead of a synthetic score. **Not** a unit-test fixture in the usu
 sense — though `test_pdf_systems.py`, `test_bounds_api.py` and the browser tests do
 read it — and it is free to change shape as the app does.
 
+`10-cleaned/fixes.json` carries score edits a person authorised — things the
+automatic passes refuse to guess at (`utils/score_fixes.py`). Each entry names a
+staff, measure and chord, and says **why**. Applying is strict: an entry that no
+longer matches raises, so a pipeline change that moves the note fails the build
+instead of quietly leaving the defect in.
+
 ```bash
 fixtures/virta-venhetta-vie/reset.sh        # drop it into songs/ at the furthest stage
 fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clean
@@ -125,10 +131,11 @@ fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clea
 ```
 
 Stages are overlays holding only what they add, so the 745 KB scan is stored once.
-It stops at stage `fix` on purpose: one health issue and 2 lyric mismatches. The
-health issue is m26's upper bass voice, which the OCR gave a dot it does not have on
-the page — the one thing there that needs a person to look. The lyric mismatches are
-one note over apiece, a dropped melisma slur each. `STEPS.md` records how each stage
+It cleans with **no health issues** and stops at stage `fix` with 2 lyric
+mismatches, one note without a syllable apiece. m26 needed a recorded fix
+(`fixes.json`, below) for a dot the OCR invented; the two lyric residuals are not
+diagnosed — a dropped slur and a rhythm difference both look like this from the
+counts, and settling them needs the score in front of a person. `STEPS.md` records how each stage
 was produced, including a wrong conclusion and its correction — worth reading before
 trusting a tidy-looking diagnosis of a scanned score.
 
