@@ -99,7 +99,16 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q   # 82 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q   # 84 tests, all passing
+```
+
+Two of those are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright).
+They need one extra install and skip cleanly without it, so the command above works
+either way:
+
+```bash
+.venv/bin/pip install pytest-playwright
+.venv/bin/playwright install chromium      # ~95 MB, into ~/Library/Caches/ms-playwright
 ```
 
 `pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
@@ -127,6 +136,15 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
   to the same rebuild.
 - `src/song_app/tests/test_clean_flow.py` — the song-app path: grid answers →
   `save_system_answers` → headless `run_clean` → rebuilt parts + lyric routing.
+- `src/song_app/tests/test_ui_flow.py` — the **SPA itself**, in a real browser: it
+  starts the actual server on a free port with its own `songs/` folder and answer
+  file, then walks New song → per-system grid → clean → manual lyric entry → import,
+  and asserts the mismatch is attached to the cell that caused it. A second test pins
+  the grid's answer rules (blank inherits, `-` clears, both flagged before cleaning).
+  Score previews are switched off (`MUSESCORE_CLI_PATH` points at nothing) — the
+  renderer is not under test and a real MuseScore run would make it slow and
+  host-dependent. Both were verified by sabotage: breaking the cell attachment or the
+  `-` rule in `app.js` fails the matching test.
 - `test_missing_tuplets.py` — the dropped-tuplet cross-voice auto-fix (mirror
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` — the re-voicing plan and the
