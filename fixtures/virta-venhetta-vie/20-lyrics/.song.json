@@ -8,16 +8,25 @@
     "pdf": "Virta venhettä vie.pdf"
   },
   "created_at": 1787475359.460669,
-  "updated_at": 1787489846.1448488,
+  "updated_at": 1787490893.390482,
   "cleaned": "Virta-venhetta-vie_cleaned.mscx",
-  "cleaned_fingerprint": "sha1:b1b2f8735f58f6fdc6f99e4d7399d6df78d8fdd2",
+  "cleaned_fingerprint": "sha1:97f11f04a9642b79590256a148516e21964009f5",
   "health": {
-    "checked_against": "sha1:0a2ef28db04f3e783f73d19ff727fe7a84005426",
-    "issues": []
+    "checked_against": "sha1:11185677b04d5655b8545ff3331101c104929724",
+    "issues": [
+      {
+        "id": "malformed-m26-s3-v0",
+        "kind": "malformed-measure",
+        "measure": 26,
+        "staff": "B1",
+        "detail": "voice 1 fills 9/8 of 1",
+        "status": "open"
+      }
+    ]
   },
   "lyrics": {
     "json": "lyrics.json",
-    "imported_against": "sha1:b1b2f8735f58f6fdc6f99e4d7399d6df78d8fdd2",
+    "imported_against": "sha1:97f11f04a9642b79590256a148516e21964009f5",
     "warnings": [
       {
         "kind": "too_few",

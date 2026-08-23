@@ -5,19 +5,25 @@ prevailing meter. `preprocess_corrupted_measures` tries to fix these by shorteni
 final rests, but all-or-nothing: it gives up entirely if any over-long voice does
 not end in a rest, and then the measure stays malformed for good.
 
-This pass handles the other case — a measure that is *internally consistent except
-for one voice*. The length is decided by the voices themselves: whichever length a
-majority of the note-bearing voices agree on is taken as the truth, and voices that
-fall short of it are padded with a rest.
+This pass handles the other case, and takes the **prevailing time signature** as the
+truth rather than a vote among the voices. A voice must already fill it exactly for
+anything to happen — that witness is the evidence the override is wrong.
 
-**It only ever adds rests.** An earlier version of this pass also deleted things
-that looked like OCR junk — a trailing rest, a `location` gap, a repeated notehead —
-and on the reference score it deleted a real note: the bar looked like 4/4, but the
-voice with "one note too many" was singing six syllables that the page prints, and
-the lyric arithmetic caught it immediately afterwards. Three voices had independently
-been read as 9/8; the bar simply is 9/8. Padding cannot make that mistake, because
-adding a rest to a voice that is already complete is never necessary and never
-happens.
+**It only removes things that are not music**: a `location` gap (MuseScore holding a
+voice's place) or a trailing rest, and only when that item accounts for the overrun
+exactly. It never deletes a note, never shortens one, and never pads.
+
+Those limits are the scars of getting this measure wrong twice. The first version
+deleted a "repeated" notehead and destroyed a real note — the voice was singing six
+syllables the page prints, and the lyric arithmetic caught it. The second decided a
+majority of voices meant the bar really was 9/8 and padded the odd one out; that made
+the file self-consistent at a length the page does not have. The bar is 4/4. What the
+OCR actually did was add three unrelated things — a dot on one voice's first note, a
+trailing rest on another, a gap on a third — and write `len="9/8"` to reconcile them.
+
+A voice that can only be fixed by changing a note's duration is left alone and the
+health check flags it. That is the honest outcome: the remaining issue points at the
+one thing here that needs a person to look at the page.
 """
 import logging
 from collections import Counter
@@ -82,54 +88,83 @@ def _has_notes(voice: etree._Element) -> bool:
     return voice.find("Chord") is not None
 
 
-def _pad(voice: etree._Element, missing: Fraction) -> None:
-    """Append rests totalling `missing` to the end of the voice."""
-    for name, size in _PAD:
-        while missing >= size:
-            rest = etree.SubElement(voice, "Rest")
-            etree.SubElement(rest, "durationType").text = name
-            missing -= size
-        if missing == 0:
-            return
+def _drop_location_gap(voice: etree._Element, excess: Fraction) -> bool:
+    """Remove a `location` gap that is exactly the overrun. A gap is not music."""
+    for el in list(voice):
+        if el.tag == "location" and _fraction(el.findtext("fractions")) == excess:
+            voice.remove(el)
+            return True
+    return False
+
+
+def _drop_trailing_rest(voice: etree._Element, excess: Fraction) -> bool:
+    """Remove a final rest that is exactly the overrun. A rest carries no music."""
+    kids = [e for e in voice if e.tag in ("Chord", "Rest")]
+    if not kids or kids[-1].tag != "Rest":
+        return False
+    before = _voice_len(voice)
+    voice.remove(kids[-1])
+    if _voice_len(voice) == before - excess:
+        return True
+    voice.append(kids[-1])
+    return False
 
 
 def fix_overfull_measures(root: etree._Element) -> int:
-    """Pad voices that fall short of the length the rest of the measure agrees on.
+    """Strip non-musical padding from measures carrying a spurious `len`.
 
-    Returns the number of voices padded.
+    Returns the number of measures whose override was removed.
     """
     staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
     if not staves:
         return 0
-    padded = 0
     count = max(len(s.findall("Measure")) for s in staves)
 
+    # Prevailing meter per measure, carried forward from the last TimeSig seen.
+    meters: Dict[int, Fraction] = {}
+    meter = Fraction(4, 4)
     for mi in range(count):
-        voices: List[etree._Element] = []
         for staff in staves:
             ms = staff.findall("Measure")
-            if mi >= len(ms) or not ms[mi].get("len"):
-                continue
-            found = ms[mi].findall("voice")
-            voices.extend(found if found else [ms[mi]])
-        if not voices:
+            if mi < len(ms):
+                ts = ms[mi].find(".//TimeSig")
+                if ts is not None and ts.findtext("sigN") and ts.findtext("sigD"):
+                    meter = Fraction(int(ts.findtext("sigN")), int(ts.findtext("sigD")))
+                    break
+        meters[mi] = meter
+
+    fixed = 0
+    for mi in range(count):
+        target = meters[mi]
+        marked = [(s, s.findall("Measure")[mi]) for s in staves
+                  if mi < len(s.findall("Measure")) and s.findall("Measure")[mi].get("len")]
+        if not marked:
             continue
 
+        voices = [v for _, m in marked for v in (m.findall("voice") or [m])]
         lengths = [(v, _voice_len(v)) for v in voices if _has_notes(v)]
         lengths = [(v, n) for v, n in lengths if n is not None]
-        if len(lengths) < 3:
-            continue                      # too few voices to call one of them odd
-
-        agreed, votes = Counter(n for _, n in lengths).most_common(1)[0]
-        if votes < len(lengths) - 1 or votes < 2:
-            logger.debug("Measure %d: voices do not agree (%s), left alone",
-                         mi + 1, [str(n) for _, n in lengths])
+        if not any(n == target for _, n in lengths):
+            logger.debug("Measure %d: no voice fills %s, len override kept", mi + 1, target)
             continue
 
         for voice, filled in lengths:
-            if filled < agreed:
-                _pad(voice, agreed - filled)
-                padded += 1
-                logger.debug("Measure %d: padded a voice from %s to %s",
-                             mi + 1, filled, agreed)
-    return padded
+            if filled <= target:
+                continue
+            excess = filled - target
+            if _drop_location_gap(voice, excess):
+                logger.debug("Measure %d: dropped a %s location gap", mi + 1, excess)
+            elif _drop_trailing_rest(voice, excess):
+                logger.debug("Measure %d: dropped a %s trailing rest", mi + 1, excess)
+            else:
+                logger.debug("Measure %d: a voice overruns %s by %s and only a note "
+                             "edit would fix it — left for the health check",
+                             mi + 1, target, excess)
+
+        now = [_voice_len(v) for v, _ in lengths]
+        if sum(1 for n in now if n == target) * 2 > len(now):
+            for _, m in marked:
+                del m.attrib["len"]
+            fixed += 1
+            logger.debug("Measure %d: len override removed, nominal is %s", mi + 1, target)
+    return fixed

@@ -125,9 +125,10 @@ fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clea
 ```
 
 Stages are overlays holding only what they add, so the 745 KB scan is stored once.
-It stops at stage `fix` on purpose: 2 lyric mismatches, each one note over — a
-dropped melisma slur apiece. (m26, long the fixture's one health issue, is repaired
-automatically now; `fix_overfull_measures` came out of it.) `STEPS.md` records how each stage
+It stops at stage `fix` on purpose: one health issue and 2 lyric mismatches. The
+health issue is m26's upper bass voice, which the OCR gave a dot it does not have on
+the page — the one thing there that needs a person to look. The lyric mismatches are
+one note over apiece, a dropped melisma slur each. `STEPS.md` records how each stage
 was produced, including a wrong conclusion and its correction — worth reading before
 trusting a tidy-looking diagnosis of a scanned score.
 
@@ -375,12 +376,14 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    `fix_overfull_measures` (`utils/overfull_measures.py`) handles what it declines.
    That pass is all-or-nothing — it shortens the final rest of every over-long voice
    and gives up if any of them ends on a note — so a measure that is consistent
-   *except for one voice* stays broken. The second pass takes the length a majority
-   of the note-bearing voices agree on and **pads the short one with rests**. It only
-   ever adds: an earlier version deleted what looked like OCR junk and destroyed a
-   real note, which the lyric arithmetic caught (see the fixture's STEPS.md). Lengths
-   count `location` gaps, or a voice can look complete on its notes and still
-   overrun.
+   *except for one voice* stays broken. The second takes the **prevailing meter** as
+   the target, requires a voice that already fills it as a witness, and strips only
+   what is **not music**: a `location` gap or a trailing rest, and only when it
+   accounts for the overrun exactly. It never removes, shortens or adds a note; a
+   voice that would need one is left for the health check. Lengths count `location`
+   gaps, or a voice looks complete on its notes while the file has it occupying more
+   of the bar. The fixture's m26 cost two wrong versions before that shape — see its
+   STEPS.md.
 2. Decide which staves actually contain 2 voices; only those get split.
    Staff ids are renumbered to leave a gap after each split staff
    (split staff `n` → `n` and `n+1`), tracked in `GLOBALS.STAFF_MAPPING`.

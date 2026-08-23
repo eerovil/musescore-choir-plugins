@@ -218,30 +218,44 @@ Three rules worth carrying to any scanned score:
   slur had its tie present all along.
 
 
-## Step 5 — m26, and a repair that went wrong first
+## Step 5 — m26, and two wrong repairs before the right one
 
-The health check's one issue. The reading that looked obvious was that m26 is a
-plain 4/4 bar — the page shows dotted-quarter, eighth, quarter, two beamed eighths,
-which is exactly 8/8 — and that the OCR had added an eighth to three voices in three
-different ways: a trailing rest (T2), a repeated notehead (B1), and a `location` gap
-(B2). A pass was written to strip all three.
+The health check's one issue, and the measure that cost the most to understand.
 
-**It deleted a real note.** The lyric import said so immediately: B1 went from
-fitting its line exactly to one syllable over. That voice sings six syllables the
-page prints — "vie, mi-hin päät-ty-vi" — and it has six notes to put them on.
+**What the OCR actually did.** m26 is an ordinary 4/4 bar. The scanner padded three
+voices in three unrelated ways and wrote `len="9/8"` to reconcile them:
 
-The consistent reading is the opposite one. **The bar really is 9/8.** Three voices
-were independently read as 9/8 and only the tenor came out short, which is what the
-health check said in the first place. The repair is to pad the short voice, and
-`fix_overfull_measures` does exactly that and nothing else — it only ever adds rests.
+| voice | what it got | |
+|---|---|---|
+| T1 | nothing — already 4/4 | the witness |
+| T2 | a trailing eighth **rest** | not music, safe to drop |
+| B2 | a `location` **gap** of 1/8 | not music, safe to drop |
+| B1 | a **dot** on its first note | a note edit — needs a person |
 
-Two things worth keeping from the wrong turn:
+**Wrong repair 1: deleting a note.** Reading the bar as 4/4 was right, but the pass
+also stripped what looked like a repeated notehead from B1. That was a real note —
+B1 sings six syllables the page prints, "vie, mi-hin päät-ty-vi", on six notes. The
+lyric import caught it within seconds: B1 went from fitting its line exactly to one
+syllable over. Nothing else would have noticed; the score was well-formed afterwards
+and the health check was satisfied.
 
-* **The lyric arithmetic caught it.** Nothing else would have: the score was
-  well-formed after the bad repair, the health check was satisfied, and the deleted
-  note was musically plausible. The syllable count was the only witness.
-* **Length has to be measured the way MuseScore measures it.** The first version
-  ignored `location` gaps, so it saw a voice as complete when the file had it
-  occupying an extra eighth — which is how it came to look for a culprit note at all.
+**Wrong repair 2: padding to a length the page does not have.** Backing off the
+deletion, the next version let the voices vote: three read as 9/8, so it padded T1 up
+to match. Health went green and the lyrics did not regress — and it was still wrong.
+The bar is 4/4; three voices "agreeing" on 9/8 were three separate OCR errors
+agreeing with each other. **A self-consistent file is not the same as a correct one,
+and neither the health check nor the lyric arithmetic can tell the difference.** It
+took someone looking at the page and saying *B1 has no dotted note*.
 
-The fixture now cleans to **no health issues**.
+**What it does now.** The prevailing meter is the target, a voice that already fills
+it is required as evidence, and only non-music is removed — a gap, a trailing rest,
+and only when it accounts for the overrun exactly. B1 keeps its dot and the health
+check flags it, which is the honest outcome: the remaining issue points at the one
+thing in the measure that needs a person.
+
+The three rules from step 3 hold up, and the second one nearly saved this measure
+twice. A fourth belongs with them:
+
+* **Self-consistency is not correctness.** Every automatic check here can be
+  satisfied by a wrong answer, because the checks compare the file against itself.
+  Only the page settles it.

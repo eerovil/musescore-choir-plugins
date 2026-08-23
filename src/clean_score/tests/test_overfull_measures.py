@@ -1,9 +1,9 @@
-"""Padding a voice that falls short of the length its measure agrees on.
+"""Stripping non-musical padding from a measure with a spurious `len`.
 
-The rule this pass exists to enforce is that it *only adds rests*. An earlier
-version deleted things that looked like OCR junk and destroyed a real note on the
-reference score, so the tests below pin the additive behaviour rather than just the
-happy path.
+The rule is that the pass touches only things that are not music -- a `location`
+gap, a trailing rest -- and leaves anything needing a note edit for the health
+check. Earlier versions deleted a real note, and then padded a voice to a length the
+page does not have; the tests below pin the limits, not just the happy path.
 """
 import os
 from fractions import Fraction
@@ -24,9 +24,12 @@ def _score(voices, length="9/8"):
         if length:
             measure.set("len", length)
         v = etree.SubElement(measure, "voice")
-        for tag, dur in items:
+        for item in items:
+            tag, dur = item[0], item[1]
             el = etree.SubElement(v, tag)
             etree.SubElement(el, "durationType").text = dur
+            if len(item) > 2:
+                etree.SubElement(el, "dots").text = str(item[2])
             if tag == "Chord":
                 etree.SubElement(etree.SubElement(el, "Note"), "pitch").text = "60"
     return root
@@ -36,54 +39,77 @@ def _lens(root):
     return [_voice_len(v) for v in root.iter("voice")]
 
 
-def test_the_odd_voice_out_is_padded_to_match_the_others():
-    """Three voices read as 9/8 and one as 8/8: the short one is wrong."""
-    nine = [("Chord", "quarter")] * 4 + [("Chord", "eighth")]      # 9/8
-    eight = [("Chord", "quarter")] * 4                             # 8/8
-    root = _score([nine, nine, nine, eight])
+def _timesig(root, n, d):
+    for measure in root.iter("Measure"):
+        ts = etree.SubElement(measure, "TimeSig")
+        etree.SubElement(ts, "sigN").text = str(n)
+        etree.SubElement(ts, "sigD").text = str(d)
+        break
+    return root
+
+
+def test_a_trailing_rest_that_accounts_for_the_overrun_goes():
+    four = [("Chord", "quarter")] * 4
+    root = _timesig(_score([four, four, four, four + [("Rest", "eighth")]]), 4, 4)
     assert fix_overfull_measures(root) == 1
-    assert _lens(root) == [Fraction(9, 8)] * 4
+    assert _lens(root) == [Fraction(1)] * 4
+    assert root.find(".//Measure").get("len") is None
 
 
-def test_nothing_is_ever_removed():
-    """A voice longer than the agreement keeps every note it had."""
-    eight = [("Chord", "quarter")] * 4
-    nine = eight + [("Chord", "eighth")]
-    root = _score([eight, eight, eight, nine])
+def test_a_location_gap_that_accounts_for_the_overrun_goes():
+    four = [("Chord", "quarter")] * 4
+    root = _timesig(_score([four, four, four, four]), 4, 4)
+    voice = list(root.iter("voice"))[-1]
+    loc = etree.SubElement(voice, "location")
+    etree.SubElement(loc, "fractions").text = "1/8"
+    assert _voice_len(voice) == Fraction(9, 8)          # the gap counts
+    fix_overfull_measures(root)
+    assert _voice_len(voice) == Fraction(1)
+
+
+def test_a_voice_needing_a_note_edit_is_left_for_the_health_check():
+    """The reference case: one voice overruns because of a dot the OCR invented.
+
+    Shortening a note is a musical judgement, so the pass declines and the measure
+    keeps a voice the health check will flag.
+    """
+    four = [("Chord", "quarter")] * 4
+    dotted = [("Chord", "quarter", 1)] + [("Chord", "quarter")] * 3
+    root = _timesig(_score([four, four, four, dotted]), 4, 4)
+    before = [(c.findtext("durationType"), c.findtext("dots")) for c in root.iter("Chord")]
+    fix_overfull_measures(root)
+    after = [(c.findtext("durationType"), c.findtext("dots")) for c in root.iter("Chord")]
+    assert after == before                              # every note untouched
+    assert Fraction(9, 8) in _lens(root)
+
+
+def test_notes_are_never_removed_or_shortened():
+    four = [("Chord", "quarter")] * 4
+    five = [("Chord", "quarter")] * 5
+    root = _timesig(_score([four, four, four, five]), 4, 4)
     before = len(list(root.iter("Chord")))
     fix_overfull_measures(root)
     assert len(list(root.iter("Chord"))) == before
-    assert Fraction(9, 8) in _lens(root)              # the long one is untouched
 
 
-def test_voices_that_do_not_agree_are_left_alone():
-    """No majority, no truth to pad towards."""
-    a = [("Chord", "quarter")]
-    b = [("Chord", "quarter"), ("Chord", "quarter")]
-    c = [("Chord", "quarter"), ("Chord", "quarter"), ("Chord", "quarter")]
-    root = _score([a, b, c])
+def test_nothing_happens_without_a_voice_that_fills_the_meter():
+    """No witness, no evidence the override is wrong — so the bar really is 9/8.
+
+    Every voice here ends with a rest the pass *could* strip. It must not: when
+    they all agree on 9/8 and none fills the meter, the odd length is the truth
+    and the rests are holding real time.
+    """
+    nine = [("Chord", "quarter")] * 4 + [("Rest", "eighth")]
+    root = _timesig(_score([nine, nine, nine]), 4, 4)
     assert fix_overfull_measures(root) == 0
-    assert _lens(root) == [Fraction(1, 4), Fraction(1, 2), Fraction(3, 4)]
+    assert _lens(root) == [Fraction(9, 8)] * 3          # rests kept
+    assert root.find(".//Measure").get("len") == "9/8"
 
 
 def test_measures_without_a_len_override_are_not_touched():
-    """The pass is for measures MuseScore already marked as irregular."""
-    nine = [("Chord", "quarter")] * 4 + [("Chord", "eighth")]
-    eight = [("Chord", "quarter")] * 4
-    root = _score([nine, nine, nine, eight], length=None)
+    four = [("Chord", "quarter")] * 4
+    root = _timesig(_score([four, four, four, four + [("Rest", "eighth")]], length=None), 4, 4)
     assert fix_overfull_measures(root) == 0
-
-
-def test_a_location_gap_counts_towards_the_length():
-    """A voice can be complete on its notes and still occupy more of the bar.
-
-    Missing this was what made an earlier version delete a real note.
-    """
-    root = _score([[("Chord", "quarter")]])
-    voice = root.find(".//voice")
-    loc = etree.SubElement(voice, "location")
-    etree.SubElement(loc, "fractions").text = "1/8"
-    assert _voice_len(voice) == Fraction(3, 8)
 
 
 FIXTURE = os.path.join(
@@ -93,20 +119,23 @@ FIXTURE = os.path.join(
 
 
 @pytest.mark.skipif(not os.path.exists(FIXTURE), reason="prototyping fixture not present")
-def test_the_reference_measure_comes_out_well_formed():
-    """m26 of the fixture: a real 9/8 bar the OCR left one voice short of.
+def test_the_reference_measure():
+    """m26: a 4/4 bar the OCR gave a bogus len="9/8" and three kinds of padding.
 
-    All four voices must fill it, and the six notes the upper bass sings -- one
-    per printed syllable -- must all still be there.
+    Three voices come out at 4/4; the fourth keeps the dot that the OCR invented,
+    because removing it is a musical judgement, and keeps all six of its notes --
+    one per syllable the page prints for it.
     """
     root = etree.parse(FIXTURE).getroot()
-    staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
-    lengths, bass_notes = [], 0
-    for staff in staves:
+    staves = {s.get("id"): s for s in root.findall(".//Score/Staff")
+              if s.find("Measure") is not None}
+    lengths = {}
+    for sid, staff in staves.items():
         m = staff.findall("Measure")[25]
-        for v in (m.findall("voice") or [m]):
-            lengths.append(_voice_len(v))
-        if staff.get("id") == "3":
-            bass_notes = len(m.findall(".//Chord"))
-    assert lengths == [Fraction(9, 8)] * 4
-    assert bass_notes == 6
+        assert m.get("len") is None                     # override gone
+        v = m.find("voice") if m.find("voice") is not None else m
+        lengths[sid] = _voice_len(v)
+    assert lengths["1"] == lengths["2"] == lengths["4"] == Fraction(1)
+    assert lengths["3"] == Fraction(9, 8)               # the dot, still there
+    b1 = staves["3"].findall("Measure")[25]
+    assert len(b1.findall(".//Chord")) == 6             # six notes, six syllables

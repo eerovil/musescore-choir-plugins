@@ -1133,7 +1133,7 @@
             </Rest>
           </voice>
         </Measure>
-      <Measure len="9/8">
+      <Measure>
         <voice>
           <Rest>
             <durationType>half</durationType>
@@ -1148,7 +1148,7 @@
               <tpc>13</tpc>
               </Note>
             </Chord>
-          <Rest><durationType>eighth</durationType></Rest></voice>
+          </voice>
         </Measure>
       <Measure>
         <voice>
@@ -3463,7 +3463,7 @@
             </Rest>
           </voice>
         </Measure>
-      <Measure len="9/8">
+      <Measure>
         <voice>
           <Chord>
             <dots>1</dots>
@@ -3506,10 +3506,6 @@
               <tpc>13</tpc>
               </Note>
             </Chord>
-          <Rest>
-            <visible>0</visible>
-            <durationType>eighth</durationType>
-            </Rest>
           </voice>
         </Measure>
       <Measure>
@@ -5649,7 +5645,7 @@
             </Chord>
           </voice>
         </Measure>
-      <Measure len="9/8">
+      <Measure>
         <voice>
           <Chord>
             <dots>1</dots>
@@ -7776,7 +7772,7 @@
             </Rest>
           </voice>
         </Measure>
-      <Measure len="9/8">
+      <Measure>
         <voice>
           <Chord>
             <dots>1</dots>
@@ -7786,9 +7782,6 @@
               <tpc>9</tpc>
               </Note>
             </Chord>
-          <location>
-            <fractions>1/8</fractions>
-            </location>
           <Chord>
             <BeamMode>no</BeamMode>
             <durationType>eighth</durationType>
