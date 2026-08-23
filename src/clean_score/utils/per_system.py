@@ -250,12 +250,20 @@ def system_ranges(root: etree._Element) -> List[SystemRange]:
 
 
 def _max_voices_in_range(staff: etree._Element, a: int, b: int) -> int:
-    """Max number of note-bearing voices (ignoring all-rest voices) across the range."""
+    """How many parts this staff can carry across the range.
+
+    Note-bearing voices (all-rest voices don't count), but a chord counts as one part
+    per notehead: an engraver writes two singers holding a chord together as a single
+    voice with the notes stacked, and a staff that is only ever asked for one name
+    there hands both notes to the upper part and leaves the lower one silent.
+    """
     measures = staff.findall("Measure")
     best = 0
     for m in range(a, b + 1):
-        n = sum(1 for v in measures[m].findall("voice") if v.find("Chord") is not None)
-        best = max(best, n)
+        voices = [v for v in measures[m].findall("voice") if v.find("Chord") is not None]
+        stacked = max((len(ch.findall("Note"))
+                       for v in voices for ch in v.findall("Chord")), default=0)
+        best = max(best, len(voices), stacked if len(voices) == 1 else 0)
     return best
 
 
@@ -372,6 +380,37 @@ def _set_clef(staff: etree._Element, letter: str) -> None:
                 child.text = clef_type
 
 
+def _has_chord_stack(voice: etree._Element) -> bool:
+    """True if any chord here stacks more than one notehead (divisi in one voice)."""
+    return any(len(ch.findall("Note")) > 1 for ch in voice.findall("Chord"))
+
+
+def _voice_at_notehead(voice: etree._Element, rank: int) -> List[etree._Element]:
+    """This voice with each chord reduced to one notehead: `rank` 0 = top, 1 = next.
+
+    For the bar where the engraver writes two singers as one stack of notes. A chord
+    with fewer noteheads than `rank` asks for is a moment where the two converge, so
+    the part takes the lowest note there rather than falling silent — silence would
+    leave a hole in that singer's practice track.
+    """
+    out: List[etree._Element] = []
+    for el in voice:
+        if el.tag in _SKELETON_KEEP:
+            continue
+        copy = deepcopy(el)
+        if copy.tag == "Chord":
+            notes = copy.findall("Note")
+            if len(notes) > 1:
+                by_pitch = sorted(notes, key=lambda n: int(n.findtext("pitch") or 0),
+                                  reverse=True)
+                keep = by_pitch[rank] if rank < len(by_pitch) else by_pitch[-1]
+                for note in notes:
+                    if note is not keep:
+                        copy.remove(note)
+        out.append(copy)
+    return out
+
+
 def _build_parts(
     root: etree._Element, bounds: List[Tuple[int, int]], decls: _Decls
 ) -> List[str]:
@@ -432,7 +471,28 @@ def _build_parts(
                 if src_staff is not None:
                     src_measure = src_staff.findall("Measure")[mi]
                     src_voices = src_measure.findall("voice")
-                    if src[1] < len(src_voices):
+                    declared_here = sum(1 for (sid, _) in decls.get(system, {})
+                                        if sid == src[0])
+                    # Divisi written as a chord: the staff declares more parts than it
+                    # has voices here, and the notes really are stacked in one voice.
+                    # Each part takes its own notehead — copying the voice whole would
+                    # give the upper part both notes and leave the lower one silent.
+                    # The stack itself has to be there: a staff that simply has one
+                    # voice in this bar is a bar where the page shows one line, and
+                    # whether that means unison or a tacit voice is a reading of the
+                    # page, not something to infer here (a wrong guess is silent —
+                    # a note and a rest are both well-formed).
+                    stacked = (declared_here > len(src_voices) and bool(src_voices)
+                               and _has_chord_stack(src_voices[0]))
+                    if stacked:
+                        for el in _voice_at_notehead(src_voices[0], src[1]):
+                            voice.append(el)
+                        placed = True
+                        logger.debug(
+                            "Measure %d staff %d: %s takes notehead %d of a shared chord",
+                            mi + 1, src[0], part, src[1],
+                        )
+                    elif src[1] < len(src_voices):
                         for el in src_voices[src[1]]:
                             if el.tag not in _SKELETON_KEEP:
                                 voice.append(deepcopy(el))

@@ -92,3 +92,25 @@ def test_a_wholesale_drift_is_still_caught(tmp_path):
     late = [NoteEvent(n, t + 10 * ALIGNMENT_TOLERANCE, t + 1)
             for n, t in (("a", 0.0), ("b", 1.0), ("c", 2.0))]
     assert alignment(late, path) < 0.5
+
+
+# --------------------------------------------------------------------------- #
+# The every-voice mix
+# --------------------------------------------------------------------------- #
+
+def test_the_combined_mix_is_named_all_and_is_not_a_part():
+    """ALL is a mix, not a voice: it must never be looked up among the part names."""
+    from src.scrollvideo.build import COMBINED
+    from src.scrollvideo.audio import part_names, set_mix, FOCUS_VOLUME
+    from lxml import etree
+
+    root = etree.fromstring(
+        b"<museScore><Score>"
+        b"<Part><trackName>T1</trackName><Instrument><Channel/></Instrument></Part>"
+        b"<Part><trackName>B1</trackName><Instrument><Channel/></Instrument></Part>"
+        b"</Score></museScore>")
+    assert COMBINED not in part_names(root)
+    # focus=None, which is what ALL renders with, leaves every voice equally loud.
+    set_mix(root, None)
+    volumes = {c.get("value") for c in root.iter("controller")}
+    assert volumes == {str(FOCUS_VOLUME)}

@@ -138,3 +138,30 @@ def test_the_reference_measure():
         assert _voice_len(v) == Fraction(1), f"staff {sid} is not 4/4"
     b1 = staves["3"].findall("Measure")[25]
     assert len(b1.findall(".//Chord")) == 6             # six notes, six syllables
+
+
+def test_a_staff_resting_through_the_bar_is_relengthened_with_the_override():
+    """The rest was written to the wrong length the override declared.
+
+    Left alone it overruns the corrected bar, and MuseScore then plays the measure
+    longer than it is engraved — a practice video that drifts, not a health issue.
+    """
+    four = [("Chord", "quarter")] * 3
+    root = _timesig(_score([four, four + [("Rest", "quarter")], [("Rest", "whole")]],
+                           length="4/4"), 3, 4)
+    assert fix_overfull_measures(root) == 1
+    silent = list(root.iter("voice"))[-1]
+    # A measure rest, which every reader (MuseScore, the health check) takes as the
+    # whole bar however long the bar turns out to be.
+    assert silent.find("Rest/durationType").text == "measure"
+    assert silent.find("Rest/duration").text == "3/4"
+    assert len(silent.findall("Rest")) == 1
+
+
+def test_a_silent_staff_already_the_right_length_is_untouched():
+    four = [("Chord", "quarter")] * 3
+    root = _timesig(_score([four, four + [("Rest", "quarter")],
+                            [("Rest", "quarter")] * 3], length="4/4"), 3, 4)
+    assert fix_overfull_measures(root) == 1
+    silent = list(root.iter("voice"))[-1]
+    assert [r.find("durationType").text for r in silent.findall("Rest")] == ["quarter"] * 3

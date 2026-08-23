@@ -428,7 +428,13 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    the target, requires a voice that already fills it as a witness, and strips only
    what is **not music**: a `location` gap or a trailing rest, and only when it
    accounts for the overrun exactly. It never removes, shortens or adds a note; a
-   voice that would need one is left for the health check. Lengths count `location`
+   voice that would need one is left for the health check. The one thing it writes
+   rather than removes is the length of **silence**: a voice resting through the bar
+   was written to the length the override declared, so once the override goes it
+   overruns the corrected bar and MuseScore plays the measure longer than it is
+   engraved. No health check sees that — it showed up as a scrolling video the
+   renderer refused, 92% of the played notes having no highlight — so such a voice
+   becomes a measure rest of the real bar. Lengths count `location`
    gaps, or a voice looks complete on its notes while the file has it occupying more
    of the bar. The fixture's m26 cost two wrong versions before that shape — see its
    STEPS.md.
@@ -506,9 +512,25 @@ root (gitignored) via `save_answers`/`saved_answers`/`has_answers`; the file its
 internal (swap it in tests with `use_answer_file(path)`). A complete
 answer set lets per-system mode run **non-interactively** (no TTY) — that is how the web
 app cleans headless after the grid is submitted, and how the tests drive it. `main()`
-handles per-system mode in an early branch: it calls `clean_per_system` (handing it the
-prompt adapter only when there is a TTY) and writes the file — the rebuild details and
-the metadata are the module's.
+handles per-system mode in an early branch: it runs the OCR measure repairs
+(`preprocess_corrupted_measures`, `fix_overfull_measures`), then calls
+`clean_per_system` (handing it the prompt adapter only when there is a TTY) and writes
+the file — the rebuild details and the metadata are the module's. The repairs used to
+sit below the branch, so a per-system score kept every spurious `len` the scanner
+wrote: on Kaksi-laulua-krapulasta a bar the page prints as 3/4 stayed 4/4 and ran a
+beat long in the practice track, while an ordinary clean of the same file repaired it.
+Voice-anomaly resolution stays out on purpose — the answers already say what each
+voice is.
+
+**Divisi written as a chord.** An engraver writes two singers holding a chord together
+as one voice with the noteheads stacked, so a staff can carry two declared parts
+without having two `<voice>` elements. `_max_voices_in_range` therefore counts a chord's
+noteheads as parts, and the rebuild gives each declared part its own notehead (top
+first). Copying the voice whole instead handed both notes to the upper part and left
+the lower one silent — on Kaksi-laulua-krapulasta the lower bass lost the "duu" in m22
+entirely, which no health check catches (a chord is well-formed and so is a rest). Where
+the stack narrows to one notehead the parts converge in unison rather than one of them
+falling silent.
 
 Because the PDF's printed staff numbering
 **shifts per system** as parts are omitted (e.g. with T3 absent, the bass becomes
@@ -632,9 +654,14 @@ Interface — everything else is an implementation detail of this one call:
 ```python
 build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
              fps=60, with_audio=True, keep_silent=False, emphasise=False,
-             spacer_per_quarter=2, smooth_seconds=2.0, basename=None,
-             log=...) -> [video paths]
+             combined=True, spacer_per_quarter=2, smooth_seconds=2.0,
+             basename=None, log=...) -> [video paths]
 ```
+
+`combined` also writes **"&lt;base&gt; ALL"** — the same picture with every voice at equal
+volume (`render_mix(focus=None)`, muxed like any other track). It is a mix, not a part,
+so it never goes through `part_names`; downstream reads the part out of the file name,
+which is why it is called ALL, the name the screen recorder always used.
 
 Three MuseScore CLI calls feed it, and each output answers one question:
 

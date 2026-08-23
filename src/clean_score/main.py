@@ -223,6 +223,16 @@ def main(
     # Per-system mode: rebuild the score from per-system part declarations instead of
     # the normal split. For badly-parsed scores where staves change role per system.
     if per_system:
+        # The OCR measure repairs below the branch never ran here, so a per-system
+        # score kept every bogus `len` override the scanner wrote: on
+        # Kaksi-laulua-krapulasta a bar the page prints as 3/4 stayed 4/4 and ran a
+        # beat long in the practice track, while an ordinary clean of the same file
+        # repaired it. They read the source staves, which is the same shape the
+        # rebuild reads, so they belong on both paths. Voice-anomaly resolution
+        # deliberately stays out: per-system answers already say what each voice is.
+        preprocess_corrupted_measures(root)
+        fix_overfull_measures(root)
+
         can_prompt = interactive and sys.stdin.isatty()
         result = clean_per_system(
             root,

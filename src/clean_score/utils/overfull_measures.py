@@ -9,9 +9,17 @@ This pass handles the other case, and takes the **prevailing time signature** as
 truth rather than a vote among the voices. A voice must already fill it exactly for
 anything to happen — that witness is the evidence the override is wrong.
 
-**It only removes things that are not music**: a `location` gap (MuseScore holding a
-voice's place) or a trailing rest, and only when that item accounts for the overrun
-exactly. It never deletes a note, never shortens one, and never pads.
+**It only touches things that are not music**: it removes a `location` gap (MuseScore
+holding a voice's place) or a trailing rest, and only when that item accounts for the
+overrun exactly. It never deletes a note, never shortens one, and never pads a voice
+that has any.
+
+One thing it writes rather than removes: a voice resting through the whole bar was
+written to the length the override declared, so once the override goes that rest
+overruns the corrected bar. MuseScore then *plays* the measure longer than it is
+engraved, which no health check sees — it surfaced as a practice video the renderer
+refused because a twelfth of the played notes had no highlight. Silence makes no
+musical claim, so such a voice is re-lengthed to a measure rest of the real bar.
 
 Those limits are the scars of getting this measure wrong twice. The first version
 deleted a "repeated" notehead and destroyed a real note — the voice was singing six
@@ -110,6 +118,30 @@ def _drop_trailing_rest(voice: etree._Element, excess: Fraction) -> bool:
     return False
 
 
+def _resize_silent_voice(voice: etree._Element, target: Fraction) -> bool:
+    """A voice of nothing but rests becomes one measure rest of `target`.
+
+    Only for voices with no notes at all: a bar of silence says nothing about the
+    music, so its length is bookkeeping rather than a musical claim.
+    """
+    rests = voice.findall("Rest")
+    if not rests or voice.find("Chord") is not None:
+        return False
+    if _voice_len(voice) == target:
+        return False
+    for rest in rests[1:]:
+        voice.remove(rest)
+    keep = rests[0]
+    # Only the length is ours to change: a hidden rest (<visible>0</visible>) or one
+    # the engraver moved stays as it was, or a bar of silence would reappear on the
+    # page because its duration was wrong.
+    for child in keep.findall("durationType") + keep.findall("duration") + keep.findall("dots"):
+        keep.remove(child)
+    etree.SubElement(keep, "durationType").text = "measure"
+    etree.SubElement(keep, "duration").text = f"{target.numerator}/{target.denominator}"
+    return True
+
+
 def fix_overfull_measures(root: etree._Element) -> int:
     """Strip non-musical padding from measures carrying a spurious `len`.
 
@@ -165,6 +197,13 @@ def fix_overfull_measures(root: etree._Element) -> int:
         if sum(1 for n in now if n == target) * 2 > len(now):
             for _, m in marked:
                 del m.attrib["len"]
+                # A staff resting through the bar was written to the old, wrong length
+                # (a whole rest under len="4/4"). Left alone it now overruns the bar the
+                # override was hiding, and MuseScore plays the measure longer than it is
+                # engraved — which is not a health issue, it is a video that drifts out
+                # of sync. Silence carries no music, so re-length it to the real bar.
+                for voice in m.findall("voice"):
+                    _resize_silent_voice(voice, target)
             fixed += 1
             logger.debug("Measure %d: len override removed, nominal is %s", mi + 1, target)
     return fixed
