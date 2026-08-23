@@ -193,6 +193,7 @@ async function renderWorkspace(slug) {
 function viewerTabs(song) {
   const tabs = [];
   if (song.has_pdf) tabs.push(["pdf", "Original PDF"]);
+  if (song.has_pdf) tabs.push(["systems", "Systems"]);
   tabs.push(["original", "Original XML"]);
   if (song.has_cleaned) {
     tabs.push(["cleaned_nolyrics", "Cleaned MSCX"]);
@@ -260,6 +261,141 @@ async function mountPdf(view, url) {
   }
 }
 
+
+// ---- Systems: the printed-system boundaries, drawn over the page and draggable ----
+// An AI proposes these off the scan; this is where they get corrected. Bounds are
+// fractions of page height, so they hold at any zoom. Indices and measure ranges
+// are assigned by the server on save, never by this editor.
+async function systemsEditor(view, slug) {
+  const P = `/api/songs/${encodeURIComponent(slug)}`;
+  view.replaceChildren(el("p", { className: "muted" }, "Loading pages…"));
+  let data;
+  try {
+    data = await (await fetch(`${P}/bounds`)).json();
+  } catch {
+    view.replaceChildren(el("p", { className: "warn" }, "Could not load the PDF."));
+    return;
+  }
+  let bands = (data.systems || []).map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+  let dirty = false;
+
+  const status = el("div", { className: "sysstatus" });
+  const redrawStatus = () => {
+    const n = bands.length;
+    const want = data.declared || 0;
+    const agree = want && n === want;
+    status.replaceChildren(
+      el("span", {}, `${n} system${n === 1 ? "" : "s"}`),
+      want ? el("span", { className: agree ? "ok" : "warn" },
+        agree ? ` — matches the score` : ` — the score declares ${want}`) : el("span"),
+      dirty ? el("span", { className: "warn" }, " — unsaved") : el("span"),
+    );
+  };
+
+  const save = async () => {
+    const res = await fetch(`${P}/bounds`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ systems: bands }),
+    });
+    if (!res.ok) { alert("Save failed: " + (await res.text())); return; }
+    const out = await res.json();
+    bands = out.systems.map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+    dirty = false;
+    drawBands();
+  };
+
+  const pagesWrap = el("div", { className: "syspages" });
+  // Pages are built once and kept. Rebuilding them per redraw recreates the <img>,
+  // which reloads it, collapses its measured height to zero and wrecks the drag
+  // geometry mid-gesture — only the overlays are redrawn.
+  const pageEls = [];
+
+  function buildPages() {
+    const kids = [];
+    for (let p = 1; p <= data.pages; p++) {
+      const img = el("img", { src: `${P}/page/${p}?dpi=150`, alt: `page ${p}` });
+      const overlay = el("div", { className: "sysoverlay" });
+      const holder = el("div", { className: "syspage" }, img, overlay);
+      holder.onclick = (ev) => {
+        if (ev.target !== img) return;              // only empty page area adds one
+        const r = img.getBoundingClientRect();
+        if (!r.height) return;
+        const y = (ev.clientY - r.top) / r.height;
+        bands.push({ page: p, top: Math.max(0, y), bottom: Math.min(1, y + 0.15) });
+        dirty = true; drawBands();
+      };
+      img.onload = drawBands;                        // positions need the real height
+      pageEls.push({ page: p, img, overlay });
+      kids.push(el("div", { className: "syspagewrap" },
+        el("div", { className: "muted" }, `Page ${p}`), holder));
+    }
+    pagesWrap.replaceChildren(...kids);
+  }
+
+  function drawBands() {
+    redrawStatus();
+    for (const { page, img, overlay } of pageEls) {
+      const mine = bands
+        .map((b, i) => ({ b, i }))
+        .filter(({ b }) => b.page === page)
+        .sort((x, y) => x.b.top - y.b.top);
+      overlay.replaceChildren(...mine.map(({ b, i }) => {
+        const box = el("div", { className: "sysband" });
+        box.style.top = `${b.top * 100}%`;
+        box.style.height = `${(b.bottom - b.top) * 100}%`;
+        const idx = bands.filter((o) => o.page < page ||
+          (o.page === page && o.top < b.top)).length + 1;
+        box.append(el("span", { className: "syslabel" }, `S${idx}`));
+        box.append(el("button", {
+          className: "sysdel", title: "remove this system",
+          onclick: (ev) => { ev.stopPropagation(); bands.splice(i, 1); dirty = true; drawBands(); },
+        }, "\u00d7"));
+        for (const edge of ["top", "bottom"]) {
+          box.append(el("div", {
+            className: `sysgrip ${edge}`,
+            onmousedown: (ev) => startDrag(ev, img, b, edge, box),
+          }));
+        }
+        return box;
+      }));
+    }
+  }
+
+  function startDrag(ev, img, band, edge, box) {
+    ev.preventDefault(); ev.stopPropagation();
+    const rect = img.getBoundingClientRect();
+    if (!rect.height) return;                        // image not laid out yet
+    const move = (e) => {
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      if (edge === "top") band.top = Math.min(y, band.bottom - 0.01);
+      else band.bottom = Math.max(y, band.top + 0.01);
+      dirty = true;
+      // Move the one element being dragged; a full redraw would drop it mid-drag.
+      box.style.top = `${band.top * 100}%`;
+      box.style.height = `${(band.bottom - band.top) * 100}%`;
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      drawBands();                                   // re-label and re-order once
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
+  view.replaceChildren(
+    el("div", { className: "sysbar" },
+      el("button", { className: "primary", onclick: save }, "Save boundaries"),
+      status,
+      el("span", { className: "muted" },
+        " Drag an edge to adjust; click the page for a new system; × removes one."),
+    ),
+    pagesWrap,
+  );
+  buildPages();
+  drawBands();
+}
+
 // `panes` is a shared mutable array; `rebuild` re-creates the viewer (split/close).
 // Each doc keeps its own scroll container mounted (lazily); switching a tab hides/shows
 // them (scroll preserved). `el._refreshFp(fp)` re-renders only the cleaned previews
@@ -276,7 +412,8 @@ function viewer(song, slug, panes, rebuild) {
     const btns = {};
     const ensureRendered = (doc) => {
       const v = frames[doc];
-      if (!v || v._url === v._renderedUrl) return;
+      if (!v || v._systems) return;                  // the systems editor draws itself
+      if (v._url === v._renderedUrl) return;
       if (v.style.display === "none") return;      // render when shown
       if (v.clientWidth > 0) mountPdf(v, v._url);
       else requestAnimationFrame(() => ensureRendered(doc)); // wait for layout (e.g. after split)
@@ -285,9 +422,10 @@ function viewer(song, slug, panes, rebuild) {
       panes[i] = doc;
       if (!frames[doc]) {
         const v = el("div", { className: "pdfview" });
-        v._url = docUrl(slug, doc, song.cleaned_fingerprint);
         frames[doc] = v;
         body.append(v);
+        if (doc === "systems") { v._systems = true; systemsEditor(v, slug); }
+        else v._url = docUrl(slug, doc, song.cleaned_fingerprint);
       }
       for (const d in frames) frames[d].style.display = d === doc ? "" : "none";
       for (const k in btns) btns[k].className = k === doc ? "vtab active" : "vtab";

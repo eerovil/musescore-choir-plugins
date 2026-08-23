@@ -22,6 +22,7 @@ them be dragged, and an agent reads the same crops off disk.
 import json
 import os
 import subprocess
+import threading
 from dataclasses import dataclass, asdict, replace
 from typing import Dict, List, Optional
 
@@ -74,16 +75,23 @@ def page_count(pdf_path: str) -> int:
 
 
 def render_page(pdf_path: str, page: int, dpi: int, out_dir: str) -> str:
-    """Rasterise one page, cached by (page, dpi) under out_dir."""
+    """Rasterise one page, cached by (page, dpi) under out_dir.
+
+    Rendered to a private name and moved into place, because the editor asks for
+    every page at once: two requests for the same page would otherwise render over
+    each other and one of them would serve a half-written file.
+    """
     os.makedirs(out_dir, exist_ok=True)
-    stem = os.path.join(out_dir, f"page-{page:02d}@{dpi}")
-    out = stem + ".png"
-    if not os.path.exists(out):
-        subprocess.run(
-            ["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page),
-             "-png", "-singlefile", pdf_path, stem],
-            check=True, capture_output=True,
-        )
+    out = os.path.join(out_dir, f"page-{page:02d}@{dpi}.png")
+    if os.path.exists(out):
+        return out
+    stem = os.path.join(out_dir, f".tmp-{os.getpid()}-{threading.get_ident()}-{page}@{dpi}")
+    subprocess.run(
+        ["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page),
+         "-png", "-singlefile", pdf_path, stem],
+        check=True, capture_output=True,
+    )
+    os.replace(stem + ".png", out)          # atomic; last writer wins, both are valid
     return out
 
 
@@ -110,6 +118,7 @@ def _with_grid(page_png: str) -> str:
     out = page_png.replace(".png", "-grid.png")
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(page_png):
         return out
+    tmp = f"{out}.{os.getpid()}.{threading.get_ident()}.tmp"
     img = Image.open(page_png).convert("RGB")
     draw = ImageDraw.Draw(img)
     w, h = img.size
@@ -120,7 +129,8 @@ def _with_grid(page_png: str) -> str:
                   width=2 if labelled else 1)
         if labelled:
             draw.text((6, min(h - 14, y + 3)), f"{pct}%", fill=(255, 0, 0))
-    img.save(out)
+    img.save(tmp, format="PNG")
+    os.replace(tmp, out)
     return out
 
 

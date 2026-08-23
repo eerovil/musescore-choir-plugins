@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from lxml import etree
 
+from . import pdf_systems
 from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
@@ -180,6 +181,68 @@ def _scaled_staff_mscx(mscx_path: str) -> Optional[str]:
     with open(tmp, "wb") as f:
         f.write(etree.tostring(root, encoding="UTF-8"))
     return tmp
+
+
+def _page_cache(song_dir: str) -> str:
+    return os.path.join(song_dir, ".pages")
+
+
+def system_bounds(song_dir: str) -> List[Dict]:
+    """The stored printed-system boundaries, as plain dicts for the wire."""
+    return [b.to_dict() for b in pdf_systems.load_bounds(song_dir)]
+
+
+def save_system_bounds(song_dir: str, bands: List[Dict], mscx_path: str = "") -> List[Dict]:
+    """Store boundaries, re-indexed in page order and labelled where possible.
+
+    `bands` are {page, top, bottom} as fractions of page height -- whatever the
+    editor currently shows. Indices and measure ranges are derived here rather
+    than trusted from the browser, so a drag can never invent an alignment.
+    """
+    ordered = sorted(bands, key=lambda b: (int(b["page"]), float(b["top"])))
+    bounds = [
+        pdf_systems.SystemBounds(
+            index=i, page=int(b["page"]),
+            top=max(0.0, min(1.0, float(b["top"]))),
+            bottom=max(0.0, min(1.0, float(b["bottom"]))),
+        )
+        for i, b in enumerate(ordered, 1)
+    ]
+    if mscx_path:
+        bounds = pdf_systems.label(bounds, mscx_path)
+    pdf_systems.save_bounds(song_dir, bounds)
+    return [b.to_dict() for b in bounds]
+
+
+def declared_system_count(mscx_path: str) -> int:
+    """How many printed systems the score itself declares (0 if unknown)."""
+    if not mscx_path or not os.path.exists(mscx_path):
+        return 0
+    try:
+        return len(per_system.system_ranges(etree.parse(mscx_path).getroot()))
+    except Exception:
+        return 0
+
+
+def page_image(song_dir: str, pdf_path: str, page: int, dpi: int, grid: bool = False) -> str:
+    """One rasterised page, cached under the song folder."""
+    out = _page_cache(song_dir)
+    raw = pdf_systems.render_page(pdf_path, page, dpi, out)
+    return pdf_systems._with_grid(raw) if grid else raw
+
+
+def page_count(pdf_path: str) -> int:
+    return pdf_systems.page_count(pdf_path)
+
+
+def system_crop(song_dir: str, pdf_path: str, index: int, dpi: int) -> str:
+    """One printed system, cropped from the stored bounds."""
+    bounds = pdf_systems.load_bounds(song_dir)
+    match = [b for b in bounds if b.index == index]
+    if not match:
+        raise ValueError(f"No stored bounds for system {index}")
+    images = pdf_systems.crop_systems(pdf_path, match, _page_cache(song_dir), dpi=dpi)
+    return images[0].path
 
 
 def render_score_pdf(mscx_path: str) -> str:

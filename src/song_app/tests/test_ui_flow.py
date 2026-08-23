@@ -206,3 +206,87 @@ def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
     assert dropped, "cleaning with unnamed staves must confirm first"
     assert "staff 1 · system 3" in dropped[0], dropped[0]
     assert "staff 1 · system 4" in dropped[0], dropped[0]
+
+
+BOUNDS_FIXTURE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    "fixtures", "virta-venhetta-vie",
+)
+
+
+@pytest.fixture
+def bounds_song():
+    """Drop the Virta fixture into the live app's songs folder, cleaned stage."""
+    import json
+    import shutil
+
+    from src.song_app import state
+
+    slug = "virta-venhetta-vie"
+    dest = os.path.join(state.SONGS_DIR, slug)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest)
+    for stage in ("00-registered", "10-cleaned"):
+        src = os.path.join(BOUNDS_FIXTURE, stage)
+        for name in os.listdir(src):
+            shutil.copyfile(os.path.join(src, name), os.path.join(dest, name))
+    yield slug, dest, lambda: json.load(open(os.path.join(dest, ".systems.json")))["systems"]
+    shutil.rmtree(dest, ignore_errors=True)
+
+
+def _open_systems_tab(page, base, slug):
+    """Open the Systems tab and wait for a page image to actually be laid out.
+
+    The bands are positioned as percentages of the image, and rasterising a page
+    takes a second or two, so until it has loaded there is no geometry to drag
+    against — the editor refuses the drag, exactly as it should.
+    """
+    page.goto(f"{base}/#/song/{slug}")
+    page.get_by_role("button", name="Systems").click()
+    expect(page.locator(".sysband").first).to_be_visible(timeout=30_000)
+    page.wait_for_function(
+        "() => { const i = document.querySelector('.syspage img');"
+        "        return i && i.complete && i.getBoundingClientRect().height > 50; }",
+        timeout=60_000,
+    )
+
+
+def test_system_boundaries_can_be_dragged_and_saved(page, live_app, bounds_song):
+    """The correction path: drag an edge, save, and it is what the song now holds."""
+    slug, _, stored = bounds_song
+    _open_systems_tab(page, live_app, slug)
+
+    assert page.locator(".sysband").count() == 15
+    expect(page.locator(".sysstatus")).to_contain_text("matches the score")
+    before = stored()[0]["top"]
+
+    grip = page.locator(".sysband").first.locator(".sysgrip.top")
+    box = grip.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] - 40, steps=8)
+    page.mouse.up()
+
+    page.get_by_role("button", name="Save boundaries").click()
+    expect(page.locator(".sysstatus")).not_to_contain_text("unsaved")
+
+    after = stored()[0]["top"]
+    assert after < before, "dragging the top edge upward should lower the fraction"
+    assert stored()[0]["measure_start"] == 1, "still labelled against the score"
+
+
+def test_removing_a_system_stops_the_measure_labelling(page, live_app, bounds_song):
+    """14 bands cannot be aligned to 15 systems, so the app must not pretend."""
+    slug, _, stored = bounds_song
+    _open_systems_tab(page, live_app, slug)
+
+    page.locator(".sysband").last.locator(".sysdel").click()
+    assert page.locator(".sysband").count() == 14
+    expect(page.locator(".sysstatus")).to_contain_text("the score declares 15")
+
+    page.get_by_role("button", name="Save boundaries").click()
+    expect(page.locator(".sysstatus")).not_to_contain_text("unsaved")
+
+    saved = stored()
+    assert len(saved) == 14
+    assert all(b["measure_start"] == 0 for b in saved)
