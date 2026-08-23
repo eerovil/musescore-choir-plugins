@@ -125,8 +125,9 @@ fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clea
 ```
 
 Stages are overlays holding only what they add, so the 745 KB scan is stored once.
-It stops at stage `fix` on purpose: one unfixable over-full measure (m26 arrives with
-`len="9/8"`) and 2 lyric mismatches, each one note over — a dropped melisma slur apiece. `STEPS.md` records how each stage
+It stops at stage `fix` on purpose: 2 lyric mismatches, each one note over — a
+dropped melisma slur apiece. (m26, long the fixture's one health issue, is repaired
+automatically now; `fix_overfull_measures` came out of it.) `STEPS.md` records how each stage
 was produced, including a wrong conclusion and its correction — worth reading before
 trusting a tidy-looking diagnosis of a scanned score.
 
@@ -370,7 +371,16 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    signature or a measure whose content matches neither. Exact-Fraction durations
    (tuplet/dot-aware). Runs before any split/rebuild, all modes; fixes the per-system
    case where a stray 2/4 made ~18 measures render over-full.
-1. `preprocess_corrupted_measures` fixes measures with bad tick totals.
+1. `preprocess_corrupted_measures` fixes measures with bad tick totals, then
+   `fix_overfull_measures` (`utils/overfull_measures.py`) handles what it declines.
+   That pass is all-or-nothing — it shortens the final rest of every over-long voice
+   and gives up if any of them ends on a note — so a measure that is consistent
+   *except for one voice* stays broken. The second pass takes the length a majority
+   of the note-bearing voices agree on and **pads the short one with rests**. It only
+   ever adds: an earlier version deleted what looked like OCR junk and destroyed a
+   real note, which the lyric arithmetic caught (see the fixture's STEPS.md). Lengths
+   count `location` gaps, or a voice can look complete on its notes and still
+   overrun.
 2. Decide which staves actually contain 2 voices; only those get split.
    Staff ids are renumbered to leave a gap after each split staff
    (split staff `n` → `n` and `n+1`), tracked in `GLOBALS.STAFF_MAPPING`.

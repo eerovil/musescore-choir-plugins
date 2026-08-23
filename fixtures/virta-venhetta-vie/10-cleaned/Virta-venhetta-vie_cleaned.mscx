@@ -1148,7 +1148,7 @@
               <tpc>13</tpc>
               </Note>
             </Chord>
-          </voice>
+          <Rest><durationType>eighth</durationType></Rest></voice>
         </Measure>
       <Measure>
         <voice>

@@ -24,7 +24,8 @@ page).
 What it got wrong or dropped, and this is the useful part:
 
 - **all lyrics** — there is not one `<lyric>` element in 265 KB of MusicXML
-- **m26 arrives over-full**, carrying an explicit `len="9/8"` where the meter is 3/4
+- **m26 arrives with one voice short of the others** — three voices read as 9/8,
+  the tenor as 8/8, and an explicit `len="9/8"` on the measure
 - **melisma slurs**, in quantity — see step 3
 
 ## Step 2 — Clean (`10-cleaned/`)
@@ -48,10 +49,8 @@ Worth knowing what fired along the way:
   (`Note durations do not match parent pair: 32, 16 != 64, 64`) and mirrored nothing
   there — correctly, since the durations do not line up.
 
-**Result: one open health issue**, `malformed-m26-s1-v0` — "voice 1 fills 1 of 9/8".
-It is real: the measure is genuinely over-full in the OCR and no automatic pass can
-know what the engraver meant. Fixing it needs the score open in MuseScore, which is
-step 4.
+**Result at the time: one open health issue**, `malformed-m26-s1-v0` — "voice 1
+fills 1 of 9/8". It is now repaired automatically; see step 5.
 
 ## Step 3 — Lyrics (`20-lyrics/`)
 
@@ -193,8 +192,7 @@ edit to `lyrics.json`.
 The song stays at stage `fix` with 2 lyric mismatches and 1 health issue, and both
 are now localised to single notes:
 
-- **m26 (`len="9/8"`)** — the measure is over-full. Which note is spurious is a
-  judgement about what the engraver wrote; a pass that guessed would corrupt scores.
+- **m26** — fixed, see step 5.
 - **two dropped slurs** — m31–34 B2 (the sustained note in m32) and m50–52 B1 (in
   m50). Writing a slur into the score is the first edit here that changes the
   *music* rather than the text about it, which is why it stopped for a decision
@@ -218,3 +216,32 @@ Three rules worth carrying to any scanned score:
   numbers bent to fit is wrong.
 * **Read the XML before blaming the OCR.** The one gap confidently called a missing
   slur had its tie present all along.
+
+
+## Step 5 — m26, and a repair that went wrong first
+
+The health check's one issue. The reading that looked obvious was that m26 is a
+plain 4/4 bar — the page shows dotted-quarter, eighth, quarter, two beamed eighths,
+which is exactly 8/8 — and that the OCR had added an eighth to three voices in three
+different ways: a trailing rest (T2), a repeated notehead (B1), and a `location` gap
+(B2). A pass was written to strip all three.
+
+**It deleted a real note.** The lyric import said so immediately: B1 went from
+fitting its line exactly to one syllable over. That voice sings six syllables the
+page prints — "vie, mi-hin päät-ty-vi" — and it has six notes to put them on.
+
+The consistent reading is the opposite one. **The bar really is 9/8.** Three voices
+were independently read as 9/8 and only the tenor came out short, which is what the
+health check said in the first place. The repair is to pad the short voice, and
+`fix_overfull_measures` does exactly that and nothing else — it only ever adds rests.
+
+Two things worth keeping from the wrong turn:
+
+* **The lyric arithmetic caught it.** Nothing else would have: the score was
+  well-formed after the bad repair, the health check was satisfied, and the deleted
+  note was musically plausible. The syllable count was the only witness.
+* **Length has to be measured the way MuseScore measures it.** The first version
+  ignored `location` gaps, so it saw a voice as complete when the file had it
+  occupying an extra eighth — which is how it came to look for a culprit note at all.
+
+The fixture now cleans to **no health issues**.

@@ -19,6 +19,7 @@ from .utils.reversed_voices import (
 )
 
 from .utils.corrupted_measures import preprocess_corrupted_measures
+from .utils.overfull_measures import fix_overfull_measures
 from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.spurious_timesigs import fix_spurious_timesigs
 from .utils.interactive import resolve_voice_anomalies
@@ -252,6 +253,9 @@ def main(
         resolve_voice_anomalies(root, interactive=False)
 
     preprocess_corrupted_measures(root)
+    # ...and repair what that one declines: it is all-or-nothing, so a measure
+    # where one voice ends on a note rather than a rest keeps its bad len.
+    fix_overfull_measures(root)
     # Convert staff ids to make space after each staff
     # id="1" becomes id="1" and
     # id="2" becomes id="3"

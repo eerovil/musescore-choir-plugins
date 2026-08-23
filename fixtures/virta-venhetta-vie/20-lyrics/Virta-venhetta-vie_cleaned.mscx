@@ -1149,7 +1149,7 @@
               <tpc>13</tpc>
               </Note>
             <Lyrics><syllabic>single</syllabic><text>Ei</text></Lyrics></Chord>
-          </voice>
+          <Rest><durationType>eighth</durationType></Rest></voice>
         </Measure>
       <Measure>
         <voice>
