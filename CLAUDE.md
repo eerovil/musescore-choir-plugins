@@ -99,13 +99,21 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q   # 73 tests, all passing
+.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q   # 82 tests, all passing
 ```
 
 `pyproject.toml` only sets `log_cli_level=DEBUG`. Key test modules:
 
 - `test_lyric_txt_spanner.py` — asserts lyric export→import round-trips back to
-  the original XML (the real behavioral coverage).
+  the original XML (the real behavioral coverage), driven through `export_lyrics` /
+  `place_lyrics`.
+- `test_json_staff_mapping.py` — lyric **routing**: builds a synthetic score, places
+  a PDF-derived line, and reads back which output staff got the words (printed
+  staff+position, per-system map, part names, explicit `parts` override).
+- `test_lyric_diagnostics.py` — the structured `Mismatch` fields, measure_start
+  inference, and the editor-grid → cells → blocks → import → editor-grid round trip.
+- `src/clean_score/tests/scorebuilder.py` — the shared synthetic-score helper those
+  two use (not a test module).
 - `test_simple1_split.py` — a **golden-file snapshot** test: it runs the split
   pipeline on `test_files/<name>_input.mscx` and compares the element-tag
   sequence against `<name>_output.mscx`. If you intentionally change pipeline
@@ -121,8 +129,8 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
   `save_system_answers` → headless `run_clean` → rebuilt parts + lyric routing.
 - `test_missing_tuplets.py` — the dropped-tuplet cross-voice auto-fix (mirror
   within/across staves; well-formed and donor-less voices left untouched).
-- `test_revoice.py` / `test_interactive.py` / `test_json_staff_mapping.py` — the
-  re-voicing plan, non-interactive anomaly reduction, and JSON lyric staff mapping.
+- `test_revoice.py` / `test_interactive.py` — the re-voicing plan and the
+  non-interactive anomaly reduction.
 
 ## The song web app (`src/song_app/`)
 
@@ -142,8 +150,8 @@ state model are in `DESIGN.md`.
 - `pipeline.py` is the glue: `convert_to_mscx` (mscx as-is / mscz unzip / xml via
   MuseScore CLI), `run_clean` (calls `main(..., interactive=False)`; per-system runs off
   the answers the **grid form** recorded via `save_system_answers`), and
-  `run_lyric_import` (calls `import_file`, capturing the stderr `Warning:` lines
-  as the syllable-mismatch list). `system_grid` / `save_system_answers` /
+  `run_lyric_import` (calls `import_file` and returns its `LyricImport` — the
+  mismatches come back as records, nothing is scraped from stderr). `system_grid` / `save_system_answers` /
   `has_system_answers` / `system_ranges` are one-liners over the per-system module's
   interface (`layout_for_file`, `save_answers`, `has_answers`, `system_ranges`) —
   the grid is an adapter, not a second implementation.
@@ -213,15 +221,18 @@ state model are in `DESIGN.md`.
   is page-level only** (no bounding boxes) — see DESIGN.md.
 - The Lyrics panel has two client-side modes (remembered in `localStorage`):
   **Paste from AI** keeps the prompt/JSON round-trip, while **Type by system**
-  fetches `/lyric-grid` and renders a textarea for every `(printed system, output
-  part)`. The backend derives part names from `Part/trackName`, skips click/rest
-  parts, gets system ranges via `pipeline.system_ranges`, and prefills cells by
-  exporting the score's current lyrics. The browser turns non-empty cells into
-  name-addressed JSON blocks (`parts: [part name]`, `measure_start: system start`)
-  and submits them through the same `/lyrics` importer. Import warnings are parsed
-  back onto the matching system/part cell; lyric-panel scroll is preserved across
-  the refresh. Blank cells are omitted, so this editor expresses a lyric line
-  starting in a system, not an instruction to clear one isolated cell.
+  fetches `/lyric-grid` (`lyric_txt.editor_grid(...).to_dict()`) and renders a
+  textarea for every `(printed system, output part)` — parts, systems and the
+  prefilled text all come from the lyric module, not from `server.py`. The browser
+  POSTs the raw cells (`{"cells": {system: {part: text}}}`); the server turns them
+  into name-addressed JSON blocks with `blocks_from_cells` (`parts: [part name]`,
+  `measure_start: system start`), writes them to `lyrics.json`, and runs the same
+  importer as the paste mode. Mismatches come back as **fields** (`kind`,
+  `measure_start`, `measure_end`, `staff_ids`, `syllables`, `slots`, `message`) and
+  are attached to the matching system/part cell by comparing those fields — the
+  browser no longer parses warning prose. Lyric-panel scroll is preserved across the
+  refresh. Blank cells are omitted, so this editor expresses a lyric line starting in
+  a system, not an instruction to clear one isolated cell.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are
@@ -349,12 +360,34 @@ lyric-fixing flow (and its `pdf_path` plumbing, `utils/gemini_api.py`,
 it deletes any `Lyrics` elements on the staves it splits but does not author or
 fix lyric text.
 
-## Lyric txt/json format (`src/clean_score/lyric_txt.py`)
+## Lyric placement (`src/clean_score/lyric_txt.py`)
 
-The most intricate module. Round-trips lyrics between `.mscx` and a plain text
-or JSON format, designed so an LLM can fix lyrics against the original score
-(e.g. a PDF pasted into the chat) without breaking syllable alignment. The
-prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive that.
+The most intricate module, and the single owner of lyric placement: format
+normalization, target routing, chord eligibility, syllable distribution, XML
+placement and the diagnostics that fall out of it. It round-trips lyrics between
+`.mscx` and a plain text or JSON format, designed so an LLM can fix lyrics against
+the original score (e.g. a PDF pasted into the chat) without breaking syllable
+alignment. The prompt files `lyric_json_prompt.txt` / `lyrics_txt_prompt.txt` drive
+that.
+
+Its interface — all three callers (the CLI file adapters, the AI-JSON paste, the
+song app's manual editor) go through these, and nothing else is public:
+
+```python
+export_lyrics(root) -> str                      # the TXT projection of the score
+place_lyrics(root, source, fmt=, replace=, split=) -> LyricImport
+editor_grid(root) -> EditorGrid                 # parts x printed systems, prefilled
+blocks_from_cells(grid, cells) -> [block]       # those cells as lyric JSON
+export_file(...) / import_file(...) -> LyricImport      # the .txt/.json adapters
+```
+
+`source` is TXT, JSON text, or already-parsed JSON blocks (`fmt` overrides the
+sniff). **Diagnostics are returned, never printed**: `LyricImport.mismatches` is a
+list of `Mismatch(kind, message, measure_start, measure_end, staff_ids, syllables,
+slots)` — kinds `too_many` / `too_few` / `no_systems` / `no_system_for_line` /
+`block_count` — plus `filled_measure_starts` for nulls inferred from the printed
+systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prints
+`Warning: <message>` itself, so terminal output is unchanged.
 
 - **Eligibility**: only voice 0, verse 1. A note gets a syllable token unless it
   is a slur/tie *continuation* (not the first note of the slur/tie) — those get

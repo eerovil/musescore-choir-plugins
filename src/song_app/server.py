@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -420,40 +421,14 @@ def api_prompt() -> Dict:
 
 @app.get("/api/songs/{slug}/lyric-grid")
 def api_lyric_grid(slug: str) -> Dict:
-    """Structure for the manual lyric editor: the parts and the printed systems."""
+    """Structure for the manual lyric editor: the parts, the printed systems, the text."""
     song = _require(slug)
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         raise HTTPException(400, "Clean the score first")
     from lxml import etree
-    root = etree.parse(cleaned).getroot()
-    score = root.find(".//Score") if root.tag != "Score" else root
-    parts = []
-    for p in score.findall("Part"):
-        st = p.find("Staff")
-        sid = int(st.get("id")) if st is not None and st.get("id") else 0
-        name = (p.findtext("trackName") or p.findtext("Instrument/trackName") or "").strip()
-        # Skip spacer/click staves (add_rest_track) — they never carry lyrics.
-        if any(w in name.lower() for w in ("drum", "click", "rest")):
-            continue
-        parts.append({"name": name or f"staff {sid}", "id": sid})
-    parts.sort(key=lambda x: x["id"])
-    sys_ranges = pipeline.system_ranges(root)
-    systems = [{"index": r.index, "start": r.start, "end": r.end} for r in sys_ranges]
-
-    # Prefill: the lyrics already in the score, as hyphenated text per (system, part).
-    from src.clean_score.lyric_txt import lyrics_by_measure_staff, _merge_tokens
-    bms = lyrics_by_measure_staff(root)
-    prefill: Dict[str, Dict[str, str]] = {}
-    for r in sys_ranges:
-        for part in parts:
-            toks = []
-            for mi in range(r.start - 1, r.end):
-                toks += [t for t in bms.get(mi, {}).get(part["id"], []) if t != "_"]
-            text = _merge_tokens(toks).strip()
-            if text:
-                prefill.setdefault(str(r.index), {})[part["name"]] = text
-    return {"parts": parts, "systems": systems, "prefill": prefill}
+    from src.clean_score.lyric_txt import editor_grid
+    return editor_grid(etree.parse(cleaned).getroot()).to_dict()
 
 
 @app.get("/api/songs/{slug}/lyrics-json")
@@ -468,27 +443,39 @@ def api_lyrics_json(slug: str):
 
 @app.post("/api/songs/{slug}/lyrics")
 def api_lyrics(slug: str, body: Dict) -> Dict:
+    """Import lyrics: either pasted JSON (`json`) or the manual editor's cells (`cells`)."""
     song = _require(slug)
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         raise HTTPException(400, "Clean the score first")
-    json_text = (body or {}).get("json", "")
-    if not json_text.strip():
-        raise HTTPException(400, "Paste the lyric JSON first")
+    body = body or {}
+    cells = body.get("cells")
+    if cells:
+        from lxml import etree
+        from src.clean_score.lyric_txt import blocks_from_cells, editor_grid
+        grid = editor_grid(etree.parse(cleaned).getroot())
+        blocks = blocks_from_cells(grid, cells)
+        if not blocks:
+            raise HTTPException(400, "Nothing typed yet")
+        json_text = json.dumps(blocks, ensure_ascii=False, indent=2)
+    else:
+        json_text = body.get("json", "")
+        if not json_text.strip():
+            raise HTTPException(400, "Paste the lyric JSON first")
     json_path = song.path("lyrics.json")
     with open(json_path, "w", encoding="utf-8") as f:
         f.write(json_text)
     try:
-        warnings = pipeline.run_lyric_import(json_path, cleaned, replace=True)
+        result = pipeline.run_lyric_import(json_path, cleaned, replace=True)
     except Exception as exc:
         raise HTTPException(400, f"Import failed: {exc}")
     song.data["lyrics"] = {
         "json": "lyrics.json",
         "imported_against": state.file_fingerprint(cleaned),
-        "warnings": warnings,
+        "warnings": [m.to_dict() for m in result.mismatches],
     }
     song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
-    if not warnings:
+    if result.ok:
         song.set_stage("review")
     song.save()
     return _derived(song)

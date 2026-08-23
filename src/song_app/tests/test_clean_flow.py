@@ -78,3 +78,60 @@ def test_grid_answers_clean_headless_into_parts_and_lyric_routing(song_dir):
 def test_clean_without_answers_reports_no_output(song_dir):
     with pytest.raises(RuntimeError, match="no parts declared"):
         pipeline.run_clean(_source(song_dir), song_dir, per_system=True)
+
+
+# --------------------------------------------------------------------------- #
+# The lyric stage: the manual editor's cells go in, structured mismatches come out
+# --------------------------------------------------------------------------- #
+
+def _cleaned_song(song_dir):
+    """Clean the fixture so there is a score to put lyrics into."""
+    src = _source(song_dir)
+    pipeline.save_system_answers(src, ANSWERS)
+    cleaned, _ = pipeline.run_clean(src, song_dir, per_system=True)
+    return cleaned
+
+
+def test_editor_cells_become_lyrics_in_the_cleaned_score(song_dir):
+    from lxml import etree
+
+    from src.clean_score.lyric_txt import blocks_from_cells, editor_grid
+
+    cleaned = _cleaned_song(song_dir)
+    grid = editor_grid(etree.parse(cleaned).getroot())
+    assert [p.name for p in grid.parts] == ["T1", "T2", "T3", "B"]
+
+    cells = {0: {"T1": "en-sim mäi-nen", "B": "bas-so"}}
+    blocks = blocks_from_cells(grid, cells)
+    json_path = os.path.join(song_dir, "lyrics.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(blocks, f, ensure_ascii=False)
+
+    result = pipeline.run_lyric_import(json_path, cleaned, replace=True)
+    # Mismatches are fields, not text scraped off stderr.
+    assert all(hasattr(m, "kind") and m.staff_ids for m in result.mismatches)
+    back = editor_grid(etree.parse(cleaned).getroot())
+    assert back.text(0, "T1").startswith("en-sim")
+    assert back.text(0, "B").startswith("bas-so")
+
+
+def test_import_reports_a_too_short_line_against_its_own_system(song_dir):
+    from lxml import etree
+
+    from src.clean_score.lyric_txt import TOO_FEW, blocks_from_cells, editor_grid
+
+    cleaned = _cleaned_song(song_dir)
+    grid = editor_grid(etree.parse(cleaned).getroot())
+    system = grid.systems[0]
+    blocks = blocks_from_cells(grid, {0: {"T1": "yk"}})  # one syllable for a whole system
+    json_path = os.path.join(song_dir, "lyrics.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(blocks, f, ensure_ascii=False)
+
+    result = pipeline.run_lyric_import(json_path, cleaned, replace=True)
+    short = [m for m in result.mismatches if m.kind == TOO_FEW]
+    assert short, "a one-syllable line over a whole system must be reported"
+    m = short[0]
+    assert m.measure_start == system.start          # attaches to the system it starts in
+    assert m.staff_ids == (1,)                      # T1 is output staff 1
+    assert m.syllables == 1 and m.slots > 1

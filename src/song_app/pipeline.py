@@ -6,10 +6,7 @@ non-interactively. No musical logic lives here; this only orchestrates.
 
 from __future__ import annotations
 
-import contextlib
-import io
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -19,7 +16,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from lxml import etree
 
 from src.clean_score.main import main as clean_main
-from src.clean_score.lyric_txt import import_file
+from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
@@ -209,12 +206,8 @@ def render_score_pdf(mscx_path: str) -> str:
     return out
 
 
-_WARN_RE = re.compile(r"^Warning:\s*(.*)$", re.MULTILINE)
-
-
-def run_lyric_import(json_path: str, cleaned_path: str, replace: bool = True) -> List[str]:
-    """Import lyric JSON in place into the cleaned score; return any warning lines."""
-    buf = io.StringIO()
-    with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
-        import_file(json_path, cleaned_path, cleaned_path, replace=replace)
-    return [m.strip() for m in _WARN_RE.findall(buf.getvalue())]
+def run_lyric_import(
+    json_path: str, cleaned_path: str, replace: bool = True
+) -> LyricImport:
+    """Import lyric JSON in place into the cleaned score; return the placement result."""
+    return import_file(json_path, cleaned_path, cleaned_path, replace=replace)

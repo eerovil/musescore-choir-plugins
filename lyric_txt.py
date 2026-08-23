@@ -92,7 +92,12 @@ def main() -> None:
                 split = [int(x.strip()) for x in args.split.split(",") if x.strip()]
             except ValueError:
                 sys.exit("--split must be comma-separated part numbers (e.g. 3,4)")
-        import_file(txt_path, mscx_in, out, split=split, replace=args.replace)
+        result = import_file(txt_path, mscx_in, out, split=split, replace=args.replace)
+        for mismatch in result.mismatches:
+            print(f"Warning: {mismatch.message}", file=sys.stderr)
+        if result.filled_measure_starts:
+            print(f"Note: auto-filled {len(result.filled_measure_starts)} null measure_start "
+                  f"value(s) from the score's systems.", file=sys.stderr)
         print(f"Imported to {out}")
 
 
