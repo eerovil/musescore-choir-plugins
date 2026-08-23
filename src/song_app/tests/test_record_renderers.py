@@ -87,6 +87,26 @@ def test_the_rendered_files_are_what_review_and_upload_look_for(client, song, mo
         f"{song.slug} A1.mp4", f"{song.slug} S1.mp4"]
 
 
+def test_switching_renderer_does_not_upload_the_previous_take_as_well(song):
+    """Both renderers write "<slug> <part>" here and neither clears the other's
+    files, so upload has to pick one video per voice or a re-render doubles every
+    upload."""
+    import time
+
+    from src.stemmanauha.create_video import find_merged_outputs
+
+    media = os.path.join(song.dir, "media")
+    video = os.path.join(media, "video")
+    os.makedirs(video)
+    open(os.path.join(media, f"{song.slug} S1.mp3"), "wb").close()
+    open(os.path.join(video, f"{song.slug} S1.mov"), "wb").close()   # screen recording
+    time.sleep(0.01)
+    open(os.path.join(video, f"{song.slug} S1.mp4"), "wb").close()   # newer scroll render
+
+    found = [os.path.basename(p) for p in find_merged_outputs(song.dir)]
+    assert found == [f"{song.slug} S1.mp4"], "one video per voice, newest wins"
+
+
 def test_the_size_choice_is_passed_through(client, song, monkeypatch):
     seen = {}
     _fake_scroll(monkeypatch, seen)

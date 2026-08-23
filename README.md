@@ -151,6 +151,7 @@ unattended, and the audio can't drift against the picture.
 
     ./scroll_video.py "songs/MySong/MySong_cleaned.mscx"
     ./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 720 --no-audio
+    # --height alone picks a 16:9 width; pass --width only to override it
 
 One video per voice: the score scrolls horizontally as one long system, bar numbers
 printed above, and the notehead of every sounding note turns MuseScore blue — the head

@@ -556,8 +556,10 @@ voice the track is for is highlighted strongly while the others stay faint.
 Interface — everything else is an implementation detail of this one call:
 
 ```python
-build_videos(mscx_path, out_dir, parts=None, height=1080, width=1920,
-             fps=30, with_audio=True, log=...) -> [video paths]
+build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
+             fps=60, with_audio=True, keep_silent=False, emphasise=False,
+             spacer_per_quarter=2, smooth_seconds=2.0, basename=None,
+             log=...) -> [video paths]
 ```
 
 Three MuseScore CLI calls feed it, and each output answers one question:

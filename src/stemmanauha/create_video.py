@@ -394,13 +394,22 @@ def find_merged_outputs(song_dir):
                 for mp3 in mp3_files for ext in (".mov", ".mp4")}
     if not video_dir.exists():
         return []
+    videos = [p for p in video_dir.iterdir() if p.suffix.lower() in (".mov", ".mp4")]
     # Prefer the named merge outputs; fall back to any "<song> *".
-    out = [p for p in video_dir.iterdir()
-           if p.suffix.lower() in (".mov", ".mp4") and p.name in expected]
+    out = [p for p in videos if p.name in expected]
     if not out:
-        out = [p for p in video_dir.iterdir()
-               if p.suffix.lower() in (".mov", ".mp4") and p.name.startswith(song_name + " ")]
-    return sorted(out)
+        out = [p for p in videos if p.name.startswith(song_name + " ")]
+
+    # One video per voice, newest wins. Both renderers write "<song> <part>" here
+    # and neither clears the other's files, so a song recorded with one and then
+    # re-rendered with the other would otherwise upload the stale take as well.
+    newest = {}
+    for path in out:
+        stem = path.stem
+        part = stem[len(song_name) + 1:] if stem.startswith(song_name + " ") else stem
+        if part not in newest or path.stat().st_mtime > newest[part].stat().st_mtime:
+            newest[part] = path
+    return sorted(newest.values())
 
 
 def run(song_dir=None, youtube=False, extra_playlist_id=None,

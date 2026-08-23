@@ -30,7 +30,7 @@ def rendered(request):
         midi_path = audio_mod.run_musescore(score, os.path.join(tmp, "s.mid"))
         eng = engrave(musicxml)
         tempo = TempoMap.from_midi(midi_path)
-        events = note_events(eng.timemap, tempo, eng.layout.notes)
+        events = note_events(eng.timemap, tempo, eng.drawn_id)
         onsets = sorted({round(t, 3) for t in (e.on for e in events)})
         midi = mido.MidiFile(midi_path)
         played, now = set(), 0.0

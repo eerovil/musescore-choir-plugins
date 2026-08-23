@@ -213,10 +213,6 @@ def rasterise(svg_text: str, layout: Layout, height_px: int) -> np.ndarray:
     wider than the cap. Tile edges are cut on the output pixel grid so the tiles
     abut exactly instead of accumulating rounding drift.
     """
-    m = _DEF_SCALE.search(svg_text)
-    scale = height_px / layout.height
-    total_px = int(round(layout.width * scale))
-
     # Filled tile by tile into one buffer: at 4K a strip is hundreds of MB, and
     # collecting tiles before joining them would hold two copies at once.
     total_px = int(round(layout.width * height_px / layout.height))

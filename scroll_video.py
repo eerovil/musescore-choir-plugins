@@ -32,7 +32,8 @@ def main() -> None:
     parser.add_argument("--parts", nargs="+", default=None,
                         help="only these part names (default: every part)")
     parser.add_argument("--height", type=int, default=2160, help="video height (default 2160, i.e. 4K)")
-    parser.add_argument("--width", type=int, default=3840, help="video width (default 3840, i.e. 4K)")
+    parser.add_argument("--width", type=int, default=None,
+                        help="video width (default: 16:9 for the chosen height)")
     parser.add_argument("--fps", type=int, default=60, help="frames per second (default 60)")
     parser.add_argument("--no-audio", action="store_true", help="video only, no audio mix")
     parser.add_argument("--keep-silent", action="store_true",
@@ -50,8 +51,11 @@ def main() -> None:
     out_dir = args.out_dir or os.path.join(os.path.dirname(os.path.abspath(args.score)),
                                            "media", "scroll")
     try:
+        # Height alone should give a sensible video: setting only --height used to
+        # keep the 4K width and produce a 32:9 letterbox.
+        width = args.width or round(args.height * 16 / 9 / 2) * 2
         written = build_videos(args.score, out_dir, parts=args.parts, height=args.height,
-                               width=args.width, fps=args.fps, with_audio=not args.no_audio,
+                               width=width, fps=args.fps, with_audio=not args.no_audio,
                                keep_silent=args.keep_silent, emphasise=args.emphasise,
                                spacer_per_quarter=args.spacer, smooth_seconds=args.smooth,
                                log=lambda m: print(m, flush=True))

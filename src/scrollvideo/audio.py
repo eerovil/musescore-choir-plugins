@@ -44,18 +44,27 @@ def run_musescore(input_path: str, output_path: str, timeout: int = CLI_TIMEOUT)
     return output_path
 
 
+def part_name(part: etree._Element, index: int) -> str:
+    """What this part is called. Unnamed parts get a positional name.
+
+    One function so the name a caller is given by `part_names` is the same one
+    `set_mix` matches on: matching on a bare trackName instead would silently
+    leave an unnamed part unboosted in its own practice track.
+    """
+    return (part.findtext("trackName") or f"Part {index + 1}").strip()
+
+
 def part_names(root: etree._Element) -> List[str]:
     """Part track names, in score order (top staff first)."""
-    return [(p.findtext("trackName") or f"Part {i + 1}").strip()
-            for i, p in enumerate(root.iter("Part"))]
+    return [part_name(p, i) for i, p in enumerate(root.iter("Part"))]
 
 
 def set_mix(root: etree._Element, focus: Optional[str],
             focus_volume: int = FOCUS_VOLUME,
             background_volume: int = BACKGROUND_VOLUME) -> etree._Element:
     """Set channel volumes so `focus` stands out. focus=None -> an even mix."""
-    for part in root.iter("Part"):
-        name = (part.findtext("trackName") or "").strip()
+    for index, part in enumerate(root.iter("Part")):
+        name = part_name(part, index)
         for channel in part.iter("Channel"):
             for existing in channel.findall("controller"):
                 if existing.get("ctrl") == VOLUME_CTRL:

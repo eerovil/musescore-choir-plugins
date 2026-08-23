@@ -101,6 +101,13 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
     four-part score. `emphasise=True` instead re-renders per voice with that
     voice's notes lit brighter than the rest, which costs a full encode each.
     """
+    # Checked before the work, not at the encode: engraving, rasterising and the
+    # audio mixes take minutes, and failing at the end with a bare FileNotFoundError
+    # from Popen wastes all of it.
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg is not on PATH — it renders the video. "
+                           "macOS: brew install ffmpeg")
+
     root = etree.parse(mscx_path).getroot()
     jumps = unsupported_repeats(root)
     if jumps:

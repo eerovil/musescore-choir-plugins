@@ -938,7 +938,7 @@ function panelRecord(panel, song, P, refresh) {
   const scrollOpts = el("div", {},
     el("label", {}, "Size"),
     el("div", { className: "row" }, quality,
-      el("span", { className: "hint" }, "4K takes about a minute of CPU per minute of music")));
+      el("span", { className: "hint" }, "4K takes roughly 1.5 minutes of CPU per minute of music")));
   const screenOpts = el("div", {},
     el("label", {}, "Audio sync offset (ms)"),
     el("div", { className: "row" }, delay,
