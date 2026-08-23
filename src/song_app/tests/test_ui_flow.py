@@ -359,3 +359,24 @@ def test_clicking_empty_page_adds_a_system(page, live_app, bounds_song):
     page.get_by_role("button", name="Save boundaries").click()
     expect(page.locator(".sysstatus")).not_to_contain_text("unsaved")
     assert len(stored()) == 16
+
+
+def test_the_lyrics_view_is_offered_only_once_there_are_lyrics(page, live_app, bounds_song):
+    """Before the import that tab renders a score identical to the one beside it.
+
+    Offering it anyway looks like the lyrics failed to appear, which is exactly how
+    it was read in use.
+    """
+    slug, song_dir, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    expect(page.get_by_role("button", name="Cleaned MSCX", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Cleaned MSCX with lyrics")).to_have_count(0)
+
+    # Import lyrics through the app, then it appears.
+    page.locator(".step", has_text="Lyrics").first.click()
+    page.get_by_role("button", name="Type by system").click()
+    expect(page.locator(".sysblock").first).to_be_visible(timeout=30_000)
+    page.locator(".sysblock").first.locator("textarea").first.fill("Vir-ta ven-het-tä")
+    page.get_by_role("button", name="Import lyrics").click()
+    expect(page.get_by_role("button", name="Cleaned MSCX with lyrics")).to_be_visible(
+        timeout=60_000)

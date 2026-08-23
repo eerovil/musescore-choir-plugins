@@ -156,16 +156,23 @@ async function renderWorkspace(slug) {
     const next = viewer(song, slug, panes, rebuildViewer);
     wsGrid.replaceChild(next, viewerEl);
     viewerEl = next;
+    builtTabs = tabKeys();
   }
 
+  const tabKeys = () => viewerTabs(song).map(([k]) => k).join(",");
+  // What the viewer was actually built with. Comparing against this rather than
+  // against a before/after of `song` matters: a caller that already merged the
+  // server's reply into `song` before calling refresh() would otherwise see no
+  // change and the new tab would appear only on reload.
+  let builtTabs = tabKeys();
+
   async function refresh() {
-    const hadCleaned = song.has_cleaned;
     const fresh = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
     Object.assign(song, fresh);
     drawStagebar();
     drawPanel();
-    if (song.has_cleaned !== hadCleaned) {
-      // The tab set changed (cleaned docs appeared/vanished) → structural rebuild.
+    if (tabKeys() !== builtTabs) {
+      // The tab set changed (a doc appeared or vanished) → structural rebuild.
       viewFp = song.cleaned_fingerprint;
       rebuildViewer();
     } else if (song.cleaned_fingerprint !== viewFp) {
@@ -198,7 +205,9 @@ function viewerTabs(song) {
   tabs.push(["original", "Original XML"]);
   if (song.has_cleaned) {
     tabs.push(["cleaned_nolyrics", "Cleaned MSCX"]);
-    tabs.push(["cleaned", "Cleaned MSCX with lyrics"]);
+    // Only once there are lyrics to see. Offering it beforehand renders a score
+    // identical to the tab next to it, with nothing to say why.
+    if (song.lyrics) tabs.push(["cleaned", "Cleaned MSCX with lyrics"]);
   }
   return tabs;
 }
