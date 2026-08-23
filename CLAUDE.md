@@ -32,6 +32,7 @@ clean_score.py           CLI wrapper → src/clean_score/main.py (split voices i
 lyric_txt.py             CLI wrapper → src/clean_score/lyric_txt.py (lyrics <-> txt/json)
 rename_parts.py          Standalone CLI: rename Part/Instrument names + add click staff
 record_stemmanauha.py    CLI wrapper → src/stemmanauha (record practice video)
+scroll_video.py          CLI wrapper → src/scrollvideo (render scrolling practice video)
 src/song_app/            Local web app tying the workflow together (see DESIGN.md)
   state.py               Song state machine (.song.json), slug, stages
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
@@ -44,6 +45,13 @@ src/clean_score/         Score-cleaning package
   utils/                 part_types, reversed_voices, missing_ties,
                          corrupted_measures, utils, globals
   tests/                 pytest
+src/scrollvideo/         Scrolling practice video rendered from the score (no GUI)
+  engrave.py             verovio: one continuous system -> SVG + timemap
+  geometry.py            SVG -> note positions; SVG -> pixel strip (tiled)
+  timing.py              MuseScore MIDI tempo map = the clock; note on/off events
+  audio.py               per-voice mixes + MuseScore CLI calls
+  video.py               frame compositing (scroll + highlight) -> ffmpeg
+  build.py               orchestration (the public build_videos)
 src/stemmanauha/         Audio/video recording automation (macOS, AppleScript + OBS/ffmpeg)
   create_video.py        Orchestrates mp3 export -> video record -> merge -> upload
   upload_to_youtube.py   YouTube Data API upload
@@ -92,6 +100,10 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 # Record a practice video (macOS only; song must already exist in songs/<name>/)
 ./record_stemmanauha.py MySong --youtube --playlist <id>
 
+# Render a scrolling practice video per voice, no GUI/screen recording involved
+./scroll_video.py "songs/MySong/MySong_cleaned.mscx"
+./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 720 --no-audio
+
 # Backup all .mscz files to backup/
 ./backup.sh
 ```
@@ -99,9 +111,10 @@ python rename_parts.py score.mscx SSAA -o score_renamed.mscx
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ -q
-# 82 passed, 1 skipped   — a fresh checkout (the browser tests skip)
-# 84 passed              — once Playwright is installed
+.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
+# 135 passed, 4 skipped  — a fresh checkout (browser tests skip; so do the
+#                          scrollvideo sync tests without a MuseScore CLI)
+# 139 passed             — with Playwright installed and MUSESCORE_CLI_PATH set
 ```
 
 The two extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
@@ -464,6 +477,157 @@ test `test_lyric_txt_spanner.py` asserts export→import round-trips back to the
 original XML. The `il-man il-ki-rii-vi-` case (where a word's syllables span a
 measure boundary) is covered by the two `measure_14` regression tests; the
 syllable distribution in `json_lines_to_by_measure` must keep them green.
+
+## Scrolling practice video (`src/scrollvideo/`)
+
+An alternative to the screen-recording pipeline: the video is **rendered from the
+score**, so nothing appears on screen, nothing depends on window focus or global
+shortcuts, and it can run unattended. One video per voice: the score scrolls
+horizontally as a single continuous system, every sounding note lights up, and the
+voice the track is for is highlighted strongly while the others stay faint.
+
+Interface — everything else is an implementation detail of this one call:
+
+```python
+build_videos(mscx_path, out_dir, parts=None, height=1080, width=1920,
+             fps=30, with_audio=True, log=...) -> [video paths]
+```
+
+Three MuseScore CLI calls feed it, and each output answers one question:
+
+| output | question | who answers |
+| --- | --- | --- |
+| MusicXML | what does the page look like, and which note is where? | verovio |
+| MIDI | *when* does each note sound? | MuseScore's tempo map |
+| WAV per voice | what do we hear? | MuseScore's synth |
+
+**The clock is the whole design.** Verovio's timemap and MuseScore's audio are
+*different musics*: verovio ignores playback properties, above all the
+`timeStretch=3` that `clean_score` puts on fermatas. On the Hanget soi score
+verovio says 48.0s where MuseScore renders 59.6s — a video on verovio's clock
+drifts up to 14s. But MuseScore writes that stretch into its MIDI export as tempo
+changes (120 -> 40 bpm for a fermata), so: **musical position (qstamp) from
+verovio, seconds from the MIDI tempo map** (`timing.TempoMap`). Verified against
+the MIDI's own note-ons — every highlight lands within 20ms of a note MuseScore
+actually plays. This is what `tests/test_sync.py` pins; don't "simplify" it back
+to `entry["tstamp"]`.
+
+- `score.py` is the only edit made to the score before engraving: parts with nothing
+  to sing (percussion, or a staff of only rests — the click track
+  `add_rest_track.qml` adds) are dropped, along with the staves they own. They would
+  otherwise cost a staff of height in every frame and each get their own pointless
+  practice video. The original file is never touched; with nothing to drop it is used
+  as-is. `build_videos(..., keep_silent=True)` / `--keep-silent` turns it off.
+- `engrave.py` renders with `breaks: "none"` so the whole score is one system
+  (one page — a second page is an error, not something to stitch). Notes are
+  `<g id=... class="note">` and the timemap's `on`/`off` lists name those same ids;
+  that pairing is what makes highlighting possible at all.
+- `geometry.py` owns two verovio-SVG facts. Coordinates live in the **nested**
+  `<svg class="definition-scale" viewBox=...>`, not the root (whose px size is 1/25
+  of it), and a note's position is its notehead `<use transform="translate(x, y)">`
+  **plus every ancestor `<g transform>`** (verovio emits a page margin; dropping it
+  puts every highlight a staff too high). `rasterise` renders the strip in tiles
+  because cairo caps surface dimensions at 32767px and a 3-minute score is wider;
+  tile edges are cut on the **output pixel grid**, not by converting a fixed unit
+  width, so seams don't accumulate rounding drift.
+- `video.py` composites: the engraving is rasterised **once** and a frame is a crop
+  of that strip plus an alpha blend over each sounding note's rectangle. Nothing is
+  re-engraved per frame — a four-voice minute of music costs about a minute of CPU
+  for all four videos. Scroll position is interpolated from the notes' own x
+  positions (`timing.scroll_anchors`), so a fermata's held note simply sits still.
+- `audio.py` replaces `export.qml` + AppleScript: a per-voice mix is MIDI controller
+  7 on each Part's `<Channel>` in the .mscx, so it is a copy-the-score-and-set-
+  volumes edit, then one headless CLI render (~6s per voice). Every CLI call is
+  bounded by `CLI_TIMEOUT` — a wedged MuseScore process otherwise hangs the render
+  (and the test suite) forever.
+
+Because video and audio come off the same clock, there is **no `audio_delay_ms`**
+here — that offset exists in `stemmanauha` only because a screen recording and an
+mp3 are captured independently.
+
+**It is deterministic**, and that is deliberate: `engrave.XML_ID_SEED` pins verovio's
+element ids (otherwise random per run, which changes nothing visible but makes
+renders impossible to diff). Verified by rendering twice: SVG, rasterised strip,
+MuseScore's MusicXML/MIDI/WAV and the final mp4 all come out byte-identical. The one
+caveat is MuseScore's MusicXML export stamping `<encoding-date>` with today's date,
+so a re-render on a later day differs in that file (not in the video).
+
+**The picture is identical for every voice, so it is encoded once.** At 1080p30,
+compositing the frames was 3.2s of a 21.5s render and x264 the other 18.3s, so
+rendering per voice paid for the encode four times over to change nothing but which
+highlights were brighter. Instead: one encode, then each practice track is a
+`-c:v copy` mux of that video with its own mix, and the audio mixes run concurrently
+(four MuseScore processes: 11.8s together instead of 43s).
+`emphasise=True` / `--emphasise` restores per-voice highlighting (that voice bright,
+the others faint) and with it a full encode per voice — it is the slow path, and
+`test_video.test_mux_puts_audio_on_a_video_without_touching_the_picture` pins that
+the default one does not re-encode.
+
+**Output is 3840x2160 @ 60fps** (`--width/--height/--fps`). 60fps because the whole
+frame pans horizontally, which is exactly what judders at 30. Measured on
+Käyttäytymisohjeita (78 bars, 1451 notes, 2:32, 4 voices): **228s** for all four,
+peak RSS 2.9GB, 25MB per video.
+
+     3s  setup      MusicXML + MIDI + engrave
+    14s  rasterise  59518x2160 strip = 386 MB
+    12s  audio      4 mixes, concurrent
+   170s  video      ONCE
+    ~5s  mux        4x, stream copy
+
+At 4K the encoder is no longer the bottleneck — moving 25MB frames is. x264 presets
+barely change the time (medium 16.7s vs veryfast 13.8s for a 15s probe) but change
+the size a lot (24MB vs 47MB), so `DEFAULT_PRESET` stays `medium`. For the same
+reason `video.render` fills **one reused frame buffer** rather than copying a blank
+per frame, and `geometry.rasterise` fills a single strip buffer instead of
+`hstack`ing tiles — at 4K each of those would otherwise double hundreds of MB of
+traffic or footprint. Strip memory is ~2.5MB per second of music at 2160p, so a
+6-minute score needs roughly 900MB; that is the number to watch if a very long score
+ever fails.
+
+Three behaviours worth knowing:
+
+- **Tie continuations get their own highlight.** Verovio's timemap emits an `on` for
+  the second note of a tie; MuseScore's MIDI (correctly) does not retrigger. The
+  highlight moves to the tied notehead while the sound continues — which is what a
+  singer follows, and matches MuseScore's own playback cursor.
+- **Section repeats and voltas work, and the scroll jumps back.** Verovio *expands*
+  repeats in its timemap exactly as MuseScore does, so the played timeline is already
+  unrolled and the qstamp axis still matches MIDI ticks. The section is engraved once,
+  so the repeat pass sounds under suffixed ids (`xyz-rend2`) that are not drawn;
+  `engrave._drawn_ids` maps them back with verovio's `getNotatedIdForElement`. A
+  repeated note therefore gets one highlight event per pass, and the scroll walks
+  back to where that section is drawn. **D.C./D.S. jumps are still refused** —
+  verovio does not follow them (on Jouluriemua it plays 181 quarters where MuseScore
+  plays 257.5), so `build.unsupported_repeats` looks for `Jump` only (a `Marker` — segno, coda,
+  fine — is just a label and changes nothing on its own).
+- **Every render is verified against the audio before it ships.** `build.alignment`
+  checks what fraction of highlights land within 200ms of a note MuseScore actually
+  strikes, and refuses below 98%. That is the real property, so it catches timeline
+  disagreements we did not think to look for — don't replace it with a structural
+  check on the markup.
+
+Tests (`src/scrollvideo/tests/`) — `test_sync.py` needs the MuseScore CLI and skips
+without it, like the browser tests:
+
+- `test_sync.py` — the clock, end to end on a fixture with a 3x fermata: every
+  highlight lands within 20ms of a MIDI note-on, the last note ends with the audio,
+  and a guard test spelling out what verovio's own clock *would* have shipped.
+- `test_geometry.py` — the ancestor-translate offset, the definition-scale viewBox,
+  and that tiled rasterisation matches single-shot (alignment pinned; antialiasing
+  along a seam is allowed to differ by a pixel).
+- `test_timing.py` — TempoMap arithmetic (a 3x fermata window), notes still sounding
+  at the end being closed rather than dropped.
+- `test_video.py` — highlights land on the right staff, and are present while a note
+  sounds and gone after it stops (decoded back out of the rendered mp4).
+- `test_score.py` — which parts count as silent, that dropping one takes its staff
+  with it, and that the original file is never modified.
+- `test_audio.py` / `test_build.py` — the volume edit (replaced, not duplicated;
+  pan/program untouched), the D.C.-jump refusal, that section repeats/voltas are
+  *not* refused, and the alignment measure itself (full when highlights match the
+  MIDI, falling when they drift).
+- `tests/test_files/fermata.mscx` — `simple_1_output` with a `timeStretch=3` fermata
+  added to measure 1 (4.00s -> 5.00s of MIDI). `fermata.musicxml` is the same score
+  pre-converted so engraving tests need no MuseScore.
 
 ## MuseScore plugins (`plugins/`)
 

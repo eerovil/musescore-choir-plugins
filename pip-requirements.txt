@@ -8,5 +8,11 @@ pyautogui
 fastapi
 uvicorn[standard]
 python-multipart
+# Scrolling practice video (src/scrollvideo): engraving, rasterising, MIDI clock.
+# Also needs ffmpeg/ffprobe on PATH and the MuseScore CLI.
+verovio
+cairosvg
+mido
+numpy
 # Browser tests only (src/song_app/tests/test_ui_flow.py); they skip when it is absent:
 #   pip install pytest-playwright && playwright install chromium
