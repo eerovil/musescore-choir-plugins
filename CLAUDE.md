@@ -331,6 +331,14 @@ state model are in `DESIGN.md`.
   (`watchfiles.awatch` on `songs/`) that re-runs the health check when a
   `*_cleaned.mscx` is saved in MuseScore (guarded by fingerprint so our own writes
   don't loop). Static SPA is mounted at `/` (so `/api/*` wins).
+- `static/` **layout**: the page never scrolls — `html, body` are fixed to the
+  window and every panel scrolls inside itself. `#app` takes what the header leaves
+  (`flex: 1 1 auto; min-height: 0`) and the workspace grid fills it. It used to be
+  `height: calc(100vh - 49px)`, a guess at the header's height, which overflows the
+  moment the header is a pixel taller — a longer song name will do it — and then the
+  whole page scrolls and the viewer is carried off-screen. Grid and flex items need
+  the explicit `min-height: 0`, or they refuse to shrink below their content and
+  `overflow: auto` never fires.
 - `static/` is a dependency-free vanilla-JS SPA: a library view and a 3-pane
   workspace (stage rail · per-stage panel · document viewer, controls clustered
   left, previews right). The viewer tabs

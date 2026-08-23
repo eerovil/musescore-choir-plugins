@@ -312,7 +312,8 @@ async function compareView(view, slug) {
       + "nothing to compare. Check the boundaries in the Systems tab."));
     return;
   }
-  view.replaceChildren(...rows.map((r) => el("div", { className: "cmprow" },
+  const byIndex = {};
+  view.replaceChildren(...rows.map((r) => byIndex[r.index] = el("div", { className: "cmprow" },
     el("div", { className: "cmphead" },
       `System ${r.index} — measures ${r.measure_start}–${r.measure_end}`),
     el("div", { className: "cmplabel" }, "scan"),
@@ -322,6 +323,16 @@ async function compareView(view, slug) {
     el("img", { className: "cmpimg", loading: "lazy",
                 src: `${P}/cleaned-system/${r.index}?dpi=300`, alt: `cleaned system ${r.index}` }),
   )));
+
+  // Typing lyrics for a system should put that system in front of you, scan and
+  // result together — that is the pair you are checking the words against.
+  view._focusSystem = (n) => {
+    const row = byIndex[n];
+    if (!row) return;
+    for (const el_ of Object.values(byIndex)) el_.classList.remove("cmpon");
+    row.classList.add("cmpon");
+    row.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
 }
 
 // ---- Systems: the printed-system boundaries, drawn over the page and draggable ----
@@ -517,6 +528,11 @@ function viewer(song, slug, panes, rebuild) {
         // Only the first pane follows the cursor, so a split can keep a second
         // document in view while the other tracks what is being typed.
         if (i !== 0) return;
+        const here = frames[panes[i]];
+        if (panes[i] === "compare" && here && here._focusSystem) {
+          here._focusSystem(n);       // already comparing: scroll to that pair
+          return;
+        }
         show("system");
         frames.system._setSystem(n);
       };

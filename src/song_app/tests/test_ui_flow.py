@@ -410,3 +410,41 @@ def test_compare_says_so_when_it_cannot_pair(page, live_app, bounds_song):
     page.get_by_role("button", name="Compare").first.click()
     expect(page.locator(".compare .warn")).to_contain_text("do not correspond", timeout=60_000)
     assert page.locator(".cmprow").count() == 0
+
+
+def test_a_long_panel_scrolls_itself_and_leaves_the_viewer_in_place(page, live_app, bounds_song):
+    """Typing lyrics for 15 systems makes the panel far taller than the window.
+
+    It has to scroll inside itself and the viewer has to stay put. The layout used
+    to size the workspace as `100vh - 49px`, a guess at the header's height: one
+    pixel taller -- a longer song name, a different font -- and the workspace
+    overflowed the window, the page scrolled, and the viewer went with it. The
+    header is made taller here because that is the condition that triggers it.
+    """
+    slug, _, _ = bounds_song
+    page.goto(f"{live_app}/#/song/{slug}")
+    page.locator(".step", has_text="Lyrics").first.click()
+    page.get_by_role("button", name="Type by system").click()
+    expect(page.locator(".sysblock").first).to_be_visible(timeout=30_000)
+    assert page.locator(".sysblock").count() > 10          # premise: a long panel
+
+    page.evaluate("document.querySelector('header').style.padding = '40px 18px'")
+    page.wait_for_timeout(200)
+
+    m = page.evaluate("""() => {
+        const p = document.querySelector('.panel');
+        const v = document.querySelector('.vbody').getBoundingClientRect();
+        return { page_scrolls: document.documentElement.scrollHeight > window.innerHeight + 2,
+                 panel_scrolls: p.scrollHeight > p.clientHeight + 2,
+                 viewer_bottom: v.bottom, win: window.innerHeight };
+    }""")
+    assert not m["page_scrolls"], "the window scrolls instead of the panel"
+    assert m["panel_scrolls"], "the panel is not the thing that scrolls"
+    assert m["viewer_bottom"] <= m["win"] + 2, (
+        f"the viewer runs past the window ({m['viewer_bottom']} > {m['win']})")
+
+    # Scrolling to the last system must not move the viewer.
+    before = page.locator(".vbody").first.bounding_box()
+    page.locator(".sysblock").last.locator("textarea").first.scroll_into_view_if_needed()
+    after = page.locator(".vbody").first.bounding_box()
+    assert abs(after["y"] - before["y"]) < 2, "the viewer moved when the panel scrolled"
