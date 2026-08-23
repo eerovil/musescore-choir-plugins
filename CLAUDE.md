@@ -131,11 +131,12 @@ fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clea
 ```
 
 Stages are overlays holding only what they add, so the 745 KB scan is stored once.
-It cleans with **no health issues** and stops at stage `fix` with 2 lyric
-mismatches, one note without a syllable apiece. m26 needed a recorded fix
-(`fixes.json`, below) for a dot the OCR invented; the two lyric residuals are not
-diagnosed — a dropped slur and a rhythm difference both look like this from the
-counts, and settling them needs the score in front of a person. `STEPS.md` records how each stage
+It now runs clean the whole way: **no health issues, no lyric mismatches**, and it
+reaches stage `review`. Two things needed a person to read the page, and both are
+recorded in `fixes.json` with their reasoning — a dot the OCR invented in m26, and a
+slur it dropped in m50. A third case needed no score edit at all: in m32 the bass
+lower voice holds one syllable while the others sing two, which is a rhythm
+difference and was fixed in the text. `STEPS.md` records how each stage
 was produced, including a wrong conclusion and its correction — worth reading before
 trusting a tidy-looking diagnosis of a scanned score.
 

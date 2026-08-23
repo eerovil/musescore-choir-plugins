@@ -281,20 +281,26 @@ a silently ignored fix leaves the score looking repaired when it is not.
 
 The fixture now cleans with **no health issues**.
 
-### What is actually left
+### What was left, and how it went
 
-```
-[too_few] m31-34  B2:  17 syllables for 18 slots
-[too_few] m50-52  B1:  13 syllables for 14 slots
-```
+Two lines, one note short each. Both were called "dropped melisma slurs" at one
+point; only one of them was.
 
-One note without a syllable in each. Earlier notes here called both "dropped
-melisma slurs" — that was stated with more confidence than the evidence carries.
-Looking at m32 at 400 dpi, the bass lower voice has **three** notes (half, dotted
-quarter, eighth) against the tenors' four syllables. That is a rhythm difference,
-not necessarily a melisma, and which of the two it is decides whether the fix is a
-slur in the score or a different syllable split in the text.
+**m31–34 B2 — not a slur.** At 400 dpi the bass lower voice in m32 has three notes
+(half, dotted quarter, eighth) where the tenors sing four syllables. It holds "kaik"
+through the others' "ki," and sings three. Nothing is wrong with the score; the text
+was wrong. Giving that voice `"kaik kaik-ki ..."` made it 18 for 18 — a lyric edit,
+no score edit.
 
-Both look identical from the counts. Settling them needs someone reading the two
-bass voices apart at the notehead — the same thing that settled m26, and the same
-thing that neither the health check nor the lyric arithmetic can do.
+**m50–52 B1 — a slur, and it is visible.** The page draws one over the fourth and
+fifth notes of the upper bass voice in m50; the OCR lost it. The lower voice's five
+notes carry its own printed "vir - ta ven-het-tä," exactly, so the melisma belongs
+to B1. Recorded in `fixes.json` and applied during the build.
+
+The two cases look identical from the counts — one note without a syllable — and
+they have opposite fixes. Only the page separates them, which is the fourth rule
+again.
+
+**The fixture now runs clean the whole way: no health issues, no lyric mismatches,
+stage `review`.** Of 87 notes originally without a syllable, none are left, and the
+score carries two recorded human judgements, each with its reason written out.

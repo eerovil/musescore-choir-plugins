@@ -6836,7 +6836,7 @@
               <pitch>49</pitch>
               <tpc>9</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>ven</text></Lyrics></Chord>
+            <Spanner type="Slur"><Slur><up>up</up></Slur><next><location><fractions>1/8</fractions></location></next></Spanner><Lyrics><syllabic>begin</syllabic><text>ven</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -6844,7 +6844,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            <Lyrics><syllabic>middle</syllabic><text>het</text></Lyrics></Chord>
+            <Spanner type="Slur"><prev><location><fractions>-1/8</fractions></location></prev></Spanner></Chord>
           <Beam>
             </Beam>
           <Chord>
@@ -6854,7 +6854,7 @@
               <pitch>53</pitch>
               <tpc>13</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>tä,</text></Lyrics></Chord>
+            <Lyrics><syllabic>middle</syllabic><text>het</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -6862,7 +6862,7 @@
               <pitch>53</pitch>
               <tpc>13</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>ven</text></Lyrics></Chord>
+            <Lyrics><syllabic>end</syllabic><text>tä,</text></Lyrics></Chord>
           </voice>
         </Measure>
       <Measure>
@@ -6886,7 +6886,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>het</text></Lyrics></Chord>
+            <Lyrics><syllabic>begin</syllabic><text>ven</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -6911,7 +6911,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            <Lyrics><syllabic>single</syllabic><text>tä,</text></Lyrics></Chord>
+            <Lyrics><syllabic>middle</syllabic><text>het</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -6919,7 +6919,7 @@
               <pitch>49</pitch>
               <tpc>9</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>ven</text></Lyrics></Chord>
+            <Lyrics><syllabic>end</syllabic><text>tä,</text></Lyrics></Chord>
           <Beam>
             </Beam>
           <Chord>
@@ -6939,7 +6939,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            <Lyrics><syllabic>middle</syllabic><text>het</text></Lyrics></Chord>
+            <Lyrics><syllabic>begin</syllabic><text>ven</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -6964,7 +6964,7 @@
               <pitch>48</pitch>
               <tpc>14</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>tä</text></Lyrics></Chord>
+            <Lyrics><syllabic>middle</syllabic><text>het</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -6972,7 +6972,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            <Lyrics><syllabic>single</syllabic><text>vie.</text></Lyrics></Chord>
+            <Lyrics><syllabic>end</syllabic><text>tä</text></Lyrics></Chord>
           </voice>
         </Measure>
       <Measure>
@@ -6984,7 +6984,7 @@
               <pitch>49</pitch>
               <tpc>9</tpc>
               </Note>
-            </Chord>
+            <Lyrics><syllabic>single</syllabic><text>vie.</text></Lyrics></Chord>
           <Rest>
             <durationType>quarter</durationType>
             </Rest>
@@ -8046,7 +8046,7 @@
               <pitch>53</pitch>
               <tpc>13</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>kaik</text></Lyrics></Chord>
+            <Lyrics><syllabic>single</syllabic><text>kaik</text></Lyrics></Chord>
           <Chord>
             <dots>1</dots>
             <durationType>quarter</durationType>
@@ -8054,7 +8054,7 @@
               <pitch>56</pitch>
               <tpc>10</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>ki</text></Lyrics></Chord>
+            <Lyrics><syllabic>begin</syllabic><text>kaik</text></Lyrics></Chord>
           <Chord>
             <BeamMode>no</BeamMode>
             <durationType>eighth</durationType>
@@ -8065,7 +8065,7 @@
               <pitch>55</pitch>
               <tpc>15</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>ka</text></Lyrics></Chord>
+            <Lyrics><syllabic>end</syllabic><text>ki</text></Lyrics></Chord>
           </voice>
         </Measure>
       <Measure>
@@ -8082,7 +8082,7 @@
               <pitch>55</pitch>
               <tpc>15</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>to</text></Lyrics></Chord>
+            <Lyrics><syllabic>begin</syllabic><text>ka</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -8090,14 +8090,14 @@
               <pitch>53</pitch>
               <tpc>13</tpc>
               </Note>
-            <Lyrics><syllabic>single</syllabic><text>aa;</text></Lyrics></Chord>
+            <Lyrics><syllabic>middle</syllabic><text>to</text></Lyrics></Chord>
           <Chord>
             <durationType>half</durationType>
             <Note>
               <pitch>55</pitch>
               <tpc>15</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>kuin</text></Lyrics></Chord>
+            <Lyrics><syllabic>end</syllabic><text>aa;</text></Lyrics></Chord>
           <Beam>
             </Beam>
           <Chord>
@@ -8110,7 +8110,7 @@
               <pitch>54</pitch>
               <tpc>8</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>ka</text></Lyrics></Chord>
+            <Lyrics><syllabic>begin</syllabic><text>kuin</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -8118,7 +8118,7 @@
               <pitch>54</pitch>
               <tpc>8</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>säi</text></Lyrics></Chord>
+            <Lyrics><syllabic>end</syllabic><text>ka</text></Lyrics></Chord>
           </voice>
         </Measure>
       <Measure>
@@ -8129,7 +8129,7 @@
               <pitch>53</pitch>
               <tpc>13</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>lyi</text></Lyrics></Chord>
+            <Lyrics><syllabic>begin</syllabic><text>säi</text></Lyrics></Chord>
           <Beam>
             </Beam>
           <Chord>
@@ -8139,7 +8139,7 @@
               <pitch>53</pitch>
               <tpc>13</tpc>
               </Note>
-            <Lyrics><syllabic>single</syllabic><text>si</text></Lyrics></Chord>
+            <Lyrics><syllabic>middle</syllabic><text>lyi</text></Lyrics></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -8147,7 +8147,7 @@
               <pitch>53</pitch>
               <tpc>13</tpc>
               </Note>
-            <Lyrics><syllabic>begin</syllabic><text>sie</text></Lyrics></Chord>
+            <Lyrics><syllabic>end</syllabic><text>si</text></Lyrics></Chord>
           <Chord>
             <dots>1</dots>
             <durationType>quarter</durationType>
@@ -8155,7 +8155,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            <Lyrics><syllabic>end</syllabic><text>lu</text></Lyrics></Chord>
+            <Lyrics><syllabic>begin</syllabic><text>sie</text></Lyrics></Chord>
           <Chord>
             <BeamMode>no</BeamMode>
             <durationType>eighth</durationType>
@@ -8163,7 +8163,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            </Chord>
+            <Lyrics><syllabic>end</syllabic><text>lu</text></Lyrics></Chord>
           </voice>
         </Measure>
       <Measure>

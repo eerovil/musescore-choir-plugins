@@ -6836,7 +6836,7 @@
               <pitch>49</pitch>
               <tpc>9</tpc>
               </Note>
-            </Chord>
+            <Spanner type="Slur"><Slur><up>up</up></Slur><next><location><fractions>1/8</fractions></location></next></Spanner></Chord>
           <Chord>
             <BeamMode>mid</BeamMode>
             <durationType>eighth</durationType>
@@ -6844,7 +6844,7 @@
               <pitch>51</pitch>
               <tpc>11</tpc>
               </Note>
-            </Chord>
+            <Spanner type="Slur"><prev><location><fractions>-1/8</fractions></location></prev></Spanner></Chord>
           <Beam>
             </Beam>
           <Chord>

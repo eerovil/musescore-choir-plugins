@@ -1,46 +1,23 @@
 {
   "name": "Virta Venhettä Vie",
   "slug": "virta-venhetta-vie",
-  "stage": "fix",
+  "stage": "review",
   "mode": "normal",
   "sources": {
     "xml": "Virta-venhetta-vie.xml",
     "pdf": "Virta venhettä vie.pdf"
   },
   "created_at": 1787475359.460669,
-  "updated_at": 1787492774.879643,
+  "updated_at": 1787493656.9092,
   "cleaned": "Virta-venhetta-vie_cleaned.mscx",
-  "cleaned_fingerprint": "sha1:d421a82a4596708c577c9d4be4490ca0d3df6002",
+  "cleaned_fingerprint": "sha1:67310c865443a324d23476316849da3e88164db9",
   "health": {
-    "checked_against": "sha1:cd78bd541ee0169d00a60af85cbc776d28452740",
+    "checked_against": "sha1:7f77aeb0d20f6c839bef86600e15f52101e0db65",
     "issues": []
   },
   "lyrics": {
     "json": "lyrics.json",
-    "imported_against": "sha1:d421a82a4596708c577c9d4be4490ca0d3df6002",
-    "warnings": [
-      {
-        "kind": "too_few",
-        "message": "Measures 31-34 (staffs 4): too few tokens (17 syllables, 18 slots); some slots will be empty.",
-        "measure_start": 31,
-        "measure_end": 34,
-        "staff_ids": [
-          4
-        ],
-        "syllables": 17,
-        "slots": 18
-      },
-      {
-        "kind": "too_few",
-        "message": "Measures 50-52 (staffs 3): too few tokens (13 syllables, 14 slots); some slots will be empty.",
-        "measure_start": 50,
-        "measure_end": 52,
-        "staff_ids": [
-          3
-        ],
-        "syllables": 13,
-        "slots": 14
-      }
-    ]
+    "imported_against": "sha1:67310c865443a324d23476316849da3e88164db9",
+    "warnings": []
   }
 }

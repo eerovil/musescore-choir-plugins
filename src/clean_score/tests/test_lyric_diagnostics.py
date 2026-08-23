@@ -183,8 +183,11 @@ def test_slot_counts_are_what_a_mismatch_is_measured_against():
     counts = lyric_txt.slot_counts(root)
     assert set(counts) == {1, 2, 3, 4}
 
-    # The three known residuals, as the last build reported them.
-    for staff, (lo, hi), slots in ((4, (8, 10), 11), (4, (31, 34), 18), (3, (50, 52), 14)):
+    # Ranges the lyric work turned on, with the slot totals the importer sees.
+    # These moved as the score was repaired -- m50-52 B1 lost a slot when a
+    # dropped slur was restored -- so they pin the two against each other rather
+    # than any particular number being interesting.
+    for staff, (lo, hi), slots in ((4, (8, 10), 11), (4, (31, 34), 18), (3, (50, 52), 13)):
         assert sum(counts[staff].get(m, 0) for m in range(lo, hi + 1)) == slots
 
     # Eligibility matches the export: a continuation note takes no syllable, so

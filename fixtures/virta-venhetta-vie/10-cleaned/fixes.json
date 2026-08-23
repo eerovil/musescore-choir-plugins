@@ -5,5 +5,13 @@
     "measure": 26,
     "index": 0,
     "why": "The OCR gave B1's first note a dot. On the page the bass staff's first beat is two noteheads a second apart sharing one dot, and the dot belongs to the lower voice (B2), which is a dotted quarter. B1 is a plain quarter, making its bar 8/8 like the other three. Confirmed by eye against the scan."
+  },
+  {
+    "kind": "slur",
+    "staff": 3,
+    "measure": 50,
+    "index": 3,
+    "span": 1,
+    "why": "The page draws a slur over the fourth and fifth notes of B1 in m50 and the OCR lost it. B1 doubles the tenor line here (13 syllables) but has 14 notes; the lower bass voice's five notes carry its own printed 'vir - ta ven - het-ta,' exactly, so the melisma is B1's. With the slur the second note carries no syllable and the line fits."
   }
 ]
