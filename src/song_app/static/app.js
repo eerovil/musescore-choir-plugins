@@ -253,7 +253,7 @@ async function renderPdf(view, url) {
   const lib = await ensurePdfjs();
   const pdf = await lib.getDocument(url).promise;
   if (view._tok !== token) return; // superseded by a newer render
-  const width = (view.clientWidth || 600) * (view._zoom || 1);
+  const width = view.clientWidth || 600;
   const canvases = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
@@ -262,10 +262,6 @@ async function renderPdf(view, url) {
     const vp = page.getViewport({ scale: (width - 14) / base.width });
     const c = el("canvas", { className: "pdfpage" });
     c.width = vp.width; c.height = vp.height;
-    // The stylesheet caps a page at the container width, which would scale a
-    // zoomed render straight back down again. Past 1x it may overflow and the
-    // view scrolls to it.
-    if ((view._zoom || 1) > 1) c.style.maxWidth = "none";
     await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
     if (view._tok !== token) return;
     canvases.push(c);
@@ -493,26 +489,13 @@ function viewer(song, slug, panes, rebuild) {
       body._cleanup = () => window.removeEventListener(SYSTEM_EVENT, onAsk);
     }
 
-    const zoomBy = (factor) => {
-      const v = frames[panes[i]];
-      if (!v || v._systems) return;                 // editors size themselves
-      v._zoom = Math.max(0.5, Math.min(4, (v._zoom || 1) * factor));
-      v._renderedUrl = null;                        // force a re-render at the new scale
-      ensureRendered(panes[i]);
-    };
-    const zoomRow = [
-      el("button", { className: "vtab", title: "zoom out", onclick: () => zoomBy(1 / 1.25) }, "−"),
-      el("button", { className: "vtab", title: "zoom in", onclick: () => zoomBy(1.25) }, "+"),
-    ];
-
     const ctrl = panes.length === 1
       ? el("button", { className: "vtab split", title: "Split view",
           onclick: () => { panes.push(keys.find((k) => k !== panes[0]) || panes[0]); rebuild(); } }, "⇆ Split")
       : el("button", { className: "vtab close", title: "Close this pane",
           onclick: () => { panes.splice(i, 1); rebuild(); } }, "✕");
 
-    const bar = el("div", { className: "viewtabs" }, ...tabRow,
-      el("span", { className: "spacer" }), ...zoomRow, ctrl);
+    const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), ctrl);
     show(panes[i]);
     // Re-render only the cleaned previews; their scroll is preserved by renderPdf.
     refreshers.push((fp) => {
