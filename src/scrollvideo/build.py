@@ -27,7 +27,8 @@ from .engrave import engrave
 from .geometry import playing_coverage, rasterise
 from .timing import (SMOOTH_SECONDS, TempoMap, note_events, rest_events,
                      scroll_anchors, smooth_scroll)
-from .video import mux, place, render
+from .video import (NVIDIA_ENCODER, SOFTWARE_ENCODER, mux, place,
+                    preferred_encoder, render)
 
 Logger = Callable[[str], None]
 
@@ -51,6 +52,11 @@ COMBINED = "ALL"
 
 def _noop(_msg: str) -> None:
     pass
+
+
+def video_encoder(hardware_encoding: bool, width: int, height: int) -> str:
+    """Select automatic hardware encoding unless the caller explicitly disabled it."""
+    return preferred_encoder(width, height) if hardware_encoding else SOFTWARE_ENCODER
 
 
 def unsupported_repeats(root: etree._Element) -> List[str]:
@@ -98,7 +104,9 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
                  smooth_seconds: float = SMOOTH_SECONDS,
                  basename: Optional[str] = None,
-                 log: Logger = _noop) -> List[str]:
+                 hardware_encoding: bool = True,
+                 audio_cache_dir: Optional[str] = None,
+                 log: Logger = _noop, progress: Logger = _noop) -> List[str]:
     """Render a scrolling video per voice. Returns the paths written.
 
     The picture is the same for every voice, so by default it is encoded once and
@@ -213,12 +221,29 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
 
         tracks: dict = {}
         if with_audio:
-            log(f"Rendering {len(mixes)} audio mix(es)")
+            log(f"Preparing {len(mixes)} audio mix(es)")
             with ThreadPoolExecutor(max_workers=min(4, len(mixes))) as pool:
-                futures = {name: pool.submit(audio_mod.render_mix, source, focus,
-                                             os.path.join(tmp, f"{name}.wav"))
-                           for name, focus in mixes}
-                tracks = {name: future.result() for name, future in futures.items()}
+                if audio_cache_dir:
+                    futures = {name: pool.submit(audio_mod.render_mix_cached, source, focus,
+                                                 audio_cache_dir)
+                               for name, focus in mixes}
+                    results = {name: future.result() for name, future in futures.items()}
+                    tracks = {name: result[0] for name, result in results.items()}
+                    reused = sum(result[1] for result in results.values())
+                    if reused:
+                        log(f"Reused {reused} unchanged audio mix(es)")
+                    audio_mod.prune_mix_cache(audio_cache_dir, set(tracks.values()))
+                else:
+                    futures = {name: pool.submit(audio_mod.render_mix, source, focus,
+                                                 os.path.join(tmp, f"{name}.wav"))
+                               for name, focus in mixes}
+                    tracks = {name: future.result() for name, future in futures.items()}
+
+        encoder = video_encoder(hardware_encoding, width, height)
+        if encoder == NVIDIA_ENCODER:
+            log("Using NVIDIA hardware video encoding")
+        else:
+            log("Using software video encoding")
 
         if emphasise:
             for name, focus in mixes:
@@ -228,7 +253,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                 out = os.path.join(out_dir, f"{base} {name}.mp4")
                 render(strip, placed, anchors, out, px_per_unit=px_per_unit, width=width,
                        fps=fps, focus_staff=staff, audio_path=tracks.get(name),
-                       coverage=coverage)
+                       coverage=coverage, progress=progress, encoder=encoder)
                 written.append(out)
                 log(f"{name}: wrote {os.path.basename(out)}")
             return written
@@ -236,7 +261,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         log("Rendering the video (once, shared by every voice)")
         shared = os.path.join(tmp, "shared.mp4")
         render(strip, placed, anchors, shared, px_per_unit=px_per_unit, width=width, fps=fps,
-               coverage=coverage)
+               coverage=coverage, progress=progress, encoder=encoder)
         for name, _focus in mixes:
             out = os.path.join(out_dir, f"{base} {name}.mp4")
             if tracks.get(name):

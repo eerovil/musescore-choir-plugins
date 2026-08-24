@@ -48,6 +48,8 @@ def main() -> None:
                         help="light each voice's own notes brighter; re-encodes per voice (slow)")
     parser.add_argument("--no-combined", action="store_true",
                         help="skip the extra ALL video (every voice at equal volume)")
+    parser.add_argument("--software-encoder", action="store_true",
+                        help="disable automatic NVIDIA hardware encoding")
     args = parser.parse_args()
 
     out_dir = args.out_dir or os.path.join(os.path.dirname(os.path.abspath(args.score)),
@@ -60,8 +62,10 @@ def main() -> None:
                                width=width, fps=args.fps, with_audio=not args.no_audio,
                                keep_silent=args.keep_silent, emphasise=args.emphasise,
                                combined=not args.no_combined,
+                               hardware_encoding=not args.software_encoder,
                                spacer_per_quarter=args.spacer, smooth_seconds=args.smooth,
-                               log=lambda m: print(m, flush=True))
+                               log=lambda m: print(m, flush=True),
+                               progress=lambda m: print(m, flush=True))
     except NotImplementedError as exc:
         sys.exit(f"Unsupported score: {exc}")
     print(f"\nWrote {len(written)} video(s) to {out_dir}")

@@ -8,9 +8,13 @@ render it. This replaces the `export.qml` + AppleScript round-trip.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import shutil
 import subprocess
 import tempfile
+import wave
 from typing import List, Optional
 
 from lxml import etree
@@ -21,6 +25,7 @@ VOLUME_CTRL = "7"
 CLI_TIMEOUT = 600
 FOCUS_VOLUME = 127
 BACKGROUND_VOLUME = 36
+AUDIO_CACHE_VERSION = 1
 
 
 def musescore_cli() -> str:
@@ -88,3 +93,67 @@ def render_mix(mscx_path: str, focus: Optional[str], out_path: str, **volumes) -
         return run_musescore(tmp.name, out_path)
     finally:
         os.unlink(tmp.name)
+
+
+def _valid_wav(path: str) -> bool:
+    """A cache entry is reusable only after a complete, readable WAV was written."""
+    try:
+        with wave.open(path, "rb") as wav:
+            return wav.getnchannels() > 0 and wav.getframerate() > 0 and wav.getnframes() > 0
+    except (FileNotFoundError, EOFError, wave.Error):
+        return False
+
+
+def _cache_key(mscx_path: str, focus: Optional[str], **volumes) -> str:
+    with open(mscx_path, "rb") as source:
+        score_digest = hashlib.sha256(source.read()).hexdigest()
+    configured = musescore_cli()
+    executable = shutil.which(configured) or configured
+    try:
+        stat = os.stat(executable)
+        executable_identity = [os.path.realpath(executable), stat.st_size, stat.st_mtime_ns]
+    except FileNotFoundError:
+        executable_identity = [executable]
+    payload = {
+        "version": AUDIO_CACHE_VERSION,
+        "score": score_digest,
+        "focus": focus,
+        "focus_volume": volumes.get("focus_volume", FOCUS_VOLUME),
+        "background_volume": volumes.get("background_volume", BACKGROUND_VOLUME),
+        "musescore": executable_identity,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def render_mix_cached(mscx_path: str, focus: Optional[str], cache_dir: str,
+                      **volumes) -> tuple[str, bool]:
+    """Return (WAV path, reused), rendering atomically on a cache miss."""
+    os.makedirs(cache_dir, exist_ok=True)
+    cached = os.path.join(cache_dir, f"{_cache_key(mscx_path, focus, **volumes)}.wav")
+    if _valid_wav(cached):
+        return cached, True
+
+    handle = tempfile.NamedTemporaryFile(dir=cache_dir, suffix=".wav", delete=False)
+    pending = handle.name
+    handle.close()
+    os.unlink(pending)
+    try:
+        render_mix(mscx_path, focus, pending, **volumes)
+        if not _valid_wav(pending):
+            raise RuntimeError("MuseScore wrote an invalid WAV audio mix")
+        os.replace(pending, cached)
+        return cached, False
+    finally:
+        if os.path.exists(pending):
+            os.unlink(pending)
+
+
+def prune_mix_cache(cache_dir: str, keep: set[str]) -> None:
+    """Keep only the current build's complete WAVs in the dedicated cache."""
+    if not os.path.isdir(cache_dir):
+        return
+    keep = {os.path.abspath(path) for path in keep}
+    for name in os.listdir(cache_dir):
+        path = os.path.abspath(os.path.join(cache_dir, name))
+        if name.endswith(".wav") and path not in keep:
+            os.unlink(path)

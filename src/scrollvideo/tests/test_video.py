@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from src.scrollvideo import video
 from src.scrollvideo.geometry import Layout, NoteGeom, RestGeom
 from src.scrollvideo.timing import NoteEvent
 from src.scrollvideo.video import (HIGHLIGHT, Placed, blend_beat_marker,
@@ -78,6 +79,52 @@ def test_render_writes_a_playable_video_of_the_expected_length(tmp_path):
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
         capture_output=True, text=True).stdout.strip())
     assert seconds == pytest.approx(2.0, abs=0.2)
+
+
+@needs_ffmpeg
+def test_render_reports_frame_progress_from_start_to_finish(tmp_path):
+    strip = np.full((60, 160, 3), 255, dtype=np.uint8)
+    progress = []
+
+    render(strip, [], ([0.0, 1.0], [0.0, 0.0]), str(tmp_path / "progress.mp4"),
+           px_per_unit=1.0, width=160, fps=10, duration=1.0,
+           progress=progress.append)
+
+    assert progress[0] == "Rendering video: 0% (0/10 frames)"
+    assert progress[-1] == "Rendering video: 100% (10/10 frames)"
+    assert len(progress) <= 101
+
+
+def test_hardware_encoding_is_used_only_when_a_real_probe_succeeds(monkeypatch):
+    monkeypatch.setattr(video, "_encoder_works", lambda encoder, width, height: True)
+    assert video.preferred_encoder(3840, 2160) == video.NVIDIA_ENCODER
+
+    monkeypatch.setattr(video, "_encoder_works", lambda encoder, width, height: False)
+    assert video.preferred_encoder(3840, 2160) == video.SOFTWARE_ENCODER
+
+
+def test_nvidia_encoder_uses_the_measured_high_quality_settings():
+    args = video._video_encoder_args(video.NVIDIA_ENCODER, "medium", 20)
+    assert args == [
+        "-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq",
+        "-rc", "vbr", "-cq", "16", "-b:v", "0", "-pix_fmt", "yuv420p",
+    ]
+
+
+def test_hardware_probe_uses_the_real_size_and_encoder_options(monkeypatch):
+    seen = {}
+
+    def run(command, **kwargs):
+        seen["command"] = command
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(video.subprocess, "run", run)
+    assert video._encoder_works(video.NVIDIA_ENCODER, 3840, 2160)
+    assert "color=size=3840x2160:rate=1" in seen["command"]
+    encoder_start = seen["command"].index("-c:v")
+    output_format = seen["command"].index("-f", encoder_start)
+    assert video._video_encoder_args(video.NVIDIA_ENCODER, "medium", 20) == \
+        seen["command"][encoder_start:output_format]
 
 
 @needs_ffmpeg
