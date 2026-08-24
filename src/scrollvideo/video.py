@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from bisect import bisect_right
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -21,10 +22,12 @@ from .timing import NoteEvent
 HIGHLIGHT = (42, 95, 171)
 FOCUS_ALPHA = 1.0        # how blue the voice this track is for goes
 BACKGROUND_ALPHA = 0.45  # ... and the other voices, when emphasising one
+BAND_ALPHA = 0.18        # translucent beat marker; engraving remains readable
 TAIL_SECONDS = 1.5       # keep rolling past the last note
 # Engraving is flat white with sharp black marks — x264 finds it very compressible,
 # so a fast preset costs little quality here and saves a lot of time at 4K.
 DEFAULT_PRESET = "medium"
+_BAND_COLOUR = np.rint(np.array(HIGHLIGHT) * BAND_ALPHA).astype(np.uint8)
 
 
 def mux(video_path: str, audio_path: str, out_path: str) -> str:
@@ -74,6 +77,31 @@ def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float) -> Li
     return placed
 
 
+def latest_onset_index(onsets: Sequence[float], t: float) -> Optional[int]:
+    """Index of the last onset at or before ``t``, or none before music starts."""
+    index = bisect_right(onsets, t) - 1
+    return index if index >= 0 else None
+
+
+def blend_beat_marker(frame: np.ndarray, marker: Placed, left: int) -> None:
+    """Blend a two-notehead-wide, full-height marker into ``frame`` in place."""
+    width = frame.shape[1]
+    note_width = max(1, marker.x1 - marker.x0)
+    band_width = 2 * note_width
+    centre = (marker.x0 + marker.x1) / 2
+    x0 = int(round(centre - band_width / 2)) - left
+    x1 = x0 + band_width
+    x0, x1 = max(x0, 0), min(x1, width)
+    if x1 <= x0:
+        return
+
+    # Both operations use the reusable frame slice as their output, so no
+    # frame-sized temporary is allocated for the marker.
+    band = frame[:, x0:x1]
+    np.multiply(band, 1 - BAND_ALPHA, out=band, casting="unsafe")
+    np.add(band, _BAND_COLOUR, out=band, casting="unsafe")
+
+
 def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[float], Sequence[float]],
            out_path: str, *, px_per_unit: float, width: int = 3840, fps: int = 60,
            playhead: float = 0.35, focus_staff: Optional[int] = None,
@@ -111,6 +139,7 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
     # overwrites the window, and only the margins past either end need whiting out.
     frame = np.empty((height, width, 3), dtype=np.uint8)
     colour = np.array(HIGHLIGHT, dtype=np.float32)
+    onsets = tuple(p.on for p in placed)
 
     try:
         for frame_no in range(n_frames):
@@ -124,6 +153,10 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
                 frame[:, dst1:] = 255
             if src1 > src0:
                 np.copyto(frame[:, dst0:dst1], strip[:, src0:src1])
+
+            marker_index = latest_onset_index(onsets, t)
+            if marker_index is not None:
+                blend_beat_marker(frame, placed[marker_index], left)
 
             for p in placed:
                 if p.on > t:
