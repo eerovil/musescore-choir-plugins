@@ -28,6 +28,33 @@ app = FastAPI(title="song")
 
 
 # --------------------------------------------------------------------------
+# Freshness
+# --------------------------------------------------------------------------
+# The app deploys over itself every couple of minutes, and a recorded video is
+# rewritten under the same name whenever a part is re-rendered. Neither the SPA
+# files nor the videos carried any Cache-Control, which does NOT mean "do not
+# cache": a browser given no instruction is free to invent a freshness lifetime
+# from Last-Modified, and Chrome on Android invents a generous one. The phone
+# then serves old code and old video off its own disk without ever asking us,
+# which is why only restarting the browser helped.
+#
+# "no-cache" is not "no-store" — the copy is kept, but the browser has to ask
+# before reusing it. Starlette's FileResponse already sends an ETag and honours
+# If-None-Match, so an unchanged file still costs one small 304 rather than a
+# re-download.
+REVALIDATE = {"Cache-Control": "no-cache"}
+
+
+class RevalidatingStaticFiles(StaticFiles):
+    """StaticFiles that makes the browser revalidate instead of guessing."""
+
+    def file_response(self, *args, **kwargs):  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(REVALIDATE)
+        return response
+
+
+# --------------------------------------------------------------------------
 # WebSocket connection manager — progress logs + state-changed pings per slug.
 # --------------------------------------------------------------------------
 class Hub:
@@ -99,6 +126,15 @@ def is_recording(song: state.Song) -> bool:
     return False
 
 
+def _media_version(path: str) -> str:
+    """A short stamp that changes whenever the file does (mtime + size)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return "0"
+    return f"{int(st.st_mtime)}-{st.st_size}"
+
+
 def _media_list(song: state.Song) -> List[Dict]:
     """Merged per-voice videos (and the raw recording) available for review."""
     vdir = song.path("media", "video")
@@ -110,11 +146,14 @@ def _media_list(song: state.Song) -> List[Dict]:
             continue
         prefix = song.slug + " "
         is_merged = name.startswith(prefix)
+        # Re-recording a part rewrites the same file name, so without the stamp
+        # the URL is identical and a phone happily plays yesterday's video.
+        version = _media_version(os.path.join(vdir, name))
         out.append({
             "name": name,
             "label": name[len(prefix):].rsplit(".", 1)[0] if is_merged else "raw recording",
             "merged": is_merged,
-            "url": f"/api/songs/{song.slug}/media/{name}",
+            "url": f"/api/songs/{song.slug}/media/{name}?v={version}",
         })
     out.sort(key=lambda m: (not m["merged"], m["label"]))
     return out
@@ -612,7 +651,7 @@ def api_page(slug: str, page: int, dpi: int = 150, grid: bool = False):
         path = pipeline.page_image(song.dir, pdf, page, max(50, min(dpi, 600)), grid)
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
 def _cleaned_breaks(song) -> tuple:
@@ -652,7 +691,7 @@ def api_cleaned_system(slug: str, index: int, dpi: int = 200):
         raise HTTPException(404, str(exc))
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
 @app.get("/api/songs/{slug}/system/{index}")
@@ -666,7 +705,7 @@ def api_system_image(slug: str, index: int, dpi: int = 400):
         raise HTTPException(404, str(exc))
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
 @app.get("/api/songs/{slug}/pdf")
@@ -675,7 +714,7 @@ def api_pdf(slug: str):
     pdf = song.source_path("pdf")
     if not pdf or not os.path.exists(pdf):
         raise HTTPException(404, "No PDF")
-    return FileResponse(pdf, media_type="application/pdf")
+    return FileResponse(pdf, media_type="application/pdf", headers=dict(REVALIDATE))
 
 
 @app.get("/api/songs/{slug}/render")
@@ -711,7 +750,7 @@ def api_render(slug: str, doc: str = "cleaned"):
         raise
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    return FileResponse(rendered, media_type="application/pdf")
+    return FileResponse(rendered, media_type="application/pdf", headers=dict(REVALIDATE))
 
 
 @app.post("/api/songs/{slug}/open-score")
@@ -925,7 +964,7 @@ def api_media(slug: str, name: str):
     if not os.path.exists(path):
         raise HTTPException(404, "No such media")
     kind = "video/mp4" if safe.lower().endswith(".mp4") else "video/quicktime"
-    return FileResponse(path, media_type=kind)
+    return FileResponse(path, media_type=kind, headers=dict(REVALIDATE))
 
 
 @app.post("/api/songs/{slug}/youtube-delete")
@@ -1010,7 +1049,7 @@ async def _startup() -> None:
 # --------------------------------------------------------------------------
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=dict(REVALIDATE))
 
 
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+app.mount("/", RevalidatingStaticFiles(directory=STATIC_DIR, html=True), name="static")
