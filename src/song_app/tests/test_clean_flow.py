@@ -44,6 +44,7 @@ def test_grid_describes_every_system(song_dir):
     assert [s["staff_id"] for s in grid[0]["staves"]] == [1, 2]
     assert grid[0]["staves"][0]["voices"] == 2
     assert all(s["answer"] == "" for sys in grid for s in sys["staves"])
+    assert [sys["can_reuse_previous"] for sys in grid[:4]] == [False, True, True, False]
 
 
 def test_grid_answers_survive_a_reload(song_dir):

@@ -630,9 +630,37 @@ function updateProgress(line) {
   logBox.scrollTop = logBox.scrollHeight;
 }
 
-function makeLog() {
+function makeLog(job) {
   logBox = el("div", { className: "log" });
+  for (const entry of job?.logs || []) {
+    const cls = entry.type === "error" ? "err" : entry.type === "progress" ? "progress" : "";
+    logBox.append(el("div", { className: cls }, entry.line));
+  }
+  logBox.scrollTop = logBox.scrollHeight;
   return logBox;
+}
+
+function verificationView(summary) {
+  if (!summary) return el("p", { className: "hint" }, "Verification has not run.");
+  const icon = { passed: "✓", warning: "⚠", stale: "⚠", not_checked: "—" };
+  const row = (name, result) => el("li", { className: `check ${result?.status || "not_checked"}` },
+    `${icon[result?.status] || "—"} ${name}: ${result?.detail || "Not checked."}`);
+  const media = summary.media || {};
+  const files = Object.entries(media.files || {}).map(([part, result]) =>
+    el("li", { className: `check file ${result.status || "not_checked"}` },
+      `${icon[result.status] || "—"} ${part}: ${result.detail}`));
+  return el("div", { className: "verify" },
+    el("h3", {}, "Verification"),
+    el("p", { className: "hint" },
+      `Expected parts: ${(summary.expected_parts || []).join(", ") || "not available"}; `
+      + `printed systems: ${summary.systems || "not available"}.`),
+    el("ul", {},
+      row("Health", summary.health),
+      row("Source notes", summary.notes),
+      row("Lyrics", summary.lyrics),
+      row("Rendered files", media),
+      ...files),
+    summary.render_error ? el("div", { className: "banner err" }, "Render error: " + summary.render_error) : "");
 }
 
 // ---- per-stage panels ----------------------------------------------------
@@ -682,6 +710,7 @@ function panelRegister(panel, song, P, refresh) {
 }
 
 async function panelClean(panel, song, slug, P, refresh) {
+  const cleanJob = song.jobs?.clean;
   panel.append(el("h2", {}, "Clean"),
     el("p", { className: "sub" }, song.mode === "per-system"
       ? "Name each staff's voices per system, then build."
@@ -731,6 +760,28 @@ async function panelClean(panel, song, slug, P, refresh) {
           }
         }
       };
+      const effectiveBefore = (staff, system) => {
+        let carry = "";
+        for (const inp of byStaff()[staff] || []) {
+          if (+inp.dataset.sys >= system) break;
+          const value = inp.value.trim();
+          if (value === CLEARED) carry = "";
+          else if (value) carry = value;
+        }
+        return carry;
+      };
+      holder.querySelectorAll("button[data-reuse]").forEach((button) => {
+        button.onclick = () => {
+          const start = +button.dataset.reuse;
+          for (let si = start; si < grid.length && grid[si].can_reuse_previous; si++) {
+            for (const inp of inputs.filter((candidate) => +candidate.dataset.sys === si)) {
+              const suggested = effectiveBefore(inp.dataset.staff, si);
+              if (!inp.value.trim() && suggested) inp.value = suggested;
+            }
+          }
+          cascade();
+        };
+      });
       // staves left unnamed (would be dropped from the result)
       const unnamed = () => {
         const out = [];
@@ -790,7 +841,11 @@ async function panelClean(panel, song, slug, P, refresh) {
     }}, cleanLabel);
     panel.append(el("div", { className: "row" }, runBtn));
   }
-  panel.append(makeLog());
+  if (cleanJob?.status === "running")
+    panel.append(el("div", { className: "banner" }, "● Cleaning… recent messages are saved below."));
+  else if (cleanJob?.status === "failed")
+    panel.append(el("div", { className: "banner err" }, "Last clean failed: " + cleanJob.error));
+  panel.append(makeLog(cleanJob));
   if (song.has_cleaned) appendLog("A cleaned score exists. Re-cleaning will overwrite it.");
 }
 
@@ -805,8 +860,12 @@ function sysBlock(sys) {
         "data-sys": sys.system, "data-staff": st.staff_id,
         "data-hint": st.voices > 1 ? "e.g. T1, T2 (- = silent)" : "e.g. T1 (- = silent)",
       }))));
+  const reuse = sys.can_reuse_previous
+    ? el("button", { "data-reuse": sys.system }, "Reuse previous assignments through matching systems")
+    : "";
   return el("div", { className: "sysblock" },
-    el("h4", {}, `System ${sys.system + 1} — measures ${sys.measure_start}–${sys.measure_end}`),
+    el("div", { className: "row syshead" },
+      el("h4", {}, `System ${sys.system + 1} — measures ${sys.measure_start}–${sys.measure_end}`), reuse),
     el("table", { className: "grid" },
       el("tr", {}, el("th", {}, "Staff"), el("th", {}, "Voices"), el("th", {}, "Content"), el("th", {}, "Part names")),
       rows));
@@ -937,7 +996,7 @@ async function lyricsManual(panel, song, P, refresh) {
   } catch { /* no PDF, or none stored yet — the cells work regardless */ }
   // Off by default now that focusing a cell shows the system in the viewer.
   let showScore = localStorage.getItem("lyricScore") === "1";
-  const { parts, systems, cells } = grid;
+  const { parts, systems, cells, capacities } = grid;
   const cellText = (si, name) => (cells?.[si]?.[name]) || "";
   const warns = lyricMismatches(song);
   // Attach a mismatch to the system where its line STARTS (a line can span several
@@ -965,7 +1024,7 @@ async function lyricsManual(panel, song, P, refresh) {
         const shown = byStart[sys.start];
         if (shown) ta.onfocus = () => showSystem(shown);
         return el("div", { className: "lyrow" },
-          el("label", {}, p.name), ta,
+          el("label", {}, `${p.name} · ${capacities?.[sys.index]?.[p.name] ?? 0} lyric slots`), ta,
           ...cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
             `⚠ m${w.measure_start}–${w.measure_end}`
             + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
@@ -1004,6 +1063,7 @@ async function lyricsManual(panel, song, P, refresh) {
 function panelReview(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Review"),
     el("p", { className: "sub" }, "Final check of notes + lyrics before producing tracks."),
+    verificationView(song.verification_summary),
     el("div", { className: "row" },
       el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
       el("button", { onclick: async () => { await postJSON(`${P}/stage/record`); refresh(); } }, "Looks good → Record")));
@@ -1020,6 +1080,7 @@ function panelRecord(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Record"));
   const sub = el("p", { className: "sub" }, "");
   panel.append(sub);
+  panel.append(verificationView(song.verification_summary));
 
   if (recording) {
     panel.append(el("div", { className: "banner" }, "● Rendering… leave this running."));
@@ -1029,6 +1090,9 @@ function panelRecord(panel, song, P, refresh) {
   }
   if (rec.error) {
     panel.append(el("div", { className: "banner err" }, "Last run failed: " + rec.error));
+  } else if (song.jobs?.render?.status === "failed") {
+    panel.append(el("div", { className: "banner err" },
+      "Last render failed: " + song.jobs.render.error));
   }
 
   const scrollRadio = el("input", { type: "radio", name: "renderer", checked: renderer === "scroll" });
@@ -1091,7 +1155,7 @@ function panelRecord(panel, song, P, refresh) {
       el("span", { className: "hint" }, "(MuseScore + QuickRecorder, macOS)")),
     scrollOpts, screenOpts,
     el("div", { className: "row" }, runBtn),
-    makeLog());
+    makeLog(song.jobs?.render));
 
   scrollRadio.onclick = () => choose("scroll");
   screenRadio.onclick = () => choose("screen");
@@ -1114,7 +1178,8 @@ function panelRecord(panel, song, P, refresh) {
 
 function panelUpload(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Upload"),
-    el("p", { className: "sub" }, "Upload the recorded videos to YouTube and (optionally) add them to a playlist."));
+    el("p", { className: "sub" }, "Upload the recorded videos to YouTube and (optionally) add them to a playlist."),
+    verificationView(song.verification_summary));
 
   const rec = song.record || {};
   const recording = song.recording;
@@ -1128,6 +1193,9 @@ function panelUpload(panel, song, P, refresh) {
   }
   if (rec.error) {
     panel.append(el("div", { className: "banner err" }, "Last run failed: " + rec.error));
+  } else if (song.jobs?.upload?.status === "failed") {
+    panel.append(el("div", { className: "banner err" },
+      "Last upload failed: " + song.jobs.upload.error));
   }
   if (!recorded) {
     panel.append(el("p", { className: "hint" }, "Nothing to upload yet — record the videos first."));
@@ -1162,7 +1230,7 @@ function panelUpload(panel, song, P, refresh) {
     el("div", { className: "row" }, plPick),
     pl,
     el("div", { className: "row" }, uploadBtn),
-    makeLog());
+    makeLog(song.jobs?.upload || song.jobs?.render));
 
   if (uploads.length) {
     panel.append(

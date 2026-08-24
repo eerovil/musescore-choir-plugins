@@ -21,6 +21,7 @@ them be dragged, and an agent reads the same crops off disk.
 """
 import hashlib
 import json
+import hashlib
 import math
 import os
 import subprocess
@@ -239,7 +240,9 @@ def crop_systems(
     for b in bounds:
         top = max(0, min(height - 1, int(height * b.top)))
         band = max(1, min(height - top, int(height * b.bottom) - top))
-        path = os.path.join(out_dir, f"system-{b.index:02d}@{dpi}.png")
+        geometry = f"{b.page}:{b.top:.9f}:{b.bottom:.9f}".encode()
+        version = hashlib.sha1(geometry).hexdigest()[:10]
+        path = os.path.join(out_dir, f"system-{b.index:02d}@{dpi}-{version}.png")
         if not os.path.exists(path):
             stem = os.path.join(
                 out_dir, f".tmp-{os.getpid()}-{threading.get_ident()}-s{b.index}@{dpi}")

@@ -83,7 +83,16 @@ def system_grid(mscx_path: str) -> List[Dict]:
     Returns one entry per printed system: measure range + each note-bearing staff's
     id, voice count and a short content summary, prefilled with any saved answer.
     """
-    return [layout.to_dict() for layout in per_system.layout_for_file(mscx_path)]
+    layouts = per_system.layout_for_file(mscx_path)
+    out = []
+    previous = None
+    for layout in layouts:
+        item = layout.to_dict()
+        shape = [(staff.staff_id, staff.voices) for staff in layout.staves]
+        item["can_reuse_previous"] = previous == shape if previous is not None else False
+        out.append(item)
+        previous = shape
+    return out
 
 
 def save_system_answers(mscx_path: str, answers: Dict[int, Dict[int, str]]) -> None:
@@ -345,6 +354,13 @@ def save_system_bounds(song_dir: str, bands: List[Dict], mscx_path: str = "") ->
     if mscx_path:
         bounds = pdf_systems.label(bounds, mscx_path)
     pdf_systems.save_bounds(song_dir, bounds)
+    # Crop names are system-index + DPI, so edited geometry must clear the old
+    # originals. Rendered-score crops live in .pages/cleaned and are unrelated.
+    cache = _page_cache(song_dir)
+    if os.path.isdir(cache):
+        for name in os.listdir(cache):
+            if name.startswith("system-") and name.endswith(".png"):
+                os.remove(os.path.join(cache, name))
     return [b.to_dict() for b in bounds]
 
 
