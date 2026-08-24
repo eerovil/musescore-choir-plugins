@@ -1104,6 +1104,10 @@ function panelRecord(panel, song, P, refresh) {
   const hardwareEncoding = el("input", {
     type: "checkbox", checked: rec.hardware_encoding !== false
   });
+  const bpm = el("input", {
+    type: "number", value: rec.bpm ?? 80, min: 20, max: 300, step: 1,
+    style: "width:120px"
+  });
   const delay = el("input", { type: "number", value: rec.audio_delay_ms ?? 1300, step: 50, style: "width:120px" });
   const redoMp3 = el("input", { type: "checkbox" });
   const redoVideo = el("input", { type: "checkbox" });
@@ -1118,7 +1122,8 @@ function panelRecord(panel, song, P, refresh) {
 
   const runBtn = el("button", { className: "primary", disabled: recording, onclick: () =>
     renderer === "scroll"
-      ? post({ quality: quality.value, hardware_encoding: hardwareEncoding.checked },
+      ? post({ quality: quality.value, hardware_encoding: hardwareEncoding.checked,
+               ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}) },
              "Rendering the scrolling video…")
       : post({ audio_delay_ms: Number(delay.value) || 1300,
                redo_mp3: redoMp3.checked, redo_video: redoVideo.checked }, "Starting…") }, "");
@@ -1130,6 +1135,11 @@ function panelRecord(panel, song, P, refresh) {
     el("label", {}, "Size"),
     el("div", { className: "row" }, quality,
       el("span", { className: "hint" }, "4K keeps panning smooth and text sharp")),
+    ...(song.needs_initial_bpm ? [
+      el("label", {}, "Tempo (BPM)"),
+      el("div", { className: "row" }, bpm,
+        el("span", { className: "hint" }, "this score has no opening tempo marking"))
+    ] : []),
     el("div", { className: "row" }, hardwareEncoding,
       el("span", {}, "Use NVIDIA hardware encoding when available")));
   const screenOpts = el("div", {},

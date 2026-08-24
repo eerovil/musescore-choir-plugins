@@ -104,6 +104,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
                  smooth_seconds: float = SMOOTH_SECONDS,
                  basename: Optional[str] = None,
+                 initial_bpm: Optional[int] = None,
                  hardware_encoding: bool = True,
                  audio_cache_dir: Optional[str] = None,
                  log: Logger = _noop, progress: Logger = _noop) -> List[str]:
@@ -142,7 +143,8 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
     written: List[str] = []
 
     with tempfile.TemporaryDirectory() as tmp:
-        source, dropped = score_mod.prepare(mscx_path, tmp, keep_silent=keep_silent)
+        source, dropped = score_mod.prepare(mscx_path, tmp, keep_silent=keep_silent,
+                                            initial_bpm=initial_bpm)
         if dropped:
             log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
 

@@ -126,6 +126,8 @@ def _derived(song: state.Song) -> Dict:
     pdf = song.source_path("pdf")
     issues = song.data.get("health", {}).get("issues", [])
     systems = len([b for b in pdf_systems.load_bounds(song.dir) if b.measure_start])
+    needs_initial_bpm = bool(
+        cleaned and os.path.exists(cleaned) and not pipeline.has_opening_tempo(cleaned))
     return {
         **song.data,
         "slug": song.slug,
@@ -133,6 +135,7 @@ def _derived(song: state.Song) -> Dict:
         "stage_index": state.STAGES.index(song.stage) if song.stage in state.STAGES else 0,
         "has_pdf": bool(pdf and os.path.exists(pdf)),
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
+        "needs_initial_bpm": needs_initial_bpm,
         # Printed-system bounds, labelled with the measures they cover: what lets
         # the viewer show one system and the lyric editor ask per system.
         "systems": systems,
@@ -776,6 +779,7 @@ def _run_record(slug: str, opts: Dict) -> None:
             outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
                                                 quality=quality,
                                                 hardware_encoding=hardware_encoding,
+                                                initial_bpm=opts.get("bpm"),
                                                 log=log,
                                                 progress=progress)
             song = _require(slug)
@@ -874,6 +878,22 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
     if is_recording(song):
         raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
     opts = body or {}
+    scrolling_render = (opts.get("renderer") or "scroll") == "scroll" \
+        and not (opts.get("merge_only") or opts.get("upload_only"))
+    cleaned = song.cleaned_path()
+    if scrolling_render and cleaned and os.path.exists(cleaned) \
+            and not pipeline.has_opening_tempo(cleaned):
+        try:
+            bpm = int(opts.get("bpm", song.data.get("record", {}).get("bpm", 80)))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "BPM must be a whole number") from None
+        if not 20 <= bpm <= 300:
+            raise HTTPException(400, "BPM must be between 20 and 300")
+        opts["bpm"] = bpm
+        song.data.setdefault("record", {})["bpm"] = bpm
+        song.save()
+    else:
+        opts.pop("bpm", None)
     kind = "upload" if opts.get("upload_only") else "render"
     source_fingerprint = state.file_fingerprint(song.cleaned_path())
     if not job_state.start_if_idle(

@@ -105,6 +105,8 @@ def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(record_
     assert not radios.nth(1).is_checked()
     assert view.locator('select option[value="720p"]').text_content() == "720p, 30fps (test)"
     assert view.get_by_text("Use NVIDIA hardware encoding when available").is_visible()
+    assert view.get_by_text("Tempo (BPM)", exact=True).is_visible()
+    assert view.locator('input[type="number"][min="20"][max="300"]').input_value() == "80"
     hardware = view.get_by_text("Use NVIDIA hardware encoding when available").locator("..").locator("input")
     assert hardware.is_checked()
     assert view.get_by_role("button", name="Render videos").is_visible()
@@ -112,6 +114,9 @@ def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(record_
         view.locator("select").select_option("720p")
         view.locator("text=Size").scroll_into_view_if_needed()
         view.screenshot(path=os.path.join(evidence, "issue-26-render-options.png"))
+    if evidence := os.getenv("ISSUE_28_EVIDENCE_DIR"):
+        view.get_by_text("Tempo (BPM)", exact=True).scroll_into_view_if_needed()
+        view.screenshot(path=os.path.join(evidence, "issue-28-bpm.png"))
 
 
 def test_choosing_the_screen_recorder_swaps_the_controls(record_panel):
@@ -124,6 +129,7 @@ def test_choosing_the_screen_recorder_swaps_the_controls(record_panel):
     assert view.get_by_role("button", name="Run recording").is_visible()
     assert view.get_by_text("Audio sync offset (ms)").is_visible()
     assert not size.is_visible(), "the size choice does not apply to screen recording"
+    assert not view.get_by_text("Tempo (BPM)", exact=True).is_visible()
 
 
 def test_the_run_button_posts_the_chosen_renderer(record_panel):
@@ -140,6 +146,7 @@ def test_the_run_button_posts_the_chosen_renderer(record_panel):
     assert sent and sent[0]["renderer"] == "scroll"
     assert sent[0]["quality"] == "4k"
     assert sent[0]["hardware_encoding"] is True
+    assert sent[0]["bpm"] == 80
 
 
 def test_render_progress_survives_a_page_reload(record_panel):
