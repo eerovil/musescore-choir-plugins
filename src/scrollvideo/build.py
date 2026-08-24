@@ -27,7 +27,8 @@ from .engrave import engrave
 from .geometry import playing_coverage, rasterise
 from .timing import (SMOOTH_SECONDS, TempoMap, note_events, rest_events,
                      scroll_anchors, smooth_scroll)
-from .video import NVIDIA_ENCODER, mux, place, preferred_encoder, render
+from .video import (NVIDIA_ENCODER, SOFTWARE_ENCODER, mux, place,
+                    preferred_encoder, render)
 
 Logger = Callable[[str], None]
 
@@ -51,6 +52,11 @@ COMBINED = "ALL"
 
 def _noop(_msg: str) -> None:
     pass
+
+
+def video_encoder(hardware_encoding: bool, width: int, height: int) -> str:
+    """Select automatic hardware encoding unless the caller explicitly disabled it."""
+    return preferred_encoder(width, height) if hardware_encoding else SOFTWARE_ENCODER
 
 
 def unsupported_repeats(root: etree._Element) -> List[str]:
@@ -98,6 +104,8 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
                  smooth_seconds: float = SMOOTH_SECONDS,
                  basename: Optional[str] = None,
+                 hardware_encoding: bool = True,
+                 audio_cache_dir: Optional[str] = None,
                  log: Logger = _noop, progress: Logger = _noop) -> List[str]:
     """Render a scrolling video per voice. Returns the paths written.
 
@@ -213,14 +221,25 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
 
         tracks: dict = {}
         if with_audio:
-            log(f"Rendering {len(mixes)} audio mix(es)")
+            log(f"Preparing {len(mixes)} audio mix(es)")
             with ThreadPoolExecutor(max_workers=min(4, len(mixes))) as pool:
-                futures = {name: pool.submit(audio_mod.render_mix, source, focus,
-                                             os.path.join(tmp, f"{name}.wav"))
-                           for name, focus in mixes}
-                tracks = {name: future.result() for name, future in futures.items()}
+                if audio_cache_dir:
+                    futures = {name: pool.submit(audio_mod.render_mix_cached, source, focus,
+                                                 audio_cache_dir)
+                               for name, focus in mixes}
+                    results = {name: future.result() for name, future in futures.items()}
+                    tracks = {name: result[0] for name, result in results.items()}
+                    reused = sum(result[1] for result in results.values())
+                    if reused:
+                        log(f"Reused {reused} unchanged audio mix(es)")
+                    audio_mod.prune_mix_cache(audio_cache_dir, set(tracks.values()))
+                else:
+                    futures = {name: pool.submit(audio_mod.render_mix, source, focus,
+                                                 os.path.join(tmp, f"{name}.wav"))
+                               for name, focus in mixes}
+                    tracks = {name: future.result() for name, future in futures.items()}
 
-        encoder = preferred_encoder(width, height)
+        encoder = video_encoder(hardware_encoding, width, height)
         if encoder == NVIDIA_ENCODER:
             log("Using NVIDIA hardware video encoding")
         else:

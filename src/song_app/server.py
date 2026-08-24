@@ -737,8 +737,14 @@ def api_reveal_pdf(slug: str) -> Dict:
 def _run_record(slug: str, opts: Dict) -> None:
     song = _require(slug)
     start_fingerprint = opts.get("_source_fingerprint")
-    previous_rendered_against = song.data.get("record", {}).get("rendered_against")
-    previous_outputs = bool(song.data.get("record", {}).get("outputs"))
+    previous_record = song.data.get("record", {})
+    previous_rendered_against = previous_record.get("rendered_against")
+    legacy_screen_against = previous_rendered_against \
+        if previous_record.get("renderer") in (None, "screen") else None
+    previous_audio_against = previous_record.get(
+        "audio_rendered_against", legacy_screen_against)
+    previous_video_against = previous_record.get(
+        "video_rendered_against", legacy_screen_against)
     job_kind = "upload" if opts.get("upload_only") else "render"
     log = lambda m: _job_emit(slug, job_kind, m)
     progress = lambda m: _job_emit(slug, job_kind, m, "progress")
@@ -765,15 +771,19 @@ def _run_record(slug: str, opts: Dict) -> None:
             if not cleaned or not os.path.exists(cleaned):
                 raise FileNotFoundError("No cleaned score yet — clean the song first.")
             quality = opts.get("quality") or "4k"
+            hardware_encoding = opts.get("hardware_encoding") is not False
             log(f"Rendering the scrolling video ({quality})…")
             outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
-                                                quality=quality, log=log,
+                                                quality=quality,
+                                                hardware_encoding=hardware_encoding,
+                                                log=log,
                                                 progress=progress)
             song = _require(slug)
             rec = song.data.setdefault("record", {})
             rec["exported"] = True
             rec["renderer"] = "scroll"
             rec["quality"] = quality
+            rec["hardware_encoding"] = hardware_encoding
             rec["outputs"] = [os.path.basename(p) for p in outputs]
             rec["rendered_against"] = start_fingerprint
             rec["verification"] = verification.verify_media(
@@ -795,13 +805,24 @@ def _run_record(slug: str, opts: Dict) -> None:
         log("Uploading to YouTube…" if upload_only
             else "Re-merging with new offset…" if merge_only
             else "Starting recording pipeline…")
+        redo_mp3 = bool(opts.get("redo_mp3"))
+        redo_video = bool(opts.get("redo_video"))
+        if not (merge_only or upload_only):
+            stale_audio = previous_audio_against != start_fingerprint
+            stale_video = previous_video_against != start_fingerprint
+            if stale_audio:
+                redo_mp3 = True
+            if stale_video:
+                redo_video = True
+            if stale_audio or stale_video:
+                log("The score changed; refreshing its MP3 audio and screen recording.")
         results = run(
             song_dir=song.dir,
             youtube=youtube,
             extra_playlist_id=opts.get("playlist") or None,
             audio_delay_ms=int(opts.get("audio_delay_ms", 1300)),
-            redo_mp3=bool(opts.get("redo_mp3")),
-            redo_video=bool(opts.get("redo_video")),
+            redo_mp3=redo_mp3,
+            redo_video=redo_video,
             merge_only=merge_only,
             upload_only=upload_only,
             log=log, progress=progress,
@@ -816,12 +837,14 @@ def _run_record(slug: str, opts: Dict) -> None:
             rec["audio_delay_ms"] = int(opts.get("audio_delay_ms", 1300))
             rec["outputs"] = [os.path.basename(str(r)) for r in (results or [])]
             cleaned = song.cleaned_path()
-            # Reusing or re-merging existing ingredients cannot prove they came from
-            # today's score. Preserve prior provenance unless both were regenerated,
-            # or this is the first set of outputs for the song.
-            fresh_inputs = (bool(opts.get("redo_mp3")) and bool(opts.get("redo_video"))) \
-                or not previous_outputs
-            rec["rendered_against"] = start_fingerprint if fresh_inputs \
+            if redo_mp3:
+                rec["audio_rendered_against"] = start_fingerprint
+            if redo_video:
+                rec["video_rendered_against"] = start_fingerprint
+            audio_against = rec.get("audio_rendered_against", previous_audio_against)
+            video_against = rec.get("video_rendered_against", previous_video_against)
+            rec["rendered_against"] = start_fingerprint \
+                if audio_against == video_against == start_fingerprint \
                 else previous_rendered_against
             rec["verification"] = verification.verify_media(
                 song, rec["outputs"], verification.singing_parts(cleaned))

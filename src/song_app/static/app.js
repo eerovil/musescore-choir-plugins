@@ -1099,7 +1099,11 @@ function panelRecord(panel, song, P, refresh) {
   const screenRadio = el("input", { type: "radio", name: "renderer", checked: renderer === "screen" });
   const quality = el("select", {},
     el("option", { value: "4k", selected: (rec.quality || "4k") === "4k" }, "4K, 60fps"),
-    el("option", { value: "1080p", selected: rec.quality === "1080p" }, "1080p, 30fps (faster)"));
+    el("option", { value: "1080p", selected: rec.quality === "1080p" }, "1080p, 30fps (faster)"),
+    el("option", { value: "720p", selected: rec.quality === "720p" }, "720p, 30fps (test)"));
+  const hardwareEncoding = el("input", {
+    type: "checkbox", checked: rec.hardware_encoding !== false
+  });
   const delay = el("input", { type: "number", value: rec.audio_delay_ms ?? 1300, step: 50, style: "width:120px" });
   const redoMp3 = el("input", { type: "checkbox" });
   const redoVideo = el("input", { type: "checkbox" });
@@ -1114,7 +1118,8 @@ function panelRecord(panel, song, P, refresh) {
 
   const runBtn = el("button", { className: "primary", disabled: recording, onclick: () =>
     renderer === "scroll"
-      ? post({ quality: quality.value }, "Rendering the scrolling video…")
+      ? post({ quality: quality.value, hardware_encoding: hardwareEncoding.checked },
+             "Rendering the scrolling video…")
       : post({ audio_delay_ms: Number(delay.value) || 1300,
                redo_mp3: redoMp3.checked, redo_video: redoVideo.checked }, "Starting…") }, "");
   const remergeBtn = el("button", { disabled: recording, onclick: () =>
@@ -1124,7 +1129,9 @@ function panelRecord(panel, song, P, refresh) {
   const scrollOpts = el("div", {},
     el("label", {}, "Size"),
     el("div", { className: "row" }, quality,
-      el("span", { className: "hint" }, "4K takes roughly 1.5 minutes of CPU per minute of music")));
+      el("span", { className: "hint" }, "4K keeps panning smooth and text sharp")),
+    el("div", { className: "row" }, hardwareEncoding,
+      el("span", {}, "Use NVIDIA hardware encoding when available")));
   const screenOpts = el("div", {},
     el("label", {}, "Audio sync offset (ms)"),
     el("div", { className: "row" }, delay,

@@ -47,9 +47,11 @@ def _finished(client, slug):
 
 
 def _fake_scroll(monkeypatch, seen, parts=("S1", "A1")):
-    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None,
+    def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
+             log=lambda m: None,
              progress=lambda m: None):
-        seen.update(song_dir=song_dir, cleaned=cleaned, name=name, quality=quality)
+        seen.update(song_dir=song_dir, cleaned=cleaned, name=name, quality=quality,
+                    hardware_encoding=hardware_encoding)
         out = os.path.join(song_dir, "media", "video")
         os.makedirs(out, exist_ok=True)
         made = []
@@ -70,6 +72,7 @@ def test_the_scrolling_renderer_is_what_runs_by_default(client, song, monkeypatc
 
     assert seen["name"] == song.slug, "outputs must be named for the slug"
     assert seen["quality"] == "4k"
+    assert seen["hardware_encoding"] is True
     assert data["record"]["renderer"] == "scroll"
     assert data["record"]["outputs"] == [f"{song.slug} S1.mp4", f"{song.slug} A1.mp4"]
     assert data["stage"] == "upload"
@@ -116,9 +119,39 @@ def test_the_size_choice_is_passed_through(client, song, monkeypatch):
     assert seen["quality"] == "1080p"
 
 
+def test_720p_and_software_encoding_are_passed_through_and_remembered(
+        client, song, monkeypatch):
+    seen = {}
+    _fake_scroll(monkeypatch, seen)
+    client.post(f"/api/songs/{song.slug}/record", json={
+        "quality": "720p", "hardware_encoding": False})
+    data = _finished(client, song.slug)
+
+    assert seen["quality"] == "720p"
+    assert seen["hardware_encoding"] is False
+    assert data["record"]["quality"] == "720p"
+    assert data["record"]["hardware_encoding"] is False
+
+
+def test_720p_maps_to_1280_by_720_and_uses_the_song_audio_cache(
+        song, monkeypatch):
+    seen = {}
+    import src.scrollvideo as scrollvideo
+    monkeypatch.setattr(scrollvideo, "build_videos",
+                        lambda *args, **kwargs: seen.update(kwargs) or [])
+
+    pipeline.run_scroll_video(song.dir, song.cleaned_path(), song.slug,
+                              quality="720p", hardware_encoding=False)
+
+    assert (seen["width"], seen["height"], seen["fps"]) == (1280, 720, 30)
+    assert seen["hardware_encoding"] is False
+    assert seen["audio_cache_dir"] == song.path("media", ".scrollvideo-audio")
+
+
 def test_render_status_and_logs_are_available_after_a_fresh_song_read(
         client, song, monkeypatch):
-    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None,
+    def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
+             log=lambda m: None,
              progress=lambda m: None):
         log("Engraving")
         progress("Rendering video: 50% (30/60 frames)")
@@ -143,7 +176,8 @@ def test_render_status_and_logs_are_available_after_a_fresh_song_read(
 
 
 def test_a_score_edit_during_render_marks_the_outputs_stale(client, song, monkeypatch):
-    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None,
+    def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
+             log=lambda m: None,
              progress=lambda m: None):
         with open(cleaned, "a") as f:
             f.write("\n")
@@ -231,7 +265,69 @@ def test_asking_for_the_screen_recorder_still_gets_it(client, song, monkeypatch)
     client.post(f"/api/songs/{song.slug}/record", json={"renderer": "screen"})
     data = _finished(client, song.slug)
     assert called, "the screen recorder should have been invoked"
+    assert called["redo_mp3"] is True, "a score with no prior provenance needs fresh audio"
+    assert called["redo_video"] is True
     assert data["record"]["renderer"] == "screen"
+
+
+def test_screen_recorder_reuses_mp3_when_the_score_is_unchanged(
+        client, song, monkeypatch):
+    fingerprint = state.file_fingerprint(song.cleaned_path())
+    song.data["record"] = {"rendered_against": fingerprint, "outputs": ["old.mov"]}
+    song.save()
+    called = {}
+
+    import src.stemmanauha.create_video as create_video
+    monkeypatch.setattr(create_video, "run",
+                        lambda **kwargs: called.update(kwargs) or [])
+
+    client.post(f"/api/songs/{song.slug}/record", json={"renderer": "screen"})
+    _finished(client, song.slug)
+
+    assert called["redo_mp3"] is False
+    assert called["redo_video"] is False
+
+
+def test_screen_recorder_refreshes_audio_and_video_once_after_a_score_change(
+        client, song, monkeypatch):
+    old = state.file_fingerprint(song.cleaned_path())
+    song.data["record"] = {"rendered_against": old, "outputs": ["old.mov"]}
+    song.save()
+    with open(song.cleaned_path(), "a") as changed:
+        changed.write("\n")
+    calls = []
+
+    import src.stemmanauha.create_video as create_video
+    monkeypatch.setattr(create_video, "run",
+                        lambda **kwargs: calls.append(kwargs) or [])
+
+    client.post(f"/api/songs/{song.slug}/record", json={"renderer": "screen"})
+    first = _finished(client, song.slug)
+    client.post(f"/api/songs/{song.slug}/record", json={"renderer": "screen"})
+    _finished(client, song.slug)
+
+    assert (calls[0]["redo_mp3"], calls[0]["redo_video"]) == (True, True)
+    assert (calls[1]["redo_mp3"], calls[1]["redo_video"]) == (False, False)
+    assert first["record"]["audio_rendered_against"] == state.file_fingerprint(song.cleaned_path())
+    assert first["record"]["video_rendered_against"] == state.file_fingerprint(song.cleaned_path())
+
+
+def test_switching_from_scroll_does_not_reuse_untracked_screen_ingredients(
+        client, song, monkeypatch):
+    current = state.file_fingerprint(song.cleaned_path())
+    song.data["record"] = {
+        "renderer": "scroll", "rendered_against": current, "outputs": ["scroll.mp4"]}
+    song.save()
+    called = {}
+
+    import src.stemmanauha.create_video as create_video
+    monkeypatch.setattr(create_video, "run",
+                        lambda **kwargs: called.update(kwargs) or [])
+
+    client.post(f"/api/songs/{song.slug}/record", json={"renderer": "screen"})
+    _finished(client, song.slug)
+
+    assert (called["redo_mp3"], called["redo_video"]) == (True, True)
 
 
 def test_progress_reporting_cannot_kill_the_render():

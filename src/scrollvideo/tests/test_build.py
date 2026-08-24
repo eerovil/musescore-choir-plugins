@@ -5,7 +5,8 @@ import pytest
 from lxml import etree
 
 from src.scrollvideo.build import (ALIGNMENT_TOLERANCE, alignment, build_videos,
-                                   midi_onsets, unsupported_repeats)
+                                   midi_onsets, unsupported_repeats, video_encoder)
+from src.scrollvideo.video import NVIDIA_ENCODER, SOFTWARE_ENCODER
 from src.scrollvideo.timing import NoteEvent
 
 PLAIN = "<museScore><Score><Staff id='1'><Measure/></Staff></Score></museScore>"
@@ -92,6 +93,13 @@ def test_a_wholesale_drift_is_still_caught(tmp_path):
     late = [NoteEvent(n, t + 10 * ALIGNMENT_TOLERANCE, t + 1)
             for n, t in (("a", 0.0), ("b", 1.0), ("c", 2.0))]
     assert alignment(late, path) < 0.5
+
+
+def test_hardware_encoding_can_be_explicitly_disabled(monkeypatch):
+    monkeypatch.setattr("src.scrollvideo.build.preferred_encoder",
+                        lambda width, height: NVIDIA_ENCODER)
+    assert video_encoder(True, 1280, 720) == NVIDIA_ENCODER
+    assert video_encoder(False, 1280, 720) == SOFTWARE_ENCODER
 
 
 # --------------------------------------------------------------------------- #
