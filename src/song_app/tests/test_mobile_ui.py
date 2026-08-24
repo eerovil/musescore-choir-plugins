@@ -204,6 +204,7 @@ def test_phone_pdf_viewer_scrolls_inside_its_pane(live_app, own_answers, page):
 
     view = page.locator(".pdfview").first
     expect(view).to_be_visible()
+    page.wait_for_function("e => Boolean(e._renderedUrl)", arg=view.element_handle())
     view.evaluate("""e => {
         const pages = document.createElement('div');
         pages.style.height = '1600px';
