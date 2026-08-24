@@ -33,9 +33,13 @@ Notes:
 - Give each line's text by "staff_number" (top staff = 1) and, for a staff shared by
   two divisi voices that sing different words, a "position" ("above"/"below"). If the
   two voices on a staff sing the SAME words, give one line and omit "position".
-- Split each word into syllables with hyphens, e.g. "ly-ric". Give the syllables as
-  they are actually sung; don't worry about matching the exact note count
-  (melismas/slurs are handled separately) and don't add padding or melisma markers.
+- Split each word into syllables with hyphens, e.g. "ly-ric". Be meticulous: put a
+  hyphen between every pair of sung syllables that belong to the same word, using
+  the lyric's language and the PDF spelling. A missing hyphen makes the score show
+  a new word, so re-check every multi-syllable word before returning the JSON.
+  Give the syllables as they are actually sung; don't worry about matching the exact
+  note count (melismas/slurs are handled separately) and don't add padding or melisma
+  markers.
 - A word that continues onto the next line ends with a trailing hyphen (e.g. "Su-ku-")
   and the next line starts with the rest of it ("pol-vis-ta …").
 - Only verse 1 is imported. Skip later verses and editorial/ossia notes.
