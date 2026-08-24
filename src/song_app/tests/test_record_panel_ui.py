@@ -12,11 +12,28 @@ import time
 
 import pytest
 
-pytest.importorskip("playwright.sync_api")
+_NEEDS = "pip install pytest-playwright && playwright install chromium"
+pytest.importorskip("playwright.sync_api", reason=_NEEDS)
+pytest.importorskip("pytest_playwright", reason=_NEEDS)
 pytest.importorskip("uvicorn")
 
+
+def _browser_installed() -> bool:
+    """Launching is the only honest check; see test_ui_flow for why it runs here."""
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch().close()
+        return True
+    except Exception:
+        return False
+
+
+if not _browser_installed():
+    pytest.skip(_NEEDS, allow_module_level=True)
+
 import uvicorn
-from playwright.sync_api import sync_playwright
 
 from src.song_app import server, state
 
@@ -67,24 +84,20 @@ def live(tmp_path_factory):
 
 
 @pytest.fixture
-def page(live):
+def record_panel(live, page):
     base, slug = live
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        errors = []
-        page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto(f"{base}/#/song/{slug}")
-        page.wait_for_selector(".stagebar")
-        page.locator(".stagebar .step", has_text="Record").click()
-        page.wait_for_selector("text=How to make the videos")
-        yield page, slug, errors
-        assert not errors, f"the panel raised: {errors}"
-        browser.close()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/#/song/{slug}")
+    page.wait_for_selector(".stagebar")
+    page.locator(".stagebar .step", has_text="Record").click()
+    page.wait_for_selector("text=How to make the videos")
+    yield page, slug, errors
+    assert not errors, f"the panel raised: {errors}"
 
 
-def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(page):
-    view, _, _ = page
+def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(record_panel):
+    view, _, _ = record_panel
     assert view.get_by_text("Scrolling score", exact=True).is_visible()
     assert view.get_by_text("Screen recording", exact=True).is_visible()
     radios = view.locator("input[type=radio][name=renderer]")
@@ -93,8 +106,8 @@ def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(page):
     assert view.get_by_role("button", name="Render videos").is_visible()
 
 
-def test_choosing_the_screen_recorder_swaps_the_controls(page):
-    view, _, _ = page
+def test_choosing_the_screen_recorder_swaps_the_controls(record_panel):
+    view, _, _ = record_panel
     size = view.locator("select")           # the size choice, scrolling renderer only
     assert size.is_visible() and size.input_value() == "4k"
     assert not view.get_by_text("Audio sync offset (ms)").is_visible()
@@ -105,9 +118,9 @@ def test_choosing_the_screen_recorder_swaps_the_controls(page):
     assert not size.is_visible(), "the size choice does not apply to screen recording"
 
 
-def test_the_run_button_posts_the_chosen_renderer(page):
+def test_the_run_button_posts_the_chosen_renderer(record_panel):
     """What the server branches on has to actually leave the browser."""
-    view, slug, _ = page
+    view, slug, _ = record_panel
     sent = []
     view.route(f"**/api/songs/{slug}/record", lambda route: (
         sent.append(json.loads(route.request.post_data or "{}")),

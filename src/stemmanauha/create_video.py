@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 import unicodedata
 from dotenv import load_dotenv
-import obsws_python as obs  # This is how you originally used it — and it works
 import logging
 
 from .upload_to_youtube import get_authenticated_service, upload_to_youtube

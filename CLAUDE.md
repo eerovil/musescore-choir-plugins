@@ -69,10 +69,7 @@ backup/                  Gitignored .mscz backups (created by backup.sh)
 - Install deps: `.venv/bin/pip install -r pip-requirements.txt`
   (lxml, pytest, dotenv, google-api-python-client, google-auth-oauthlib, pillow,
   pyautogui, fastapi, uvicorn, python-multipart; recording also needs
-  `obsws-python`, `ffmpeg`/`ffprobe` on PATH, and macOS with MuseScore 3 +
-  QuickRecorder). **Dependency-file gap:** `create_video.py` imports
-  `obsws_python`, but `obsws-python` is not currently listed in
-  `pip-requirements.txt`; install it separately in a fresh environment.
+  `ffmpeg`/`ffprobe` on PATH, and macOS with MuseScore 3 + QuickRecorder).
 - Config is via `.env` (falls back to `.env.default`). Keys:
   `MUSESCORE_CLI_PATH`, `MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
   `YOUTUBE_CLIENT_SECRETS_PATH`. Never commit real secrets;

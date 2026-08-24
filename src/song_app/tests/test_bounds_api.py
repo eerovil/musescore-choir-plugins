@@ -40,6 +40,9 @@ def client(tmp_path, monkeypatch):
 
 
 def test_bounds_come_back_with_the_score_count_to_check_against(client):
+    song = state.load(SLUG)
+    assert os.path.isfile(song.source_path("pdf")), (
+        "the overlaid fixture must retain a portable reference to its source PDF")
     r = client.get(f"/api/songs/{SLUG}/bounds")
     assert r.status_code == 200
     data = r.json()

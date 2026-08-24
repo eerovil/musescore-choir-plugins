@@ -34,9 +34,6 @@ do `from src...import`, so **run them from the repo root** — `./song.py`,
 `./clean_score.py`, not from inside `src/`. Use `.venv/bin/python` directly
 rather than activating.
 
-If you plan to use the old screen recorder, also `pip install obsws-python` —
-`create_video.py` imports it but it is not in `pip-requirements.txt`.
-
 ## 3. Things that are not pip packages
 
 ```bash
