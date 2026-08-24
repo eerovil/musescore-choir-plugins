@@ -8,6 +8,7 @@ same ids. This module owns that pairing; nothing else touches verovio.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.resources import files
 from typing import Dict, List
 
 import verovio
@@ -37,6 +38,11 @@ OPTIONS = {
     "xmlIdSeed": XML_ID_SEED,
 }
 
+# The native library does not carry the package's default resource path into the
+# executor thread used by the song app. Give each toolkit its bundled fonts
+# explicitly wherever engraving runs.
+RESOURCE_PATH = str(files("verovio") / "data")
+
 
 @dataclass(frozen=True)
 class Engraving:
@@ -52,7 +58,9 @@ class Engraving:
 
 def engrave(musicxml_path: str, options: Dict | None = None) -> Engraving:
     """Render `musicxml_path` as one system and return SVG + geometry + timemap."""
-    tk = verovio.toolkit()
+    tk = verovio.toolkit(False)
+    if not tk.setResourcePath(RESOURCE_PATH):
+        raise RuntimeError(f"Verovio could not load its resources from {RESOURCE_PATH}")
     tk.setOptions({**OPTIONS, **(options or {})})
     if not tk.loadFile(musicxml_path):
         raise RuntimeError(f"Verovio could not load {musicxml_path}")
