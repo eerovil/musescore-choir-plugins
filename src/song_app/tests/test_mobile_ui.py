@@ -191,6 +191,27 @@ def test_phone_library_and_panels_do_not_overflow_the_screen(live_app, own_answe
     assert not _scrolls_sideways(page, ".lib"), "the library is wider than the screen"
 
 
+def test_the_library_scrolls_to_its_last_song(live_app, own_answers, page):
+    """Sideways is not the only way to put a song out of reach. The page itself never
+    scrolls, so the library has to scroll inside itself; when it did not, every card
+    below the window's edge was simply unreachable, which is what 43 songs looked
+    like."""
+    page.set_viewport_size({"width": 390, "height": 320})
+    _new_song(page, live_app, "Scroll check")
+
+    page.goto(live_app)
+    expect(page.locator(".card").first).to_be_visible()
+    lib = page.locator(".lib")
+    assert lib.evaluate("e => e.scrollHeight > e.clientHeight + 1"), \
+        "the library is not taller than the window — this test proves nothing"
+
+    last = page.locator(".card").last
+    last.scroll_into_view_if_needed()
+    assert lib.evaluate("e => e.scrollTop") > 0, "the library did not scroll"
+    expect(last).to_be_in_viewport()
+    assert not _page_scrolls(page)
+
+
 def test_desktop_layout_is_unchanged(live_app, own_answers, page):
     """The phone rules are additive: at a desktop size all three panes share the
     screen and the switcher is not there at all."""

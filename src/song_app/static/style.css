@@ -38,7 +38,13 @@ a { color: var(--accent); }
 label { display: block; margin: 12px 0 4px; color: var(--muted); }
 
 /* ---- Library ---- */
-.lib { padding: 24px; max-width: 1000px; margin: 0 auto; }
+/* The page itself never scrolls, so the library has to scroll inside itself or a
+   song list longer than the window is simply cut off with no way to reach the rest.
+   It is a flex item of #app: min-height:0 lets it shrink below its content (else
+   overflow-y never fires), and the auto margins keep it centred once max-width
+   stops it growing. */
+.lib { padding: 24px; max-width: 1000px; margin: 0 auto;
+       flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .lib-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .card {
