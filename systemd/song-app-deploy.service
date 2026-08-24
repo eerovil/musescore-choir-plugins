@@ -1,0 +1,13 @@
+[Unit]
+Description=Deploy the song app to the current origin/main
+After=network-online.target
+# Deliberately no Wants=/Requires= on song-app.service: this unit restarts that
+# service, and depending on it would tangle the restart into its own start job.
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/musescore-choir-plugins
+# A timer job inherits almost no PATH, and the deploy needs git, curl and systemctl.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/musescore-choir-plugins/scripts/deploy-song-app.sh --unattended
+TimeoutStartSec=300

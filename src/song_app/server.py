@@ -219,6 +219,15 @@ def import_legacy() -> int:
     return count
 
 
+@app.get("/healthz")
+def healthz() -> Dict:
+    """Is this process serving? The deploy watcher asks after every restart, and it
+    reads `status`, so the shape matters as much as the 200. Deliberately shallow: it
+    must answer while a clean or a render is occupying the worker threads, so it
+    touches no song, no MuseScore and no disk."""
+    return {"status": "ok"}
+
+
 @app.get("/api/songs")
 def api_songs() -> List[Dict]:
     return [s.to_summary() for s in state.list_songs()]

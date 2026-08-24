@@ -1,0 +1,13 @@
+[Unit]
+Description=song web app (musescore-choir-plugins)
+After=network.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/musescore-choir-plugins
+ExecStart=%h/musescore-choir-plugins/.venv/bin/python song.py --host 127.0.0.1 --port 8123 --no-browser --no-reload
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

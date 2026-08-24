@@ -1,0 +1,18 @@
+[Unit]
+Description=Look for a merged revision to deploy to the song app, every 2 minutes
+
+[Timer]
+Unit=song-app-deploy.service
+OnBootSec=90
+OnUnitInactiveSec=120
+AccuracySec=15
+# The cadence has to sit well under the poller's deploy-watch grace (900s): the
+# release gate turns bad if the service has not restarted by then, so a deploy
+# must start and finish inside that window.
+#
+# Not persistent: a missed tick is never worth replaying. The next tick deploys
+# whatever origin/main is by then, which is the only revision anyone wants live.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -159,6 +159,23 @@ difference and was fixed in the text. `STEPS.md` records how each stage
 was produced, including a wrong conclusion and its correction — worth reading before
 trusting a tidy-looking diagnosis of a scanned score.
 
+### Working in a worktree (agents, read this first)
+
+An issue worker gets a fresh worktree under `.worktrees/issue-N`, and a fresh worktree
+has **no `.venv`, no `.env` and no `songs/`** — all three are gitignored and live only
+in the main checkout at `~/musescore-choir-plugins`. Without them nothing runs: there is
+no interpreter with lxml in it, `MUSESCORE_CLI_PATH` is unset, and the app has no songs.
+Link them in before doing anything else:
+
+```bash
+for f in .venv .env songs; do ln -sfn ~/musescore-choir-plugins/"$f" "$f"; done
+```
+
+`songs/` is the **real** song folders, shared with the running app — a re-clean or a
+rename inside a worktree changes the songs you actually sing. Read them freely; write
+to one only when the issue is about that song, and say so in the PR. Tests never need
+it: they build their own songs in a tmp dir and read `fixtures/` from the worktree.
+
 ### Tests
 
 ```bash
@@ -979,6 +996,34 @@ keyboard shortcuts wired in QuickRecorder/MuseScore, `MUSESCORE_EXPORT_PATH`,
 CI. The `.scpt` AppleScript files and the keyboard shortcuts described in
 `README.md`/`record_stemmanauha.py --help` must match. The CLI still skips a
 stage when its output exists; the web app exposes the redo flags instead.
+
+## This host: the live app, the deploy, the board
+
+The app is not something someone starts when they want it. It runs as a systemd **user**
+service from this very checkout, `song-app.service` on 127.0.0.1:8123 (reached from the
+phone over Tailscale). The units are committed under `systemd/` — the live copies live in
+`~/.config/systemd/user/`, so an edit here is not live until it is copied over and
+`systemctl --user daemon-reload` has run.
+
+A merge deploys itself. `song-app-deploy.timer` runs `scripts/deploy-song-app.sh
+--unattended` every two minutes: it fast-forwards `main` to `origin/main`, installs
+requirements, restarts the app and waits for `/healthz` to say `ok`. **It refuses more
+often than it acts** — a dirty checkout, another branch, or local commits that are not
+on `origin/main` all mean someone is working here, and deploying would either destroy
+that work or ship a commit GitHub has never seen. Nothing to deploy is a no-op with no
+restart, deliberately: a restart is the evidence a release waits for, so a spurious one
+would tell the board a merge had reached the host when it had not.
+
+`/healthz` exists for that watcher. It returns `{"status": "ok"}` and touches nothing —
+it has to answer while a clean or a video render is occupying the worker threads.
+
+Issues are worked from a GitHub Project board by the AgentDeck poller (instance
+`musescore`, unit `agentdeck-poller@musescore.timer`). Its manifest is **not** in this
+repo: it lives in `~/agentdeck/poller/manifests/musescore/`, with every project's
+alongside it, and the host half (paths, account, token) is the uncommitted overlay in
+`~/.local/share/agentdeck/poller/instances/musescore/`. Comment `/claude <what you want>`
+on an issue to start or steer work; `/merge` from **In review** releases it. Nothing
+merges without that comment.
 
 ## Conventions & gotchas
 

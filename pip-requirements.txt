@@ -8,6 +8,10 @@ pyautogui
 fastapi
 uvicorn[standard]
 python-multipart
+# FastAPI's TestClient imports httpx, so the route-level tests (test_bounds_api,
+# test_record_renderers, test_healthz) skip without it rather than failing --
+# which is how they went unnoticed while skipping.
+httpx
 # Scrolling practice video (src/scrollvideo): engraving, rasterising, MIDI clock.
 # Also needs ffmpeg/ffprobe on PATH and the MuseScore CLI.
 verovio
