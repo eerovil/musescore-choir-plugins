@@ -361,6 +361,19 @@ state model are in `DESIGN.md`.
   (`watchfiles.awatch` on `songs/`) that re-runs the health check when a
   `*_cleaned.mscx` is saved in MuseScore (guarded by fingerprint so our own writes
   don't loop). Static SPA is mounted at `/` (so `/api/*` wins).
+  **Freshness.** This pull request proposes sending `Cache-Control: no-cache` on
+  every file the app serves — the SPA shell, `app.js`/`style.css` (via
+  `RevalidatingStaticFiles`), the PDFs, the system crops and the videos. Sending
+  no `Cache-Control` at all is not the same as forbidding caching: a browser
+  given no instruction invents a freshness lifetime from `Last-Modified`, and
+  Chrome on Android invents a generous one, so a phone kept serving old code and
+  old video off its own disk until the browser was restarted (#34). `no-cache`
+  is not `no-store` — the copy is kept and `FileResponse`'s ETag turns an
+  unchanged file into a small 304, so this costs a round trip, not a download.
+  Videos additionally carry a `?v=<mtime>-<size>` stamp in the URL
+  `_media_list` hands out, because re-recording a part rewrites the same file
+  name and an identical URL is the one thing revalidation cannot save you from
+  once a range request is already cached.
 - `static/` **layout**: the page never scrolls — `html, body` are fixed to the
   window and every panel scrolls inside itself. `#app` takes what the header leaves
   (`flex: 1 1 auto; min-height: 0`) and the workspace grid fills it. It used to be
