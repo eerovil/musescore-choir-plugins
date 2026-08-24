@@ -27,7 +27,7 @@ from .engrave import engrave
 from .geometry import playing_coverage, rasterise
 from .timing import (SMOOTH_SECONDS, TempoMap, note_events, rest_events,
                      scroll_anchors, smooth_scroll)
-from .video import mux, place, render
+from .video import NVIDIA_ENCODER, mux, place, preferred_encoder, render
 
 Logger = Callable[[str], None]
 
@@ -98,7 +98,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
                  smooth_seconds: float = SMOOTH_SECONDS,
                  basename: Optional[str] = None,
-                 log: Logger = _noop) -> List[str]:
+                 log: Logger = _noop, progress: Logger = _noop) -> List[str]:
     """Render a scrolling video per voice. Returns the paths written.
 
     The picture is the same for every voice, so by default it is encoded once and
@@ -220,6 +220,12 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                            for name, focus in mixes}
                 tracks = {name: future.result() for name, future in futures.items()}
 
+        encoder = preferred_encoder(width, height)
+        if encoder == NVIDIA_ENCODER:
+            log("Using NVIDIA hardware video encoding")
+        else:
+            log("Using software video encoding")
+
         if emphasise:
             for name, focus in mixes:
                 staff = (names.index(focus)
@@ -228,7 +234,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                 out = os.path.join(out_dir, f"{base} {name}.mp4")
                 render(strip, placed, anchors, out, px_per_unit=px_per_unit, width=width,
                        fps=fps, focus_staff=staff, audio_path=tracks.get(name),
-                       coverage=coverage)
+                       coverage=coverage, progress=progress, encoder=encoder)
                 written.append(out)
                 log(f"{name}: wrote {os.path.basename(out)}")
             return written
@@ -236,7 +242,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         log("Rendering the video (once, shared by every voice)")
         shared = os.path.join(tmp, "shared.mp4")
         render(strip, placed, anchors, shared, px_per_unit=px_per_unit, width=width, fps=fps,
-               coverage=coverage)
+               coverage=coverage, progress=progress, encoder=encoder)
         for name, _focus in mixes:
             out = os.path.join(out_dir, f"{base} {name}.mp4")
             if tracks.get(name):

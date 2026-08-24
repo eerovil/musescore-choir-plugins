@@ -47,7 +47,8 @@ def _finished(client, slug):
 
 
 def _fake_scroll(monkeypatch, seen, parts=("S1", "A1")):
-    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None):
+    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None,
+             progress=lambda m: None):
         seen.update(song_dir=song_dir, cleaned=cleaned, name=name, quality=quality)
         out = os.path.join(song_dir, "media", "video")
         os.makedirs(out, exist_ok=True)
@@ -117,8 +118,10 @@ def test_the_size_choice_is_passed_through(client, song, monkeypatch):
 
 def test_render_status_and_logs_are_available_after_a_fresh_song_read(
         client, song, monkeypatch):
-    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None):
+    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None,
+             progress=lambda m: None):
         log("Engraving")
+        progress("Rendering video: 50% (30/60 frames)")
         out = os.path.join(song_dir, "media", "video")
         os.makedirs(out, exist_ok=True)
         path = os.path.join(out, f"{name} ALL.mp4")
@@ -131,12 +134,17 @@ def test_render_status_and_logs_are_available_after_a_fresh_song_read(
 
     job = data["jobs"]["render"]
     assert job["status"] == "succeeded"
-    assert [line["line"] for line in job["logs"]] == [
-        "Rendering the scrolling video (4k)…", "Engraving", "Done. 1 video(s) ready."]
+    assert [(line["type"], line["line"]) for line in job["logs"]] == [
+        ("log", "Rendering the scrolling video (4k)…"),
+        ("log", "Engraving"),
+        ("progress", "Rendering video: 50% (30/60 frames)"),
+        ("log", "Done. 1 video(s) ready."),
+    ]
 
 
 def test_a_score_edit_during_render_marks_the_outputs_stale(client, song, monkeypatch):
-    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None):
+    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None,
+             progress=lambda m: None):
         with open(cleaned, "a") as f:
             f.write("\n")
         out = os.path.join(song_dir, "media", "video")
@@ -187,6 +195,25 @@ def test_upload_uses_the_exact_recorded_output_manifest(client, song, monkeypatc
 def test_persisting_a_log_cannot_abort_the_reported_work(song, monkeypatch):
     monkeypatch.setattr(job_state, "append", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
     server._job_emit(song.slug, "render", "still rendering")
+
+
+def test_progress_does_not_load_song_state_that_another_thread_may_be_saving(
+        song, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(server, "_require",
+                        lambda slug: pytest.fail("progress must not parse .song.json"))
+    monkeypatch.setattr(job_state, "append",
+                        lambda directory, kind, line, entry_type: seen.update(
+                            directory=directory, kind=kind, line=line, entry_type=entry_type))
+
+    server._job_emit(song.slug, "render", "Rendering video: 50%", "progress")
+
+    assert seen == {
+        "directory": song.dir,
+        "kind": "render",
+        "line": "Rendering video: 50%",
+        "entry_type": "progress",
+    }
 
 
 def test_asking_for_the_screen_recorder_still_gets_it(client, song, monkeypatch):

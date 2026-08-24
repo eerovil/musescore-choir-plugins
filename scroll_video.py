@@ -61,7 +61,8 @@ def main() -> None:
                                keep_silent=args.keep_silent, emphasise=args.emphasise,
                                combined=not args.no_combined,
                                spacer_per_quarter=args.spacer, smooth_seconds=args.smooth,
-                               log=lambda m: print(m, flush=True))
+                               log=lambda m: print(m, flush=True),
+                               progress=lambda m: print(m, flush=True))
     except NotImplementedError as exc:
         sys.exit(f"Unsupported score: {exc}")
     print(f"\nWrote {len(written)} video(s) to {out_dir}")

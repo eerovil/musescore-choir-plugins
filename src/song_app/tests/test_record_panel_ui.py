@@ -35,7 +35,7 @@ if not _browser_installed():
 
 import uvicorn
 
-from src.song_app import server, state
+from src.song_app import job_state, server, state
 
 pytestmark = pytest.mark.browser
 
@@ -131,3 +131,27 @@ def test_the_run_button_posts_the_chosen_renderer(record_panel):
     view.wait_for_timeout(300)
     assert sent and sent[0]["renderer"] == "scroll"
     assert sent[0]["quality"] == "4k"
+
+
+def test_render_progress_survives_a_page_reload(record_panel):
+    view, slug, _ = record_panel
+    song = state.load(slug)
+    lock = server._lock_path(song)
+    try:
+        job_state.start(song.dir, "render")
+        job_state.append(song.dir, "render", "Rendering video: 42% (2520/6000 frames)",
+                         "progress")
+        with open(lock, "w") as handle:
+            handle.write(str(os.getpid()))
+
+        view.reload()
+        view.wait_for_selector(".progress")
+        assert "42%" in view.locator(".progress").inner_text()
+        assert view.get_by_text("Rendering… leave this running.", exact=False).is_visible()
+        if evidence := os.getenv("ISSUE_26_EVIDENCE_DIR"):
+            view.locator(".progress").scroll_into_view_if_needed()
+            view.screenshot(path=os.path.join(evidence, "issue-26-render-progress.png"))
+    finally:
+        if os.path.exists(lock):
+            os.remove(lock)
+        job_state.finish(song.dir, "render")

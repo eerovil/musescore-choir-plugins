@@ -145,9 +145,10 @@ def _derived(song: state.Song) -> Dict:
 
 
 def _job_emit(slug: str, kind: str, line: str, entry_type: str = "log") -> None:
-    song = _require(slug)
     try:
-        job_state.append(song.dir, kind, line, entry_type)
+        # Progress can arrive while another thread saves .song.json. The slug already
+        # determines the job path, so do not parse unrelated song state merely to log.
+        job_state.append(state.song_dir(slug), kind, line, entry_type)
     except Exception:
         traceback.print_exc()
     hub.emit(slug, {"type": entry_type, "line": line})
@@ -766,7 +767,8 @@ def _run_record(slug: str, opts: Dict) -> None:
             quality = opts.get("quality") or "4k"
             log(f"Rendering the scrolling video ({quality})…")
             outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
-                                                quality=quality, log=log)
+                                                quality=quality, log=log,
+                                                progress=progress)
             song = _require(slug)
             rec = song.data.setdefault("record", {})
             rec["exported"] = True

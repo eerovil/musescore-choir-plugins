@@ -525,7 +525,8 @@ SCROLL_QUALITY = {"4k": (3840, 2160, 60), "1080p": (1920, 1080, 30)}
 
 
 def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
-                     quality: str = "4k", log: Logger = _noop) -> List[str]:
+                     quality: str = "4k", log: Logger = _noop,
+                     progress: Logger = _noop) -> List[str]:
     """Render one scrolling practice video per voice into media/video.
 
     Files are named "<name> <part>.mp4" — the same shape `record_stemmanauha`
@@ -537,7 +538,8 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
     width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
     out_dir = os.path.join(song_dir, "media", "video")
     return build_videos(cleaned_path, out_dir, basename=name,
-                        width=width, height=height, fps=fps, log=log)
+                        width=width, height=height, fps=fps, log=log,
+                        progress=progress)
 
 
 def run_lyric_import(

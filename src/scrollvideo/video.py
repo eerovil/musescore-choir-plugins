@@ -11,7 +11,7 @@ import os
 import subprocess
 from bisect import bisect_right
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -24,10 +24,47 @@ FOCUS_ALPHA = 1.0        # how blue the voice this track is for goes
 BACKGROUND_ALPHA = 0.45  # ... and the other voices, when emphasising one
 BAND_ALPHA = 0.18        # translucent beat marker; engraving remains readable
 TAIL_SECONDS = 1.5       # keep rolling past the last note
-# Engraving is flat white with sharp black marks — x264 finds it very compressible,
-# so a fast preset costs little quality here and saves a lot of time at 4K.
+# Portable software fallback for machines without a working hardware encoder.
 DEFAULT_PRESET = "medium"
+SOFTWARE_ENCODER = "libx264"
+NVIDIA_ENCODER = "h264_nvenc"
 _BAND_COLOUR = np.rint(np.array(HIGHLIGHT) * BAND_ALPHA).astype(np.uint8)
+Progress = Callable[[str], None]
+
+
+def _noop_progress(_message: str) -> None:
+    pass
+
+
+def _encoder_works(encoder: str, width: int, height: int) -> bool:
+    """Probe the exact options and size; compiled support can still lack a device."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+             f"color=size={width}x{height}:rate=1", "-frames:v", "1",
+             *_video_encoder_args(encoder, DEFAULT_PRESET, 20), "-f", "null", "-"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def preferred_encoder(width: int, height: int) -> str:
+    """Use NVIDIA's encoder when it can really encode; software works everywhere."""
+    return NVIDIA_ENCODER if _encoder_works(NVIDIA_ENCODER, width, height) else SOFTWARE_ENCODER
+
+
+def _video_encoder_args(encoder: str, preset: str, crf: int) -> List[str]:
+    if encoder == NVIDIA_ENCODER:
+        # CQ 16 measured visually closer to x264 medium/CRF 20 than x264 veryfast,
+        # while encoding on the GPU. p7 is NVENC's highest-quality preset.
+        return ["-c:v", NVIDIA_ENCODER, "-preset", "p7", "-tune", "hq",
+                "-rc", "vbr", "-cq", str(max(0, crf - 4)), "-b:v", "0",
+                "-pix_fmt", "yuv420p"]
+    if encoder != SOFTWARE_ENCODER:
+        raise ValueError(f"Unsupported video encoder: {encoder}")
+    return ["-c:v", SOFTWARE_ENCODER, "-preset", preset, "-pix_fmt", "yuv420p",
+            "-crf", str(crf)]
 
 
 def mux(video_path: str, audio_path: str, out_path: str) -> str:
@@ -111,7 +148,9 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
            playhead: float = 0.35, focus_staff: Optional[int] = None,
            audio_path: Optional[str] = None, duration: Optional[float] = None,
            crf: int = 20, preset: str = DEFAULT_PRESET,
-           coverage: Optional[np.ndarray] = None) -> str:
+           coverage: Optional[np.ndarray] = None,
+           progress: Progress = _noop_progress,
+           encoder: str = SOFTWARE_ENCODER) -> str:
     """Write the scrolling video. `focus_staff` lights one staff and dims the rest.
 
     `coverage` is `geometry.playing_coverage`: how much of each pixel a notehead or
@@ -134,16 +173,19 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
            "-r", str(fps), "-i", "-"]
     if audio_path:
         cmd += ["-i", audio_path, "-c:a", "aac", "-b:a", "192k"]
-    cmd += ["-c:v", "libx264", "-preset", preset, "-pix_fmt", "yuv420p",
-            "-crf", str(crf), out_path]
+    cmd += [*_video_encoder_args(encoder, preset, crf), out_path]
 
     ff = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     # One reused buffer. At 4K a frame is 25MB, so allocating and white-filling a
     # fresh one per frame costs more than the encoder does; the strip copy below
     # overwrites the window, and only the margins past either end need whiting out.
     frame = np.empty((height, width, 3), dtype=np.uint8)
+    frame_bytes = memoryview(frame).cast("B")
     colour = np.array(HIGHLIGHT, dtype=np.float32)
-    onsets = tuple(p.on for p in placed)
+    active: List[Placed] = []
+    next_placed = 0
+    last_percent = 0
+    progress(f"Rendering video: 0% (0/{n_frames} frames)")
 
     try:
         for frame_no in range(n_frames):
@@ -158,15 +200,15 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
             if src1 > src0:
                 np.copyto(frame[:, dst0:dst1], strip[:, src0:src1])
 
-            marker_index = latest_onset_index(onsets, t)
-            if marker_index is not None:
-                blend_beat_marker(frame, placed[marker_index], left)
+            while next_placed < len(placed) and placed[next_placed].on <= t:
+                active.append(placed[next_placed])
+                next_placed += 1
+            active = [item for item in active if item.off > t]
 
-            for p in placed:
-                if p.on > t:
-                    break
-                if p.off <= t:
-                    continue
+            if next_placed:
+                blend_beat_marker(frame, placed[next_placed - 1], left)
+
+            for p in active:
                 x0, x1 = max(p.x0 - left, 0), min(p.x1 - left, width)
                 if x1 <= x0:
                     continue
@@ -191,7 +233,12 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
                 frame[y0:y1, x0:x1] = np.where(
                     a > 0, 255.0 - a * (255.0 - colour), patch).astype(np.uint8)
 
-            ff.stdin.write(frame.tobytes())
+            ff.stdin.write(frame_bytes)
+            done = frame_no + 1
+            percent = done * 100 // n_frames
+            if percent > last_percent:
+                progress(f"Rendering video: {percent}% ({done}/{n_frames} frames)")
+                last_percent = percent
         ff.stdin.close()
     except BrokenPipeError as exc:
         raise RuntimeError("ffmpeg exited while frames were being written.") from exc
