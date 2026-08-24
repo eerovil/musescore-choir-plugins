@@ -1,5 +1,7 @@
 """Reading a verovio SVG: where the notes are, and turning the page into pixels."""
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pytest
 from lxml import etree
@@ -47,6 +49,13 @@ def test_layout_uses_the_definition_scale_viewbox_not_the_root_size():
 def test_parse_layout_rejects_a_non_verovio_svg():
     with pytest.raises(ValueError):
         parse_layout('<svg xmlns="http://www.w3.org/2000/svg"><g/></svg>')
+
+
+def test_engrave_loads_fonts_in_a_worker_thread(fermata_musicxml):
+    """The song app engraves in an executor, outside Verovio's importing thread."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        rendered = executor.submit(engrave, fermata_musicxml).result()
+    assert rendered.notes
 
 
 def test_every_engraved_note_that_sounds_has_a_position(fermata_musicxml):
