@@ -191,6 +191,36 @@ def test_phone_library_and_panels_do_not_overflow_the_screen(live_app, own_answe
     assert not _scrolls_sideways(page, ".lib"), "the library is wider than the screen"
 
 
+def test_phone_pdf_viewer_scrolls_inside_its_pane(live_app, own_answers, page):
+    """A tall PDF must shrink to the viewer and scroll there, above the switcher.
+
+    Use a stand-in for the PDF.js canvases so this layout test does not depend on
+    the CDN or MuseScore renderer. The real renderer appends the same kind of tall
+    block content to ``.pdfview``.
+    """
+    page.set_viewport_size(PHONE)
+    _new_song(page, live_app, "PDF scroll check")
+    page.locator(".mobilebar").get_by_role("button", name="Score").click()
+
+    view = page.locator(".pdfview").first
+    expect(view).to_be_visible()
+    page.wait_for_function("e => Boolean(e._renderedUrl)", arg=view.element_handle())
+    view.evaluate("""e => {
+        const pages = document.createElement('div');
+        pages.style.height = '1600px';
+        pages.dataset.testid = 'tall-pdf';
+        e.replaceChildren(pages);
+    }""")
+
+    sizes = view.evaluate("e => ({client: e.clientHeight, scroll: e.scrollHeight})")
+    assert sizes["scroll"] > sizes["client"] + 500, \
+        f"the PDF grew its pane instead of overflowing it: {sizes}"
+
+    view.evaluate("e => { e.scrollTop = e.scrollHeight; }")
+    assert view.evaluate("e => e.scrollTop") > 500, "the PDF pane did not scroll"
+    assert not _page_scrolls(page), "the document scrolled instead of the PDF pane"
+
+
 def test_the_library_scrolls_to_its_last_song(live_app, own_answers, page):
     """Sideways is not the only way to put a song out of reach. The page itself never
     scrolls, so the library has to scroll inside itself; when it did not, every card
