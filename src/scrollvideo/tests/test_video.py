@@ -5,7 +5,8 @@ import pytest
 
 from src.scrollvideo.geometry import Layout, NoteGeom
 from src.scrollvideo.timing import NoteEvent
-from src.scrollvideo.video import HIGHLIGHT, mux, place, render
+from src.scrollvideo.video import (HIGHLIGHT, Placed, blend_beat_marker,
+                                   latest_onset_index, mux, place, render)
 from .conftest import needs_ffmpeg
 
 
@@ -33,6 +34,27 @@ def test_place_skips_notes_without_geometry():
     assert place([NoteEvent("ghost", 0, 1)], _layout(), px_per_unit=1.0) == []
 
 
+@pytest.mark.parametrize(("time", "expected"), [
+    (0.49, None),
+    (0.5, 0),
+    (1.99, 0),
+    (2.0, 1),
+    (9.0, 1),
+])
+def test_beat_marker_uses_the_last_onset_at_or_before_the_frame(time, expected):
+    assert latest_onset_index([0.5, 2.0], time) == expected
+
+
+def test_beat_marker_blends_full_height_two_noteheads_wide_and_centred():
+    frame = np.full((6, 50, 3), 255, dtype=np.uint8)
+    blend_beat_marker(frame, Placed(0, 1, 20, 30, 2, 4, 0), left=0)
+
+    assert np.all(frame[:, :15] == 255)
+    assert np.all(frame[:, 35:] == 255)
+    assert np.all(frame[:, 15:35] == frame[0, 15])
+    assert np.all(frame[:, 15:35] > 200), "the engraving must remain readable through the wash"
+
+
 @needs_ffmpeg
 def test_render_writes_a_playable_video_of_the_expected_length(tmp_path):
     import subprocess
@@ -46,6 +68,21 @@ def test_render_writes_a_playable_video_of_the_expected_length(tmp_path):
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
         capture_output=True, text=True).stdout.strip())
     assert seconds == pytest.approx(2.0, abs=0.2)
+
+
+@needs_ffmpeg
+def test_render_is_byte_deterministic_with_the_beat_marker(tmp_path):
+    strip = np.full((60, 160, 3), 255, dtype=np.uint8)
+    placed = [Placed(0.0, 0.5, 15, 25, 10, 20, 0),
+              Placed(0.5, 1.0, 75, 85, 30, 40, 1)]
+    outputs = [tmp_path / "first.mp4", tmp_path / "second.mp4"]
+
+    for out in outputs:
+        render(strip, placed, ([0.0, 1.0], [0.0, 0.0]), str(out), px_per_unit=1.0,
+               width=160, fps=10, duration=1.0, crf=0, playhead=0.0,
+               coverage=np.zeros((60, 160), dtype=np.uint8))
+
+    assert outputs[0].read_bytes() == outputs[1].read_bytes()
 
 
 def _frame_reader(path, height, width):
@@ -101,6 +138,30 @@ def test_the_note_itself_turns_blue_rather_than_a_box_over_it(tmp_path):
     around = frame[max(box.y0, 0):box.y1, max(box.x0, 0):box.x1].copy()
     around[24 - max(box.y0, 0):32 - max(box.y0, 0), :] = 255
     assert _blue_pixels(around) == 0, "colour leaked outside the glyph — that is a box"
+
+
+@needs_ffmpeg
+def test_beat_marker_is_full_height_translucent_and_centred_on_latest_note(tmp_path):
+    strip = np.full((60, 160, 3), 255, dtype=np.uint8)
+    placed = [
+        # Both notes have ten-pixel heads; the marker should jump from x=20 to x=80.
+        # Their lifetimes do not control the marker: only the latest onset does.
+        Placed(0.0, 0.1, 15, 25, 10, 20, 0),
+        Placed(1.0, 1.1, 75, 85, 30, 40, 1),
+    ]
+    out = tmp_path / "marker.mp4"
+    render(strip, placed, ([0.0, 2.0], [0.0, 0.0]), str(out), px_per_unit=1.0,
+           width=160, fps=10, duration=2.0, crf=0, playhead=0.0,
+           coverage=np.zeros((60, 160), dtype=np.uint8))
+
+    frame_at = _frame_reader(out, 60, 160)
+    first = frame_at(0.5)
+    second = frame_at(1.5)
+    assert first[:, 10:30].max() < 250
+    assert first[:, 70:90].min() > 250
+    assert second[:, 10:30].min() > 250
+    assert second[:, 70:90].max() < 250
+    assert second[:, 70:90].min() > 200, "the engraving must remain readable through the wash"
 
 
 @needs_ffmpeg
