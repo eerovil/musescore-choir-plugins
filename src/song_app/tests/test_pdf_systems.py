@@ -100,6 +100,23 @@ def test_bounds_round_trip_through_the_song_folder(bounds, tmp_path):
     assert pdf_systems.load_bounds(str(tmp_path)) == bounds
 
 
+def test_saving_edited_bounds_invalidates_same_dpi_crops(bounds, tmp_path):
+    from src.song_app import pipeline
+
+    song_dir = str(tmp_path)
+    pdf_systems.save_bounds(song_dir, bounds)
+    first = pipeline.system_crop(song_dir, PDF, 1, DPI)
+    old_height = Image.open(first).height
+
+    bands = [b.to_dict() for b in bounds]
+    bands[0]["bottom"] = bands[0]["bottom"] - 0.02
+    pipeline.save_system_bounds(song_dir, bands)
+    second = pipeline.system_crop(song_dir, PDF, 1, DPI)
+
+    assert second != first
+    assert Image.open(second).height < old_height
+
+
 def test_a_missing_or_broken_bounds_file_reads_as_none(tmp_path):
     assert pdf_systems.load_bounds(str(tmp_path)) == []
     with open(tmp_path / pdf_systems.BOUNDS_FILE, "w") as f:

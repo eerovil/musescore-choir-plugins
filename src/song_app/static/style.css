@@ -125,6 +125,8 @@ table.grid input { width: 100%; }
 table.grid input.unset { border-color: var(--warn); }
 .sysblock { margin-bottom: 18px; }
 .sysblock h4 { margin: 0 0 6px; }
+.syshead { justify-content: space-between; margin-bottom: 6px; }
+.syshead h4 { margin: 0; }
 .lyrow { margin-bottom: 8px; }
 .lyrow label { display: inline-block; margin: 0 0 2px; color: var(--text); font-weight: 600; font-size: 13px; }
 .lyrow textarea { width: 100%; overflow: hidden; resize: none; }
@@ -146,6 +148,13 @@ table.grid input.unset { border-color: var(--warn); }
 .banner { padding: 9px 12px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); margin-bottom: 12px; color: var(--text); }
 .banner.good { color: var(--good); border-color: var(--good); }
 .banner.err { color: var(--bad); border-color: var(--bad); }
+.verify { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; background: var(--panel); }
+.verify h3 { margin: 0 0 4px; }
+.verify ul { margin: 8px 0 0; padding-left: 20px; }
+.verify .check { margin: 3px 0; color: var(--muted); }
+.verify .check.passed { color: var(--good); }
+.verify .check.warning, .verify .check.stale { color: var(--warn); }
+.verify .check.file { margin-left: 14px; font-size: 12px; }
 .result { margin: 12px 0; }
 .result .rlabel { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
 .result video { width: 100%; border-radius: 8px; background: #000; }

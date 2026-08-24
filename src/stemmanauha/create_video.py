@@ -413,7 +413,8 @@ def find_merged_outputs(song_dir):
 
 def run(song_dir=None, youtube=False, extra_playlist_id=None,
         audio_delay_ms=1300, redo_mp3=False, redo_video=False, merge_only=False,
-        upload_only=False, log=None, progress=None, display_name=None, on_uploaded=None):
+        upload_only=False, log=None, progress=None, display_name=None, on_uploaded=None,
+        existing_outputs=None):
     """Record a practice video.
 
     audio_delay_ms : play-along sync offset for the merge.
@@ -432,7 +433,8 @@ def run(song_dir=None, youtube=False, extra_playlist_id=None,
         get_authenticated_service()
 
     if upload_only:
-        results = find_merged_outputs(song_dir)
+        results = ([Path(path) for path in existing_outputs]
+                   if existing_outputs is not None else find_merged_outputs(song_dir))
         if not results:
             raise FileNotFoundError("No merged videos found to upload — record first.")
         log("Uploading existing videos…")

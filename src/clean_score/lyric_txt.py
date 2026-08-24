@@ -114,6 +114,7 @@ class EditorGrid:
     parts: List[EditorPart] = field(default_factory=list)
     systems: List[EditorSystem] = field(default_factory=list)
     cells: Dict[int, Dict[str, str]] = field(default_factory=dict)
+    capacities: Dict[int, Dict[str, int]] = field(default_factory=dict)
 
     def text(self, system_index: int, part_name: str) -> str:
         return self.cells.get(system_index, {}).get(part_name, "")
@@ -124,6 +125,8 @@ class EditorGrid:
             "systems": [{"index": s.index, "start": s.start, "end": s.end}
                         for s in self.systems],
             "cells": {str(si): dict(cells) for si, cells in self.cells.items()},
+            "capacities": {str(si): dict(counts)
+                           for si, counts in self.capacities.items()},
         }
 
 # Default mapping from JSON part keys (e.g. S1, A2) to staff id. Overridable.
@@ -1393,16 +1396,22 @@ def editor_grid(
                   for r in system_ranges(score_root)]
     systems = ranges
     by_measure = _lyrics_by_measure_staff(score_root)
+    counts = slot_counts(score_root)
     cells: Dict[int, Dict[str, str]] = {}
+    capacities: Dict[int, Dict[str, int]] = {}
     for system in systems:
         for part in parts:
+            capacities.setdefault(system.index, {})[part.name] = sum(
+                counts.get(part.id, {}).get(mi, 0)
+                for mi in range(system.start, system.end + 1)
+            )
             tokens: List[str] = []
             for mi in range(system.start - 1, system.end):
                 tokens += [t for t in by_measure.get(mi, {}).get(part.id, []) if t != "_"]
             text = _merge_tokens(tokens).strip()
             if text:
                 cells.setdefault(system.index, {})[part.name] = text
-    return EditorGrid(parts=parts, systems=systems, cells=cells)
+    return EditorGrid(parts=parts, systems=systems, cells=cells, capacities=capacities)
 
 
 def blocks_from_cells(

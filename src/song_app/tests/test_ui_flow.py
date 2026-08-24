@@ -164,6 +164,7 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     page.get_by_role("button", name="Type by system").click()
     cell = page.locator('textarea[data-sys="0"][data-part="T1"]')
     expect(cell).to_be_visible()
+    expect(cell.locator("xpath=preceding-sibling::label")).to_contain_text("lyric slots")
     cell.fill("yk")  # one syllable for a whole system: too few
     page.get_by_role("button", name="Import lyrics").click()
 
@@ -178,6 +179,11 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
 
     # What was typed survives the re-render, read back out of the score.
     expect(page.locator('textarea[data-sys="0"][data-part="T1"]')).to_have_value("yk")
+    if evidence := os.getenv("ISSUE_17_EVIDENCE_DIR"):
+        page.locator(".stagebar .step", has_text="Review").click()
+        expect(page.locator(".verify")).to_contain_text("Health: Current score checked")
+        expect(page.locator(".verify")).to_contain_text("Lyrics: Current score; 1 lyric warning")
+        page.screenshot(path=os.path.join(evidence, "issue-17-verification-summary.png"))
 
 
 def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
@@ -207,6 +213,45 @@ def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
     assert dropped, "cleaning with unnamed staves must confirm first"
     assert "staff 1 · system 3" in dropped[0], dropped[0]
     assert "staff 1 · system 4" in dropped[0], dropped[0]
+
+
+def test_one_confirmation_reuses_assignments_only_through_matching_systems(
+        live_app, own_answers, page):
+    _new_song(page, live_app, "Reuse matching systems")
+
+    def cell(system, staff):
+        return page.locator(f'input[data-sys="{system}"][data-staff="{staff}"]')
+
+    cell(0, 1).fill("T1,T2")
+    cell(0, 2).fill("B")
+    cell(1, 1).fill("T1,T3")       # explicit exception must survive reuse
+    cell(1, 2).fill("-")           # so must an explicit clear
+    page.get_by_role("button", name="Reuse previous assignments through matching systems").first.click()
+
+    # Systems 2 and 3 share the complete layout with system 1.
+    expect(cell(1, 1)).to_have_value("T1,T3")
+    expect(cell(1, 2)).to_have_value("-")
+    expect(cell(2, 1)).to_have_value("T1,T3")
+    expect(cell(2, 2)).to_have_value("")
+    # System 4 has four voices on staff 1, so reuse stops before it.
+    expect(cell(3, 1)).to_have_value("")
+    if evidence := os.getenv("ISSUE_17_EVIDENCE_DIR"):
+        page.locator(".sysblock").nth(1).scroll_into_view_if_needed()
+        page.screenshot(path=os.path.join(evidence, "issue-17-assignment-reuse.png"))
+
+
+def test_clean_logs_are_hydrated_after_a_page_reload(live_app, own_answers, page):
+    from src.song_app import job_state, state
+
+    _new_song(page, live_app, "Persisted clean log")
+    song_dir = state.song_dir("persisted-clean-log")
+    job_state.start(song_dir, "clean")
+    job_state.append(song_dir, "clean", "Recovered after reload")
+    job_state.finish(song_dir, "clean", error="Example final failure")
+
+    page.reload()
+    expect(page.locator(".log")).to_contain_text("Recovered after reload")
+    expect(page.locator(".banner.err")).to_contain_text("Example final failure")
 
 
 BOUNDS_FIXTURE = os.path.join(

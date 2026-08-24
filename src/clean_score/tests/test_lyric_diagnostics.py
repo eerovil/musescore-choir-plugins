@@ -129,6 +129,39 @@ def test_editor_grid_lists_parts_and_systems_and_skips_the_click_staff():
     assert [p.name for p in grid.parts] == ["S", "A"]  # the click staff carries no lyrics
     assert [(s.index, s.start, s.end) for s in grid.systems] == [(0, 1, 2), (1, 3, 4)]
     assert grid.cells == {}  # nothing typed yet
+    assert grid.capacities == {0: {"S": 6, "A": 6}, 1: {"S": 6, "A": 6}}
+
+
+def test_editor_capacity_uses_the_importers_rest_tie_and_slur_rules():
+    """The displayed number is the same public slot count the importer consumes."""
+    import os
+
+    from lxml import etree
+
+    from src.clean_score.lyric_txt import slot_counts
+    from src.clean_score.tests.test_lyric_txt_spanner import SPANNER_MSCX
+
+    assert os.path.exists(SPANNER_MSCX)
+    root = etree.parse(SPANNER_MSCX).getroot()
+    grid = editor_grid(root)
+    counts = slot_counts(root)
+    for system in grid.systems:
+        for part in grid.parts:
+            expected = sum(counts.get(part.id, {}).get(measure, 0)
+                           for measure in range(system.start, system.end + 1))
+            assert grid.capacities[system.index][part.name] == expected
+
+
+def test_editor_capacity_shows_zero_before_a_delayed_entrance():
+    root = build_score(staff_ids=(1, 2), measures=2, chords=3,
+                       names={1: "T1", 2: "T2"}, line_breaks=(1,))
+    lower = root.find(".//Score/Staff[@id='2']")
+    for chord in list(lower.findall("Measure[1]/voice/Chord")):
+        chord.getparent().remove(chord)
+
+    grid = editor_grid(root)
+    assert grid.capacities[0] == {"T1": 3, "T2": 0}
+    assert grid.capacities[1] == {"T1": 3, "T2": 3}
 
 
 def test_editor_cells_round_trip_through_import_and_back():

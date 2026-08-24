@@ -13,7 +13,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
-from src.song_app import pipeline, server, state
+from src.song_app import job_state, pipeline, server, state
 
 
 @pytest.fixture
@@ -113,6 +113,80 @@ def test_the_size_choice_is_passed_through(client, song, monkeypatch):
     client.post(f"/api/songs/{song.slug}/record", json={"quality": "1080p"})
     _finished(client, song.slug)
     assert seen["quality"] == "1080p"
+
+
+def test_render_status_and_logs_are_available_after_a_fresh_song_read(
+        client, song, monkeypatch):
+    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None):
+        log("Engraving")
+        out = os.path.join(song_dir, "media", "video")
+        os.makedirs(out, exist_ok=True)
+        path = os.path.join(out, f"{name} ALL.mp4")
+        open(path, "wb").close()
+        return [path]
+
+    monkeypatch.setattr(pipeline, "run_scroll_video", fake)
+    client.post(f"/api/songs/{song.slug}/record", json={})
+    data = _finished(client, song.slug)
+
+    job = data["jobs"]["render"]
+    assert job["status"] == "succeeded"
+    assert [line["line"] for line in job["logs"]] == [
+        "Rendering the scrolling video (4k)…", "Engraving", "Done. 1 video(s) ready."]
+
+
+def test_a_score_edit_during_render_marks_the_outputs_stale(client, song, monkeypatch):
+    def fake(song_dir, cleaned, name, *, quality="4k", log=lambda m: None):
+        with open(cleaned, "a") as f:
+            f.write("\n")
+        out = os.path.join(song_dir, "media", "video")
+        os.makedirs(out, exist_ok=True)
+        path = os.path.join(out, f"{name} ALL.mp4")
+        open(path, "wb").close()
+        return [path]
+
+    monkeypatch.setattr(pipeline, "run_scroll_video", fake)
+    client.post(f"/api/songs/{song.slug}/record", json={})
+    data = _finished(client, song.slug)
+
+    assert data["record"]["rendered_against"] != data["verification_summary"]["cleaned_fingerprint"]
+    assert data["verification_summary"]["media"]["status"] == "stale"
+
+
+def test_clean_and_render_cannot_overlap(client, song):
+    job_state.start(song.dir, "clean")
+    response = client.post(f"/api/songs/{song.slug}/record", json={})
+    assert response.status_code == 409
+    job_state.finish(song.dir, "clean", error="test cleanup")
+
+
+def test_upload_uses_the_exact_recorded_output_manifest(client, song, monkeypatch):
+    video = song.path("media", "video")
+    os.makedirs(video)
+    chosen = song.path("media", "video", f"{song.slug} T1.mp4")
+    stale = song.path("media", "video", f"{song.slug} old.mov")
+    open(chosen, "wb").close()
+    open(stale, "wb").close()
+    song.data["record"] = {"outputs": [os.path.basename(chosen)]}
+    song.save()
+    seen = {}
+
+    import src.stemmanauha.create_video as create_video
+
+    def fake_run(**kwargs):
+        seen.update(kwargs)
+        return [chosen]
+
+    monkeypatch.setattr(create_video, "run", fake_run)
+    client.post(f"/api/songs/{song.slug}/record", json={"upload_only": True})
+    _finished(client, song.slug)
+    assert seen["existing_outputs"] == [chosen]
+    assert stale not in seen["existing_outputs"]
+
+
+def test_persisting_a_log_cannot_abort_the_reported_work(song, monkeypatch):
+    monkeypatch.setattr(job_state, "append", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    server._job_emit(song.slug, "render", "still rendering")
 
 
 def test_asking_for_the_screen_recorder_still_gets_it(client, song, monkeypatch):

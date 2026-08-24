@@ -15,7 +15,7 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import health, pdf_systems, pipeline, state
+from . import health, job_state, pdf_systems, pipeline, state, verification
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -125,6 +125,7 @@ def _derived(song: state.Song) -> Dict:
     cleaned = song.cleaned_path()
     pdf = song.source_path("pdf")
     issues = song.data.get("health", {}).get("issues", [])
+    systems = len([b for b in pdf_systems.load_bounds(song.dir) if b.measure_start])
     return {
         **song.data,
         "slug": song.slug,
@@ -134,11 +135,29 @@ def _derived(song: state.Song) -> Dict:
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
         # Printed-system bounds, labelled with the measures they cover: what lets
         # the viewer show one system and the lyric editor ask per system.
-        "systems": len([b for b in pdf_systems.load_bounds(song.dir) if b.measure_start]),
+        "systems": systems,
         "open_issues": [i for i in issues if i.get("status") == "open"],
         "recording": is_recording(song),
         "media": _media_list(song),
+        "jobs": job_state.load(song.dir),
+        "verification_summary": verification.summary(song, systems),
     }
+
+
+def _job_emit(slug: str, kind: str, line: str, entry_type: str = "log") -> None:
+    song = _require(slug)
+    try:
+        job_state.append(song.dir, kind, line, entry_type)
+    except Exception:
+        traceback.print_exc()
+    hub.emit(slug, {"type": entry_type, "line": line})
+
+
+def _job_finish(song: state.Song, kind: str, error: Optional[str] = None) -> None:
+    try:
+        job_state.finish(song.dir, kind, error=error)
+    except Exception:
+        traceback.print_exc()
 
 
 # --------------------------------------------------------------------------
@@ -304,15 +323,19 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
 def _run_clean(slug: str) -> None:
     song = _require(slug)
     xml = song.source_path("xml")
-    log = lambda m: hub.emit(slug, {"type": "log", "line": m})
+    log = lambda m: _job_emit(slug, "clean", m)
     try:
-        cleaned, _ = pipeline.run_clean(
+        cleaned, source_mscx = pipeline.run_clean(
             xml, song.dir, per_system=(song.mode == "per-system"), log=log,
             voicing=song.data.get("voicing") or None,
         )
         rel = os.path.relpath(cleaned, song.dir)
         song.data["cleaned"] = rel
         song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
+        note_check = verification.compare_notes(source_mscx, cleaned)
+        song.data.setdefault("verification", {})["notes"] = {
+            **note_check, "checked_against": song.data["cleaned_fingerprint"],
+        }
         # Run the health check.
         found = health.scan(cleaned)
         prev = song.data.get("health", {}).get("issues", [])
@@ -323,16 +346,24 @@ def _run_clean(slug: str) -> None:
         song.set_stage("fix")
         song.save()
         n = len(_derived(song)["open_issues"])
-        log(f"Done. {n} issue(s) to review." if n else "Done. No issues found.")
+        final = f"Done. {n} issue(s) to review." if n else "Done. No issues found."
+        log(final)
+        _job_finish(song, "clean")
         hub.emit(slug, {"type": "state"})
     except Exception as exc:  # surface to the UI rather than dying silently
         traceback.print_exc()
-        hub.emit(slug, {"type": "error", "line": str(exc)})
+        _job_emit(slug, "clean", str(exc), "error")
+        _job_finish(song, "clean", str(exc))
+        hub.emit(slug, {"type": "state"})
 
 
 @app.post("/api/songs/{slug}/clean")
 async def api_clean(slug: str) -> Dict:
-    _require(slug)
+    song = _require(slug)
+    if is_recording(song) or not job_state.start_if_idle(
+            song.dir, "clean", ("clean", "render", "upload"),
+            state.file_fingerprint(song.source_path("xml"))):
+        raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
     return {"started": True}
 
@@ -485,16 +516,30 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     json_path = song.path("lyrics.json")
     with open(json_path, "w", encoding="utf-8") as f:
         f.write(json_text)
+    previous_fingerprint = state.file_fingerprint(cleaned)
     try:
         result = pipeline.run_lyric_import(json_path, cleaned, replace=True)
     except Exception as exc:
         raise HTTPException(400, f"Import failed: {exc}")
+    current_fingerprint = state.file_fingerprint(cleaned)
     song.data["lyrics"] = {
         "json": "lyrics.json",
-        "imported_against": state.file_fingerprint(cleaned),
+        "imported_against": current_fingerprint,
         "warnings": [m.to_dict() for m in result.mismatches],
     }
-    song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
+    # Import may add full-measure rests to otherwise empty measures, so health must
+    # be checked again rather than rebound to the new fingerprint without evidence.
+    previous_issues = song.data.get("health", {}).get("issues", [])
+    song.data["health"] = {
+        "checked_against": current_fingerprint,
+        "issues": health.merge_issues(health.scan(cleaned), previous_issues),
+    }
+    # Pitch events do not change during lyric placement, so this narrower result can
+    # safely follow the controlled XML edit without repeating the source comparison.
+    note_data = song.data.get("verification", {}).get("notes", {})
+    if note_data.get("checked_against") == previous_fingerprint:
+        note_data["checked_against"] = current_fingerprint
+    song.data["cleaned_fingerprint"] = current_fingerprint
     if result.ok:
         song.set_stage("review")
     song.save()
@@ -690,16 +735,21 @@ def api_reveal_pdf(slug: str) -> Dict:
 # --------------------------------------------------------------------------
 def _run_record(slug: str, opts: Dict) -> None:
     song = _require(slug)
-    log = lambda m: hub.emit(slug, {"type": "log", "line": m})
-    progress = lambda m: hub.emit(slug, {"type": "progress", "line": m})
+    start_fingerprint = opts.get("_source_fingerprint")
+    previous_rendered_against = song.data.get("record", {}).get("rendered_against")
+    previous_outputs = bool(song.data.get("record", {}).get("outputs"))
+    job_kind = "upload" if opts.get("upload_only") else "render"
+    log = lambda m: _job_emit(slug, job_kind, m)
+    progress = lambda m: _job_emit(slug, job_kind, m, "progress")
 
     def on_uploaded(info: Dict) -> None:
-        rec = song.data.setdefault("record", {})
+        current_song = _require(slug)
+        rec = current_song.data.setdefault("record", {})
         rec.setdefault("uploads", []).append(info)
         rec["playlist_id"] = info.get("playlist_id")
         if info.get("playlist_id"):
             state.save_playlist(info["playlist_id"], info.get("playlist_title"))
-        song.save()
+        current_song.save()
         hub.emit(slug, {"type": "state"})
 
     try:
@@ -717,15 +767,20 @@ def _run_record(slug: str, opts: Dict) -> None:
             log(f"Rendering the scrolling video ({quality})…")
             outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
                                                 quality=quality, log=log)
+            song = _require(slug)
             rec = song.data.setdefault("record", {})
             rec["exported"] = True
             rec["renderer"] = "scroll"
             rec["quality"] = quality
             rec["outputs"] = [os.path.basename(p) for p in outputs]
+            rec["rendered_against"] = start_fingerprint
+            rec["verification"] = verification.verify_media(
+                song, rec["outputs"], verification.singing_parts(cleaned))
             rec["error"] = None
             song.set_stage("upload")
             song.save()
             log(f"Done. {len(outputs)} video(s) ready.")
+            _job_finish(song, job_kind)
             return
 
         from src.stemmanauha.create_video import run
@@ -749,24 +804,38 @@ def _run_record(slug: str, opts: Dict) -> None:
             upload_only=upload_only,
             log=log, progress=progress,
             display_name=song.name, on_uploaded=on_uploaded,
+            existing_outputs=opts.get("_existing_outputs"),
         )
+        song = _require(slug)
         rec = song.data.setdefault("record", {})
         if not upload_only:
             rec["exported"] = True
             rec["renderer"] = "screen"
             rec["audio_delay_ms"] = int(opts.get("audio_delay_ms", 1300))
             rec["outputs"] = [os.path.basename(str(r)) for r in (results or [])]
+            cleaned = song.cleaned_path()
+            # Reusing or re-merging existing ingredients cannot prove they came from
+            # today's score. Preserve prior provenance unless both were regenerated,
+            # or this is the first set of outputs for the song.
+            fresh_inputs = (bool(opts.get("redo_mp3")) and bool(opts.get("redo_video"))) \
+                or not previous_outputs
+            rec["rendered_against"] = start_fingerprint if fresh_inputs \
+                else previous_rendered_against
+            rec["verification"] = verification.verify_media(
+                song, rec["outputs"], verification.singing_parts(cleaned))
         rec["error"] = None
         # After recording, move on to the Upload stage; uploading stays there.
         if not merge_only:
             song.set_stage("upload")
         song.save()
         log("Upload complete." if upload_only else f"Done. {len(results or [])} video(s) ready.")
+        _job_finish(song, job_kind)
     except Exception as exc:
         traceback.print_exc()
         song.data.setdefault("record", {})["error"] = str(exc)
         song.save()
-        hub.emit(slug, {"type": "error", "line": str(exc)})
+        _job_emit(slug, job_kind, str(exc), "error")
+        _job_finish(song, job_kind, str(exc))
     finally:
         lock = _lock_path(song)
         if os.path.exists(lock):
@@ -778,12 +847,28 @@ def _run_record(slug: str, opts: Dict) -> None:
 async def api_record(slug: str, body: Dict = None) -> Dict:
     song = _require(slug)
     if is_recording(song):
-        raise HTTPException(409, "A recording is already running for this song.")
-    # Take the lock before launching so a second request (e.g. after a page
-    # refresh) is rejected rather than starting a clashing recording.
-    with open(_lock_path(song), "w") as f:
-        f.write(str(os.getpid()))
-    asyncio.get_running_loop().run_in_executor(None, _run_record, slug, body or {})
+        raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
+    opts = body or {}
+    kind = "upload" if opts.get("upload_only") else "render"
+    source_fingerprint = state.file_fingerprint(song.cleaned_path())
+    if not job_state.start_if_idle(
+            song.dir, kind, ("clean", "render", "upload"), source_fingerprint):
+        raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
+    # The durable start above is the atomic gate; the PID lock keeps the existing
+    # process-aware recording indicator and stale-lock recovery behavior.
+    try:
+        with open(_lock_path(song), "w") as f:
+            f.write(str(os.getpid()))
+    except Exception as exc:
+        _job_finish(song, kind, str(exc))
+        raise
+    opts["_source_fingerprint"] = source_fingerprint
+    if opts.get("upload_only"):
+        opts["_existing_outputs"] = [
+            song.path("media", "video", os.path.basename(name))
+            for name in song.data.get("record", {}).get("outputs", [])
+        ]
+    asyncio.get_running_loop().run_in_executor(None, _run_record, slug, opts)
     return {"started": True}
 
 
@@ -869,6 +954,8 @@ async def _startup() -> None:
             print(f"Imported {n} existing song folder(s).")
     except Exception:
         traceback.print_exc()
+    for song in state.list_songs():
+        job_state.interrupt_running(song.dir)
     if os.path.isdir(state.SONGS_DIR):
         asyncio.create_task(_watch_cleaned())
 
