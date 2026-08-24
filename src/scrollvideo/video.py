@@ -1,4 +1,4 @@
-"""Frames: a pre-rendered strip, scrolled, with the sounding notes lit up.
+"""Frames: a pre-rendered strip, scrolled, with active notes and rests lit up.
 
 The engraving is rasterised once; a frame is a crop of that strip plus an alpha
 blend over each sounding note's rectangle. Nothing is re-engraved per frame, so
@@ -49,7 +49,7 @@ def mux(video_path: str, audio_path: str, out_path: str) -> str:
 
 @dataclass(frozen=True)
 class Placed:
-    """A note event with its pixel rectangle and staff."""
+    """A timed note or rest with its pixel rectangle and staff."""
 
     on: float
     off: float
@@ -60,19 +60,23 @@ class Placed:
     staff: int
 
 
-def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float) -> List[Placed]:
-    """Note events -> the pixel box of each drawn note (sorted by onset)."""
+def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float,
+          staff_limit: Optional[int] = None) -> List[Placed]:
+    """Timed notes/rests -> pixel boxes, sorted by onset."""
     placed = []
     for e in events:
-        geom = layout.notes.get(e.note_id)
+        geom = layout.playing(e.note_id)
         if geom is None:
+            continue
+        staff = layout.staff_index(geom)
+        if staff_limit is not None and staff >= staff_limit:
             continue
         x0, y0, x1, y1 = geom.box()
         placed.append(Placed(
             e.on, e.off,
             int(x0 * px_per_unit), int(x1 * px_per_unit),
             int(y0 * px_per_unit), int(y1 * px_per_unit),
-            layout.staff_index(geom)))
+            staff))
     placed.sort(key=lambda p: p.on)
     return placed
 
@@ -110,10 +114,10 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
            coverage: Optional[np.ndarray] = None) -> str:
     """Write the scrolling video. `focus_staff` lights one staff and dims the rest.
 
-    `coverage` is `geometry.note_coverage`: how much of each pixel a note glyph
-    covers. A sounding note is repainted blue through it, so the note itself turns
-    blue — stem, dots and antialiased edges included — rather than sitting under a
-    coloured box. Without it, the box is drawn instead.
+    `coverage` is `geometry.playing_coverage`: how much of each pixel a notehead or
+    rest glyph covers. An active symbol is repainted blue through it, including
+    antialiased edges, rather than sitting under a coloured box. Without coverage,
+    the box is drawn instead.
     """
     height = strip.shape[0]
     strip_w = strip.shape[1]

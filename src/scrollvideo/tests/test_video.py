@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.scrollvideo.geometry import Layout, NoteGeom
+from src.scrollvideo.geometry import Layout, NoteGeom, RestGeom
 from src.scrollvideo.timing import NoteEvent
 from src.scrollvideo.video import (HIGHLIGHT, Placed, blend_beat_marker,
                                    latest_onset_index, mux, place, render)
@@ -14,7 +14,8 @@ def _layout():
     return Layout(width=1000.0, height=500.0,
                   notes={"top": NoteGeom(100.0, 120.0, 100.0, 25.0),
                          "low": NoteGeom(300.0, 320.0, 300.0, 25.0)},
-                  staff_tops=[100.0, 300.0])
+                  staff_tops=[100.0, 300.0],
+                  rests={"rest": RestGeom(300.0, 120.0, 100.0, 25.0)})
 
 
 def test_place_maps_notes_to_their_own_staff():
@@ -32,6 +33,15 @@ def test_place_scales_with_the_output_size():
 
 def test_place_skips_notes_without_geometry():
     assert place([NoteEvent("ghost", 0, 1)], _layout(), px_per_unit=1.0) == []
+
+
+def test_place_maps_rests_and_can_leave_out_the_spacer_staff():
+    layout = _layout()
+    events = [NoteEvent("rest", 0, 1), NoteEvent("low", 0, 1)]
+    placed = place(events, layout, px_per_unit=1.0, staff_limit=1)
+    assert len(placed) == 1
+    assert placed[0].staff == 0
+    assert (placed[0].x0 + placed[0].x1) / 2 == pytest.approx(315.0)
 
 
 @pytest.mark.parametrize(("time", "expected"), [
@@ -115,6 +125,27 @@ def test_only_sounding_notes_are_lit(tmp_path):
     frame_at = _frame_reader(out, 120, 320)
     assert _blue_pixels(frame_at(0.5)) > 0, "note not highlighted while sounding"
     assert _blue_pixels(frame_at(2.5)) == 0, "highlight outlived the note"
+
+
+@needs_ffmpeg
+def test_playing_rest_turns_blue_and_moves_the_marker(tmp_path):
+    strip = np.full((120, 800, 3), 255, dtype=np.uint8)
+    coverage = np.zeros((120, 800), dtype=np.uint8)
+    coverage[24:32, 24:32] = 255
+    coverage[24:32, 72:80] = 255
+    strip[24:32, 24:32] = 0
+    strip[24:32, 72:80] = 0
+    placed = place([NoteEvent("top", 0.0, 1.0), NoteEvent("rest", 1.0, 2.0)],
+                   _layout(), px_per_unit=0.24)
+    out = tmp_path / "rest.mp4"
+    render(strip, placed, ([0.0, 2.0], [0.0, 0.0]), str(out), px_per_unit=0.24,
+           width=320, fps=10, duration=2.0, crf=0, coverage=coverage, playhead=0.0)
+
+    frame = _frame_reader(out, 120, 320)(1.5)
+    assert _blue_pixels(frame[24:32, 72:80]) > 0, "rest glyph did not turn blue"
+    assert _blue_pixels(frame[24:32, 24:32]) == 0, "finished note stayed highlighted"
+    assert frame[0, 76].max() < 250, "beat marker did not move to the rest"
+    assert frame[0, 28].min() > 250, "beat marker stayed on the finished note"
 
 
 @needs_ffmpeg

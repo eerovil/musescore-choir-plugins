@@ -65,16 +65,10 @@ class TempoMap:
         return self._secs[i] + (qstamp - self._q[i]) * self._us[i] / 1e6
 
 
-def note_events(timemap: Sequence[dict], tempo: TempoMap,
-                drawn_id: Mapping[str, str] | None = None) -> List[NoteEvent]:
-    """Verovio timemap -> note on/off in seconds on the tempo map's clock.
-
-    `drawn_id` maps a sounding id to the note engraved on the page; inside a
-    repeated section those differ, and the same drawn note gets one event per
-    pass. Sounding ids it does not cover have nothing to highlight and are
-    dropped. Notes still sounding at the end (no ``off`` event) are closed at
-    the last timestamp, so a final fermata stays lit instead of blinking out.
-    """
+def _timed_events(timemap: Sequence[dict], tempo: TempoMap,
+                  drawn_id: Mapping[str, str] | None, *,
+                  on_key: str, off_key: str) -> List[NoteEvent]:
+    """Pair one kind of Verovio on/off event on MuseScore's clock."""
     known = dict(drawn_id) if drawn_id is not None else None
     started: dict = {}
     events: List[NoteEvent] = []
@@ -83,11 +77,11 @@ def note_events(timemap: Sequence[dict], tempo: TempoMap,
     for entry in timemap:
         q = float(entry.get("qstamp", 0.0))
         last_q = max(last_q, q)
-        for nid in entry.get("off", []):
+        for nid in entry.get(off_key, []):
             if nid in started:
                 events.append(NoteEvent(known[nid] if known else nid,
                                         tempo.seconds(started.pop(nid)), tempo.seconds(q)))
-        for nid in entry.get("on", []):
+        for nid in entry.get(on_key, []):
             if known is None or nid in known:
                 started[nid] = q
 
@@ -97,6 +91,26 @@ def note_events(timemap: Sequence[dict], tempo: TempoMap,
 
     events.sort(key=lambda e: (e.on, e.off))
     return events
+
+
+def note_events(timemap: Sequence[dict], tempo: TempoMap,
+                drawn_id: Mapping[str, str] | None = None) -> List[NoteEvent]:
+    """Verovio note on/off events in seconds on MuseScore's tempo map.
+
+    `drawn_id` maps a sounding id to the note engraved on the page; inside a
+    repeated section those differ, and the same drawn note gets one event per
+    pass. Sounding ids it does not cover have nothing to highlight and are
+    dropped. Notes still sounding at the end (no ``off`` event) are closed at
+    the last timestamp, so a final fermata stays lit instead of blinking out.
+    """
+    return _timed_events(timemap, tempo, drawn_id, on_key="on", off_key="off")
+
+
+def rest_events(timemap: Sequence[dict], tempo: TempoMap,
+                drawn_id: Mapping[str, str] | None = None) -> List[NoteEvent]:
+    """Verovio rest on/off events in seconds on MuseScore's tempo map."""
+    return _timed_events(timemap, tempo, drawn_id,
+                         on_key="restsOn", off_key="restsOff")
 
 
 # How long a window the scroll speed is averaged over. Long enough to even out
@@ -168,18 +182,21 @@ def smooth_scroll(times: Sequence[float], xs: Sequence[float], *, fps: int,
 
 
 def scroll_anchors(timemap: Sequence[dict], tempo: TempoMap, layout,
-                   drawn_id: Mapping[str, str] | None = None) -> Tuple[List[float], List[float]]:
+                   drawn_id: Mapping[str, str] | None = None,
+                   staff_limit: int | None = None) -> Tuple[List[float], List[float]]:
     """(seconds, x-in-units) pairs: where the music is on the page at each moment.
 
-    Taken from the notes' own x positions, so the scroll follows the engraving's
-    spacing — a fermata's held note simply sits still for its whole duration, and
-    a repeat walks back to where the repeated section is drawn.
+    Taken from the active notes' and rests' own x positions, so the scroll follows
+    the engraving's spacing — a fermata's held note simply sits still for its whole
+    duration, and a repeat walks back to where the repeated section is drawn.
     """
     resolve = dict(drawn_id) if drawn_id else {}
     seen: dict = {}
     for entry in timemap:
-        xs = [layout.notes[resolve.get(n, n)].x for n in entry.get("on", [])
-              if resolve.get(n, n) in layout.notes]
+        element_ids = (*entry.get("on", []), *entry.get("restsOn", []))
+        geometries = [layout.playing(resolve.get(n, n)) for n in element_ids]
+        xs = [geom.x for geom in geometries if geom is not None and
+              (staff_limit is None or layout.staff_index(geom) < staff_limit)]
         if xs:
             seen.setdefault(tempo.seconds(float(entry.get("qstamp", 0.0))), min(xs))
     if not seen:
