@@ -20,6 +20,12 @@ header {
 }
 .brand { color: var(--text); text-decoration: none; font-weight: 700; font-size: 16px; }
 #crumb { color: var(--muted); }
+.new-issue-link {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+  padding: 4px 9px; border: 1px solid var(--line); border-radius: 7px;
+  color: var(--muted); text-decoration: none; white-space: nowrap;
+}
+.new-issue-link:hover, .new-issue-link:focus-visible { color: var(--text); border-color: var(--accent); }
 main { padding: 0; }
 
 button {
@@ -300,4 +306,9 @@ table.grid input.unset { border-color: var(--warn); }
   table.grid td:nth-child(2)::before { content: "voices: "; color: var(--muted); }
 
   .log { max-height: 160px; }
+}
+
+@media (max-width: 420px) {
+  .new-issue-link { padding: 6px; }
+  .new-issue-link > span { display: none; }
 }

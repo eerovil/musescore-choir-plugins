@@ -134,6 +134,35 @@ def _scrolls_sideways(page, selector):
     )
 
 
+def test_new_issue_link_is_global_and_mobile_safe(live_app, own_answers, page):
+    page.set_viewport_size(DESKTOP)
+    page.goto(live_app)
+
+    link = page.get_by_role(
+        "link", name="Create musescore-choir-plugins GitHub issue",
+    )
+    expect(link).to_be_visible()
+    assert link.get_attribute("href") == (
+        "https://github.com/eerovil/musescore-choir-plugins/issues/new"
+        "?template=issue-for-agent-to-fix.md"
+    )
+    assert link.get_attribute("target") == "_blank"
+    assert link.get_attribute("rel") == "noopener"
+
+    _new_song(page, live_app, "Issue shortcut")
+    expect(link).to_be_visible()
+    if evidence := os.getenv("ISSUE_23_EVIDENCE_DIR"):
+        os.makedirs(evidence, exist_ok=True)
+        page.screenshot(path=os.path.join(evidence, "issue-23-new-issue-button.png"))
+
+    page.set_viewport_size(PHONE)
+    expect(link).to_be_visible()
+    expect(link.locator("span")).to_be_hidden()
+    if evidence := os.getenv("ISSUE_23_EVIDENCE_DIR"):
+        page.screenshot(path=os.path.join(evidence, "issue-23-new-issue-phone.png"))
+    assert not _page_scrolls(page)
+
+
 def test_phone_shows_one_pane_at_a_time_and_the_bar_switches_them(live_app, own_answers, page):
     page.set_viewport_size(PHONE)
     _new_song(page, live_app, "Phone song")
