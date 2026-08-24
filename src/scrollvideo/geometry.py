@@ -56,6 +56,8 @@ class NoteGeom:
 class RestGeom(NoteGeom):
     """A rest uses the notehead width but needs more vertical room."""
 
+    measure_rest: bool = False
+
     def box(self) -> Tuple[float, float, float, float]:
         sp = self.staff_spacing
         return (self.x - 0.2 * sp, self.y - 2.5 * sp,
@@ -163,8 +165,9 @@ def parse_layout(svg_text: str) -> Layout:
             t = _TRANSLATE.match(use.get("transform", "") or "")
             if not t:
                 continue
-            rests[rest.get("id")] = RestGeom(float(t.group(1)) + odx,
-                                             float(t.group(2)) + ody, top, spacing)
+            rests[rest.get("id")] = RestGeom(
+                float(t.group(1)) + odx, float(t.group(2)) + ody, top, spacing,
+                measure_rest=rest.get("class") == "mRest")
 
     return Layout(vb[2], vb[3], notes, sorted(staff_tops), rests)
 

@@ -16,7 +16,9 @@ def _layout():
                   notes={"top": NoteGeom(100.0, 120.0, 100.0, 25.0),
                          "low": NoteGeom(300.0, 320.0, 300.0, 25.0)},
                   staff_tops=[100.0, 300.0],
-                  rests={"rest": RestGeom(300.0, 120.0, 100.0, 25.0)})
+                  rests={"rest": RestGeom(300.0, 120.0, 100.0, 25.0),
+                         "measure-rest": RestGeom(300.0, 120.0, 100.0, 25.0,
+                                                  measure_rest=True)})
 
 
 def test_place_maps_notes_to_their_own_staff():
@@ -193,6 +195,26 @@ def test_playing_rest_turns_blue_and_moves_the_marker(tmp_path):
     assert _blue_pixels(frame[24:32, 24:32]) == 0, "finished note stayed highlighted"
     assert frame[0, 76].max() < 250, "beat marker did not move to the rest"
     assert frame[0, 28].min() > 250, "beat marker stayed on the finished note"
+
+
+@needs_ffmpeg
+def test_full_measure_rest_turns_blue_without_moving_the_marker(tmp_path):
+    strip = np.full((120, 800, 3), 255, dtype=np.uint8)
+    coverage = np.zeros((120, 800), dtype=np.uint8)
+    coverage[24:32, 24:32] = 255
+    coverage[24:32, 72:80] = 255
+    strip[24:32, 24:32] = 0
+    strip[24:32, 72:80] = 0
+    placed = place([NoteEvent("top", 0.0, 1.0), NoteEvent("measure-rest", 1.0, 2.0)],
+                   _layout(), px_per_unit=0.24)
+    out = tmp_path / "measure-rest.mp4"
+    render(strip, placed, ([0.0, 2.0], [0.0, 0.0]), str(out), px_per_unit=0.24,
+           width=320, fps=10, duration=2.0, crf=0, coverage=coverage, playhead=0.0)
+
+    frame = _frame_reader(out, 120, 320)(1.5)
+    assert _blue_pixels(frame[24:32, 72:80]) > 0, "full-measure rest was not highlighted"
+    assert frame[0, 28].max() < 250, "beat marker did not stay on the last aligned symbol"
+    assert frame[0, 76].min() > 250, "beat marker snapped to the full-measure rest"
 
 
 @needs_ffmpeg

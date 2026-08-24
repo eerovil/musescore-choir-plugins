@@ -196,6 +196,7 @@ def scroll_anchors(timemap: Sequence[dict], tempo: TempoMap, layout,
         element_ids = (*entry.get("on", []), *entry.get("restsOn", []))
         geometries = [layout.playing(resolve.get(n, n)) for n in element_ids]
         xs = [geom.x for geom in geometries if geom is not None and
+              not getattr(geom, "measure_rest", False) and
               (staff_limit is None or layout.staff_index(geom) < staff_limit)]
         if xs:
             seen.setdefault(tempo.seconds(float(entry.get("qstamp", 0.0))), min(xs))
