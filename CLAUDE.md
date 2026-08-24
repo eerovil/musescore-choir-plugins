@@ -1011,6 +1011,16 @@ that work or ship a commit GitHub has never seen. Nothing to deploy is a no-op w
 restart, deliberately: a restart is the evidence a release waits for, so a spurious one
 would tell the board a merge had reached the host when it had not.
 
+"Dirty" has to mean *a person edited the checkout*, and one thing that is not that
+used to trip it: the poller checks each issue out into `.worktrees/issue-N` **inside
+this repo**, so `git status --porcelain` listed an untracked `.worktrees/` and the
+deploy refused for as long as any agent was working. It refused silently as far as the
+board was concerned — the timer failed every two minutes, the app kept serving old
+code, and the card that had just merged was told its production deploy had failed. This
+change gitignores `.worktrees/`. A worktree is a separate working directory, so a
+fast-forward of `main` cannot disturb one; leaving it visible bought nothing and cost
+every deploy made while a card was open.
+
 `/healthz` exists for that watcher. It returns `{"status": "ok"}` and touches nothing —
 it has to answer while a clean or a video render is occupying the worker threads.
 

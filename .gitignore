@@ -19,6 +19,12 @@ playlists.txt
 # per-system answer cache (local testing convenience)
 .persystem_cache.json
 
+# Agent worktrees (the poller checks an issue out into .worktrees/issue-N).
+# Untracked, they made `git status --porcelain` non-empty, and the unattended
+# deploy reads that as "someone is editing the checkout" and refuses — so the
+# live app stopped deploying for as long as any agent was working here.
+.worktrees/
+
 # Working input score files dropped at the repo root (PDFs, MusicXML, MuseScore)
 /*.pdf
 /*.xml
