@@ -1,16 +1,55 @@
-"""Preparing the score before it is engraved.
+"""Preparing a temporary score before it is engraved and played.
 
-The one edit made here is dropping staves that carry no music — the click/rest
-staff `add_rest_track.qml` adds, and any percussion part. They cost a staff of
-height in every frame and would each get their own pointless practice video.
+Render-only edits live here: dropping staves that carry no music, and supplying
+an opening tempo when the score has none. The source score is never changed.
 """
 
 from __future__ import annotations
 
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from lxml import etree
+
+
+def has_opening_tempo(root: etree._Element) -> bool:
+    """Whether any staff declares tempo before its first sounding/rest event."""
+    score = root.find("Score")
+    if score is None:
+        return False
+    for staff in score.findall("Staff"):
+        measure = staff.find("Measure")
+        if measure is None:
+            continue
+        for voice in measure.findall("voice"):
+            for element in voice:
+                if element.tag == "Tempo":
+                    return True
+                if element.tag in ("Chord", "Rest", "location"):
+                    break
+    return False
+
+
+def add_opening_tempo(root: etree._Element, bpm: int) -> bool:
+    """Add an invisible opening tempo when one is absent. Returns whether added."""
+    if has_opening_tempo(root):
+        return False
+    score = root.find("Score")
+    voice = score.find("Staff/Measure/voice") if score is not None else None
+    if voice is None:
+        raise ValueError("The score has no opening voice to attach a tempo to")
+
+    tempo = etree.Element("Tempo")
+    etree.SubElement(tempo, "tempo").text = format(bpm / 60, ".12g")
+    etree.SubElement(tempo, "visible").text = "0"
+    text = etree.SubElement(tempo, "text")
+    etree.SubElement(text, "sym").text = "metNoteQuarterUp"
+    text[-1].tail = f" = {bpm}"
+
+    index = next((i for i, child in enumerate(voice)
+                  if child.tag in ("Chord", "Rest", "location")), len(voice))
+    voice.insert(index, tempo)
+    return True
 
 
 def _part_name(part: etree._Element, index: int) -> str:
@@ -60,20 +99,22 @@ def drop_parts(root: etree._Element, names: List[str]) -> int:
     return dropped
 
 
-def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False) -> Tuple[str, List[str]]:
+def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
+            initial_bpm: Optional[int] = None) -> Tuple[str, List[str]]:
     """Return (score to render, names dropped).
 
-    The original file is never touched; when there is nothing to drop it is used
-    as-is, so the common case costs nothing.
+    The original file is never touched; when no render-only edit is needed it is
+    used as-is, so the common case costs nothing.
     """
-    if keep_silent:
-        return mscx_path, []
     tree = etree.parse(mscx_path)
-    silent = silent_parts(tree.getroot())
-    if not silent:
+    root = tree.getroot()
+    silent = [] if keep_silent else silent_parts(root)
+    changed = bool(drop_parts(root, silent))
+    if initial_bpm is not None:
+        changed = add_opening_tempo(root, initial_bpm) or changed
+    if not changed:
         return mscx_path, []
 
     target = os.path.join(work_dir, "render_score.mscx")
-    drop_parts(tree.getroot(), silent)
     tree.write(target, encoding="UTF-8", xml_declaration=True)
     return target, silent

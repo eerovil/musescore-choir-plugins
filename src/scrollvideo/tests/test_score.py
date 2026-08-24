@@ -2,7 +2,8 @@
 
 from lxml import etree
 
-from src.scrollvideo.score import drop_parts, prepare, silent_parts
+from src.scrollvideo.score import (add_opening_tempo, drop_parts,
+                                   has_opening_tempo, prepare, silent_parts)
 
 SCORE = """<museScore><Score>
   <Part><trackName>T1</trackName><Staff id="1"/></Part>
@@ -57,3 +58,53 @@ def test_keep_silent_skips_the_whole_thing(tmp_path):
     original = tmp_path / "score.mscx"
     original.write_text(SCORE)
     assert prepare(str(original), str(tmp_path), keep_silent=True) == (str(original), [])
+
+
+def test_an_opening_tempo_must_precede_the_first_musical_event():
+    root = etree.fromstring(
+        b"<museScore><Score><Staff><Measure><voice>"
+        b"<Tempo><tempo>1.5</tempo></Tempo><Chord/>"
+        b"</voice></Measure></Staff></Score></museScore>")
+    assert has_opening_tempo(root)
+
+    root.find(".//voice").insert(0, etree.Element("Chord"))
+    assert not has_opening_tempo(root)
+
+
+def test_adding_an_opening_tempo_preserves_later_changes():
+    root = etree.fromstring(
+        b"<museScore><Score><Staff><Measure><voice>"
+        b"<TimeSig/><Chord/><Tempo><tempo>1</tempo></Tempo>"
+        b"</voice></Measure></Staff></Score></museScore>")
+
+    assert add_opening_tempo(root, 80)
+    tempos = root.findall(".//Tempo")
+    assert [t.findtext("tempo") for t in tempos] == ["1.33333333333", "1"]
+    assert tempos[0].findtext("visible") == "0"
+    assert "80" in "".join(tempos[0].itertext())
+
+
+def test_prepare_applies_tempo_only_to_its_temporary_copy(tmp_path):
+    original = tmp_path / "score.mscx"
+    original.write_text(SINGING_ONLY)
+    before = original.read_text()
+
+    path, dropped = prepare(str(original), str(tmp_path), initial_bpm=80)
+
+    assert dropped == []
+    assert path != str(original)
+    assert has_opening_tempo(etree.parse(path).getroot())
+    assert original.read_text() == before
+
+
+def test_prepare_does_not_override_an_existing_opening_tempo(tmp_path):
+    original = tmp_path / "score.mscx"
+    original.write_text(
+        "<museScore><Score><Staff><Measure><voice>"
+        "<Tempo><tempo>1.5</tempo></Tempo><Chord/>"
+        "</voice></Measure></Staff></Score></museScore>")
+
+    path, dropped = prepare(str(original), str(tmp_path), initial_bpm=80)
+
+    assert (path, dropped) == (str(original), [])
+    assert etree.parse(path).findtext(".//Tempo/tempo") == "1.5"

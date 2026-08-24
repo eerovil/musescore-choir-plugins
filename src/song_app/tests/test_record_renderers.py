@@ -48,10 +48,11 @@ def _finished(client, slug):
 
 def _fake_scroll(monkeypatch, seen, parts=("S1", "A1")):
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
+             initial_bpm=None,
              log=lambda m: None,
              progress=lambda m: None):
         seen.update(song_dir=song_dir, cleaned=cleaned, name=name, quality=quality,
-                    hardware_encoding=hardware_encoding)
+                    hardware_encoding=hardware_encoding, initial_bpm=initial_bpm)
         out = os.path.join(song_dir, "media", "video")
         os.makedirs(out, exist_ok=True)
         made = []
@@ -73,9 +74,37 @@ def test_the_scrolling_renderer_is_what_runs_by_default(client, song, monkeypatc
     assert seen["name"] == song.slug, "outputs must be named for the slug"
     assert seen["quality"] == "4k"
     assert seen["hardware_encoding"] is True
+    assert seen["initial_bpm"] == 80
     assert data["record"]["renderer"] == "scroll"
+    assert data["record"]["bpm"] == 80
     assert data["record"]["outputs"] == [f"{song.slug} S1.mp4", f"{song.slug} A1.mp4"]
     assert data["stage"] == "upload"
+
+
+def test_the_song_api_reports_when_the_bpm_choice_is_needed(client, song):
+    assert client.get(f"/api/songs/{song.slug}").json()["needs_initial_bpm"] is True
+
+
+def test_an_existing_opening_tempo_is_never_overridden(client, song, monkeypatch):
+    with open(song.cleaned_path(), "w") as fh:
+        fh.write("<museScore><Score><Staff><Measure><voice>"
+                 "<Tempo><tempo>1.5</tempo></Tempo><Chord/>"
+                 "</voice></Measure></Staff></Score></museScore>")
+    seen = {}
+    _fake_scroll(monkeypatch, seen)
+
+    assert client.get(f"/api/songs/{song.slug}").json()["needs_initial_bpm"] is False
+    client.post(f"/api/songs/{song.slug}/record", json={"bpm": 92})
+    data = _finished(client, song.slug)
+
+    assert seen["initial_bpm"] is None
+    assert "bpm" not in data["record"]
+
+
+@pytest.mark.parametrize("bpm", [19, 301, "quick"])
+def test_an_invalid_missing_tempo_bpm_is_rejected(client, song, bpm):
+    response = client.post(f"/api/songs/{song.slug}/record", json={"bpm": bpm})
+    assert response.status_code == 400
 
 
 def test_the_rendered_files_are_what_review_and_upload_look_for(client, song, monkeypatch):
@@ -124,13 +153,15 @@ def test_720p_and_software_encoding_are_passed_through_and_remembered(
     seen = {}
     _fake_scroll(monkeypatch, seen)
     client.post(f"/api/songs/{song.slug}/record", json={
-        "quality": "720p", "hardware_encoding": False})
+        "quality": "720p", "hardware_encoding": False, "bpm": 92})
     data = _finished(client, song.slug)
 
     assert seen["quality"] == "720p"
     assert seen["hardware_encoding"] is False
+    assert seen["initial_bpm"] == 92
     assert data["record"]["quality"] == "720p"
     assert data["record"]["hardware_encoding"] is False
+    assert data["record"]["bpm"] == 92
 
 
 def test_720p_maps_to_1280_by_720_and_uses_the_song_audio_cache(
@@ -141,16 +172,19 @@ def test_720p_maps_to_1280_by_720_and_uses_the_song_audio_cache(
                         lambda *args, **kwargs: seen.update(kwargs) or [])
 
     pipeline.run_scroll_video(song.dir, song.cleaned_path(), song.slug,
-                              quality="720p", hardware_encoding=False)
+                              quality="720p", hardware_encoding=False,
+                              initial_bpm=80)
 
     assert (seen["width"], seen["height"], seen["fps"]) == (1280, 720, 30)
     assert seen["hardware_encoding"] is False
+    assert seen["initial_bpm"] == 80
     assert seen["audio_cache_dir"] == song.path("media", ".scrollvideo-audio")
 
 
 def test_render_status_and_logs_are_available_after_a_fresh_song_read(
         client, song, monkeypatch):
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
+             initial_bpm=None,
              log=lambda m: None,
              progress=lambda m: None):
         log("Engraving")
@@ -177,6 +211,7 @@ def test_render_status_and_logs_are_available_after_a_fresh_song_read(
 
 def test_a_score_edit_during_render_marks_the_outputs_stale(client, song, monkeypatch):
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
+             initial_bpm=None,
              log=lambda m: None,
              progress=lambda m: None):
         with open(cleaned, "a") as f:

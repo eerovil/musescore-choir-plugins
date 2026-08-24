@@ -14,10 +14,29 @@ import pytest
 
 from src.scrollvideo import audio as audio_mod
 from src.scrollvideo.engrave import engrave
+from src.scrollvideo.score import prepare
 from src.scrollvideo.timing import TempoMap, note_events
 from .conftest import needs_musescore
 
 pytestmark = needs_musescore
+
+
+def test_a_supplied_opening_bpm_reaches_musescores_playback_clock(
+        fermata_mscx, tmp_path):
+    """The temporary score drives MIDI and every audio mix, not just our video math."""
+    source, _ = prepare(fermata_mscx, str(tmp_path), initial_bpm=80)
+    midi_path = audio_mod.run_musescore(source, str(tmp_path / "at-80.mid"))
+
+    tick = 0
+    changes = []
+    midi = mido.MidiFile(midi_path)
+    for message in mido.merge_tracks(midi.tracks):
+        tick += message.time
+        if message.type == "set_tempo":
+            changes.append((tick, message.tempo))
+
+    assert changes[0] == (0, mido.bpm2tempo(80))
+    assert len(changes) > 1, "MuseScore's later fermata tempo changes must survive"
 
 
 @pytest.fixture(scope="module")
