@@ -3,7 +3,7 @@
 import mido
 import pytest
 
-from src.scrollvideo.geometry import Layout, NoteGeom
+from src.scrollvideo.geometry import Layout, NoteGeom, RestGeom
 from src.scrollvideo.timing import (DEFAULT_TEMPO, NoteEvent, TempoMap,
                                     note_events, rest_events, scroll_anchors)
 
@@ -73,6 +73,20 @@ def test_rest_onset_moves_the_scroll_but_spacer_rest_does_not():
     )
     assert scroll_anchors(timemap, tempo, layout, staff_limit=1) == (
         [0.0, 0.5], [100, 300])
+
+
+def test_full_measure_rest_does_not_move_the_scroll_focus():
+    tempo = TempoMap([(0.0, DEFAULT_TEMPO)])
+    layout = Layout(1000, 500,
+                    {"note": NoteGeom(100, 100, 100, 25)}, [100],
+                    {"rest": RestGeom(300, 100, 100, 25),
+                     "measure-rest": RestGeom(900, 100, 100, 25, measure_rest=True)})
+    timemap = _timemap(
+        {"qstamp": 0, "on": ["note"]},
+        {"qstamp": 1, "restsOn": ["rest"]},
+        {"qstamp": 2, "restsOn": ["measure-rest"]},
+    )
+    assert scroll_anchors(timemap, tempo, layout) == ([0.0, 0.5], [100, 300])
 
 
 def test_note_still_sounding_at_the_end_is_closed_not_dropped():

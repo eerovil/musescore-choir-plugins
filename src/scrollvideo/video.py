@@ -15,7 +15,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .geometry import Layout
+from .geometry import Layout, RestGeom
 from .timing import NoteEvent
 
 # MuseScore's playback blue, sampled from the score window.
@@ -95,6 +95,7 @@ class Placed:
     y0: int
     y1: int
     staff: int
+    snap_marker: bool = True
 
 
 def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float,
@@ -113,7 +114,7 @@ def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float,
             e.on, e.off,
             int(x0 * px_per_unit), int(x1 * px_per_unit),
             int(y0 * px_per_unit), int(y1 * px_per_unit),
-            staff))
+            staff, not isinstance(geom, RestGeom) or not geom.measure_rest))
     placed.sort(key=lambda p: p.on)
     return placed
 
@@ -184,6 +185,7 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
     colour = np.array(HIGHLIGHT, dtype=np.float32)
     active: List[Placed] = []
     next_placed = 0
+    marker: Optional[Placed] = None
     last_percent = 0
     progress(f"Rendering video: 0% (0/{n_frames} frames)")
 
@@ -201,12 +203,15 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
                 np.copyto(frame[:, dst0:dst1], strip[:, src0:src1])
 
             while next_placed < len(placed) and placed[next_placed].on <= t:
-                active.append(placed[next_placed])
+                current = placed[next_placed]
+                active.append(current)
+                if current.snap_marker:
+                    marker = current
                 next_placed += 1
             active = [item for item in active if item.off > t]
 
-            if next_placed:
-                blend_beat_marker(frame, placed[next_placed - 1], left)
+            if marker is not None:
+                blend_beat_marker(frame, marker, left)
 
             for p in active:
                 x0, x1 = max(p.x0 - left, 0), min(p.x1 - left, width)

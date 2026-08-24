@@ -54,6 +54,7 @@ def test_ancestor_translates_are_added_to_rest_positions():
     rest = layout.rests["r1"]
     assert (rest.x, rest.y) == (1000.0, 500.0)
     assert layout.staff_index(rest) == 0
+    assert rest.measure_rest
 
 
 def test_rest_box_is_taller_than_a_notehead_but_keeps_its_width():
