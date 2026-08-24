@@ -48,8 +48,8 @@ RESOURCE_PATH = str(files("verovio") / "data")
 class Engraving:
     svg: str
     layout: Layout
-    timemap: List[dict]      # verovio events: qstamp, tstamp, on/off note ids
-    drawn_id: Dict[str, str]  # sounding id -> the id of the note actually engraved
+    timemap: List[dict]       # qstamp/tstamp plus timed note and rest ids
+    drawn_id: Dict[str, str]  # timed id -> the symbol id actually engraved
 
     @property
     def notes(self) -> Dict[str, object]:
@@ -69,12 +69,12 @@ def engrave(musicxml_path: str, options: Dict | None = None) -> Engraving:
         raise RuntimeError(f"Expected one continuous system, got {pages} pages.")
     svg = tk.renderToSVG(1)
     layout = parse_layout(svg)
-    timemap = tk.renderToTimemap({"includeMeasures": True})
+    timemap = tk.renderToTimemap({"includeMeasures": True, "includeRests": True})
     return Engraving(svg, layout, timemap, _drawn_ids(tk, timemap, layout))
 
 
 def _drawn_ids(tk, timemap: List[dict], layout: Layout) -> Dict[str, str]:
-    """Map every sounding note id to the note that is actually on the page.
+    """Map every timed note/rest id to the symbol that is actually on the page.
 
     Verovio expands repeats in the timemap: a note inside a repeated section
     sounds again under a suffixed id (``xyz-rend2``) that is not drawn, because
@@ -84,13 +84,13 @@ def _drawn_ids(tk, timemap: List[dict], layout: Layout) -> Dict[str, str]:
     """
     drawn: Dict[str, str] = {}
     for entry in timemap:
-        for note_id in entry.get("on", []):
-            if note_id in drawn:
+        for element_id in (*entry.get("on", []), *entry.get("restsOn", [])):
+            if element_id in drawn:
                 continue
-            if note_id in layout.notes:
-                drawn[note_id] = note_id
+            if layout.playing(element_id) is not None:
+                drawn[element_id] = element_id
                 continue
-            notated = tk.getNotatedIdForElement(note_id)
-            if notated in layout.notes:
-                drawn[note_id] = notated
+            notated = tk.getNotatedIdForElement(element_id)
+            if layout.playing(notated) is not None:
+                drawn[element_id] = notated
     return drawn

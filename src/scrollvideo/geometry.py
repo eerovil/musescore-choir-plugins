@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Tuple
 
 import cairosvg
@@ -33,6 +33,7 @@ MAX_TILE_PX = 8000
 
 # Pure red: the engraving is black on white, so nothing else can produce it.
 MARKER = "#FF0000"
+REST_CLASSES = ("rest", "mRest")
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,16 @@ class NoteGeom:
 
 
 @dataclass(frozen=True)
+class RestGeom(NoteGeom):
+    """A rest uses the notehead width but needs more vertical room."""
+
+    def box(self) -> Tuple[float, float, float, float]:
+        sp = self.staff_spacing
+        return (self.x - 0.2 * sp, self.y - 2.5 * sp,
+                self.x + 1.4 * sp, self.y + 2.5 * sp)
+
+
+@dataclass(frozen=True)
 class Layout:
     """The engraved page's unit space and everything placed in it."""
 
@@ -59,9 +70,14 @@ class Layout:
     height: float
     notes: Dict[str, NoteGeom]
     staff_tops: List[float]   # top staff line of each staff, top to bottom
+    rests: Dict[str, RestGeom] = field(default_factory=dict)
 
     def staff_index(self, geom: NoteGeom) -> int:
         return self.staff_tops.index(geom.staff_top)
+
+    def playing(self, element_id: str) -> NoteGeom | None:
+        """Geometry for a note or rest that can be active during playback."""
+        return self.notes.get(element_id) or self.rests.get(element_id)
 
 
 def _tag(name: str) -> str:
@@ -108,6 +124,7 @@ def parse_layout(svg_text: str) -> Layout:
         offsets[g] = (px + dx, py + dy)
 
     notes: Dict[str, NoteGeom] = {}
+    rests: Dict[str, RestGeom] = {}
     staff_tops: set = set()
     for staff in root.iter(_tag("g")):
         if staff.get("class") != "staff":
@@ -137,7 +154,19 @@ def parse_layout(svg_text: str) -> Layout:
             notes[note.get("id")] = NoteGeom(float(t.group(1)) + odx,
                                              float(t.group(2)) + ody, top, spacing)
 
-    return Layout(vb[2], vb[3], notes, sorted(staff_tops))
+        for rest in staff.iter(_tag("g")):
+            if rest.get("class") not in REST_CLASSES or not rest.get("id"):
+                continue
+            use = rest.find(_tag("use"))
+            if use is None:
+                continue
+            t = _TRANSLATE.match(use.get("transform", "") or "")
+            if not t:
+                continue
+            rests[rest.get("id")] = RestGeom(float(t.group(1)) + odx,
+                                             float(t.group(2)) + ody, top, spacing)
+
+    return Layout(vb[2], vb[3], notes, sorted(staff_tops), rests)
 
 
 def _tiles(svg_text: str, layout: Layout, height_px: int) -> Iterator[Tuple[int, int, np.ndarray]]:
@@ -170,14 +199,23 @@ def note_coverage(svg_text: str, layout: Layout, height_px: int) -> np.ndarray:
     on the black staff lines and lyrics, and correctly partial on antialiased
     edges — so a highlighted note keeps its smooth outline instead of a fringe.
     """
-    marked = _mark_notes(svg_text)
+    return _coverage(_mark_notes(svg_text), layout, height_px)
+
+
+def _coverage(marked_svg: str, layout: Layout, height_px: int) -> np.ndarray:
+    """Read marker-coloured glyph coverage from an SVG."""
     width_px = int(round(layout.width * height_px / layout.height))
     coverage = np.zeros((height_px, width_px), dtype=np.uint8)
-    for x_px, w_px, tile in _tiles(marked, layout, height_px):
+    for x_px, w_px, tile in _tiles(marked_svg, layout, height_px):
         red = tile[:, :w_px, 0].astype(np.int16)
         green = tile[:, :w_px, 1].astype(np.int16)
         coverage[:, x_px:x_px + w_px] = np.clip(red - green, 0, 255).astype(np.uint8)
     return coverage
+
+
+def playing_coverage(svg_text: str, layout: Layout, height_px: int) -> np.ndarray:
+    """Per-pixel coverage of notes and rests that can be highlighted."""
+    return _coverage(_mark_playing(svg_text), layout, height_px)
 
 
 # An inline style, not fill/stroke attributes: verovio ships a stylesheet
@@ -203,6 +241,23 @@ def _mark_notes(svg_text: str) -> str:
             for part in head.iter():
                 if etree.QName(part).localname in _DRAWN:
                     part.set("style", _MARK_STYLE)
+    return etree.tostring(root, encoding="unicode")
+
+
+def _mark_playing(svg_text: str) -> str:
+    """The same SVG with noteheads and rests painted in the marker colour."""
+    return _mark_rests(_mark_notes(svg_text))
+
+
+def _mark_rests(svg_text: str) -> str:
+    """The same SVG with ordinary and whole-measure rests marked."""
+    root = etree.fromstring(svg_text.encode())
+    for rest in root.iter(_tag("g")):
+        if rest.get("class") not in REST_CLASSES:
+            continue
+        for part in rest.iter():
+            if etree.QName(part).localname in _DRAWN:
+                part.set("style", _MARK_STYLE)
     return etree.tostring(root, encoding="unicode")
 
 

@@ -3,7 +3,9 @@
 import mido
 import pytest
 
-from src.scrollvideo.timing import DEFAULT_TEMPO, TempoMap, note_events, NoteEvent
+from src.scrollvideo.geometry import Layout, NoteGeom
+from src.scrollvideo.timing import (DEFAULT_TEMPO, NoteEvent, TempoMap,
+                                    note_events, rest_events, scroll_anchors)
 
 
 def test_constant_tempo_is_linear():
@@ -50,6 +52,27 @@ def test_note_events_convert_on_and_off_to_seconds():
                                   {"qstamp": 2, "off": ["a"], "on": ["b"]},
                                   {"qstamp": 4, "off": ["b"]}), tempo)
     assert events == [NoteEvent("a", 0.0, 1.0), NoteEvent("b", 1.0, 2.0)]
+
+
+def test_rest_events_convert_rest_on_and_off_to_seconds():
+    tempo = TempoMap([(0.0, DEFAULT_TEMPO)])
+    events = rest_events(_timemap({"qstamp": 1, "restsOn": ["rest"]},
+                                  {"qstamp": 3, "restsOff": ["rest"]}), tempo)
+    assert events == [NoteEvent("rest", 0.5, 1.5)]
+
+
+def test_rest_onset_moves_the_scroll_but_spacer_rest_does_not():
+    tempo = TempoMap([(0.0, DEFAULT_TEMPO)])
+    layout = Layout(1000, 500,
+                    {"note": NoteGeom(100, 100, 100, 25)}, [100, 300],
+                    {"rest": NoteGeom(300, 100, 100, 25),
+                     "spacer": NoteGeom(900, 300, 300, 25)})
+    timemap = _timemap(
+        {"qstamp": 0, "on": ["note"]},
+        {"qstamp": 1, "restsOn": ["rest", "spacer"]},
+    )
+    assert scroll_anchors(timemap, tempo, layout, staff_limit=1) == (
+        [0.0, 0.5], [100, 300])
 
 
 def test_note_still_sounding_at_the_end_is_closed_not_dropped():

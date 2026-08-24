@@ -24,8 +24,9 @@ from . import audio as audio_mod
 from . import score as score_mod
 from . import spacing as spacing_mod
 from .engrave import engrave
-from .geometry import note_coverage, rasterise
-from .timing import SMOOTH_SECONDS, TempoMap, note_events, scroll_anchors, smooth_scroll
+from .geometry import playing_coverage, rasterise
+from .timing import (SMOOTH_SECONDS, TempoMap, note_events, rest_events,
+                     scroll_anchors, smooth_scroll)
 from .video import mux, place, render
 
 Logger = Callable[[str], None]
@@ -168,18 +169,22 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                 "highlighting every voice equally.")
 
         tempo = TempoMap.from_midi(midi)
-        events = note_events(eng.timemap, tempo, eng.drawn_id)
-        anchors = scroll_anchors(eng.timemap, tempo, layout, eng.drawn_id)
-        log(f"{len(events)} notes, {anchors[0][-1]:.1f}s on MuseScore's clock")
+        notes = note_events(eng.timemap, tempo, eng.drawn_id)
+        rests = rest_events(eng.timemap, tempo, eng.drawn_id)
+        events = sorted([*notes, *rests], key=lambda event: (event.on, event.off))
+        anchors = scroll_anchors(eng.timemap, tempo, layout, eng.drawn_id,
+                                 staff_limit=singing_staves)
+        log(f"{len(notes)} notes, {len(rests)} rests, "
+            f"{anchors[0][-1]:.1f}s on MuseScore's clock")
 
         # Verify against the audio itself rather than trusting the structure.
-        landed = alignment(events, midi)
+        landed = alignment(notes, midi)
         if landed < ALIGNMENT_REQUIRED:
             raise NotImplementedError(
                 f"Only {landed:.0%} of the notes MuseScore plays get a highlight, so this "
                 "video would look out of sync. The engraved timeline and the played one "
                 "disagree — usually an unsupported repeat structure.")
-        repeated = len(events) - len(set(e.note_id for e in events))
+        repeated = len(notes) - len(set(e.note_id for e in notes))
         if repeated:
             log(f"{repeated} notes are played more than once (repeats followed)")
 
@@ -191,8 +196,8 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
 
         log("Rasterising the strip")
         strip = rasterise(eng.svg, layout, strip_height)[:height]
-        coverage = note_coverage(eng.svg, layout, strip_height)[:height]
-        placed = place(events, layout, px_per_unit)
+        coverage = playing_coverage(eng.svg, layout, strip_height)[:height]
+        placed = place(events, layout, px_per_unit, staff_limit=singing_staves)
 
         if smooth_seconds:
             anchors = smooth_scroll(*anchors, fps=fps, seconds=smooth_seconds,
