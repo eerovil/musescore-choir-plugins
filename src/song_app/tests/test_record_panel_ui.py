@@ -12,9 +12,26 @@ import time
 
 import pytest
 
-pytest.importorskip("playwright.sync_api")
-pytest.importorskip("pytest_playwright")
+_NEEDS = "pip install pytest-playwright && playwright install chromium"
+pytest.importorskip("playwright.sync_api", reason=_NEEDS)
+pytest.importorskip("pytest_playwright", reason=_NEEDS)
 pytest.importorskip("uvicorn")
+
+
+def _browser_installed() -> bool:
+    """Launching is the only honest check; see test_ui_flow for why it runs here."""
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch().close()
+        return True
+    except Exception:
+        return False
+
+
+if not _browser_installed():
+    pytest.skip(_NEEDS, allow_module_level=True)
 
 import uvicorn
 
