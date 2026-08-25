@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from bisect import bisect_left
 from typing import Callable, List, Optional, Sequence
 
@@ -57,6 +57,27 @@ def _noop(_msg: str) -> None:
 def video_encoder(hardware_encoding: bool, width: int, height: int) -> str:
     """Select automatic hardware encoding unless the caller explicitly disabled it."""
     return preferred_encoder(width, height) if hardware_encoding else SOFTWARE_ENCODER
+
+
+def _collect_audio_results(futures: dict, progress: Logger) -> dict:
+    """Collect concurrent audio renders while reporting each completed mix.
+
+    MuseScore audio export is often the longest quiet phase before frame rendering.
+    Reporting completions rather than starts makes the number durable and truthful
+    even though mixes finish out of order on the worker pool.
+    """
+    total = len(futures)
+    if not total:
+        return {}
+    progress(f"Creating audio mixes: 0/{total} (0%)")
+    names = {future: name for name, future in futures.items()}
+    results = {}
+    for completed, future in enumerate(as_completed(names), 1):
+        name = names[future]
+        results[name] = future.result()
+        percent = round(completed * 100 / total)
+        progress(f"Creating audio mixes: {completed}/{total} ({percent}%) — {name}")
+    return results
 
 
 def unsupported_repeats(root: etree._Element) -> List[str]:
@@ -229,7 +250,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                     futures = {name: pool.submit(audio_mod.render_mix_cached, source, focus,
                                                  audio_cache_dir)
                                for name, focus in mixes}
-                    results = {name: future.result() for name, future in futures.items()}
+                    results = _collect_audio_results(futures, progress)
                     tracks = {name: result[0] for name, result in results.items()}
                     reused = sum(result[1] for result in results.values())
                     if reused:
@@ -239,7 +260,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                     futures = {name: pool.submit(audio_mod.render_mix, source, focus,
                                                  os.path.join(tmp, f"{name}.wav"))
                                for name, focus in mixes}
-                    tracks = {name: future.result() for name, future in futures.items()}
+                    tracks = _collect_audio_results(futures, progress)
 
         encoder = video_encoder(hardware_encoding, width, height)
         if encoder == NVIDIA_ENCODER:

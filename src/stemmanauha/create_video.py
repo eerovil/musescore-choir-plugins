@@ -275,11 +275,12 @@ def merge_mp3_to_video(song_dir, audio_delay_ms=1300, force=False):
     return results
 
 
-def wait_for_all_mp3(export_dir, timeout=120, check_interval=1):
+def wait_for_all_mp3(export_dir, timeout=120, check_interval=1, progress=None):
     """
     Wait for a file ending in ALL.mp3 to be created or updated and fully written in export_dir.
-    Logs any new or replaced files.
+    Logs any new or replaced files and reports durable progress to the song app.
     """
+    progress = progress or (lambda _message: None)
     export_dir = Path(export_dir)
     seen_files = {}
 
@@ -294,6 +295,7 @@ def wait_for_all_mp3(export_dir, timeout=120, check_interval=1):
     elapsed = 0
 
     print(f"Watching for '*ALL.mp3' in: {export_dir.resolve()}")
+    progress("Creating MP3 audio: waiting for MuseScore export")
 
     while elapsed < timeout:
         for f in export_dir.glob("*.mp3"):
@@ -304,6 +306,7 @@ def wait_for_all_mp3(export_dir, timeout=120, check_interval=1):
 
             if f not in seen_files or seen_files[f] != mtime:
                 print(f"New or updated file detected: {f.name}")
+                progress(f"Creating MP3 audio: received {f.name}")
                 seen_files[f] = mtime
                 elapsed = 0  # reset timeout on new activity
 
@@ -327,21 +330,24 @@ def wait_for_all_mp3(export_dir, timeout=120, check_interval=1):
                     stable_seconds = 0
                     last_size = -1
 
+                progress(f"Finalising MP3 audio: {stable_seconds}/3 stable seconds")
                 time.sleep(1)
 
             print(f"{target_file.name} has finished writing.")
             return target_file
 
+        progress(f"Creating MP3 audio: waiting {int(elapsed)}s")
         time.sleep(check_interval)
         elapsed += check_interval
 
     raise TimeoutError("Timed out waiting for '*ALL.mp3' to appear or finish writing.")
 
 
-def export_mp3_from_musescore(song_dir, redo=False):
-    """
-    Export MP3 files from MuseScore using AppleScript.
-    """
+def export_mp3_from_musescore(song_dir, redo=False, log=None, progress=None):
+    """Export MP3 files from MuseScore using AppleScript, with visible progress."""
+    log = log or (lambda message: logging.info(message))
+    progress = progress or (lambda _message: None)
+
     # If mp3 already exists in song_dir/mp3, skip export
     if song_dir:
         media_dir = Path(song_dir) / "media"
@@ -351,6 +357,8 @@ def export_mp3_from_musescore(song_dir, redo=False):
                 mp3.unlink()
         if media_dir.exists() and any(media_dir.glob("*.mp3")):
             logging.info(f"MP3 files already exist in {media_dir}, skipping export.")
+            log("Reusing existing MP3 audio.")
+            progress("Creating MP3 audio: 100% (reused)")
             one_mp3 = next(media_dir.glob("*.mp3"))
             return one_mp3
 
@@ -358,9 +366,13 @@ def export_mp3_from_musescore(song_dir, redo=False):
     if not script_path.exists():
         raise FileNotFoundError(f"Script {script_path} does not exist.")
 
+    log("Creating MP3 audio in MuseScore…")
+    progress("Creating MP3 audio: starting MuseScore export")
     subprocess.run(["osascript", str(script_path)], check=True)
     time.sleep(5)
-    all_mp3 = wait_for_all_mp3(export_dir=MUSESCORE_EXPORT_PATH, timeout=120, check_interval=1)
+    all_mp3 = wait_for_all_mp3(
+        export_dir=MUSESCORE_EXPORT_PATH, timeout=120, check_interval=1,
+        progress=progress)
     logging.info("MP3 export from MuseScore completed.")
 
     if song_dir:
@@ -375,7 +387,9 @@ def export_mp3_from_musescore(song_dir, redo=False):
             mp3.rename(target_path)
             all_mp3 = target_path
         logging.info(f"All MP3 files moved to {target_dir}")
-    
+
+    progress("Creating MP3 audio: 100%")
+    log("MP3 audio ready.")
     return all_mp3
 
 
@@ -428,6 +442,7 @@ def run(song_dir=None, youtube=False, extra_playlist_id=None,
         raise ValueError("A valid song_dir must be provided.")
 
     log = log or (lambda m: logging.info(m))
+    progress = progress or log
 
     if youtube:
         get_authenticated_service()
@@ -443,7 +458,8 @@ def run(song_dir=None, youtube=False, extra_playlist_id=None,
         logging.info("Re-merged with offset %sms: %s", audio_delay_ms,
                      ", ".join(str(r) for r in results))
     else:
-        mp3 = export_mp3_from_musescore(song_dir, redo=redo_mp3)
+        mp3 = export_mp3_from_musescore(
+            song_dir, redo=redo_mp3, log=log, progress=progress)
         logging.info("MP3 files exported from MuseScore.")
 
         record_video(song_dir, mp3, redo=redo_video)
