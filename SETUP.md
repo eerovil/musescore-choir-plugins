@@ -71,6 +71,33 @@ The one that must be right is `MUSESCORE_CLI_PATH` — on a stock macOS install
 `YOUTUBE_CLIENT_SECRETS_PATH` matters only for uploading (below);
 `MUSESCORE_EXPORT_PATH` and `VIDEO_EXPORT_PATH` only for the screen recorder.
 
+### AgentDeck song chats (optional)
+
+The song workspace can keep one normal AgentDeck chat mapped to each song. The
+mapping is stored in that song's `.song.json`, so reopening the song reuses the
+same chat instead of creating another one.
+
+Set these in `.env` when AgentDeck is available:
+
+```dotenv
+AGENTDECK_URL="https://agentdeck.example"       # URL the browser should open
+AGENTDECK_API_URL="http://127.0.0.1:PORT"       # optional; blank = AGENTDECK_URL
+AGENTDECK_ACCOUNT_KEY="provider:account"         # exact AgentDeck account key
+```
+
+`AGENTDECK_API_URL` is useful when AgentDeck's browser URL sits behind a reverse
+proxy or access layer but Choir and AgentDeck run on the same host. It is used
+only for Choir → AgentDeck requests; the persisted link always uses
+`AGENTDECK_URL`. The account key is the value AgentDeck shows/uses for the account,
+not merely its display label.
+
+Creating a song chat uses AgentDeck's ordinary **New chat** path, with the song
+folder as its working directory. It is deliberately not an AgentDeck delegation:
+the mapped chat is a long-lived user workspace and should keep normal boss-chat
+semantics. If AgentDeck later reports that the mapped session is gone, the Choir
+header changes the action to **Recreate AgentDeck**. A temporary AgentDeck outage
+does not erase the mapping.
+
 ## 5. Check it works
 
 ```bash
