@@ -124,6 +124,19 @@ def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float,
     return placed
 
 
+def lit_pixels(coverage: np.ndarray, strength: float = FOCUS_ALPHA) -> np.ndarray:
+    """What a sounding symbol's pixels are repainted to: blue over white.
+
+    The glyph is drawn again rather than covered, weighted by how much of each pixel
+    its ink covers, so the antialiased edge stays an edge. The engraving underneath
+    is not blended in at all — a lit notehead is blue on white wherever there is any
+    coverage, which is why the browser preview can be handed these pixels ready-made
+    and simply copy them in.
+    """
+    a = (coverage.astype(np.float32) / 255.0 * strength)[..., None]
+    return (255.0 - a * (255.0 - np.array(HIGHLIGHT, dtype=np.float32))).astype(np.uint8)
+
+
 def latest_onset_index(onsets: Sequence[float], t: float) -> Optional[int]:
     """Index of the last onset at or before ``t``, or none before music starts."""
     index = bisect_right(onsets, t) - 1
@@ -238,10 +251,9 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
                 cover = coverage[y0:y1, x0 + left:x1 + left]
                 if not cover.any():
                     continue
-                a = (cover.astype(np.float32) / 255.0 * strength)[:, :, None]
-                patch = frame[y0:y1, x0:x1].astype(np.float32)
-                frame[y0:y1, x0:x1] = np.where(
-                    a > 0, 255.0 - a * (255.0 - colour), patch).astype(np.uint8)
+                lit = lit_pixels(cover, strength)
+                frame[y0:y1, x0:x1] = np.where(cover[:, :, None] > 0, lit,
+                                               frame[y0:y1, x0:x1])
 
             ff.stdin.write(frame_bytes)
             done = frame_no + 1
