@@ -1010,10 +1010,25 @@ stage when its output exists; the web app exposes the redo flags instead.
 ## This host: the live app, the deploy, the board
 
 The app is not something someone starts when they want it. It runs as a systemd **user**
-service from this very checkout, `song-app.service` on 127.0.0.1:8123 (reached from the
-phone over Tailscale). The units are committed under `systemd/` — the live copies live in
-`~/.config/systemd/user/`, so an edit here is not live until it is copied over and
-`systemctl --user daemon-reload` has run.
+service from this very checkout, `song-app.service` on 127.0.0.1:8123. The units are
+committed under `systemd/` — the live copies live in `~/.config/systemd/user/`, so an
+edit here is not live until it is copied over and `systemctl --user daemon-reload` has
+run.
+
+The phone reaches it over Tailscale at **https://choir.taile8d16e.ts.net/**, a Tailscale
+*service* (`svc:choir`) whose 443 handler proxies to `http://127.0.0.1:8123`. The older
+`https://bazzite.taile8d16e.ts.net:8123` still works and points at the same app. That
+config lives in tailscaled, not in this repo:
+
+```bash
+tailscale serve --service=svc:choir --https=443 --set-path=/ http://127.0.0.1:8123
+```
+
+Port 8000 is **not** available on this host — a podman container (`sos`, the Outdoor dev
+server) has it, and `song.py` silently falls back to the next free port rather than
+failing, so an app "started on 8000" ends up somewhere like 8002 with nothing pointing at
+it. The two addresses are different **origins**, so an installed PWA does not follow a
+move from one to the other; it has to be installed again (see the PWA identity notes).
 
 A merge deploys itself. `song-app-deploy.timer` runs `scripts/deploy-song-app.sh
 --unattended` every two minutes: it fast-forwards `main` to `origin/main`, installs
