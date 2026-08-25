@@ -36,13 +36,22 @@
       <span>New issue</span>
     </a>
   </header>
+  <!-- Why the AgentDeck action cannot act. A title tooltip cannot say this on a
+       phone, which is where the app is actually used (#52). -->
+  <div id="agentdeck-note" role="status" hidden></div>
   <main id="app">Loading…</main>
   <script src="/app.js"></script>
   <script>
     (() => {
       const action = document.getElementById("agentdeck-action");
+      const note = document.getElementById("agentdeck-note");
       let current = null;
       let currentSlug = "";
+
+      const say = (message) => {
+        note.textContent = message || "";
+        note.hidden = !message;
+      };
 
       const slugFromHash = () => {
         const match = location.hash.match(/^#\/song\/(.+)$/);
@@ -55,6 +64,11 @@
         if (!response.ok) throw new Error(body.detail || response.statusText);
         return body;
       };
+
+      // The two states a tap can act on. Everything else either opens a stored
+      // link or has nothing to open — and must say so rather than going quiet.
+      const canCreate = (status) =>
+        status.state === "unmapped" || status.state === "stale";
 
       const draw = (status) => {
         current = status;
@@ -77,9 +91,13 @@
           action.textContent = "AgentDeck ?";
           action.title = status.detail || "Could not verify AgentDeck; open the stored link anyway";
         } else {
-          action.textContent = "AgentDeck";
-          action.title = status.detail || "AgentDeck is not configured";
-          action.disabled = true;
+          // No link to open and nothing to create — typically AgentDeck is not
+          // configured on this host. This used to disable the button and put the
+          // reason in a title tooltip, which a phone never shows, so the report
+          // was simply "the AgentDeck button does nothing" (#52). Stay clickable
+          // and mark it, so a tap can hand over the server's own sentence.
+          action.textContent = "AgentDeck ⚠";
+          action.title = status.detail || "AgentDeck is not available";
         }
       };
 
@@ -87,6 +105,7 @@
         const slug = slugFromHash();
         currentSlug = slug;
         current = null;
+        say("");
         if (!slug) {
           action.style.display = "none";
           return;
@@ -103,10 +122,15 @@
 
       action.addEventListener("click", async () => {
         if (!currentSlug || !current || action.disabled) return;
-        if (current.url && current.state !== "stale" && current.state !== "unmapped") {
+        if (current.url && !canCreate(current)) {
           location.href = current.url;
           return;
         }
+        if (!canCreate(current)) {
+          say(current.detail || "AgentDeck is not available for this song.");
+          return;
+        }
+        say("");
         action.disabled = true;
         action.textContent = current.state === "stale" ? "Recreating…" : "Creating…";
         try {
@@ -121,8 +145,8 @@
           draw(result);
           if (result.url) location.href = result.url;
         } catch (error) {
-          alert(error.message);
           await refresh();
+          say(error.message);
         }
       });
 

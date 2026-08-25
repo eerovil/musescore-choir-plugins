@@ -98,6 +98,12 @@ semantics. If AgentDeck later reports that the mapped session is gone, the Choir
 header changes the action to **Recreate AgentDeck**. A temporary AgentDeck outage
 does not erase the mapping.
 
+Leave the keys blank and the button is still there, but there is nothing for it to
+open. This pull request proposes labelling that state **AgentDeck ⚠** and, on a tap,
+writing the reason into a strip under the header. Before it, the button was disabled
+and carried its reason in a `title` tooltip, which a phone never shows — so the whole
+state read as a button that does nothing (#52).
+
 ## 5. Check it works
 
 ```bash

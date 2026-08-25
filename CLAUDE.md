@@ -1067,6 +1067,21 @@ every deploy made while a card was open.
 `/healthz` exists for that watcher. It returns `{"status": "ok"}` and touches nothing —
 it has to answer while a clean or a video render is occupying the worker threads.
 
+**Song chats need three keys in `.env`, and for a month they were not there.** The
+AgentDeck mapping added in #48 reads `AGENTDECK_URL`, `AGENTDECK_API_URL` and
+`AGENTDECK_ACCOUNT_KEY`, and they were only ever written to `.env.default` — blank.
+`.env` exists on this host, so `.env.default` is never loaded, and every song answered
+`unconfigured` (#52). They are now set: browser URL
+`https://bazzite.taile8d16e.ts.net` (the tailnet origin AgentDeck itself is served
+from, so the phone can open it), API URL `http://127.0.0.1:8756`, account
+`claude_code:main`. `.env` is gitignored, so this is host state, not something a
+checkout carries — a second host has to be told again. One trap when testing by hand:
+an AgentDeck-owned agent chat already exports `AGENTDECK_URL` as the loopback base for
+its own API calls, and `load_dotenv` does not override a variable that is already set,
+so `./song.py` run from such a chat persists the loopback origin into the song's
+`.song.json`. The service has no such variable; clear them (`env -u AGENTDECK_URL`)
+before reading anything into a conclusion.
+
 Issues are worked from a GitHub Project board by the AgentDeck poller (instance
 `musescore`, unit `agentdeck-poller@musescore.timer`). Its manifest is **not** in this
 repo: it lives in `~/agentdeck/poller/manifests/musescore/`, with every project's
