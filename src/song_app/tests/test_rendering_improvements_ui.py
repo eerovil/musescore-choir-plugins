@@ -32,6 +32,7 @@ import uvicorn
 from src.song_app import job_state, server, state
 
 pytestmark = pytest.mark.browser
+PHONE = {"width": 390, "height": 844}
 
 
 def _free_port():
@@ -78,22 +79,31 @@ def live(tmp_path_factory):
             os.environ["MUSESCORE_CLI_PATH"] = previous_cli
 
 
+def _choose_stage(page, label):
+    stages = page.locator(".mobilebar").get_by_role("button", name="Stages")
+    if stages.is_visible():
+        stages.click()
+    page.locator(".stagebar .step", has_text=label).click()
+
+
 def _open_record(page, live):
     base, slug = live
     page.goto(f"{base}/#/song/{slug}")
     page.wait_for_selector(".stagebar")
     # Make this a deliberate selection so the companion script stores it.
-    page.locator(".stagebar .step", has_text="Review").click()
-    page.locator(".stagebar .step", has_text="Record").click()
+    _choose_stage(page, "Review")
+    _choose_stage(page, "Record")
     page.wait_for_selector("text=How to make the videos")
     return slug
 
 
-def test_workflow_and_viewer_tabs_survive_a_reload(live, page):
+def test_workflow_mobile_pane_and_viewer_tab_survive_a_reload(live, page):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    page.set_viewport_size(PHONE)
     slug = _open_record(page, live)
 
+    page.locator(".mobilebar").get_by_role("button", name="Score").click()
     cleaned_tab = page.locator(".viewtabs .vtab", has_text="Cleaned MSCX").first
     cleaned_tab.click()
     assert cleaned_tab.evaluate("node => node.classList.contains('active')")
@@ -103,7 +113,6 @@ def test_workflow_and_viewer_tabs_survive_a_reload(live, page):
     song.save()
     try:
         page.reload()
-        page.wait_for_selector("text=How to make the videos")
         page.wait_for_function("""
             () => [...document.querySelectorAll('.stagebar .step')]
               .some(step => step.classList.contains('active') && step.textContent.trim() === 'Record')
@@ -111,6 +120,10 @@ def test_workflow_and_viewer_tabs_survive_a_reload(live, page):
         page.wait_for_function("""
             () => [...document.querySelectorAll('.viewtabs .vtab.active')]
               .some(tab => tab.textContent.trim() === 'Cleaned MSCX')
+        """)
+        page.wait_for_function("""
+            () => [...document.querySelectorAll('.mobilebar .mtab')]
+              .some(tab => tab.classList.contains('active') && tab.textContent.trim() === 'Score')
         """)
         assert not errors, f"the reloaded workspace raised: {errors}"
     finally:
@@ -123,6 +136,23 @@ def test_finished_render_appears_without_a_websocket_state_message(live, page):
     """The polling fallback must notice completion on a suspended/disconnected phone."""
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    # app.js only assigns onmessage and closes the socket. This inert substitute makes
+    # the browser genuinely miss every file-watcher state message while keeping the
+    # rest of the workspace identical to a temporarily disconnected phone.
+    page.add_init_script("""
+        (() => {
+          class SilentWebSocket {
+            constructor(url) { this.url = url; this.readyState = 1; this.onmessage = null; }
+            close() { this.readyState = 3; }
+            send() {}
+          }
+          SilentWebSocket.CONNECTING = 0;
+          SilentWebSocket.OPEN = 1;
+          SilentWebSocket.CLOSING = 2;
+          SilentWebSocket.CLOSED = 3;
+          window.WebSocket = SilentWebSocket;
+        })();
+    """)
     slug = _open_record(page, live)
     song = state.load(slug)
     lock = server._lock_path(song)
@@ -151,12 +181,11 @@ def test_finished_render_appears_without_a_websocket_state_message(live, page):
         song.save()
         job_state.finish(song.dir, "render")
         os.remove(lock)
-        # Deliberately do not call server.hub.emit(..., {"type": "state"}).
+        # Deliberately do not emit a WebSocket state message. The fake socket also
+        # prevents the server's file watcher from updating this page behind our back.
 
-        page.wait_for_selector(".result video", timeout=10000)
+        page.wait_for_selector(".result video[src*='completed=']", timeout=10000)
         assert page.locator(".result .rlabel").first.inner_text() == "S1"
-        source = page.locator(".result video").first.get_attribute("src")
-        assert "completed=" in source, source
         active = page.locator(".stagebar .step.active").inner_text()
         assert active == "Record"
         assert not errors, f"the completion refresh raised: {errors}"
