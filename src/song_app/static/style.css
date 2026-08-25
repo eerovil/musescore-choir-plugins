@@ -26,6 +26,11 @@ header {
   color: var(--muted); text-decoration: none; white-space: nowrap;
 }
 .new-issue-link:hover, .new-issue-link:focus-visible { color: var(--text); border-color: var(--accent); }
+#agentdeck-note {
+  flex: 0 0 auto; padding: 8px 18px; font-size: 13px;
+  background: #2c2314; color: #f0d9a8; border-bottom: 1px solid var(--line);
+}
+#agentdeck-note[hidden] { display: none; }
 main { padding: 0; }
 
 button {
