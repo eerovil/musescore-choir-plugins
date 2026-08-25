@@ -206,6 +206,12 @@ Key test modules:
   staff+position, per-system map, part names, explicit `parts` override).
 - `test_lyric_diagnostics.py` — the structured `Mismatch` fields, measure_start
   inference, and the editor-grid → cells → blocks → import → editor-grid round trip.
+- `test_lyric_hyphenation.py` — a word split by a barline stays one word. The JSON
+  import cuts a line into per-measure chunks and writes each back out as text in
+  between, and that text could say "carries on into the next measure" but not
+  "carries on from the previous one", so every chunk starting mid-word was read as a
+  fresh word. Four of the five fail without the fix; the fifth is the guard that a
+  word inside one measure is untouched.
 - `src/clean_score/tests/scorebuilder.py` — the shared synthetic-score helper those
   two use (not a test module).
 - `test_simple1_split.py` — a **golden-file snapshot** test: it runs the split
@@ -654,9 +660,18 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
   no token. Rests get no token.
 - **TXT format**: `# Measure N` headers, then `staffId [syllableCount]: tok1 tok2 ...`
   Tokens are space-separated; hyphens join syllables of a word (`il-man`);
-  trailing hyphen = word continues into next measure; `_` = eligible note with
-  no lyric. Syllabic state (begin/middle/end/single) is reconstructed from
-  hyphenation on import. (Alignment is per-measure — the token counter resets at each
+  trailing hyphen = the word continues, and that holds between **any** two tokens,
+  not only across a barline; a **leading** hyphen says the same thing looking
+  backwards, so a line carried over from the previous system may be written
+  `-hil-le`. `_` = eligible note with no lyric. Syllabic state
+  (begin/middle/end/single) is reconstructed from hyphenation on import: a syllable
+  is `middle` when a word runs both into and out of it, and reading that as `end`
+  splits one word in two. It did — `lai-ne-hil-le` was stored as `lai-ne-hil` plus a
+  stray `le`, because the continuation rule was applied only to the first token of a
+  measure. The syllables still land on the right notes, so no health check, test or
+  mismatch count noticed; what showed it was the by-system editor displaying
+  `hil le` where the imported JSON said `hil-le`. See `test_lyric_hyphenation.py`.
+  (Alignment is per-measure — the token counter resets at each
   barline — so a missing slur/tie only misaligns within its own measure, not the rest
   of the line.)
 - **JSON format**: line-by-line; tokens are *distributed across measures* using
