@@ -6,8 +6,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from src.song_app import agentdeck, state
+from src.song_app import agentdeck, server, state
 
 TOKEN = "0123456789abcdef0123456789abcdef"
 TOKEN2 = "fedcba9876543210fedcba9876543210"
@@ -180,6 +181,12 @@ def test_create_requires_configuration(song, monkeypatch):
     with pytest.raises(Exception) as exc:
         asyncio.run(agentdeck.create(song))
     assert getattr(exc.value, "status_code", None) == 503
+
+
+def test_agentdeck_routes_are_registered_before_static_mount(song):
+    result = TestClient(server.app).get(f"/api/songs/{song.slug}/agentdeck")
+    assert result.status_code == 200
+    assert result.json()["state"] == "unmapped"
 
 
 def test_workspace_shell_contains_agentdeck_action():
