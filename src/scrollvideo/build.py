@@ -157,9 +157,9 @@ class Prepared:
 
     This is the whole picture except its rasterisation: the engraving, the clock,
     what lights up when, where the page has scrolled to, and which slice of it the
-    frame shows. The video renderer turns it into pixels; the browser preview draws
-    the same SVG and follows the same curve. Neither recomputes any of it, so the
-    two cannot disagree about layout or timing.
+    frame shows. `raster` turns it into pixels — once for the video, again at a
+    smaller height for the browser preview — and neither recomputes any of it, so
+    the two cannot disagree about layout or timing.
     """
 
     source: str               # the .mscx actually rendered (silent parts dropped)
@@ -306,6 +306,56 @@ def _duration(events: Sequence, layout, staff_limit: int) -> float:
     return last + TAIL_SECONDS
 
 
+@dataclass(frozen=True)
+class Raster:
+    """The engraving as pixels, already cut to the frame's height.
+
+    A frame is a window onto `strip`, so this is the picture itself rather than a
+    description of it. The video renders it at the output height; the browser
+    preview asks for the same thing at a height a page can carry. Two sizes of one
+    drawing, made by one call — which is the only way a preview can promise the
+    render will look like it, down to which font the words came out in.
+    """
+
+    strip: np.ndarray        # RGB, `height` tall, the whole score end to end
+    coverage: np.ndarray     # how much of each pixel a notehead or rest glyph covers
+    placed: List             # Placed per symbol: pixel box, in strip coordinates
+    px_per_unit: float
+    height: int
+
+    @property
+    def width(self) -> int:
+        return self.strip.shape[1]
+
+
+def raster(ready: Prepared, height: int, log: Logger = _noop) -> Raster:
+    """Draw `ready` at `height` pixels tall, cropped and padded to the viewport.
+
+    Rasterising at the viewport scale is what keeps music, scroll anchors and
+    highlight geometry in one coordinate system: the page is drawn taller than the
+    frame by exactly the amount the margins and the spacer staff take away, and
+    `_vertical_view` then cuts the frame out of it.
+    """
+    layout = ready.layout
+    strip_height = int(round(height * layout.height / ready.view_height))
+    px_per_unit = strip_height / layout.height
+
+    log("Rasterising the strip")
+    view = dict(visible_height=ready.visible_height, output_height=height,
+                px_per_unit=px_per_unit, start=ready.view_start, end=ready.view_end)
+    strip = _vertical_view(rasterise(ready.engraving.svg, layout, strip_height),
+                           fill_value=255, **view)
+    coverage = _vertical_view(playing_coverage(ready.engraving.svg, layout, strip_height),
+                              fill_value=0, **view)
+
+    placed = place(ready.events, layout, px_per_unit, staff_limit=ready.singing_staves)
+    y_offset = int(round(-ready.view_start * px_per_unit))
+    if y_offset:
+        placed = [replace(p, y0=p.y0 + y_offset, y1=p.y1 + y_offset) for p in placed]
+    return Raster(strip=strip, coverage=coverage, placed=placed,
+                  px_per_unit=px_per_unit, height=height)
+
+
 def midi_onsets(midi_path: str) -> List[float]:
     """Every moment MuseScore actually strikes a note, in seconds."""
     onsets, now = [], 0.0
@@ -390,33 +440,15 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent, log=log)
         source = ready.source
-        eng = ready.engraving
         layout = ready.layout
         names, wanted = ready.names, ready.wanted
-        events, anchors = ready.events, ready.anchors
-        singing_staves = ready.singing_staves
-        visible = ready.visible_height
-        view_start, view_end = ready.view_start, ready.view_end
+        anchors = ready.anchors
 
-        # Rasterising at the viewport scale keeps music, scroll anchors and highlight
-        # geometry aligned.
-        strip_height = int(round(height * layout.height / ready.view_height))
-        px_per_unit = strip_height / layout.height
-
-        log("Rasterising the strip")
-        raw_strip = rasterise(eng.svg, layout, strip_height)
-        strip = _vertical_view(
-            raw_strip, visible_height=visible, output_height=height,
-            px_per_unit=px_per_unit, start=view_start, end=view_end, fill_value=255)
-        raw_coverage = playing_coverage(eng.svg, layout, strip_height)
-        coverage = _vertical_view(
-            raw_coverage, visible_height=visible, output_height=height,
-            px_per_unit=px_per_unit, start=view_start, end=view_end, fill_value=0)
-        placed = place(events, layout, px_per_unit, staff_limit=singing_staves)
-        y_offset = int(round(-view_start * px_per_unit))
-        if y_offset:
-            placed = [replace(p, y0=p.y0 + y_offset, y1=p.y1 + y_offset)
-                      for p in placed]
+        # The same call the browser preview makes, at the output height instead of a
+        # page-sized one.
+        drawn = raster(ready, height, log)
+        strip, coverage, placed = drawn.strip, drawn.coverage, drawn.placed
+        px_per_unit = drawn.px_per_unit
 
         # Each output is (file name, the voice its mix leans on). "ALL" leans on no
         # voice: render_mix(focus=None) is already the even mix, and render() with no

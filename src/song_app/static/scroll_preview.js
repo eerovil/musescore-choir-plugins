@@ -1,18 +1,15 @@
 // The scrolling video, played in the page before anything is rendered.
 //
-// Everything that decides what this looks like — the engraving, the viewport, the
-// clock, the scroll curve, which symbol lights up when — is computed by the Python
-// renderer and arrives in one payload. This file moves a window over an SVG and
-// puts a class on the symbols the payload says are sounding. It works out nothing
-// about music, layout or time on its own, so the preview cannot disagree with the
-// render it is a preview of.
+// The frames are not drawn here. The server rasterises the score with the same
+// call the renderer uses and sends two strips as PNG tiles: the engraving, and the
+// same engraving with every playable symbol already repainted blue. A frame is a
+// copy of a window out of the first, a translucent band for the beat marker, and a
+// copy of each sounding symbol's box out of the second — which is exactly what
+// `video.render` writes, so the preview cannot look different from the video.
+//
+// This file therefore decides nothing: not the layout, not the clock, not which
+// symbol lights up, not even what colour it goes.
 (function () {
-  const svgEl = (tag, props) => {
-    const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
-    for (const [k, v] of Object.entries(props || {})) e.setAttribute(k, v);
-    return e;
-  };
-
   const clock = (seconds) => {
     const whole = Math.max(0, Math.floor(seconds));
     return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
@@ -29,7 +26,7 @@
     return best;
   };
 
-  // Where the music is on the page at time t. A repeat is a real backward jump in
+  // Where the music is on the strip at time t. A repeat is a real backward jump in
   // the curve, and `jump` is how big a step the renderer treats as one: across it
   // the position holds until the far side, so the scroll snaps back to the repeated
   // bar instead of sliding through everything in between.
@@ -43,9 +40,27 @@
     return span > 0 ? xs[i] + (step * (t - times[i])) / span : xs[i];
   }
 
+  const loadImage = (url) => new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Could not load ${url}`));
+    image.src = url;
+  });
+
+  // Fetch the payload and every tile it names. The tiles are the picture, so there
+  // is nothing to show until they are here.
+  async function loadPreview(url, tileUrl) {
+    const response = await fetch(url);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || response.statusText);
+    const all = [...data.strip.tiles, ...data.lit.tiles];
+    const images = await Promise.all(all.map((tile) => loadImage(tileUrl(tile.name))));
+    all.forEach((tile, index) => { tile.image = images[index]; });
+    return data;
+  }
+
   function makePlayer(data) {
-    const view = data.view;
-    const windowUnits = view.height * view.aspect;
+    const frame = data.frame;
     const events = data.events;
     const onsets = events.map((e) => e.on);
     let longest = 0;
@@ -53,23 +68,29 @@
 
     const stage = document.createElement("div");
     stage.className = "pvviewport";
-    stage.style.aspectRatio = String(view.aspect);
-    stage.innerHTML = data.svg;
-    const svg = stage.querySelector("svg");
-    svg.style.setProperty("--pv-highlight", data.highlight.colour);
+    stage.style.aspectRatio = `${frame.width} / ${frame.height}`;
+    const canvas = document.createElement("canvas");
+    canvas.width = frame.width;
+    canvas.height = frame.height;
+    canvas.setAttribute("data-preview", "canvas");
+    stage.append(canvas);
+    const ctx = canvas.getContext("2d");
+    const band = data.highlight.colour;
+    const rgb = [1, 3, 5].map((i) => parseInt(band.slice(i, i + 2), 16));
+    const marker = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${data.highlight.marker_alpha})`;
 
-    // The beat marker, drawn over the engraving in the same page units.
-    const marker = svgEl("rect", {
-      y: view.start, height: view.height, fill: data.highlight.colour,
-      "fill-opacity": data.highlight.marker_alpha, "data-preview": "marker",
-    });
-    svg.appendChild(marker);
-
-    const byId = new Map();
-    for (const e of events) {
-      if (e.id && !byId.has(e.id)) byId.set(e.id, svg.querySelector(`[id="${e.id}"]`));
-    }
-    let lit = [];
+    // Copy a box out of a tiled strip, drawing from as many tiles as it spans.
+    // `dx` is where source column `sx` lands on the canvas; rows do not move, so a
+    // box keeps the vertical position the renderer gave it.
+    const copy = (tiles, sx, sy, w, h, dx) => {
+      for (const tile of tiles) {
+        const x0 = Math.max(sx, tile.x);
+        const x1 = Math.min(sx + w, tile.x + tile.width);
+        if (x1 <= x0) continue;
+        ctx.drawImage(tile.image, x0 - tile.x, sy, x1 - x0, h,
+                      dx + (x0 - sx), sy, x1 - x0, h);
+      }
+    };
 
     const sounding = (t) => {
       const out = [];
@@ -87,21 +108,21 @@
     };
 
     function draw(t) {
-      const left = positionAt(data.scroll, t) - data.playhead * windowUnits;
-      svg.setAttribute("viewBox",
-        `${left} ${view.start} ${windowUnits} ${view.height}`);
+      // The same three steps, in the same order, as one turn of `video.render`'s
+      // loop: the window, the beat marker over it, then the lit symbols on top.
+      const left = Math.trunc(positionAt(data.scroll, t) - data.playhead * frame.width);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, frame.width, frame.height);
+      copy(data.strip.tiles, left, 0, frame.width, frame.height, 0);
 
-      const active = sounding(t);
-      for (const e of lit) byId.get(e.id)?.classList.remove("pv-on");
-      for (const e of active) byId.get(e.id)?.classList.add("pv-on");
-      lit = active;
+      const beat = markerAt(t);
+      if (beat) {
+        ctx.fillStyle = marker;
+        ctx.fillRect(beat[0] - left, 0, beat[1] - beat[0], frame.height);
+      }
 
-      const band = markerAt(t);
-      if (band) {
-        marker.setAttribute("x", band[0]);
-        marker.setAttribute("width", band[1] - band[0]);
-      } else {
-        marker.setAttribute("width", 0);
+      for (const e of sounding(t)) {
+        copy(data.lit.tiles, e.x0, e.y0, e.x1 - e.x0, e.y1 - e.y0, e.x0 - left);
       }
     }
 
@@ -180,7 +201,8 @@
   }
 
   // The Record panel's preview block: a button, a status line, and the player once
-  // the payload is ready. Preparing it engraves the score, which takes seconds.
+  // the picture is ready. Preparing it engraves and rasterises the score, which
+  // takes seconds — against the minutes the render it stands in for costs.
   window.scrollPreviewPanel = function (base, settings) {
     const box = document.createElement("div");
     box.className = "svgpreview";
@@ -198,14 +220,13 @@
       holder.textContent = "";
       button.disabled = true;
       status.className = "pvstatus";
-      status.textContent = "Preparing the preview (engraving the score)…";
+      status.textContent = "Preparing the preview (drawing the score)…";
       try {
         const query = new URLSearchParams(settings()).toString();
-        const response = await fetch(`${base}/scroll-preview?${query}`);
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.detail || response.statusText);
-        status.textContent = "Silent preview — the picture and the timing, not the sound.";
-        live = mount(holder, body);
+        const data = await loadPreview(`${base}/scroll-preview?${query}`,
+                                       (name) => `${base}/scroll-preview/${name}`);
+        status.textContent = "Silent preview — the render's own picture, without the sound.";
+        live = mount(holder, data);
       } catch (err) {
         status.className = "pvstatus err";
         status.textContent = err.message;

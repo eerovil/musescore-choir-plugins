@@ -1,144 +1,169 @@
-"""The same render, as data a browser can play instead of a file ffmpeg must write.
+"""The same render, as pictures a browser can scroll instead of a file ffmpeg must write.
 
 Looking at a scrolling video is how anyone finds out whether the picture is right:
 the margins, the staff size, where the beat marker sits, whether a repeat lands
 back on the right bar. Finding that out cost a full render — minutes of engraving,
 rasterising, encoding and audio — for a question about layout.
 
-This turns `build.prepare` into a payload the browser can animate: the engraving as
-SVG, the viewport the frame would show, the scroll curve the renderer would follow,
-and when each symbol lights up. Nothing here decides anything; every number comes
-out of the same preparation the video is made from, so a preview that looks right
-is a render that will look right.
+So this stops one step short of the encoder. `build.prepare` decides the render and
+`build.raster` draws it, both exactly as `build_videos` does, only at a height a web
+page can carry; what comes back is that drawing as PNG tiles plus the numbers the
+player needs. **The pixels are the renderer's own.** An earlier version sent the
+engraving as SVG and let the browser draw it, which was cheaper and looked wrong in
+a way nobody could act on: verovio writes lyrics and measure numbers as
+`font-family="Times, serif"`, cairosvg resolves that against this host's fonts and a
+browser against its own, so the words in the preview were never the words in the
+video. Handing over pixels ends that whole class of difference — a preview is now
+the video's own frames, at a smaller size and without the sound.
 
-What the browser is left to do is interpolate the curve at the current time and move
-the SVG window. It does no scrolling, timing or layout arithmetic of its own.
+What the browser is left to do is interpolate the scroll curve, copy the window out
+of the strip, and copy each sounding symbol's box out of a second, pre-lit strip. It
+works out nothing about music, layout, time or colour.
 """
 
 from __future__ import annotations
 
+import os
 import tempfile
 from typing import Callable, Dict, List, Optional
 
-from lxml import etree
+import numpy as np
+from PIL import Image
 
 from . import spacing as spacing_mod
-from .build import prepare
-from .geometry import SVG_NS, Layout
+from .build import Raster, prepare, raster
 from .timing import JUMP_FRACTION, SMOOTH_SECONDS
-from .video import BAND_ALPHA, HIGHLIGHT, Placed, place
+from .video import BAND_ALPHA, HIGHLIGHT, Placed, lit_pixels
 
 Logger = Callable[[str], None]
 
 # Where the sung note sits across the frame — `video.render`'s own default. The
-# browser needs it to turn the scroll curve into a window on the page.
+# browser needs it to turn the scroll curve into a window on the strip.
 PLAYHEAD = 0.35
 
-# Seconds are rounded to a millisecond and page positions to a hundredth of a
-# verovio unit (~a thousandth of a staff line). Both are far finer than anything
-# visible, and rounding keeps the payload a fraction of the size on a phone.
+# How tall the preview is drawn. Not the video's height: 2160 rows of a whole score
+# is hundreds of megabytes to send to a phone, and the panel showing it is a few
+# hundred pixels wide. This is the same picture at a size a page can hold, sharp
+# enough on a desktop panel that the browser is scaling it down rather than up.
+PREVIEW_HEIGHT = 480
+
+# Cairo caps surface dimensions and so do browsers: Chrome refuses images past
+# 16384px on a side, and a long score is wider than that even at this height. The
+# strip is therefore sent as tiles, which is what `geometry.rasterise` already does
+# internally to draw it.
+TILE_WIDTH = 4096
+
+# Seconds are rounded to a millisecond and positions to a hundredth of a pixel.
+# Both are finer than anything visible, and rounding keeps the payload small.
 TIME_DP = 3
-UNIT_DP = 2
+PX_DP = 2
 
 
 def _noop(_message: str) -> None:
     pass
 
 
-def preview_svg(svg: str, layout: Layout) -> str:
-    """The engraving with its root put into score units, ready to scroll in a page.
+def _tiles(array: np.ndarray, out_dir: str, prefix: str, mode: str) -> List[Dict]:
+    """Write a strip out as PNG tiles and describe where each one starts."""
+    tiles = []
+    total = array.shape[1]
+    for index, x in enumerate(range(0, total, TILE_WIDTH)):
+        width = min(TILE_WIDTH, total - x)
+        name = f"{prefix}-{index}.png"
+        Image.fromarray(array[:, x:x + width], mode).save(os.path.join(out_dir, name))
+        tiles.append({"name": name, "x": x, "width": width})
+    return tiles
 
-    Verovio sizes the root in pixels a twenty-fifth of the coordinates everything
-    inside it uses, so a browser given the file as-is cannot address a position on
-    the page in the units the scroll curve is written in. Giving the root the unit
-    viewBox makes one user unit one unit everywhere, and then showing a moment of
-    the music is just setting the viewBox to that window — no transforms to keep in
-    step with the scroll, and the nested engraving is untouched.
+
+def lit_strip(drawn: Raster) -> np.ndarray:
+    """The whole strip with every playable symbol already repainted blue.
+
+    Which symbol is sounding changes forty times a second; what a sounding symbol
+    looks like does not. So it is drawn once, here, with `video.render`'s own
+    arithmetic, and the player copies a box out of it. Everywhere else is
+    transparent, which costs almost nothing in a PNG and leaves the engraving
+    showing through.
+
+    This is why the preview cannot invent a colour: it is not given one. It is given
+    the pixels the encoder would have written.
     """
-    root = etree.fromstring(svg.encode())
-    root.set("viewBox", f"0 0 {layout.width:g} {layout.height:g}")
-    root.set("width", "100%")
-    root.set("height", "100%")
-    root.set("preserveAspectRatio", "none")
-
-    # The engraving is a nested `<svg>` that sizes itself as a percentage of
-    # whatever viewport encloses it. That viewport is the root's viewBox, which the
-    # player rewrites every frame to move the window — so left as a percentage the
-    # engraving would shrink and stretch along with the window instead of standing
-    # still on the page. Stating its size in units pins it.
-    for nested in root.iter(f"{{{SVG_NS}}}svg"):
-        if nested is not root:
-            nested.set("width", f"{layout.width:g}")
-            nested.set("height", f"{layout.height:g}")
-    return etree.tostring(root, encoding="unicode")
+    covered = drawn.coverage > 0
+    alpha = np.where(covered, 255, 0).astype(np.uint8)
+    return np.dstack([lit_pixels(drawn.coverage), alpha])
 
 
-def _marker_band(marker: Placed) -> List[float]:
-    """The beat marker's horizontal band, the width `video.blend_beat_marker` uses."""
-    note_width = max(marker.x1 - marker.x0, 1e-9)
+def marker_band(marker: Placed) -> List[int]:
+    """The beat marker's horizontal band — `video.blend_beat_marker`'s own width."""
+    note_width = max(1, marker.x1 - marker.x0)
+    band = 2 * note_width
     centre = (marker.x0 + marker.x1) / 2
-    return [round(centre - note_width, UNIT_DP), round(centre + note_width, UNIT_DP)]
+    x0 = int(round(centre - band / 2))
+    return [x0, x0 + band]
 
 
-def _events(ready, layout: Layout) -> List[Dict]:
-    """Every symbol that lights up, when, and where it is on the page.
-
-    Built through `video.place` at one pixel per unit, so the preview highlights
-    exactly the symbols the renderer does — including the rule that a whole-measure
-    rest does not drag the beat marker onto itself.
-    """
+def _events(drawn: Raster) -> List[Dict]:
+    """Every symbol that lights up: when, and which box to copy from the lit strip."""
     return [{
         "id": item.note_id,
         "on": round(item.on, TIME_DP),
         "off": round(item.off, TIME_DP),
         "staff": item.staff,
-        "marker": _marker_band(item) if item.snap_marker else None,
-    } for item in place(ready.events, layout, 1.0, staff_limit=ready.singing_staves)]
+        "x0": item.x0, "x1": item.x1, "y0": item.y0, "y1": item.y1,
+        "marker": marker_band(item) if item.snap_marker else None,
+    } for item in drawn.placed]
 
 
-def preview(mscx_path: str, *, width: int = 3840, height: int = 2160, fps: int = 60,
-            keep_silent: bool = False, initial_bpm: Optional[int] = None,
+def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 2160,
+            fps: int = 60, keep_silent: bool = False, initial_bpm: Optional[int] = None,
             spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
             smooth_seconds: float = SMOOTH_SECONDS,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
-            log: Logger = _noop) -> Dict:
-    """Everything a browser needs to play this render, without rendering it.
+            preview_height: int = PREVIEW_HEIGHT, log: Logger = _noop) -> Dict:
+    """Draw this render as tiles in `out_dir` and return what a player needs with them.
+
+    `width`/`height` are the video's, not the preview's: they set the shape of the
+    frame, and the preview is that shape drawn `preview_height` tall.
 
     Raises what a render would raise, and for the same reasons: a D.C./D.S. jump the
     engraving cannot follow, margins that leave no picture, a timeline too far out of
     step with the audio. Failing here is the point — it costs seconds instead of the
     minutes it takes to discover the same thing from a finished file.
     """
+    os.makedirs(out_dir, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         ready = prepare(mscx_path, tmp, keep_silent=keep_silent,
                         initial_bpm=initial_bpm, spacer_per_quarter=spacer_per_quarter,
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent, log=log)
-        layout = ready.layout
+        drawn = raster(ready, preview_height, log)
+        frame_width = max(1, int(round(preview_height * width / height)))
+
+        log("Writing the preview tiles")
+        strip_tiles = _tiles(drawn.strip, out_dir, "strip", "RGB")
+        lit_tiles = _tiles(lit_strip(drawn), out_dir, "lit", "RGBA")
+
         times, xs = ready.anchors
         return {
-            "svg": preview_svg(ready.engraving.svg, layout),
-            "page": {"width": round(layout.width, UNIT_DP),
-                     "height": round(layout.height, UNIT_DP)},
-            # The slice of the page a frame shows, in the same units, already
-            # including the spacer-staff crop and the margin adjustments.
-            "view": {"start": round(ready.view_start, UNIT_DP) + 0.0,
-                     "end": round(ready.view_end, UNIT_DP),
-                     "height": round(ready.view_height, UNIT_DP),
-                     "aspect": width / height},
+            # The frame the player draws, and the strip it cuts it out of.
+            "frame": {"width": frame_width, "height": preview_height},
+            "strip": {"width": drawn.width, "tiles": strip_tiles},
+            "lit": {"tiles": lit_tiles},
             "playhead": PLAYHEAD,
             "duration": round(ready.duration, TIME_DP),
             "fps": fps,
+            # In strip pixels, so the player interpolates the curve and subtracts the
+            # playhead exactly as `video.render` does.
             "scroll": {"times": [round(t, TIME_DP) for t in times],
-                       "xs": [round(x, UNIT_DP) for x in xs],
+                       "xs": [round(x * drawn.px_per_unit, PX_DP) for x in xs],
                        # How far back the page has to go before it counts as a
                        # repeat rather than spacing noise — the same line
                        # `smooth_scroll` draws. A step past it is a jump, and the
                        # player must land on the far side of it rather than slide
                        # across the music in between.
-                       "jump": round(JUMP_FRACTION * layout.width, UNIT_DP)},
-            "events": _events(ready, layout),
+                       "jump": round(JUMP_FRACTION * ready.layout.width
+                                     * drawn.px_per_unit, PX_DP)},
+            "events": _events(drawn),
             "highlight": {"colour": "#%02x%02x%02x" % HIGHLIGHT,
                           "marker_alpha": BAND_ALPHA},
             "parts": list(ready.names),

@@ -796,12 +796,12 @@ def _margin(value, label: str) -> float:
 @app.get("/api/songs/{slug}/scroll-preview")
 async def api_scroll_preview(slug: str, quality: str = "4k", top_margin: float = 0.0,
                              bottom_margin: float = 0.0, bpm: Optional[int] = None):
-    """The scrolling render as data the browser can play, before any video exists.
+    """The scrolling render as pictures the browser can play, before any video exists.
 
-    This is the picture without the encoding: the same engraving, viewport, clock
-    and scroll curve `build_videos` would use, prepared by the same code. It writes
-    nothing into the song's state and does not count as a render — the only file it
-    leaves behind is its own cache.
+    This is the picture without the encoding: the same engraving, viewport, clock,
+    scroll curve and *pixels* `build_videos` would use, drawn by the same code at a
+    height a page can carry. It writes nothing into the song's state and does not
+    count as a render — the only files it leaves behind are its own cache.
 
     It also fails where a render would, and that is half its value: a D.C./D.S.
     jump or margins that leave no picture come back here as an ordinary error
@@ -827,6 +827,21 @@ async def api_scroll_preview(slug: str, quality: str = "4k", top_margin: float =
     except Exception as exc:
         raise HTTPException(400, str(exc) or exc.__class__.__name__)
     return JSONResponse(payload, headers=dict(REVALIDATE))
+
+
+@app.get("/api/songs/{slug}/scroll-preview/{name}")
+async def api_scroll_preview_tile(slug: str, name: str):
+    """One tile of the prepared preview strip.
+
+    The payload names these; preparing writes them. They are served rather than
+    inlined because a score's strip is megabytes of PNG, and a phone should get it
+    as images the browser can cache and decode, not as base64 inside JSON.
+    """
+    song = _require(slug)
+    path = pipeline.scroll_preview_tile(song.dir, name)
+    if not path:
+        raise HTTPException(404, "No such preview tile")
+    return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
 # --------------------------------------------------------------------------

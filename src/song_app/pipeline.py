@@ -595,10 +595,12 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                         audio_cache_dir=audio_cache_dir)
 
 
-# The prepared preview, cached beside the song. Everything that could change the
-# picture goes into the key, so the file is either the current score under the
-# current settings or it is not used at all.
-PREVIEW_CACHE = ".scroll-preview.json"
+# The prepared preview, cached beside the song: a folder, because the preview is
+# now pictures — the renderer's own strip as PNG tiles — and not only numbers.
+# Everything that could change what those tiles show goes into the key, so the
+# folder holds the current score under the current settings or it is not used.
+PREVIEW_CACHE = ".scroll-preview"
+PREVIEW_PAYLOAD = "preview.json"
 
 
 def _preview_key(cleaned_path: str, settings: Dict) -> str:
@@ -614,14 +616,17 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                    top_margin_percent: float = 0.0,
                    bottom_margin_percent: float = 0.0,
                    log: Logger = _noop) -> Dict:
-    """The scrolling render as data a browser can play, without rendering it.
+    """The scrolling render as pictures a browser can play, without rendering it.
 
-    Preparing it costs a MuseScore conversion and an engraving — seconds, not the
-    minutes a render costs, but too long to repeat every time someone presses play.
-    So it is cached beside the song under a key naming the score and every setting
-    that moves anything on screen. A score edited in MuseScore, a margin nudged or a
-    different size chosen all change the key, and a preview is never shown for a
-    score that is no longer the one on disk.
+    Preparing it costs a MuseScore conversion, an engraving and a rasterisation —
+    seconds, not the minutes a render costs, but far too long to repeat every time
+    someone presses play. So it is cached beside the song under a key naming the
+    score and every setting that moves anything on screen. A score edited in
+    MuseScore, a margin nudged or a different size chosen all change the key, and a
+    preview is never shown for a score that is no longer the one on disk.
+
+    Rebuilding empties the folder first. Tile names are positional (`strip-3.png`),
+    so a shorter score would otherwise be played against the tail of a longer one.
     """
     from src.scrollvideo.preview import preview
 
@@ -630,7 +635,8 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                 "bpm": initial_bpm, "top": top_margin_percent,
                 "bottom": bottom_margin_percent}
     key = _preview_key(cleaned_path, settings)
-    path = os.path.join(song_dir, PREVIEW_CACHE)
+    cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
+    path = os.path.join(cache_dir, PREVIEW_PAYLOAD)
 
     try:
         with open(path) as fh:
@@ -640,15 +646,34 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     except (OSError, ValueError, KeyError):
         pass
 
-    payload = preview(cleaned_path, width=width, height=height, fps=fps,
+    shutil.rmtree(cache_dir, ignore_errors=True)
+    payload = preview(cleaned_path, cache_dir, width=width, height=height, fps=fps,
                       initial_bpm=initial_bpm,
                       top_margin_percent=top_margin_percent,
                       bottom_margin_percent=bottom_margin_percent, log=log)
+    os.makedirs(cache_dir, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         json.dump({"key": key, "preview": payload}, fh)
     os.replace(tmp, path)
     return payload
+
+
+def scroll_preview_tile(song_dir: str, name: str) -> Optional[str]:
+    """One prepared preview tile by name, or None if it is not one of ours.
+
+    The name comes off the wire, so it is matched against the folder's own listing
+    rather than joined onto a path — a preview must not be a way to read a file
+    somewhere else on the host.
+    """
+    cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
+    try:
+        listing = os.listdir(cache_dir)
+    except OSError:
+        return None
+    if name not in listing or not name.endswith(".png"):
+        return None
+    return os.path.join(cache_dir, name)
 
 
 def run_lyric_import(

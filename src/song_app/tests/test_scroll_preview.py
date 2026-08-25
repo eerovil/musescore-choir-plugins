@@ -1,12 +1,13 @@
 """The preview endpoint: what it prepares, what it reuses, and what it never does.
 
-Preparing a preview engraves the score, so it is cached — and a cache is exactly
-where a preview stops being a preview. These tests hold it to the one rule that
-matters: what comes back is this score, under these settings, or it is prepared
-again.
+Preparing a preview engraves and rasterises the score, so it is cached — and a
+cache is exactly where a preview stops being a preview. These tests hold it to the
+one rule that matters: what comes back is this score, under these settings, or it
+is prepared again. Since the preview is now pictures, the cache is a folder and
+"prepared again" has to mean the old pictures are gone as well.
 
-The engraving itself is pinned in `src/scrollvideo/tests/test_preview.py`; here it
-is stubbed, so these run without MuseScore.
+The drawing itself is pinned in `src/scrollvideo/tests/test_preview.py`; here it is
+stubbed, so these run without MuseScore.
 """
 
 import json
@@ -19,8 +20,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from src.song_app import pipeline, server, state  # noqa: E402
 
-PAYLOAD = {"svg": "<svg/>", "duration": 12.0, "scroll": {"times": [0.0], "xs": [0.0],
-                                                         "jump": 1.0}}
+PAYLOAD = {"duration": 12.0, "frame": {"width": 853, "height": 480},
+           "strip": {"width": 1000, "tiles": [{"name": "strip-0.png", "x": 0,
+                                               "width": 1000}]},
+           "lit": {"tiles": [{"name": "lit-0.png", "x": 0, "width": 1000}]},
+           "scroll": {"times": [0.0], "xs": [0.0], "jump": 1.0}}
 
 
 @pytest.fixture
@@ -45,11 +49,15 @@ def client(song):
 
 @pytest.fixture
 def prepared(monkeypatch):
-    """Stand in for the engraving, and record what it was asked for."""
+    """Stand in for the drawing: record what it was asked for, leave tiles behind."""
     calls = []
 
-    def fake(mscx_path, **kwargs):
-        calls.append({"path": mscx_path, **kwargs})
+    def fake(mscx_path, out_dir, **kwargs):
+        calls.append({"path": mscx_path, "out_dir": out_dir, **kwargs})
+        os.makedirs(out_dir, exist_ok=True)
+        for tile in ("strip-0.png", "lit-0.png"):
+            with open(os.path.join(out_dir, tile), "wb") as fh:
+                fh.write(b"\x89PNG" + str(len(calls)).encode())
         return dict(PAYLOAD, call=len(calls))
 
     monkeypatch.setattr("src.scrollvideo.preview.preview", fake)
@@ -153,10 +161,47 @@ def test_a_margin_the_renderer_could_not_use_is_refused(client, song, prepared, 
     assert not prepared
 
 
+def _payload_path(song):
+    return os.path.join(song.dir, pipeline.PREVIEW_CACHE, pipeline.PREVIEW_PAYLOAD)
+
+
 def test_a_damaged_cache_file_is_prepared_again_rather_than_served(song, prepared):
     """A half-written file is not a preview; it is just a file."""
-    with open(os.path.join(song.dir, pipeline.PREVIEW_CACHE), "w") as fh:
+    os.makedirs(os.path.join(song.dir, pipeline.PREVIEW_CACHE), exist_ok=True)
+    with open(_payload_path(song), "w") as fh:
         fh.write('{"key": "whatever", "prev')
     payload = pipeline.scroll_preview(song.dir, song.cleaned_path())
     assert payload["duration"] == 12.0
-    assert json.load(open(os.path.join(song.dir, pipeline.PREVIEW_CACHE)))["preview"]
+    assert json.load(open(_payload_path(song)))["preview"]
+
+
+def test_the_tiles_the_payload_names_are_the_ones_served(client, song, prepared):
+    """The picture is files, so the payload is only half of it."""
+    client.get(f"/api/songs/{song.slug}/scroll-preview")
+    response = client.get(f"/api/songs/{song.slug}/scroll-preview/strip-0.png")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.content == b"\x89PNG1"
+
+
+def test_preparing_again_replaces_the_old_pictures(client, song, prepared):
+    """Tile names are positional, so a stale one would be played as this score's."""
+    client.get(f"/api/songs/{song.slug}/scroll-preview")
+    with open(os.path.join(song.dir, pipeline.PREVIEW_CACHE, "strip-9.png"), "wb") as fh:
+        fh.write(b"stale")
+    client.get(f"/api/songs/{song.slug}/scroll-preview", params={"top_margin": 8})
+
+    assert len(prepared) == 2
+    assert client.get(f"/api/songs/{song.slug}/scroll-preview/strip-0.png").content \
+        == b"\x89PNG2"
+    assert client.get(f"/api/songs/{song.slug}/scroll-preview/strip-9.png").status_code \
+        == 404
+
+
+def test_a_tile_name_cannot_reach_out_of_the_preview_folder(client, song, prepared):
+    """A name off the wire is matched against the folder, never joined onto a path."""
+    client.get(f"/api/songs/{song.slug}/scroll-preview")
+    for name in ("../.song.json", "..%2F.song.json", "nothing.png"):
+        assert client.get(
+            f"/api/songs/{song.slug}/scroll-preview/{name}").status_code == 404
