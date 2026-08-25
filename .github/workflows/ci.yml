@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  tests:
+    name: Python and integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pip-requirements.txt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            ffmpeg \
+            libegl1 \
+            poppler-utils \
+            xvfb
+
+      - name: Install MuseScore 3.6.2
+        env:
+          MUSESCORE_APPIMAGE_URL: https://github.com/musescore/MuseScore/releases/download/v3.6.2/MuseScore-3.6.2.548021370-x86_64.AppImage
+          MUSESCORE_APPIMAGE_SHA256: c59a41ee88bc7c565a939b9c73498ac0451bbd86574e95cb6e359302c1465290
+        run: |
+          appimage="$RUNNER_TEMP/MuseScore-3.6.2.AppImage"
+          install_dir="$RUNNER_TEMP/musescore-3.6.2"
+
+          curl --fail --location --retry 3 \
+            "$MUSESCORE_APPIMAGE_URL" \
+            --output "$appimage"
+          echo "$MUSESCORE_APPIMAGE_SHA256  $appimage" | sha256sum --check --strict
+          chmod +x "$appimage"
+
+          (
+            cd "$RUNNER_TEMP"
+            "$appimage" --appimage-extract >/dev/null
+          )
+          mv "$RUNNER_TEMP/squashfs-root" "$install_dir"
+          echo "MUSESCORE_CLI_PATH=$install_dir/AppRun" >> "$GITHUB_ENV"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r pip-requirements.txt
+          python -m pip check
+
+      - name: Show tool versions
+        run: |
+          python --version
+          xvfb-run -a "$MUSESCORE_CLI_PATH" --version
+          ffmpeg -version | head -n 1
+          pdftoppm -v 2>&1 | head -n 1
+
+      - name: Run Python and integration tests
+        run: |
+          xvfb-run -a python -m pytest \
+            src/clean_score/tests \
+            src/song_app/tests \
+            src/scrollvideo/tests \
+            -m "not browser" \
+            --strict-markers \
+            --durations=10 \
+            -ra
+
+  browser-tests:
+    name: Browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pip-requirements.txt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes poppler-utils xvfb
+
+      - name: Install Python and browser dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r pip-requirements.txt pytest-playwright
+          python -m pip check
+          python -m playwright install --with-deps chromium
+
+      - name: Verify Chromium starts
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as playwright:
+              browser = playwright.chromium.launch()
+              browser.close()
+          PY
+
+      - name: Run browser tests
+        run: |
+          xvfb-run -a python -m pytest \
+            src/song_app/tests \
+            -m browser \
+            --strict-markers \
+            --durations=10 \
+            -ra
