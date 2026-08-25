@@ -20,7 +20,12 @@
   <header>
     <a href="#/" class="brand">♪ song</a>
     <span id="crumb"></span>
+    <button id="agentdeck-action" class="new-issue-link" type="button"
+            style="display:none;margin-left:auto;background:transparent;font:inherit;cursor:pointer">
+      AgentDeck
+    </button>
     <a class="new-issue-link"
+       style="margin-left:0"
        href="https://github.com/eerovil/musescore-choir-plugins/issues/new?template=issue-for-agent-to-fix.md"
        target="_blank" rel="noopener"
        aria-label="Create musescore-choir-plugins GitHub issue"
@@ -33,6 +38,98 @@
   </header>
   <main id="app">Loading…</main>
   <script src="/app.js"></script>
+  <script>
+    (() => {
+      const action = document.getElementById("agentdeck-action");
+      let current = null;
+      let currentSlug = "";
+
+      const slugFromHash = () => {
+        const match = location.hash.match(/^#\/song\/(.+)$/);
+        return match ? decodeURIComponent(match[1]) : "";
+      };
+
+      const request = async (path, options) => {
+        const response = await fetch(path, options);
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.detail || response.statusText);
+        return body;
+      };
+
+      const draw = (status) => {
+        current = status;
+        action.disabled = false;
+        action.style.display = currentSlug ? "inline-flex" : "none";
+        if (!currentSlug) return;
+        if (status.state === "unmapped") {
+          action.textContent = "+ AgentDeck";
+          action.title = "Create an AgentDeck chat for this song";
+        } else if (status.state === "starting") {
+          action.textContent = "AgentDeck…";
+          action.title = "Open the AgentDeck chat while it starts";
+        } else if (status.state === "ready") {
+          action.textContent = "AgentDeck";
+          action.title = "Open this song's AgentDeck chat";
+        } else if (status.state === "stale") {
+          action.textContent = "Recreate AgentDeck";
+          action.title = status.detail || "The mapped AgentDeck chat no longer exists";
+        } else if (status.state === "unavailable" && status.url) {
+          action.textContent = "AgentDeck ?";
+          action.title = status.detail || "Could not verify AgentDeck; open the stored link anyway";
+        } else {
+          action.textContent = "AgentDeck";
+          action.title = status.detail || "AgentDeck is not configured";
+          action.disabled = true;
+        }
+      };
+
+      const refresh = async () => {
+        const slug = slugFromHash();
+        currentSlug = slug;
+        current = null;
+        if (!slug) {
+          action.style.display = "none";
+          return;
+        }
+        action.style.display = "inline-flex";
+        action.disabled = true;
+        action.textContent = "AgentDeck…";
+        try {
+          draw(await request(`/api/songs/${encodeURIComponent(slug)}/agentdeck`));
+        } catch (error) {
+          draw({ state: "unavailable", url: null, detail: error.message });
+        }
+      };
+
+      action.addEventListener("click", async () => {
+        if (!currentSlug || !current || action.disabled) return;
+        if (current.url && current.state !== "stale" && current.state !== "unmapped") {
+          location.href = current.url;
+          return;
+        }
+        action.disabled = true;
+        action.textContent = current.state === "stale" ? "Recreating…" : "Creating…";
+        try {
+          const result = await request(
+            `/api/songs/${encodeURIComponent(currentSlug)}/agentdeck`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ replace: current.state === "stale" }),
+            },
+          );
+          draw(result);
+          if (result.url) location.href = result.url;
+        } catch (error) {
+          alert(error.message);
+          await refresh();
+        }
+      });
+
+      window.addEventListener("hashchange", refresh);
+      window.addEventListener("DOMContentLoaded", refresh);
+    })();
+  </script>
   <script src="/rendering_state.js"></script>
   <script src="/pwa.js"></script>
 </body>
