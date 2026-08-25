@@ -137,6 +137,16 @@ and every kind checks what the bar reads **now** (`from`) before touching it, tu
 brackets included. A note's spelling is derived from its pitch: the first fixes to
 carry one by hand got three of four wrong.
 
+A fourth kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
+most edits are none of the other three — taking one notehead off a chord and turning a
+bar-length rest into a whole-bar rest both came up on one song in one sitting, and
+neither could be written down at all. Nothing interprets it: `apply_fixes` steps over
+it and `score_fixes.free_text` hands the sentences back, so cleaning logs them as still
+outstanding and the **Fix** panel lists them (`pipeline.free_text_fixes`, read live off
+the file, so writing one shows at once and applying it stops showing). Applying one is
+a person's job, or an agent asked to do it. Refusing to clean would make the file a
+hostage; skipping in silence is the failure it exists to prevent.
+
 ```bash
 fixtures/virta-venhetta-vie/reset.sh        # drop it into songs/ at the furthest stage
 fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clean

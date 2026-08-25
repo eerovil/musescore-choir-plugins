@@ -21,7 +21,7 @@ from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
-from src.clean_score.utils.score_fixes import FixError, apply_fixes
+from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
 Logger = Callable[[str], None]
@@ -164,25 +164,15 @@ def apply_recorded_fixes(cleaned_path: str, song_dir: str, log: Logger = _noop) 
     this raises rather than skipping it. A silently dropped fix leaves a score
     looking repaired when it is not, and the whole point of the file is that nothing
     downstream can tell the difference.
+
+    Free-text fixes are the exception, and are counted separately: nothing here can
+    carry out a sentence. They are logged as still outstanding, because the two
+    alternatives are both worse — refusing to clean would make the file a hostage,
+    and passing over them in silence is exactly the failure it exists to prevent.
     """
-    path = os.path.join(song_dir, "fixes.json")
-    if not os.path.exists(path):
-        return 0
-    try:
-        with open(path, encoding="utf-8") as f:
-            entries = json.load(f)
-    except ValueError as exc:
-        raise RuntimeError(f"fixes.json is not valid JSON: {exc}") from exc
+    entries = _recorded_fixes(song_dir)
     if not entries:
         return 0
-    # Every entry has to be applicable. Skipping the ones that are not would leave a
-    # score looking repaired when it is not — which is the failure this file exists
-    # to prevent — and an entry with a mistyped key would vanish in silence.
-    unusable = [e for e in entries if not isinstance(e, dict) or not e.get("kind")]
-    if unusable:
-        raise RuntimeError(
-            f"{len(unusable)} entry/entries in fixes.json have no 'kind' and cannot be "
-            f"applied: {unusable[:1]}. Give each one a kind, or take it out of the file.")
     tree = etree.parse(cleaned_path)
     try:
         lines = apply_fixes(tree.getroot(), entries)
@@ -191,11 +181,54 @@ def apply_recorded_fixes(cleaned_path: str, song_dir: str, log: Logger = _noop) 
             f"A recorded fix in fixes.json no longer matches the score: {exc}. "
             "Re-read the page and update (or remove) that entry before cleaning again."
         ) from exc
-    tree.write(cleaned_path, encoding="UTF-8", xml_declaration=True)
-    log(f"Re-applied {len(lines)} recorded fix(es) from fixes.json")
-    for line in lines:
-        log("  " + line[:120])
+    if lines:
+        tree.write(cleaned_path, encoding="UTF-8", xml_declaration=True)
+        log(f"Re-applied {len(lines)} recorded fix(es) from fixes.json")
+        for line in lines:
+            log("  " + line[:120])
+    outstanding = free_text(entries)
+    if outstanding:
+        log(f"{len(outstanding)} fix(es) in fixes.json are free text and were NOT applied:")
+        for said in outstanding:
+            log("  " + said[:200])
     return len(lines)
+
+
+def _recorded_fixes(song_dir: str) -> List[Dict]:
+    """The song's `fixes.json`, checked over. Empty list if there is no file."""
+    path = os.path.join(song_dir, "fixes.json")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            entries = json.load(f)
+    except ValueError as exc:
+        raise RuntimeError(f"fixes.json is not valid JSON: {exc}") from exc
+    if not entries:
+        return []
+    # Every entry has to be applicable. Skipping the ones that are not would leave a
+    # score looking repaired when it is not — which is the failure this file exists
+    # to prevent — and an entry with a mistyped key would vanish in silence.
+    unusable = [e for e in entries if not isinstance(e, dict) or not e.get("kind")]
+    if unusable:
+        raise RuntimeError(
+            f"{len(unusable)} entry/entries in fixes.json have no 'kind' and cannot be "
+            f"applied: {unusable[:1]}. Give each one a kind, or take it out of the file.")
+    return entries
+
+
+def free_text_fixes(song_dir: str) -> List[str]:
+    """The song's outstanding free-text fixes, for showing on the Fix stage.
+
+    Read live from the file rather than remembered from the last clean, so writing a
+    sentence down shows up at once and applying it stops showing up as soon as the
+    entry goes. Unreadable is reported as nothing to do: this runs on every state
+    request, and cleaning is where a broken file gets said out loud.
+    """
+    try:
+        return free_text(_recorded_fixes(song_dir))
+    except (RuntimeError, FixError, OSError):
+        return []
 
 
 def strip_lyrics_copy(mscx_path: str) -> str:

@@ -13,7 +13,7 @@ from lxml import etree
 
 from src.clean_score import lyric_txt
 from src.clean_score.utils.overfull_measures import _voice_len
-from src.clean_score.utils.score_fixes import FixError, apply_fixes
+from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text
 
 
 def _score(chords):
@@ -174,3 +174,38 @@ def test_a_whole_bar_rest_can_be_read_but_not_written():
     with pytest.raises(FixError):
         apply_fixes(root, [{"kind": "append", "staff": 3, "measure": 1,
                             "from": ["measure:R"], "add": ["measure:R"], "why": "x"}])
+
+
+# --------------------------------------------------------------------------- #
+# A fix that is just a sentence
+# --------------------------------------------------------------------------- #
+
+def test_a_sentence_is_recorded_but_not_carried_out():
+    """Most edits are none of the three kinds; the judgement still has to survive."""
+    root = _score([("quarter", 0, 60)])
+    said = "B1 bar 40, last eighth: drop the D, keep the C — the basses cross here."
+    lines = apply_fixes(root, [{"kind": "text", "what": said}])
+    assert lines == []                                  # nothing claims to have run
+    assert _tokens(root) == ["quarter:60"]              # and the score is untouched
+    assert free_text([{"kind": "text", "what": said}]) == [said]
+
+
+def test_a_sentence_does_not_stop_the_fixes_around_it():
+    root = _score([("quarter", 1, 60)])
+    lines = apply_fixes(root, [
+        {"kind": "text", "what": "bars 8 and 26 should be whole-bar rests"},
+        {"kind": "undot", "staff": 3, "measure": 1, "index": 0, "why": "x"},
+    ])
+    assert len(lines) == 1
+    assert _voice_len(root.find(".//voice")) == Fraction(1, 4)
+
+
+def test_a_sentence_that_says_nothing_is_an_error():
+    """An empty reminder and a repaired score look identical from here."""
+    for empty in ({"kind": "text"}, {"kind": "text", "what": "   "}):
+        with pytest.raises(FixError):
+            apply_fixes(_score([("quarter", 0, 60)]), [empty])
+
+
+def test_free_text_ignores_the_kinds_that_do_apply():
+    assert free_text([{"kind": "undot", "staff": 3, "measure": 1, "index": 0}]) == []

@@ -37,6 +37,22 @@ own length, which a fix has no way to know, so write the rests out instead. The
 note's **spelling** (MuseScore's tpc) is derived from the pitch and is deliberately
 not part of the token: the first fixes to carry one by hand got three of four wrong,
 which puts a note on the wrong line while it still sounds right.
+
+Most edits are none of those three kinds, and the shapes that are missing are not
+exotic — taking one notehead off a chord, or turning a bar-length rest into a
+whole-bar rest, both came up on one song in one sitting. So a fix can also just be
+a **sentence**:
+
+    {"kind": "text",
+     "what": "B1 bar 40, last eighth: drop the D, keep the C. The page prints one
+              head per bass voice and the basses cross here."}
+
+Nothing here interprets it. `apply_fixes` leaves a `text` entry alone and
+`free_text` hands the sentences back, so cleaning can say out loud that the score
+is not fully repaired yet instead of either refusing to clean at all or skipping in
+silence. Applying one is a person's job — or an agent asked to do it, which is how
+the sentence came to be written in the first place. What the file guarantees is
+that the judgement survives the next rebuild.
 """
 import logging
 from fractions import Fraction
@@ -209,11 +225,38 @@ def _append_bar(measure: etree._Element, expect: List[str], add: List[str],
     return f"{dropped}added {list(add)} to the end of the bar"
 
 
+def free_text(fixes: List[Dict]) -> List[str]:
+    """The sentences among the recorded fixes, in file order.
+
+    Nothing applies these; this is what lets a caller say they are still outstanding.
+    An entry with no sentence in it raises rather than reading as nothing to do — an
+    empty reminder and a repaired score look identical from here.
+    """
+    said: List[str] = []
+    for n, fix in enumerate(fixes, start=1):
+        if not isinstance(fix, dict) or fix.get("kind") != "text":
+            continue
+        text = (fix.get("what") or fix.get("why") or "").strip()
+        if not text:
+            raise FixError(
+                f"the free-text fix at position {n} says nothing — give it a 'what', "
+                "or take it out of the file")
+        said.append(text)
+    return said
+
+
 def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
-    """Apply each recorded fix. Returns one line per fix, for the build log."""
+    """Apply each recorded fix. Returns one line per fix applied, for the build log.
+
+    Free-text fixes are not applied — they are a sentence, not an instruction anything
+    here can follow — so they are absent from the return value. `free_text` reads them.
+    """
+    free_text(fixes)  # a sentence that says nothing is a mistake worth catching early
     done: List[str] = []
     for fix in fixes:
         kind = fix.get("kind")
+        if kind == "text":
+            continue
         staff, measure = int(fix["staff"]), int(fix["measure"])
         try:
             if kind == "append":
