@@ -15,7 +15,7 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import health, job_state, pdf_systems, pipeline, state, verification
+from . import agentdeck, health, job_state, pdf_systems, pipeline, state, verification
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -25,6 +25,7 @@ _env = os.path.join(SCRIPT_DIR, ".env")
 dotenv.load_dotenv(_env if os.path.exists(_env) else os.path.join(SCRIPT_DIR, ".env.default"))
 
 app = FastAPI(title="song")
+app.include_router(agentdeck.router)
 
 
 # --------------------------------------------------------------------------
