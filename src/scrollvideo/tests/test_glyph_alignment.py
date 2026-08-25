@@ -10,59 +10,75 @@ MIXED_DURATIONS = """<?xml version="1.0" encoding="UTF-8"?>
     <score-part id="P2"><part-name>Half</part-name></score-part>
     <score-part id="P3"><part-name>Whole</part-name></score-part>
     <score-part id="P4"><part-name>Half rest</part-name></score-part>
+    <score-part id="P5"><part-name>Whole rest</part-name></score-part>
   </part-list>
   <part id="P1">
     <measure number="1">
       <attributes>
         <divisions>1</divisions>
-        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <time><beats>5</beats><beat-type>4</beat-type></time>
         <clef><sign>G</sign><line>2</line></clef>
       </attributes>
       <note>
         <pitch><step>C</step><octave>4</octave></pitch>
         <duration>1</duration><voice>1</voice><type>quarter</type>
       </note>
-      <note><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/></note>
+      <note><rest/><duration>4</duration><voice>1</voice><type>whole</type></note>
     </measure>
   </part>
   <part id="P2">
     <measure number="1">
       <attributes>
         <divisions>1</divisions>
-        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <time><beats>5</beats><beat-type>4</beat-type></time>
         <clef><sign>G</sign><line>2</line></clef>
       </attributes>
       <note>
         <pitch><step>C</step><octave>4</octave></pitch>
         <duration>2</duration><voice>1</voice><type>half</type>
       </note>
-      <note><rest/><duration>2</duration><voice>1</voice><type>half</type></note>
+      <note><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/></note>
     </measure>
   </part>
   <part id="P3">
     <measure number="1">
       <attributes>
         <divisions>1</divisions>
-        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <time><beats>5</beats><beat-type>4</beat-type></time>
         <clef><sign>G</sign><line>2</line></clef>
       </attributes>
       <note>
         <pitch><step>C</step><octave>4</octave></pitch>
         <duration>4</duration><voice>1</voice><type>whole</type>
       </note>
+      <note><rest/><duration>1</duration><voice>1</voice><type>quarter</type></note>
     </measure>
   </part>
   <part id="P4">
     <measure number="1">
       <attributes>
         <divisions>1</divisions>
-        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <time><beats>5</beats><beat-type>4</beat-type></time>
         <clef><sign>G</sign><line>2</line></clef>
       </attributes>
       <note><rest/><duration>2</duration><voice>1</voice><type>half</type></note>
       <note>
         <pitch><step>C</step><octave>4</octave></pitch>
-        <duration>2</duration><voice>1</voice><type>half</type>
+        <duration>3</duration><voice>1</voice><type>half</type><dot/>
+      </note>
+    </measure>
+  </part>
+  <part id="P5">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <time><beats>5</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note><rest/><duration>4</duration><voice>1</voice><type>whole</type></note>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>quarter</type>
       </note>
     </measure>
   </part>
@@ -70,7 +86,7 @@ MIXED_DURATIONS = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def test_half_whole_notes_and_half_rest_share_the_same_rhythmic_column(tmp_path):
+def test_mixed_notes_and_rests_share_the_same_rhythmic_column(tmp_path):
     """Different glyph widths must not make the video's beat rectangle jump."""
     score = tmp_path / "mixed-durations.musicxml"
     score.write_text(MIXED_DURATIONS)
@@ -87,10 +103,21 @@ def test_half_whole_notes_and_half_rest_share_the_same_rhythmic_column(tmp_path)
         if geom is not None:
             by_staff[eng.layout.staff_index(geom)] = geom
 
-    labels = {0: "quarter note", 1: "half note", 2: "whole note", 3: "half rest"}
+    labels = {
+        0: "quarter note",
+        1: "half note",
+        2: "whole note",
+        3: "half rest",
+        4: "whole rest",
+    }
     assert set(by_staff) >= set(labels), (
-        "fixture did not produce all four simultaneous symbols: "
+        "fixture did not produce all five simultaneous symbols: "
         f"{sorted(by_staff)}")
+
+    whole_rest = by_staff[4]
+    assert not getattr(whole_rest, "measure_rest", False), (
+        "whole-rest fixture was rendered as a whole-measure rest; "
+        "that would not test ordinary whole-rest alignment")
 
     xs = {labels[i]: by_staff[i].x for i in labels}
     spacing = min(by_staff[i].staff_spacing for i in labels)
