@@ -91,23 +91,44 @@ def _warm_pwa(page, base: str) -> None:
     )
 
 
-def test_chromium_parses_the_manifest_and_activates_a_root_worker(live_app, page):
+def test_chromium_computes_a_distinct_port_qualified_app_identity(live_app, page):
     _warm_pwa(page, live_app)
 
     manifest = page.evaluate("""async () => {
         const link = document.querySelector('link[rel="manifest"]');
         const response = await fetch(link.href);
-        return { href: link.href, data: await response.json() };
+        const data = await response.json();
+        return {
+          href: link.href,
+          data,
+          resolved: {
+            id: new URL(data.id, link.href).href,
+            start: new URL(data.start_url, link.href).href,
+            scope: new URL(data.scope, link.href).href,
+          },
+        };
     }""")
     assert manifest["href"] == live_app + "/manifest.webmanifest"
     assert manifest["data"]["display"] == "standalone"
-    assert manifest["data"]["scope"] == "/"
+    assert manifest["data"]["id"] == "./choir-pwa"
+    assert manifest["resolved"] == {
+        "id": live_app + "/choir-pwa",
+        "start": live_app + "/#/",
+        "scope": live_app + "/",
+    }
     assert {icon["sizes"] for icon in manifest["data"]["icons"]} >= {"192x192", "512x512"}
 
+    # Page.getAppManifest returns Chromium's processed WebAppManifest. These values
+    # have already been resolved by Chromium itself, so they directly verify that a
+    # random non-default port is part of the installed-app identity and launch URL.
     cdp = page.context.new_cdp_session(page)
     parsed = cdp.send("Page.getAppManifest")
     assert parsed["url"] == live_app + "/manifest.webmanifest"
     assert parsed.get("errors", []) == []
+    processed = parsed["manifest"]
+    assert processed["id"] == live_app + "/choir-pwa"
+    assert processed["startUrl"] == live_app + "/#/"
+    assert processed["scope"] == live_app + "/"
 
 
 def test_offline_reload_shows_reconnecting_shell_then_returns_to_live_app(live_app, page):

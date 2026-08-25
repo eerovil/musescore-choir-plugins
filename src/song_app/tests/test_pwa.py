@@ -8,6 +8,7 @@ import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urljoin
 
 import pytest
 
@@ -42,9 +43,9 @@ def test_manifest_is_standalone_and_has_regular_and_maskable_icons(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/manifest+json")
     manifest = response.json()
-    assert manifest["id"] == "/"
-    assert manifest["start_url"] == "/#/"
-    assert manifest["scope"] == "/"
+    assert manifest["id"] == "./choir-pwa"
+    assert manifest["start_url"] == "./#/"
+    assert manifest["scope"] == "./"
     assert manifest["display"] == "standalone"
     assert manifest["theme_color"] == "#14151a"
     assert {(icon["sizes"], icon["purpose"]) for icon in manifest["icons"]} == {
@@ -60,6 +61,26 @@ def test_manifest_is_standalone_and_has_regular_and_maskable_icons(client):
         with Image.open(BytesIO(image_response.content)) as image:
             side = int(icon["sizes"].split("x", 1)[0])
             assert image.size == (side, side)
+
+
+def test_manifest_identity_and_launch_preserve_non_default_port(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "SONGS_DIR", str(tmp_path))
+    origin = "https://bazzite.taile8d16e.ts.net:8443"
+    with TestClient(server.app, base_url=origin) as port_client:
+        response = port_client.get("/manifest.webmanifest")
+
+    manifest = response.json()
+    base = str(response.url)
+    assert urljoin(base, manifest["id"]) == origin + "/choir-pwa"
+    assert urljoin(base, manifest["start_url"]) == origin + "/#/"
+    assert urljoin(base, manifest["scope"]) == origin + "/"
+    assert {
+        urljoin(base, icon["src"]) for icon in manifest["icons"]
+    } == {
+        origin + "/icon-192.png",
+        origin + "/icon-512.png",
+        origin + "/icon-maskable-512.png",
+    }
 
 
 def test_service_worker_is_root_scoped_javascript_and_never_caches_live_data(client):

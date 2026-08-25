@@ -4,6 +4,23 @@ The song app is installable as a standalone mobile web app. Its approach follows
 the live-dashboard boundary used by AgentDeck: installability and a resilient
 static shell, **not** offline song data.
 
+## App identity and ports
+
+Choir uses its own manifest identity, `./choir-pwa`, instead of the generic root
+identity `/`. Its `id`, `start_url`, `scope`, and icon paths are relative to the
+manifest URL. Browsers therefore resolve them against the exact origin that served
+the manifest — including a non-default port.
+
+This matters when several PWAs live on the same machine or Tailscale hostname. For
+example, AgentDeck may occupy `https://host` while Choir is served from
+`https://host:PORT`; Choir must remain a separate installed app and launch the port
+from which it was installed.
+
+The first PWA release used `id: "/"`. Because changing a manifest ID intentionally
+creates a different installed-app identity, remove an already-installed Choir icon
+from that release and install it once again after this change. Future updates keep
+the stable `choir-pwa` identity.
+
 ## Cache boundary
 
 `src/song_app/static/sw.js` handles only:
