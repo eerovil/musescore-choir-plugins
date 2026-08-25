@@ -874,6 +874,12 @@ function sysBlock(sys) {
 function panelFix(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Fix"),
     el("p", { className: "sub" }, "OCR damage the auto-fixers couldn't repair. Fix in MuseScore, save, and it re-checks automatically."));
+  const pending = song.pending_fixes || [];
+  if (pending.length) {
+    panel.append(el("div", { className: "issue" },
+      el("div", { className: "top" }, el("span", {}, el("span", { className: "kind" }, "fixes.json — not applied automatically"))),
+      ...pending.map((t) => el("div", { className: "detail" }, t))));
+  }
   const issues = song.open_issues || [];
   if (!issues.length) {
     panel.append(el("p", { className: "empty" }, "✓ No issues. Ready for lyrics."));

@@ -180,6 +180,9 @@ def _derived(song: state.Song) -> Dict:
         # the viewer show one system and the lyric editor ask per system.
         "systems": systems,
         "open_issues": [i for i in issues if i.get("status") == "open"],
+        # Recorded fixes nothing can apply on its own — a sentence waiting for a
+        # person or an agent. Read live, so it goes as soon as the entry does.
+        "pending_fixes": pipeline.free_text_fixes(song.dir),
         "recording": is_recording(song),
         "media": _media_list(song),
         "jobs": job_state.load(song.dir),
