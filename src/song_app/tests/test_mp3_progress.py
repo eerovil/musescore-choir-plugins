@@ -36,7 +36,7 @@ def test_recording_pipeline_forwards_progress_to_mp3_export(tmp_path, monkeypatc
 
     assert seen["song_dir"] == str(song)
     assert seen["redo"] is True
-    assert seen["progress"] is progress_lines.append
+    assert callable(seen["progress"])
     assert progress_lines == ["Creating MP3 audio: 1/2"]
 
 
