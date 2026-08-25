@@ -89,7 +89,7 @@ def _choose_stage(page, label):
 def _open_record(page, live):
     base, slug = live
     page.goto(f"{base}/#/song/{slug}")
-    page.wait_for_selector(".stagebar")
+    page.wait_for_selector(".stagebar", state="attached")
     # Make this a deliberate selection so the companion script stores it.
     _choose_stage(page, "Review")
     _choose_stage(page, "Record")
