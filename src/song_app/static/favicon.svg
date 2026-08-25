@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Choir practice tracks">
+  <rect width="64" height="64" rx="14" fill="#14151a"/>
+  <rect x="8" y="8" width="48" height="48" rx="14" fill="#252834"/>
+  <g fill="#6ea8fe">
+    <ellipse cx="25" cy="30" rx="7" ry="5"/>
+    <ellipse cx="41" cy="29" rx="7" ry="5"/>
+    <path d="M30 15v16h-4V14l19 3v13h-4V20l-11-2v-3z"/>
+  </g>
+  <g fill="#eef2f8">
+    <circle cx="20" cy="44" r="3.2"/>
+    <circle cx="28" cy="45" r="3.2"/>
+    <circle cx="36" cy="45" r="3.2"/>
+    <circle cx="44" cy="44" r="3.2"/>
+  </g>
+</svg>

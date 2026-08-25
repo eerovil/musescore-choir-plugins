@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14151a">
+  <title>Reconnecting · Choir tracks</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding:
+        calc(24px + env(safe-area-inset-top, 0px))
+        calc(24px + env(safe-area-inset-right, 0px))
+        calc(24px + env(safe-area-inset-bottom, 0px))
+        calc(24px + env(safe-area-inset-left, 0px));
+      background: #14151a;
+      color: #e7e9ee;
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+    }
+    main { width: min(100%, 28rem); }
+    img { width: 96px; height: 96px; }
+    h1 { margin: 18px 0 8px; font-size: 1.45rem; }
+    p { margin: 8px 0; color: #9aa0ad; }
+    button {
+      min-height: 44px;
+      margin-top: 18px;
+      padding: 9px 18px;
+      border: 1px solid #6ea8fe;
+      border-radius: 8px;
+      background: #252834;
+      color: #e7e9ee;
+      font: inherit;
+    }
+    #status { font-size: .85rem; }
+    .pulse {
+      display: inline-block;
+      width: .65rem;
+      height: .65rem;
+      margin-right: .4rem;
+      border-radius: 50%;
+      background: #e6b455;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: .35; transform: scale(.82); } }
+    @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/icon-192.png" alt="">
+    <h1>Reconnecting to Choir tracks…</h1>
+    <p>The song app cannot reach its server right now. Keep this screen open; it will return to the same page automatically.</p>
+    <button id="retry" type="button">Try now</button>
+    <p id="status" role="status" aria-live="polite"><span class="pulse"></span>Waiting for the server</p>
+  </main>
+  <script>
+    (() => {
+      const status = document.getElementById("status");
+      let checking = false;
+
+      async function check() {
+        if (checking) return;
+        checking = true;
+        status.textContent = "Checking the server…";
+        try {
+          const response = await fetch(`/healthz?reconnect=${Date.now()}`, {
+            cache: "no-store",
+          });
+          if (response.ok) {
+            status.textContent = "Back online — opening the app…";
+            location.reload();
+            return;
+          }
+        } catch (_) {
+          // Staying on this page is the useful failure mode.
+        }
+        status.innerHTML = '<span class="pulse"></span>Waiting for the server';
+        checking = false;
+      }
+
+      document.getElementById("retry").addEventListener("click", check);
+      window.addEventListener("online", check);
+      setInterval(check, 2500);
+    })();
+  </script>
+</body>
+</html>
