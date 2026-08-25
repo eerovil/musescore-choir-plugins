@@ -790,6 +790,20 @@ to `entry["tstamp"]`.
   (one page — a second page is an error, not something to stitch). Notes are
   `<g id=... class="note">` and the timemap's `on`/`off` lists name those same ids;
   that pairing is what makes highlighting possible at all.
+  This pull request adds one more thing it owns: **a music symbol written inside a
+  piece of text is drawn here, not left to a font.** The quarter note in "♩ = 80" is
+  the case that shows up — verovio writes it as a character of its own music font
+  and offers that font only as a base64 `@font-face` in the SVG's stylesheet, which
+  cairosvg ignores, so the note reached the video as the empty box a font draws for
+  a character it has not got (#58). It affected the tempo the app itself adds to a
+  score with none (#28) as well as printed ones. `draw_symbol_text` replaces the
+  character with the outline verovio ships beside the font — the same outlines every
+  symbol it *does* draw is made of — and moves the writing after it along by the
+  advance width in `Leipzig.xml`. Only a symbol that **opens** its text is drawn:
+  after writing, placing it would mean measuring that writing in whatever font the
+  renderer picked, and a symbol in the wrong place is worse than a box. A page with
+  no such symbol is returned untouched, so renders that never had the problem stay
+  byte-identical.
 - `geometry.py` owns two verovio-SVG facts. Coordinates live in the **nested**
   `<svg class="definition-scale" viewBox=...>`, not the root (whose px size is 1/25
   of it), and a note's position is its notehead `<use transform="translate(x, y)">`
@@ -905,6 +919,11 @@ without it, like the browser tests:
 - `test_sync.py` — the clock, end to end on a fixture with a 3x fermata: every
   highlight lands within 20ms of a MIDI note-on, the last note ends with the audio,
   and a guard test spelling out what verovio's own clock *would* have shipped.
+- `test_symbol_text.py` (added by this pull request) — a tempo mark's note is drawn
+  rather than left to a font, it is ink on the page above the music (measured against
+  the same page with the drawing taken out again, so the "= 80" beside it cannot
+  satisfy the reading), the writing after it moves along by the font's advance, and
+  a symbol that follows writing is deliberately left alone.
 - `test_geometry.py` — the ancestor-translate offset, the definition-scale viewBox,
   and that tiled rasterisation matches single-shot (alignment pinned; antialiasing
   along a seam is allowed to differ by a pixel).
