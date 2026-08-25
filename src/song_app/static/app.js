@@ -1163,7 +1163,19 @@ function panelRecord(panel, song, P, refresh) {
         el("span", { className: "hint" }, "this score has no opening tempo marking"))
     ] : []),
     el("div", { className: "row" }, hardwareEncoding,
-      el("span", {}, "Use NVIDIA hardware encoding when available")));
+      el("span", {}, "Use NVIDIA hardware encoding when available")),
+    // The picture before it costs a render: same engraving, same viewport, same
+    // clock. It reads the controls above at the moment it is asked for, so a
+    // margin can be nudged and previewed without rendering anything.
+    el("label", {}, "Preview"),
+    window.scrollPreviewPanel(P, () => ({
+      quality: quality.value,
+      top_margin: Number(topMargin.value) || 0,
+      bottom_margin: Number(bottomMargin.value) || 0,
+      ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
+    })),
+    el("p", { className: "hint" },
+      "Silent, and nothing is rendered — check the layout and the scrolling first"));
   const screenOpts = el("div", {},
     el("label", {}, "Audio sync offset (ms)"),
     el("div", { className: "row" }, delay,

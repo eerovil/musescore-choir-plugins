@@ -15,6 +15,7 @@ SHELL_ASSETS = (
     "/style.css",
     "/pwa.css",
     "/app.js",
+    "/scroll_preview.js",
     "/rendering_state.js",
     "/pwa.js",
     "/offline.html",

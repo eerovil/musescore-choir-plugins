@@ -466,6 +466,23 @@ state model are in `DESIGN.md`.
   `build_videos(basename=...)` so the names come out right); `server._run_record`
   branches on `renderer` and records which one it used in `record.renderer`.
   `find_merged_outputs` matches `.mp4` as well as `.mov` for the same reason.
+- This pull request adds a **silent scroll preview to the Record panel**, so the
+  layout question can be answered before the encoding one. Whether the margins are
+  right, whether the staff size reads, where the beat marker sits, whether a repeat
+  lands on the right bar — all of that used to cost a full render to find out, and
+  video encoding is the wrong feedback loop for it. `GET /scroll-preview` prepares
+  the render's own data (`pipeline.scroll_preview` → `src.scrollvideo.preview`) off
+  the worker thread and hands it to a player in the page (`static/scroll_preview.js`,
+  `.pvviewport` in the stylesheet): an inline SVG scrolled by `requestAnimationFrame`
+  along the payload's curve, with play/pause/restart/scrub and the sounding notehead
+  recoloured **in the SVG itself** rather than covered — the same choice the frame
+  renderer makes with pixels. No ffmpeg, no rasterising, no audio, and nothing
+  written into the song's state: it is a look at the score, not a stage of the work.
+  The prepared payload is cached as `<song>/.scroll-preview.json` under a key naming
+  the cleaned score's fingerprint **and** every setting that moves the picture (size,
+  both margins, the tempo the app supplies), so a score edited in MuseScore or a
+  margin nudged is prepared again rather than reused. Preparing costs a MuseScore
+  conversion and an engraving — seconds — which is why it is cached at all.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
@@ -732,14 +749,39 @@ shortcuts, and it can run unattended. One video per voice: the score scrolls
 horizontally as a single continuous system, every sounding note lights up, and the
 voice the track is for is highlighted strongly while the others stay faint.
 
-Interface — everything else is an implementation detail of this one call:
+Interface — everything else is an implementation detail of these calls:
 
 ```python
 build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
              fps=60, with_audio=True, keep_silent=False, emphasise=False,
              combined=True, spacer_per_quarter=2, smooth_seconds=2.0,
              basename=None, log=...) -> [video paths]
+preview(mscx_path, width=3840, height=2160, fps=60, ...) -> payload   # this PR
 ```
+
+**The picture is decided once, and there are now two things that can be done with
+it.** This pull request splits everything before rasterisation out of
+`build_videos` into `build.prepare(mscx_path, tmp, ...) -> Prepared`: the prepared
+score, the MusicXML and MIDI, the verovio engraving with its timemap and drawn-id
+map, `TempoMap.from_midi`, the note and rest events, `scroll_anchors` +
+`smooth_scroll`, the spacer-staff crop, the margin viewport, the duration — and the
+refusals, which is the part worth naming. A D.C./D.S. jump, margins that leave no
+picture and a timeline that misses more than 2% of the played notes all fail in
+`prepare`, so **the preview refuses exactly what the render refuses**, seconds in
+rather than minutes.
+
+`preview.py` turns a `Prepared` into JSON a browser can animate: the engraving as
+SVG, the page and the viewport in verovio units, the duration, the scroll curve as
+`(times, xs)`, and one entry per symbol that lights up (its element id, on, off,
+staff and the beat marker's band). The browser interpolates the curve and moves an
+SVG window; it works nothing out about music, layout or time, so it cannot disagree
+with the render. Two details make the SVG usable in a page: its root is given the
+score's own unit `viewBox` (verovio sizes it in pixels a twenty-fifth of the
+coordinates inside), and the nested engraving is given an explicit size in units —
+otherwise it would shrink and stretch every time the window moved. The curve also
+carries `jump`, the backward step past which the player must land rather than
+interpolate, so a repeat snaps back to the repeated bar instead of sliding across
+the music in between.
 
 `combined` also writes **"&lt;base&gt; ALL"** — the same picture with every voice at equal
 volume (`render_mix(focus=None)`, muxed like any other track). It is a mix, not a part,
@@ -924,6 +966,11 @@ without it, like the browser tests:
   the same page with the drawing taken out again, so the "= 80" beside it cannot
   satisfy the reading), the writing after it moves along by the font's advance, and
   a symbol that follows writing is deliberately left alone.
+- `test_preview.py` (added by this pull request) — the preview against the render it
+  is a preview of: the same scroll curve number for number, a fermata timed on
+  MuseScore's clock rather than verovio's, the viewport the margins produce, the
+  symbols `place` would light, a repeat that stays one backward jump, the same
+  refusals — and that nothing is rasterised or encoded on the way.
 - `test_geometry.py` — the ancestor-translate offset, the definition-scale viewBox,
   and that tiled rasterisation matches single-shot (alignment pinned; antialiasing
   along a seam is allowed to differ by a pixel).
@@ -942,6 +989,14 @@ without it, like the browser tests:
 - `src/song_app/tests/test_record_panel_ui.py` — the same choice in a real browser:
   both renderers offered, scrolling preselected, controls swap, and the run button
   actually posts `renderer` (browser-marked, skips without Playwright).
+- `src/song_app/tests/test_scroll_preview.py` / `test_scroll_preview_ui.py` (added by
+  this pull request) — the endpoint's caching and its invalidation (score edited, or
+  any setting that moves the picture), that previewing changes nothing about the
+  song, and a refusal arriving as a message; then the player itself in a browser —
+  play, pause, seek, restart, the repeat landing rather than sliding, the sounding
+  glyph turning blue, the beat marker following it, a phone-sized layout, and a
+  rebuilt preview after the score changes. The engraving is stubbed in both, so
+  neither needs MuseScore.
 - `test_spacing.py` — rest slots per measure follow its length (a chord does not
   lengthen one), the subdivision scales them, the singing parts come back untouched,
   an impossible subdivision gives up rather than guessing, and where the crop falls.
