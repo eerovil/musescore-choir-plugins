@@ -859,43 +859,38 @@ def _tokens_to_syllables(
 ) -> List[Tuple[str, str]]:
     """
     Expand tokens (e.g. "il-man", "kuu-ta", "ja") into a list of (syllabic, text) per chord.
-    Hyphen in the middle of a token splits into begin/end syllables.
-    If first_syllabic_continuation is True (previous measure ended with begin/middle), the first
-    syllable is forced to "end" so it continues across the bar.
+
+    A syllable's state is just how it joins its neighbours: whether a word carries on
+    into it from the left, and whether it carries on out to the right. A trailing hyphen
+    says "carries on", and that applies between any two tokens -- not only at a measure
+    boundary. `first_syllabic_continuation` supplies the answer for the very first token,
+    which has no predecessor here (the previous measure ended mid-word).
+
+    Getting this wrong is not cosmetic: a syllable that continues a word but is written
+    `end` (or worse, `single`) splits one word into two, so `lai-ne-hil-le` came back as
+    `lai-ne-hil` plus a stray `le`.
     """
     out: List[Tuple[str, str]] = []
-    for idx, tok in enumerate(tokens):
+    continues_from_previous = first_syllabic_continuation
+    for tok in tokens:
         if tok == "_":
             out.append(("_", ""))
+            continues_from_previous = False
             continue
-        # Split on hyphen that joins syllables (not leading/trailing)
         raw_trailing_hyphen = tok.strip().endswith("-")
-        parts = tok.strip().rstrip("-").split("-")
-        if len(parts) == 1:
-            text = parts[0].strip()
-            if first_syllabic_continuation and idx == 0:
-                out.append(("end", text))
-            elif raw_trailing_hyphen:
-                out.append(("begin", text))  # continues to next measure
+        # strip("-") not rstrip: a leading hyphen is how a caller writes "this continues
+        # the previous line", and it must not survive into the syllable text.
+        parts = [p.strip() for p in tok.strip().strip("-").split("-") if p.strip()]
+        if not parts:
+            continue
+        for i, p in enumerate(parts):
+            joins_left = continues_from_previous if i == 0 else True
+            joins_right = (i < len(parts) - 1) or raw_trailing_hyphen
+            if joins_left:
+                out.append(("middle" if joins_right else "end", p))
             else:
-                out.append(("single", text))
-        else:
-            for i, p in enumerate(parts):
-                p = p.strip()
-                if not p:
-                    continue
-                if first_syllabic_continuation and idx == 0 and i == 0:
-                    out.append(("end", p))
-                elif i == 0:
-                    out.append(("begin", p))
-                elif i == len(parts) - 1:
-                    # Last part: "end" unless token had trailing hyphen (word continues to next measure)
-                    if raw_trailing_hyphen:
-                        out.append(("begin", p))
-                    else:
-                        out.append(("end", p))
-                else:
-                    out.append(("middle", p))
+                out.append(("begin" if joins_right else "single", p))
+        continues_from_previous = raw_trailing_hyphen
     return out
 
 
@@ -910,48 +905,21 @@ def _last_token_ends_with_hyphen(tokens: List[str]) -> bool:
 def _syllables_to_tokens(syllables: List[Tuple[str, str]]) -> List[str]:
     """
     Convert (syllabic, text) pairs back to tokens (e.g. begin+end -> "a-b", single -> "a", begin-only -> "a-").
+
+    A `middle` keeps its trailing hyphen. It is the only way this text can say the word
+    is not finished, and the JSON import cuts a line into per-measure chunks -- so a
+    chunk that begins mid-word used to come back bare and read as a fresh word.
     """
     tokens: List[str] = []
-    i = 0
-    while i < len(syllables):
-        syllabic, text = syllables[i]
+    for syllabic, text in syllables:
         if syllabic == "_":
             tokens.append("_")
-            i += 1
-        elif syllabic == "single":
-            tokens.append(text)
-            i += 1
-        elif syllabic == "begin":
-            parts = [text]
-            i += 1
-            while i < len(syllables):
-                s2, t2 = syllables[i]
-                if s2 == "middle":
-                    parts.append(t2)
-                    i += 1
-                elif s2 == "end":
-                    parts.append(t2)
-                    i += 1
-                    tokens.append("-".join(parts))
-                    break
-                elif s2 == "begin" and i + 1 == len(syllables):
-                    # Trailing-hyphen token like "il-ki-rii-vi-" ends with (begin, vi); merge as final syllable
-                    parts.append(t2)
-                    i += 1
-                    tokens.append("-".join(parts) + "-")
-                    break
-                else:
-                    break
-            else:
-                tokens.append("-".join(parts) + "-")
-        elif syllabic == "end":
-            tokens.append(text)
-            i += 1
-        elif syllabic == "middle":
-            tokens.append(text)
-            i += 1
+            continue
+        piece = text + "-" if syllabic in ("begin", "middle") else text
+        if tokens and tokens[-1] != "_" and tokens[-1].endswith("-"):
+            tokens[-1] = tokens[-1] + piece
         else:
-            i += 1
+            tokens.append(piece)
     return tokens
 
 
