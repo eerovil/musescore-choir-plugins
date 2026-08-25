@@ -42,6 +42,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes \
             ffmpeg \
+            libegl1 \
             poppler-utils \
             xvfb
 
@@ -56,6 +57,7 @@ jobs:
             "$MUSESCORE_APPIMAGE_URL" \
             --output "$appimage"
           chmod +x "$appimage"
+          sha256sum "$appimage"
 
           (
             cd "$RUNNER_TEMP"
