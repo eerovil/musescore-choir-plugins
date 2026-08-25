@@ -538,6 +538,8 @@ def has_opening_tempo(mscx_path: str) -> bool:
 def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                      quality: str = "4k", hardware_encoding: bool = True,
                      initial_bpm: Optional[int] = None,
+                     top_margin_percent: float = 0.0,
+                     bottom_margin_percent: float = 0.0,
                      log: Logger = _noop,
                      progress: Logger = _noop) -> List[str]:
     """Render one scrolling practice video per voice into media/video.
@@ -555,6 +557,8 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                         width=width, height=height, fps=fps, log=log,
                         progress=progress, hardware_encoding=hardware_encoding,
                         initial_bpm=initial_bpm,
+                        top_margin_percent=top_margin_percent,
+                        bottom_margin_percent=bottom_margin_percent,
                         audio_cache_dir=audio_cache_dir)
 
 
