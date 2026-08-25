@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +17,8 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from src.song_app import pwa_assets, server, state
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture()
@@ -99,6 +104,18 @@ def test_generated_shell_generation_matches_every_cached_asset(client, tmp_path)
     with (copied / "pwa.css").open("a", encoding="utf-8") as handle:
         handle.write("\n/* changed */\n")
     assert pwa_assets.cache_stamp(copied) != before
+
+
+def test_checked_in_regeneration_command_runs_from_repo_root():
+    completed = subprocess.run(
+        [sys.executable, "scripts/update-pwa-assets.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "is current" in completed.stdout
 
 
 def test_index_has_mobile_install_metadata_and_safe_area_styles(client):
