@@ -1,1 +1,1 @@
-self.SONG_PWA = Object.freeze({"cache":"song-static-b72f38d8f1f2","assets":["/style.css","/pwa.css","/app.js","/rendering_state.js","/pwa.js","/offline.html","/favicon.svg","/apple-touch-icon.png","/icon-192.png","/icon-512.png","/icon-maskable-512.png","/manifest.webmanifest"]});
+self.SONG_PWA = Object.freeze({"cache":"song-static-dedc3754f2f5","assets":["/style.css","/pwa.css","/app.js","/rendering_state.js","/pwa.js","/offline.html","/favicon.svg","/apple-touch-icon.png","/icon-192.png","/icon-512.png","/icon-maskable-512.png","/manifest.webmanifest"]});
