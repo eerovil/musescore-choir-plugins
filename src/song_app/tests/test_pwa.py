@@ -142,6 +142,11 @@ def test_checked_in_regeneration_command_runs_from_repo_root():
 def test_index_has_mobile_install_metadata_and_safe_area_styles(client):
     html = client.get("/").text
 
+    # The shipped meta must NOT carry viewport-fit=cover: in a browser tab that puts
+    # the page's bottom edge under the browser's toolbar, taking the phone layout's
+    # pane-switcher bar with it (#54). The head script adds it only in standalone.
+    assert 'name="viewport" content="width=device-width, initial-scale=1"' in html
+    assert 'window.matchMedia("(display-mode: standalone)")' in html
     assert 'viewport-fit=cover' in html
     assert 'rel="manifest" href="/manifest.webmanifest"' in html
     assert 'rel="apple-touch-icon" href="/apple-touch-icon.png"' in html
