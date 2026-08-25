@@ -44,6 +44,12 @@ def main() -> None:
                              "measure width follow beats (0 disables; default 2 = eighths)")
     parser.add_argument("--smooth", type=float, default=2.0, metavar="SECONDS",
                         help="seconds to average the scroll speed over (0 disables)")
+    parser.add_argument("--top-margin", type=float, default=0.0, metavar="PERCENT",
+                        help="top video margin adjustment in percent; 0 keeps the current "
+                             "layout, positive adds white space, negative crops")
+    parser.add_argument("--bottom-margin", type=float, default=0.0, metavar="PERCENT",
+                        help="bottom video margin adjustment in percent; 0 keeps the current "
+                             "layout, positive adds white space, negative crops")
     parser.add_argument("--emphasise", action="store_true",
                         help="light each voice's own notes brighter; re-encodes per voice (slow)")
     parser.add_argument("--no-combined", action="store_true",
@@ -64,9 +70,11 @@ def main() -> None:
                                combined=not args.no_combined,
                                hardware_encoding=not args.software_encoder,
                                spacer_per_quarter=args.spacer, smooth_seconds=args.smooth,
+                               top_margin_percent=args.top_margin,
+                               bottom_margin_percent=args.bottom_margin,
                                log=lambda m: print(m, flush=True),
                                progress=lambda m: print(m, flush=True))
-    except NotImplementedError as exc:
+    except (NotImplementedError, ValueError) as exc:
         sys.exit(f"Unsupported score: {exc}")
     print(f"\nWrote {len(written)} video(s) to {out_dir}")
 

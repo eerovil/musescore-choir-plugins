@@ -1107,6 +1107,14 @@ function panelRecord(panel, song, P, refresh) {
     el("option", { value: "4k", selected: (rec.quality || "4k") === "4k" }, "4K, 60fps"),
     el("option", { value: "1080p", selected: rec.quality === "1080p" }, "1080p, 30fps (faster)"),
     el("option", { value: "720p", selected: rec.quality === "720p" }, "720p, 30fps (test)"));
+  const topMargin = el("input", {
+    type: "number", value: rec.top_margin ?? 0, min: -40, max: 100, step: 1,
+    style: "width:100px", "data-video-margin": "top"
+  });
+  const bottomMargin = el("input", {
+    type: "number", value: rec.bottom_margin ?? 0, min: -40, max: 100, step: 1,
+    style: "width:100px", "data-video-margin": "bottom"
+  });
   const hardwareEncoding = el("input", {
     type: "checkbox", checked: rec.hardware_encoding !== false
   });
@@ -1129,6 +1137,8 @@ function panelRecord(panel, song, P, refresh) {
   const runBtn = el("button", { className: "primary", disabled: recording, onclick: () =>
     renderer === "scroll"
       ? post({ quality: quality.value, hardware_encoding: hardwareEncoding.checked,
+               top_margin: Number(topMargin.value) || 0,
+               bottom_margin: Number(bottomMargin.value) || 0,
                ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}) },
              "Rendering the scrolling video…")
       : post({ audio_delay_ms: Number(delay.value) || 1300,
@@ -1141,6 +1151,12 @@ function panelRecord(panel, song, P, refresh) {
     el("label", {}, "Size"),
     el("div", { className: "row" }, quality,
       el("span", { className: "hint" }, "4K keeps panning smooth and text sharp")),
+    el("label", {}, "Vertical margins"),
+    el("div", { className: "row" },
+      el("span", {}, "Top margin"), topMargin, el("span", {}, "%")),
+    el("div", { className: "row" },
+      el("span", {}, "Bottom margin"), bottomMargin, el("span", {}, "%")),
+    el("p", { className: "hint" }, "0 = current layout; positive adds white space; negative crops that edge"),
     ...(song.needs_initial_bpm ? [
       el("label", {}, "Tempo (BPM)"),
       el("div", { className: "row" }, bpm,

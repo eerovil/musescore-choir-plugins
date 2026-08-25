@@ -1,10 +1,13 @@
 """Orchestration guards: what we refuse, and how we check we got it right."""
 
 import mido
+import numpy as np
 import pytest
 from lxml import etree
 
-from src.scrollvideo.build import (ALIGNMENT_TOLERANCE, alignment, build_videos,
+from src.scrollvideo.build import (ALIGNMENT_TOLERANCE, MAX_MARGIN_PERCENT,
+                                   MIN_MARGIN_PERCENT, _margin_viewport,
+                                   _vertical_view, alignment, build_videos,
                                    midi_onsets, unsupported_repeats, video_encoder)
 from src.scrollvideo.video import NVIDIA_ENCODER, SOFTWARE_ENCODER
 from src.scrollvideo.timing import NoteEvent
@@ -45,6 +48,46 @@ def test_a_dc_jump_is_refused(tmp_path):
     score.write_text(WITH_JUMP)
     with pytest.raises(NotImplementedError, match="Jump"):
         build_videos(str(score), str(tmp_path / "out"))
+
+
+def test_zero_margin_adjustments_are_exactly_the_old_view():
+    raw = np.arange(24, dtype=np.uint8).reshape(6, 4)
+    start, end = _margin_viewport(6.0, 0, 0)
+    result = _vertical_view(raw, visible_height=6.0, output_height=4,
+                            px_per_unit=1.0, start=start, end=end, fill_value=0)
+    assert (start, end) == (0.0, 6.0)
+    np.testing.assert_array_equal(result, raw[:4])
+
+
+def test_top_and_bottom_margin_can_add_white_space_independently():
+    # Ten source units at 2 px/unit. +20% top and +30% bottom creates a virtual
+    # 15-unit viewport: 4 white rows, 20 source rows, 6 white rows.
+    raw = np.arange(20, dtype=np.uint8).reshape(20, 1)
+    start, end = _margin_viewport(10.0, 20, 30)
+    result = _vertical_view(raw, visible_height=10.0, output_height=30,
+                            px_per_unit=2.0, start=start, end=end, fill_value=255)
+    assert (start, end) == pytest.approx((-2.0, 13.0))
+    assert np.all(result[:4] == 255)
+    np.testing.assert_array_equal(result[4:24], raw)
+    assert np.all(result[24:] == 255)
+
+
+def test_negative_margins_crop_the_requested_edges():
+    raw = np.arange(20, dtype=np.uint8).reshape(20, 1)
+    start, end = _margin_viewport(10.0, -20, -30)
+    result = _vertical_view(raw, visible_height=10.0, output_height=10,
+                            px_per_unit=2.0, start=start, end=end, fill_value=255)
+    assert (start, end) == pytest.approx((2.0, 7.0))
+    np.testing.assert_array_equal(result, raw[4:14])
+
+
+@pytest.mark.parametrize("top,bottom", [
+    (MIN_MARGIN_PERCENT - 1, 0),
+    (0, MAX_MARGIN_PERCENT + 1),
+])
+def test_margin_adjustments_reject_values_outside_the_safe_range(top, bottom):
+    with pytest.raises(ValueError, match="video margin"):
+        _margin_viewport(100.0, top, bottom)
 
 
 def _midi(tmp_path, onsets_in_beats):

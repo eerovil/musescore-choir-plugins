@@ -107,6 +107,12 @@ def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(record_
     assert view.get_by_text("Use NVIDIA hardware encoding when available").is_visible()
     assert view.get_by_text("Tempo (BPM)", exact=True).is_visible()
     assert view.locator('input[type="number"][min="20"][max="300"]').input_value() == "80"
+    top = view.locator('input[data-video-margin="top"]')
+    bottom = view.locator('input[data-video-margin="bottom"]')
+    assert top.input_value() == "0"
+    assert bottom.input_value() == "0"
+    assert view.get_by_text("Top margin", exact=True).is_visible()
+    assert view.get_by_text("Bottom margin", exact=True).is_visible()
     hardware = view.get_by_text("Use NVIDIA hardware encoding when available").locator("..").locator("input")
     assert hardware.is_checked()
     assert view.get_by_role("button", name="Render videos").is_visible()
@@ -122,13 +128,17 @@ def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(record_
 def test_choosing_the_screen_recorder_swaps_the_controls(record_panel):
     view, _, _ = record_panel
     size = view.locator("select")           # the size choice, scrolling renderer only
+    top = view.locator('input[data-video-margin="top"]')
+    bottom = view.locator('input[data-video-margin="bottom"]')
     assert size.is_visible() and size.input_value() == "4k"
+    assert top.is_visible() and bottom.is_visible()
     assert not view.get_by_text("Audio sync offset (ms)").is_visible()
 
     view.get_by_text("Screen recording", exact=True).click()
     assert view.get_by_role("button", name="Run recording").is_visible()
     assert view.get_by_text("Audio sync offset (ms)").is_visible()
     assert not size.is_visible(), "the size choice does not apply to screen recording"
+    assert not top.is_visible() and not bottom.is_visible(), "video margins only apply to scrolling"
     assert not view.get_by_text("Tempo (BPM)", exact=True).is_visible()
 
 
@@ -147,6 +157,26 @@ def test_the_run_button_posts_the_chosen_renderer(record_panel):
     assert sent[0]["quality"] == "4k"
     assert sent[0]["hardware_encoding"] is True
     assert sent[0]["bpm"] == 80
+    assert sent[0]["top_margin"] == 0
+    assert sent[0]["bottom_margin"] == 0
+
+
+def test_margin_adjustments_are_posted_independently(record_panel):
+    view, slug, _ = record_panel
+    sent = []
+    view.route(f"**/api/songs/{slug}/record", lambda route: (
+        sent.append(json.loads(route.request.post_data or "{}")),
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"started": true}')))
+
+    view.locator('input[data-video-margin="top"]').fill("12")
+    view.locator('input[data-video-margin="bottom"]').fill("-8")
+    view.get_by_role("button", name="Render videos").click()
+    view.wait_for_timeout(300)
+
+    assert sent
+    assert sent[0]["top_margin"] == 12
+    assert sent[0]["bottom_margin"] == -8
 
 
 def test_render_progress_survives_a_page_reload(record_panel):

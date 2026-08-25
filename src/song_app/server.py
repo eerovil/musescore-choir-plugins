@@ -818,19 +818,30 @@ def _run_record(slug: str, opts: Dict) -> None:
                 raise FileNotFoundError("No cleaned score yet — clean the song first.")
             quality = opts.get("quality") or "4k"
             hardware_encoding = opts.get("hardware_encoding") is not False
+            top_margin = float(opts.get("top_margin", 0.0))
+            bottom_margin = float(opts.get("bottom_margin", 0.0))
+            margin_options = {}
+            if top_margin or bottom_margin:
+                margin_options = {
+                    "top_margin_percent": top_margin,
+                    "bottom_margin_percent": bottom_margin,
+                }
             log(f"Rendering the scrolling video ({quality})…")
             outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
                                                 quality=quality,
                                                 hardware_encoding=hardware_encoding,
                                                 initial_bpm=opts.get("bpm"),
                                                 log=log,
-                                                progress=progress)
+                                                progress=progress,
+                                                **margin_options)
             song = _require(slug)
             rec = song.data.setdefault("record", {})
             rec["exported"] = True
             rec["renderer"] = "scroll"
             rec["quality"] = quality
             rec["hardware_encoding"] = hardware_encoding
+            rec["top_margin"] = top_margin
+            rec["bottom_margin"] = bottom_margin
             rec["outputs"] = [os.path.basename(p) for p in outputs]
             rec["rendered_against"] = start_fingerprint
             rec["verification"] = verification.verify_media(
@@ -924,6 +935,15 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
     scrolling_render = (opts.get("renderer") or "scroll") == "scroll" \
         and not (opts.get("merge_only") or opts.get("upload_only"))
     cleaned = song.cleaned_path()
+    if scrolling_render:
+        for key, label in (("top_margin", "Top"), ("bottom_margin", "Bottom")):
+            try:
+                value = float(opts.get(key, 0.0))
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{label} video margin must be a number") from None
+            if not -40.0 <= value <= 100.0:
+                raise HTTPException(400, f"{label} video margin must be between -40% and 100%")
+            opts[key] = value
     if scrolling_render and cleaned and os.path.exists(cleaned) \
             and not pipeline.has_opening_tempo(cleaned):
         try:

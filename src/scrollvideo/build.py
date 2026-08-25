@@ -15,9 +15,11 @@ import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bisect import bisect_left
+from dataclasses import replace
 from typing import Callable, List, Optional, Sequence
 
 import mido
+import numpy as np
 from lxml import etree
 
 from . import audio as audio_mod
@@ -44,6 +46,13 @@ JUMP_MARKUP = ("Jump",)
 ALIGNMENT_TOLERANCE = 0.2
 ALIGNMENT_REQUIRED = 0.98
 
+# Margin controls are adjustments to today's vertical viewport, not pretend absolute
+# page margins: the hidden spacing staff means the lower edge is not Verovio's page
+# edge at all. Percent keeps the result visually consistent across 4K/1080p/720p.
+# Positive values add white space; negative values crop that edge and enlarge music.
+MIN_MARGIN_PERCENT = -40.0
+MAX_MARGIN_PERCENT = 100.0
+
 # The name of the every-voice mix. Downstream (review, YouTube titles, delete) reads
 # the part out of the file name, so this is also what the combined video is called
 # there — the same name the old screen recorder used.
@@ -59,12 +68,69 @@ def video_encoder(hardware_encoding: bool, width: int, height: int) -> str:
     return preferred_encoder(width, height) if hardware_encoding else SOFTWARE_ENCODER
 
 
+def _margin_viewport(visible_height: float, top_percent: float,
+                     bottom_percent: float) -> tuple[float, float]:
+    """Virtual source-unit viewport for independent top/bottom margin adjustments.
+
+    ``0, 0`` is exactly the old viewport ``0..visible_height``. Positive values
+    extend the viewport into white space outside the engraving; negative values move
+    the corresponding edge inward. Returning source units keeps the same adjustment
+    independent of output resolution.
+    """
+    top = float(top_percent)
+    bottom = float(bottom_percent)
+    for name, value in (("top", top), ("bottom", bottom)):
+        if not MIN_MARGIN_PERCENT <= value <= MAX_MARGIN_PERCENT:
+            raise ValueError(
+                f"{name} video margin must be between {MIN_MARGIN_PERCENT:g}% and "
+                f"{MAX_MARGIN_PERCENT:g}%, got {value:g}%")
+    start = -visible_height * top / 100.0
+    end = visible_height * (1.0 + bottom / 100.0)
+    if end <= start:
+        raise ValueError("top and bottom video margins leave no visible picture")
+    return start, end
+
+
+def _vertical_view(array: np.ndarray, *, visible_height: float, output_height: int,
+                   px_per_unit: float, start: float, end: float,
+                   fill_value: int) -> np.ndarray:
+    """Crop/pad a raster to the virtual vertical viewport.
+
+    Only ``0..visible_height`` is ever copied from the engraving. That matters when
+    the hidden spacer staff exists below the real score: adding bottom margin must
+    reveal white, never the spacer we intentionally cropped away.
+    """
+    if start == 0.0 and end == visible_height:
+        # Preserve the old code path byte-for-byte at the default settings.
+        return array[:output_height]
+
+    shape = (output_height, *array.shape[1:])
+    out = np.full(shape, fill_value, dtype=array.dtype)
+    source_start = max(0.0, start)
+    source_end = min(visible_height, end)
+    if source_end <= source_start:
+        return out
+
+    src0 = int(round(source_start * px_per_unit))
+    src1 = int(round(source_end * px_per_unit))
+    dst0 = int(round((source_start - start) * px_per_unit))
+    if src1 <= src0 or dst0 >= output_height or src0 >= array.shape[0]:
+        return out
+    if dst0 < 0:
+        src0 -= dst0
+        dst0 = 0
+    count = min(src1 - src0, array.shape[0] - src0, output_height - dst0)
+    if count > 0:
+        out[dst0:dst0 + count] = array[src0:src0 + count]
+    return out
+
+
 def _collect_audio_results(futures: dict, progress: Logger) -> dict:
     """Collect concurrent audio renders while reporting each completed mix.
 
     MuseScore audio export is often the longest quiet phase before frame rendering.
     Reporting completions rather than starts makes the number durable and truthful
-    even though mixes finish out of order on the worker pool.
+    even though mixes finish out of order.
     """
     total = len(futures)
     if not total:
@@ -124,6 +190,8 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  emphasise: bool = False, combined: bool = True,
                  spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
                  smooth_seconds: float = SMOOTH_SECONDS,
+                 top_margin_percent: float = 0.0,
+                 bottom_margin_percent: float = 0.0,
                  basename: Optional[str] = None,
                  initial_bpm: Optional[int] = None,
                  hardware_encoding: bool = True,
@@ -137,10 +205,18 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
     four-part score. `emphasise=True` instead re-renders per voice with that
     voice's notes lit brighter than the rest, which costs a full encode each.
 
+    ``top_margin_percent`` and ``bottom_margin_percent`` adjust the current vertical
+    viewport independently. Zero preserves the historical layout exactly; positive
+    values add white space and negative values crop that edge.
+
     `combined` also writes "<base> ALL", the same picture with every voice at equal
     volume — what a singer listens to once they know their own line, and what the
     old screen recorder always produced.
     """
+    # Validate before minutes of engraving/audio work. The helper is also used below
+    # once the score-specific visible height is known.
+    _margin_viewport(1.0, top_margin_percent, bottom_margin_percent)
+
     # Checked before the work, not at the encode: engraving, rasterising and the
     # audio mixes take minutes, and failing at the end with a bare FileNotFoundError
     # from Popen wastes all of it.
@@ -219,16 +295,30 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         if repeated:
             log(f"{repeated} notes are played more than once (repeats followed)")
 
-        # Rasterise tall enough that the picture still fills `height` once the
-        # spacer staff at the bottom is cropped away.
+        # The base visible region is exactly what the old renderer used. Margin
+        # adjustments create a virtual viewport around/inside it. Rasterising at the
+        # viewport scale keeps music, scroll anchors and highlight geometry aligned.
         visible = spacing_mod.visible_height(layout) if spaced else layout.height
-        strip_height = int(round(height * layout.height / visible))
+        view_start, view_end = _margin_viewport(
+            visible, top_margin_percent, bottom_margin_percent)
+        view_height = view_end - view_start
+        strip_height = int(round(height * layout.height / view_height))
         px_per_unit = strip_height / layout.height
 
         log("Rasterising the strip")
-        strip = rasterise(eng.svg, layout, strip_height)[:height]
-        coverage = playing_coverage(eng.svg, layout, strip_height)[:height]
+        raw_strip = rasterise(eng.svg, layout, strip_height)
+        strip = _vertical_view(
+            raw_strip, visible_height=visible, output_height=height,
+            px_per_unit=px_per_unit, start=view_start, end=view_end, fill_value=255)
+        raw_coverage = playing_coverage(eng.svg, layout, strip_height)
+        coverage = _vertical_view(
+            raw_coverage, visible_height=visible, output_height=height,
+            px_per_unit=px_per_unit, start=view_start, end=view_end, fill_value=0)
         placed = place(events, layout, px_per_unit, staff_limit=singing_staves)
+        y_offset = int(round(-view_start * px_per_unit))
+        if y_offset:
+            placed = [replace(p, y0=p.y0 + y_offset, y1=p.y1 + y_offset)
+                      for p in placed]
 
         if smooth_seconds:
             anchors = smooth_scroll(*anchors, fps=fps, seconds=smooth_seconds,
