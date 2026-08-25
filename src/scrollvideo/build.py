@@ -15,7 +15,7 @@ import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bisect import bisect_left
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Callable, List, Optional, Sequence
 
 import mido
@@ -29,7 +29,7 @@ from .engrave import engrave
 from .geometry import playing_coverage, rasterise
 from .timing import (SMOOTH_SECONDS, TempoMap, note_events, rest_events,
                      scroll_anchors, smooth_scroll)
-from .video import (NVIDIA_ENCODER, SOFTWARE_ENCODER, mux, place,
+from .video import (NVIDIA_ENCODER, SOFTWARE_ENCODER, TAIL_SECONDS, mux, place,
                     preferred_encoder, render)
 
 Logger = Callable[[str], None]
@@ -151,6 +151,161 @@ def unsupported_repeats(root: etree._Element) -> List[str]:
     return [tag for tag in JUMP_MARKUP if root.find(f".//{tag}") is not None]
 
 
+@dataclass(frozen=True)
+class Prepared:
+    """Everything decided about a render before a single pixel is drawn.
+
+    This is the whole picture except its rasterisation: the engraving, the clock,
+    what lights up when, where the page has scrolled to, and which slice of it the
+    frame shows. The video renderer turns it into pixels; the browser preview draws
+    the same SVG and follows the same curve. Neither recomputes any of it, so the
+    two cannot disagree about layout or timing.
+    """
+
+    source: str               # the .mscx actually rendered (silent parts dropped)
+    musicxml: str
+    midi: str
+    engraving: object         # engrave.Engraving
+    names: List[str]          # the parts that can be sung
+    wanted: List[str]         # the parts asked for
+    dropped: List[str]        # parts left out for having nothing to sing
+    spaced: bool              # a spacer staff was engraved (and is cropped off)
+    singing_staves: int
+    tempo: TempoMap
+    notes: List             # NoteEvent per sounding note
+    rests: List             # NoteEvent per sounding rest
+    events: List            # both, in the order they start
+    anchors: tuple          # (seconds, x in verovio units), smoothed
+    visible_height: float   # page height with the spacer staff cropped off
+    view_start: float       # top of the frame, in verovio units
+    view_end: float         # ... and its bottom
+    duration: float         # seconds of video, including the tail past the last note
+
+    @property
+    def layout(self):
+        return self.engraving.layout
+
+    @property
+    def view_height(self) -> float:
+        return self.view_end - self.view_start
+
+
+def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
+            keep_silent: bool = False, initial_bpm: Optional[int] = None,
+            spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
+            smooth_seconds: float = SMOOTH_SECONDS, fps: int = 60,
+            top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
+            log: Logger = _noop) -> Prepared:
+    """Do everything a render needs before rasterising, and check it is renderable.
+
+    `tmp` is a directory the intermediate files are written into; it has to outlive
+    the returned `Prepared`, whose `source` the audio mixes are rendered from.
+
+    The refusals live here rather than in the renderer so that a preview fails the
+    same way a render would, before either has spent any time: a D.C./D.S. jump the
+    engraving cannot follow, margins that leave no picture, and — measured against
+    the audio itself — a timeline too far out of step to ship.
+    """
+    # Validated on a unit page first, so bad margins fail before the minutes of
+    # engraving rather than after them. Applied for real once the page is known.
+    _margin_viewport(1.0, top_margin_percent, bottom_margin_percent)
+
+    jumps = unsupported_repeats(etree.parse(mscx_path).getroot())
+    if jumps:
+        raise NotImplementedError(
+            "This score uses " + ", ".join(sorted(set(jumps))) +
+            " (a D.C./D.S. jump): MuseScore's audio follows the jump and the engraving "
+            "does not, so the video would drift out of sync. Section repeats and voltas "
+            "are supported; write the jump out in full first.")
+
+    source, dropped = score_mod.prepare(mscx_path, tmp, keep_silent=keep_silent,
+                                        initial_bpm=initial_bpm)
+    if dropped:
+        log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
+
+    root = etree.parse(source).getroot()
+    names = audio_mod.part_names(root)
+    wanted = list(parts) if parts else names
+    unknown = [p for p in wanted if p not in names]
+    if unknown:
+        raise ValueError(
+            f"No such part(s): {', '.join(unknown)}. Score has: {', '.join(names)}"
+            + (f" (left out: {', '.join(dropped)})" if dropped else ""))
+
+    log("Converting for engraving (MuseScore CLI)")
+    musicxml = audio_mod.run_musescore(source, os.path.join(tmp, "score.musicxml"))
+    midi = audio_mod.run_musescore(source, os.path.join(tmp, "score.mid"))
+
+    # A rest-only staff makes measure width follow beats rather than note
+    # density; it is engraved and then cropped off the bottom.
+    spaced = None
+    if spacer_per_quarter:
+        spaced = spacing_mod.add_spacer_staff(
+            musicxml, os.path.join(tmp, "spaced.musicxml"), spacer_per_quarter)
+        if spaced is None:
+            log("Could not build the spacer staff; engraving as-is")
+
+    log("Engraving one continuous system (verovio)")
+    eng = engrave(spaced or musicxml)
+    layout = eng.layout
+    singing_staves = len(layout.staff_tops) - (1 if spaced else 0)
+    if singing_staves != len(names):
+        log(f"Warning: {singing_staves} engraved staves vs {len(names)} parts; "
+            "highlighting every voice equally.")
+
+    tempo = TempoMap.from_midi(midi)
+    notes = note_events(eng.timemap, tempo, eng.drawn_id)
+    rests = rest_events(eng.timemap, tempo, eng.drawn_id)
+    events = sorted([*notes, *rests], key=lambda event: (event.on, event.off))
+    anchors = scroll_anchors(eng.timemap, tempo, layout, eng.drawn_id,
+                             staff_limit=singing_staves)
+    log(f"{len(notes)} notes, {len(rests)} rests, "
+        f"{anchors[0][-1]:.1f}s on MuseScore's clock")
+
+    # Verify against the audio itself rather than trusting the structure.
+    landed = alignment(notes, midi)
+    if landed < ALIGNMENT_REQUIRED:
+        raise NotImplementedError(
+            f"Only {landed:.0%} of the notes MuseScore plays get a highlight, so this "
+            "video would look out of sync. The engraved timeline and the played one "
+            "disagree — usually an unsupported repeat structure.")
+    repeated = len(notes) - len(set(e.note_id for e in notes))
+    if repeated:
+        log(f"{repeated} notes are played more than once (repeats followed)")
+
+    # The base visible region is exactly what the old renderer used. Margin
+    # adjustments create a virtual viewport around/inside it.
+    visible = spacing_mod.visible_height(layout) if spaced else layout.height
+    view_start, view_end = _margin_viewport(
+        visible, top_margin_percent, bottom_margin_percent)
+
+    if smooth_seconds:
+        anchors = smooth_scroll(*anchors, fps=fps, seconds=smooth_seconds,
+                                page_width=layout.width)
+
+    return Prepared(
+        source=source, musicxml=musicxml, midi=midi, engraving=eng, names=names,
+        wanted=wanted, dropped=dropped, spaced=bool(spaced),
+        singing_staves=singing_staves, tempo=tempo, notes=notes, rests=rests,
+        events=events, anchors=anchors, visible_height=visible,
+        view_start=view_start, view_end=view_end,
+        duration=_duration(events, layout, singing_staves))
+
+
+def _duration(events: Sequence, layout, staff_limit: int) -> float:
+    """Seconds of video: the last thing drawn, plus the tail the renderer keeps rolling.
+
+    Counted over the symbols that are actually on screen — the same ones `place`
+    keeps — so a preview and a render end at the same moment.
+    """
+    last = 0.0
+    for event in events:
+        geom = layout.playing(event.note_id)
+        if geom is not None and layout.staff_index(geom) < staff_limit:
+            last = max(last, event.off)
+    return last + TAIL_SECONDS
+
+
 def midi_onsets(midi_path: str) -> List[float]:
     """Every moment MuseScore actually strikes a note, in seconds."""
     onsets, now = [], 0.0
@@ -213,25 +368,12 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
     volume — what a singer listens to once they know their own line, and what the
     old screen recorder always produced.
     """
-    # Validate before minutes of engraving/audio work. The helper is also used below
-    # once the score-specific visible height is known.
-    _margin_viewport(1.0, top_margin_percent, bottom_margin_percent)
-
     # Checked before the work, not at the encode: engraving, rasterising and the
     # audio mixes take minutes, and failing at the end with a bare FileNotFoundError
     # from Popen wastes all of it.
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is not on PATH — it renders the video. "
                            "macOS: brew install ffmpeg")
-
-    root = etree.parse(mscx_path).getroot()
-    jumps = unsupported_repeats(root)
-    if jumps:
-        raise NotImplementedError(
-            "This score uses " + ", ".join(sorted(set(jumps))) +
-            " (a D.C./D.S. jump): MuseScore's audio follows the jump and the engraving "
-            "does not, so the video would drift out of sync. Section repeats and voltas "
-            "are supported; write the jump out in full first.")
 
     # Outputs are named "<base> <part>": the song app passes its slug so the files
     # match what the review and upload stages already look for.
@@ -240,69 +382,25 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
     written: List[str] = []
 
     with tempfile.TemporaryDirectory() as tmp:
-        source, dropped = score_mod.prepare(mscx_path, tmp, keep_silent=keep_silent,
-                                            initial_bpm=initial_bpm)
-        if dropped:
-            log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
+        # Everything up to the pixels, and every refusal, is decided here — the same
+        # call the browser preview makes, so what a singer previews is what renders.
+        ready = prepare(mscx_path, tmp, parts=parts, keep_silent=keep_silent,
+                        initial_bpm=initial_bpm, spacer_per_quarter=spacer_per_quarter,
+                        smooth_seconds=smooth_seconds, fps=fps,
+                        top_margin_percent=top_margin_percent,
+                        bottom_margin_percent=bottom_margin_percent, log=log)
+        source = ready.source
+        eng = ready.engraving
+        layout = ready.layout
+        names, wanted = ready.names, ready.wanted
+        events, anchors = ready.events, ready.anchors
+        singing_staves = ready.singing_staves
+        visible = ready.visible_height
+        view_start, view_end = ready.view_start, ready.view_end
 
-        root = etree.parse(source).getroot()
-        names = audio_mod.part_names(root)
-        wanted = list(parts) if parts else names
-        unknown = [p for p in wanted if p not in names]
-        if unknown:
-            raise ValueError(
-                f"No such part(s): {', '.join(unknown)}. Score has: {', '.join(names)}"
-                + (f" (left out: {', '.join(dropped)})" if dropped else ""))
-
-        log("Converting for engraving (MuseScore CLI)")
-        musicxml = audio_mod.run_musescore(source, os.path.join(tmp, "score.musicxml"))
-        midi = audio_mod.run_musescore(source, os.path.join(tmp, "score.mid"))
-
-        # A rest-only staff makes measure width follow beats rather than note
-        # density; it is engraved and then cropped off the bottom.
-        spaced = None
-        if spacer_per_quarter:
-            spaced = spacing_mod.add_spacer_staff(
-                musicxml, os.path.join(tmp, "spaced.musicxml"), spacer_per_quarter)
-            if spaced is None:
-                log("Could not build the spacer staff; engraving as-is")
-
-        log("Engraving one continuous system (verovio)")
-        eng = engrave(spaced or musicxml)
-        layout = eng.layout
-        singing_staves = len(layout.staff_tops) - (1 if spaced else 0)
-        if singing_staves != len(names):
-            log(f"Warning: {singing_staves} engraved staves vs {len(names)} parts; "
-                "highlighting every voice equally.")
-
-        tempo = TempoMap.from_midi(midi)
-        notes = note_events(eng.timemap, tempo, eng.drawn_id)
-        rests = rest_events(eng.timemap, tempo, eng.drawn_id)
-        events = sorted([*notes, *rests], key=lambda event: (event.on, event.off))
-        anchors = scroll_anchors(eng.timemap, tempo, layout, eng.drawn_id,
-                                 staff_limit=singing_staves)
-        log(f"{len(notes)} notes, {len(rests)} rests, "
-            f"{anchors[0][-1]:.1f}s on MuseScore's clock")
-
-        # Verify against the audio itself rather than trusting the structure.
-        landed = alignment(notes, midi)
-        if landed < ALIGNMENT_REQUIRED:
-            raise NotImplementedError(
-                f"Only {landed:.0%} of the notes MuseScore plays get a highlight, so this "
-                "video would look out of sync. The engraved timeline and the played one "
-                "disagree — usually an unsupported repeat structure.")
-        repeated = len(notes) - len(set(e.note_id for e in notes))
-        if repeated:
-            log(f"{repeated} notes are played more than once (repeats followed)")
-
-        # The base visible region is exactly what the old renderer used. Margin
-        # adjustments create a virtual viewport around/inside it. Rasterising at the
-        # viewport scale keeps music, scroll anchors and highlight geometry aligned.
-        visible = spacing_mod.visible_height(layout) if spaced else layout.height
-        view_start, view_end = _margin_viewport(
-            visible, top_margin_percent, bottom_margin_percent)
-        view_height = view_end - view_start
-        strip_height = int(round(height * layout.height / view_height))
+        # Rasterising at the viewport scale keeps music, scroll anchors and highlight
+        # geometry aligned.
+        strip_height = int(round(height * layout.height / ready.view_height))
         px_per_unit = strip_height / layout.height
 
         log("Rasterising the strip")
@@ -319,10 +417,6 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         if y_offset:
             placed = [replace(p, y0=p.y0 + y_offset, y1=p.y1 + y_offset)
                       for p in placed]
-
-        if smooth_seconds:
-            anchors = smooth_scroll(*anchors, fps=fps, seconds=smooth_seconds,
-                                    page_width=layout.width)
 
         # Each output is (file name, the voice its mix leans on). "ALL" leans on no
         # voice: render_mix(focus=None) is already the even mix, and render() with no

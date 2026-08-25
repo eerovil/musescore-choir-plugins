@@ -237,6 +237,29 @@ table.grid input.unset { border-color: var(--warn); }
             letter-spacing: .05em; margin: .3rem 0 .1rem; }
 .cmprow.cmpon { background: #eef4ff; box-shadow: 0 0 0 3px #cddffb; border-radius: 4px; }
 
+/* ---- Scroll preview ------------------------------------------------------
+   The video before it is a video: the engraving inside a window the same shape
+   as the frame, with the picture clipped to it exactly as the renderer crops
+   the strip. The aspect comes from the chosen size and is set on the element. */
+.svgpreview { margin: .4rem 0 .2rem; }
+.pvviewport { width: 100%; overflow: hidden; background: #fff;
+              border: 1px solid var(--line); border-radius: 6px; }
+.pvviewport svg { display: block; width: 100%; height: 100%; }
+.pvcontrols { align-items: center; gap: .4rem; }
+.pvseek { flex: 1 1 8rem; min-width: 5rem; }
+.pvtime { font-variant-numeric: tabular-nums; color: var(--muted); }
+.pvstatus { margin: .3rem 0; color: var(--muted); font-size: .85rem; }
+.pvstatus.err { color: #b3261e; }
+
+/* The sounding symbol is repainted, not covered — the same choice the renderer
+   makes with pixels. Heads only: verovio puts the stem and the lyric inside the
+   same group, and colouring those drags the eye around. */
+.pvviewport g.pv-on > g.notehead > *,
+.pvviewport g.pv-on > use {
+  fill: var(--pv-highlight, #2a5fab);
+  color: var(--pv-highlight, #2a5fab);
+}
+
 /* ---- Phone ---------------------------------------------------------------
    The bar that switches panes is in the DOM at every width; here is the only
    place it exists. Everything below the breakpoint is additive: not one rule

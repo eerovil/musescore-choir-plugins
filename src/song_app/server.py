@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set
 
 import dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import agentdeck, health, job_state, pdf_systems, pipeline, state, verification
@@ -777,6 +777,58 @@ def api_reveal_pdf(slug: str) -> Dict:
     return {"ok": True}
 
 
+MARGIN_LIMITS = (-40.0, 100.0)
+
+
+def _margin(value, label: str) -> float:
+    """One video margin, as a number inside the range the renderer accepts."""
+    try:
+        margin = float(value if value is not None else 0.0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{label} video margin must be a number") from None
+    low, high = MARGIN_LIMITS
+    if not low <= margin <= high:
+        raise HTTPException(
+            400, f"{label} video margin must be between {low:g}% and {high:g}%")
+    return margin
+
+
+@app.get("/api/songs/{slug}/scroll-preview")
+async def api_scroll_preview(slug: str, quality: str = "4k", top_margin: float = 0.0,
+                             bottom_margin: float = 0.0, bpm: Optional[int] = None):
+    """The scrolling render as data the browser can play, before any video exists.
+
+    This is the picture without the encoding: the same engraving, viewport, clock
+    and scroll curve `build_videos` would use, prepared by the same code. It writes
+    nothing into the song's state and does not count as a render — the only file it
+    leaves behind is its own cache.
+
+    It also fails where a render would, and that is half its value: a D.C./D.S.
+    jump or margins that leave no picture come back here as an ordinary error
+    message, seconds in, instead of after minutes of engraving and encoding.
+    """
+    song = _require(slug)
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise HTTPException(400, "No cleaned score yet — clean the song first.")
+    settings = {
+        "quality": quality if quality in pipeline.SCROLL_QUALITY else "4k",
+        "top_margin_percent": _margin(top_margin, "Top"),
+        "bottom_margin_percent": _margin(bottom_margin, "Bottom"),
+        # A score with its own opening tempo ignores this, so it is only part of
+        # what the preview is *of* when the app is the one supplying the tempo.
+        "initial_bpm": bpm if bpm and not pipeline.has_opening_tempo(cleaned) else None,
+    }
+    try:
+        payload = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: pipeline.scroll_preview(song.dir, cleaned, **settings))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, str(exc) or exc.__class__.__name__)
+    return JSONResponse(payload, headers=dict(REVALIDATE))
+
+
 # --------------------------------------------------------------------------
 # Record stage
 # --------------------------------------------------------------------------
@@ -937,13 +989,7 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
     cleaned = song.cleaned_path()
     if scrolling_render:
         for key, label in (("top_margin", "Top"), ("bottom_margin", "Bottom")):
-            try:
-                value = float(opts.get(key, 0.0))
-            except (TypeError, ValueError):
-                raise HTTPException(400, f"{label} video margin must be a number") from None
-            if not -40.0 <= value <= 100.0:
-                raise HTTPException(400, f"{label} video margin must be between -40% and 100%")
-            opts[key] = value
+            opts[key] = _margin(opts.get(key, 0.0), label)
     if scrolling_render and cleaned and os.path.exists(cleaned) \
             and not pipeline.has_opening_tempo(cleaned):
         try:

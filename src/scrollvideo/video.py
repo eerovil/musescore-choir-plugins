@@ -96,6 +96,10 @@ class Placed:
     y1: int
     staff: int
     snap_marker: bool = True
+    # Which symbol on the page this is. The frame renderer recolours pixels and
+    # never needs it; the browser preview recolours the SVG element itself, which
+    # it can only find by id.
+    note_id: str = ""
 
 
 def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float,
@@ -114,7 +118,8 @@ def place(events: Sequence[NoteEvent], layout: Layout, px_per_unit: float,
             e.on, e.off,
             int(x0 * px_per_unit), int(x1 * px_per_unit),
             int(y0 * px_per_unit), int(y1 * px_per_unit),
-            staff, not isinstance(geom, RestGeom) or not geom.measure_rest))
+            staff, not isinstance(geom, RestGeom) or not geom.measure_rest,
+            e.note_id))
     placed.sort(key=lambda p: p.on)
     return placed
 
