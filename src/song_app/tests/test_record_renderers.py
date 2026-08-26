@@ -27,6 +27,7 @@ def song(tmp_path, monkeypatch):
         fh.write("<museScore><Score/></museScore>")
     s.data["cleaned"] = os.path.basename(cleaned)
     s.data["stage"] = "record"
+    s.data["review"] = {"approved_against": state.file_fingerprint(cleaned)}
     s.save()
     return s
 
@@ -85,11 +86,78 @@ def test_the_song_api_reports_when_the_bpm_choice_is_needed(client, song):
     assert client.get(f"/api/songs/{song.slug}").json()["needs_initial_bpm"] is True
 
 
+def test_review_approval_is_tied_to_the_cleaned_score(client, song):
+    song.set_stage("review")
+    song.save()
+
+    shown = state.file_fingerprint(song.cleaned_path())
+    approved = client.post(f"/api/songs/{song.slug}/approve-review", json={
+        "cleaned_fingerprint": shown,
+    })
+
+    assert approved.status_code == 200
+    data = approved.json()
+    assert data["stage"] == "record"
+    assert data["review"]["approved_against"] == \
+           data["verification_summary"]["cleaned_fingerprint"]
+
+    with open(song.cleaned_path(), "a") as fh:
+        fh.write("\n")
+    stale = client.get(f"/api/songs/{song.slug}").json()
+    assert stale["review"]["approved_against"] != \
+           stale["verification_summary"]["cleaned_fingerprint"]
+
+
+def test_review_cannot_approve_a_score_that_changed_after_it_was_shown(client, song):
+    shown = state.file_fingerprint(song.cleaned_path())
+    with open(song.cleaned_path(), "a") as fh:
+        fh.write("\n")
+
+    response = client.post(f"/api/songs/{song.slug}/approve-review", json={
+        "cleaned_fingerprint": shown,
+    })
+
+    assert response.status_code == 409
+    assert "changed" in response.json()["detail"]
+
+
+def test_rendering_rejects_a_stale_review_approval(client, song, monkeypatch):
+    with open(song.cleaned_path(), "a") as fh:
+        fh.write("\n")
+    monkeypatch.setattr(
+        pipeline, "run_scroll_video",
+        lambda *_args, **_kwargs: pytest.fail("a stale score must not render"),
+    )
+
+    response = client.post(f"/api/songs/{song.slug}/record", json={})
+
+    assert response.status_code == 409
+    assert "approve" in response.json()["detail"]
+
+
+def test_remerge_does_not_require_approval_of_the_current_score(client, song, monkeypatch):
+    with open(song.cleaned_path(), "a") as fh:
+        fh.write("\n")
+    seen = {}
+    import src.stemmanauha.create_video as create_video
+    monkeypatch.setattr(create_video, "run", lambda **kwargs: seen.update(kwargs) or [])
+
+    response = client.post(f"/api/songs/{song.slug}/record", json={
+        "renderer": "screen", "merge_only": True,
+    })
+
+    assert response.status_code == 200
+    _finished(client, song.slug)
+    assert seen["merge_only"] is True
+
+
 def test_an_existing_opening_tempo_is_never_overridden(client, song, monkeypatch):
     with open(song.cleaned_path(), "w") as fh:
         fh.write("<museScore><Score><Staff><Measure><voice>"
                  "<Tempo><tempo>1.5</tempo></Tempo><Chord/>"
                  "</voice></Measure></Staff></Score></museScore>")
+    song.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    song.save()
     seen = {}
     _fake_scroll(monkeypatch, seen)
 
@@ -330,6 +398,8 @@ def test_screen_recorder_refreshes_audio_and_video_once_after_a_score_change(
     song.save()
     with open(song.cleaned_path(), "a") as changed:
         changed.write("\n")
+    song.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    song.save()
     calls = []
 
     import src.stemmanauha.create_video as create_video
@@ -387,7 +457,7 @@ def test_rendering_without_a_cleaned_score_is_refused(client, song, monkeypatch)
     monkeypatch.setattr(pipeline, "run_scroll_video",
                         lambda *a, **k: pytest.fail("should not render without a score"))
 
-    client.post(f"/api/songs/{song.slug}/record", json={})
-    data = _finished(client, song.slug)
-    assert "clean" in (data["record"].get("error") or "").lower()
-    assert data["stage"] != "upload"
+    response = client.post(f"/api/songs/{song.slug}/record", json={})
+    assert response.status_code == 400
+    assert "clean" in response.json()["detail"].lower()
+    assert client.get(f"/api/songs/{song.slug}").json()["stage"] != "upload"

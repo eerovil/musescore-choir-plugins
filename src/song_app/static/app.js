@@ -135,14 +135,18 @@ async function renderWorkspace(slug) {
   const song = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
   crumb.textContent = "› " + song.name;
   let view = song.stage; // which panel is shown
-  const panes = [song.has_pdf ? "pdf" : "original"]; // 1 or 2 docs shown side by side
+  const firstDoc = song.stage === "review" && song.lyrics
+    ? "cleaned" : song.stage === "record" ? "preview" : song.has_pdf ? "pdf" : "original";
+  const panes = [firstDoc]; // 1 or 2 docs shown side by side
   let viewFp = song.cleaned_fingerprint; // viewer is only rebuilt when this changes
+  let recordPreviewSettings = null;
 
   // Build the shell once. The viewer (and its rendered previews) is NOT recreated on
   // stage or panel changes, so the previews keep their loaded state and scroll position.
   const stagebarEl = el("div", { className: "stagebar" });
   const panelEl = el("div", { className: "panel" });
-  let viewerEl = viewer(song, slug, panes, rebuildViewer);
+  let viewerEl = viewer(song, slug, panes, rebuildViewer, view,
+    () => recordPreviewSettings);
   const wsGrid = el("div", { className: "ws" }, stagebarEl, panelEl, viewerEl);
   // Reviewing means reading two scores side by side; the rail and panel are just
   // in the way then. Remembered, because it is a mode you stay in.
@@ -164,6 +168,7 @@ async function renderWorkspace(slug) {
   const paneBtns = {};
   let pane = "panel";
   const showPane = (p) => {
+    if (p !== "viewer") viewerEl._pausePreview();
     pane = p;
     for (const k of ["stages", "panel", "viewer"]) wsGrid.classList.toggle("m-" + k, k === p);
     for (const k in paneBtns) paneBtns[k].className = "mtab" + (k === p ? " active" : "");
@@ -189,25 +194,53 @@ async function renderWorkspace(slug) {
     stagebarEl.replaceChildren(...song.stages.map((st, i) => el("div", {
       className: "step " + (st === view ? "active " : "") + (done(st, i) ? "done" : ""),
       // Picking a stage on a phone means "take me to it", so the panel comes forward.
-      onclick: () => { view = st; drawStagebar(); drawPanel(); showPane("panel"); },
+      onclick: () => selectStage(st),
     }, STAGE_LABEL[st] || st)));
     // The middle button names the stage it will show, so the bar says where you are.
     paneBtns.panel.textContent = STAGE_LABEL[view] || view;
+    paneBtns.viewer.textContent = view === "record" ? "Preview" : "Score";
   }
 
   function drawPanel() {
+    recordPreviewSettings = null;
     panelEl.replaceChildren();
-    renderPanel(panelEl, view, song, slug, refresh);
+    renderPanel(panelEl, view, song, slug, refresh, {
+      // Use the same click path as the rail so rendering_state.js remembers an
+      // action-driven Review → Record transition across reloads as well.
+      selectStage: (stage) => {
+        const target = [...stagebarEl.querySelectorAll(".step")]
+          .find((step) => step.textContent.trim() === (STAGE_LABEL[stage] || stage));
+        if (target) target.click();
+        else selectStage(stage);
+      },
+      openPreview: () => { viewerEl._showFirst("preview"); showPane("viewer"); },
+      pausePreview: () => viewerEl._pausePreview(),
+      previewInputsChanged: () => viewerEl._syncPreview(),
+      setPreviewSettings: (settings) => { recordPreviewSettings = settings; },
+    });
+  }
+
+  function selectStage(stage) {
+    view = stage;
+    if (view === "review" && song.lyrics) panes[0] = "cleaned";
+    else if (view === "record") panes[0] = "preview";
+    drawStagebar();
+    drawPanel();
+    if (tabKeys() !== builtTabs) rebuildViewer();
+    else viewerEl._showFirst(panes[0]);
+    showPane("panel");
   }
 
   function rebuildViewer() {
-    const next = viewer(song, slug, panes, rebuildViewer);
+    const next = viewer(song, slug, panes, rebuildViewer, view,
+      () => recordPreviewSettings);
+    viewerEl._destroyPreview();
     wsGrid.replaceChild(next, viewerEl);
     viewerEl = next;
     builtTabs = tabKeys();
   }
 
-  const tabKeys = () => viewerTabs(song).map(([k]) => k).join(",");
+  const tabKeys = () => viewerTabs(song, view).map(([k]) => k).join(",");
   // What the viewer was actually built with. Comparing against this rather than
   // against a before/after of `song` matters: a caller that already merged the
   // server's reply into `song` before calling refresh() would otherwise see no
@@ -228,6 +261,7 @@ async function renderWorkspace(slug) {
       viewFp = song.cleaned_fingerprint;
       viewerEl._refreshFp(viewFp);
     }
+    viewerEl._syncPreview();
   }
 
   drawStagebar();
@@ -245,7 +279,7 @@ async function renderWorkspace(slug) {
   };
 }
 
-function viewerTabs(song) {
+function viewerTabs(song, view) {
   const tabs = [];
   if (song.has_pdf) tabs.push(["pdf", "Original PDF"]);
   if (song.has_pdf) tabs.push(["systems", "Systems"]);
@@ -257,6 +291,7 @@ function viewerTabs(song) {
     // Only once there are lyrics to see. Offering it beforehand renders a score
     // identical to the tab next to it, with nothing to say why.
     if (song.lyrics) tabs.push(["cleaned", "Cleaned MSCX with lyrics"]);
+    if (view === "record") tabs.push(["preview", "Preview"]);
   }
   return tabs;
 }
@@ -515,12 +550,16 @@ async function systemsEditor(view, slug) {
 // Each doc keeps its own scroll container mounted (lazily); switching a tab hides/shows
 // them (scroll preserved). `el._refreshFp(fp)` re-renders only the cleaned previews
 // after a re-clean, preserving their scroll position.
-function viewer(song, slug, panes, rebuild) {
-  const tabs = viewerTabs(song);
+function viewer(song, slug, panes, rebuild, stage, previewSettings) {
+  const tabs = viewerTabs(song, stage);
   const keys = tabs.map(([k]) => k);
   for (let i = 0; i < panes.length; i++) if (!keys.includes(panes[i])) panes[i] = keys[0];
   const refreshers = [];
   const wakers = [];
+  const selectors = [];
+  const previewPausers = [];
+  const previewDestroyers = [];
+  const previewSyncers = [];
 
   const slot = (i) => {
     const frames = {};                  // doc -> scrollable pdfview div (kept alive)
@@ -540,6 +579,8 @@ function viewer(song, slug, panes, rebuild) {
       else if (v.offsetParent) requestAnimationFrame(() => ensureRendered(doc));
     };
     const show = (doc) => {
+      const previous = panes[i];
+      if (previous === "preview" && doc !== "preview") frames.preview?._pause?.();
       panes[i] = doc;
       if (!frames[doc]) {
         const v = el("div", { className: "pdfview" });
@@ -558,6 +599,19 @@ function viewer(song, slug, panes, rebuild) {
             );
           };
           v._setSystem(v._n || 1);
+        }
+        else if (doc === "preview") {
+          v._systems = true;
+          v.className = "pdfview recordpreview";
+          const P = `/api/songs/${encodeURIComponent(slug)}`;
+          const preview = window.scrollPreviewPanel(P, () => {
+            const settings = previewSettings();
+            return settings ? settings() : {};
+          }, () => song.cleaned_fingerprint);
+          v._pause = () => preview._pausePreview?.();
+          v._destroy = () => preview._stopPreview?.();
+          v._sync = () => preview._syncPreview?.();
+          v.append(preview);
         }
         else v._url = docUrl(slug, doc, song.cleaned_fingerprint);
       }
@@ -596,6 +650,10 @@ function viewer(song, slug, panes, rebuild) {
 
     const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), ctrl);
     show(panes[i]);
+    selectors.push(show);
+    previewPausers.push(() => frames.preview?._pause?.());
+    previewDestroyers.push(() => frames.preview?._destroy?.());
+    previewSyncers.push(() => frames.preview?._sync?.());
     wakers.push(() => ensureRendered(panes[i]));
     // Re-render only the cleaned previews; their scroll is preserved by renderPdf.
     refreshers.push((fp) => {
@@ -611,6 +669,12 @@ function viewer(song, slug, panes, rebuild) {
   const root = el("div", { className: "viewer" }, panes.map((_, i) => slot(i)));
   root._refreshFp = (fp) => refreshers.forEach((f) => f(fp));
   root._wake = () => wakers.forEach((f) => f());
+  root._pausePreview = () => previewPausers.forEach((pause) => pause());
+  root._destroyPreview = () => previewDestroyers.forEach((destroy) => destroy());
+  root._syncPreview = () => previewSyncers.forEach((sync) => sync());
+  root._showFirst = (doc) => {
+    if (keys.includes(doc) && selectors[0]) selectors[0](doc);
+  };
   return root;
 }
 
@@ -663,16 +727,51 @@ function verificationView(summary) {
     summary.render_error ? el("div", { className: "banner err" }, "Render error: " + summary.render_error) : "");
 }
 
+const CHECK_ICON = { passed: "✓", warning: "⚠", stale: "⚠", not_checked: "—" };
+
+function compactCheck(name, result) {
+  const status = result?.status || "not_checked";
+  return el("li", { className: `compact-check ${status}` },
+    el("span", { className: "compact-icon", "aria-hidden": "true" }, CHECK_ICON[status] || "—"),
+    el("strong", {}, name),
+    el("span", { className: "compact-detail" }, result?.detail || "Not checked."));
+}
+
+function reviewReadiness(summary) {
+  if (!summary) return { tone: "attention", title: "Needs attention" };
+  const core = [summary.notes, summary.lyrics, summary.health];
+  const media = summary.media;
+  if (core.some((result) => ["stale", "not_checked"].includes(result?.status))) {
+    return { tone: "attention", title: "Needs attention" };
+  }
+  if (core.some((result) => result?.status === "warning")
+      || ["warning", "stale"].includes(media?.status)) {
+    return { tone: "recommended", title: "Review recommended" };
+  }
+  return { tone: "ready", title: "Ready to approve" };
+}
+
+function compactReview(summary) {
+  const readiness = reviewReadiness(summary);
+  return el("section", { className: `compact-review ${readiness.tone}` },
+    el("div", { className: "review-state" }, readiness.title),
+    el("ul", {},
+      compactCheck("Notes", summary?.notes),
+      compactCheck("Lyrics", summary?.lyrics),
+      compactCheck("Health", summary?.health),
+      compactCheck("Videos", summary?.media)));
+}
+
 // ---- per-stage panels ----------------------------------------------------
-function renderPanel(panel, view, song, slug, refresh) {
+function renderPanel(panel, view, song, slug, refresh, actions) {
   logBox = null;
   const P = `/api/songs/${encodeURIComponent(slug)}`;
   if (view === "register") return panelRegister(panel, song, P, refresh);
   if (view === "clean") return panelClean(panel, song, slug, P, refresh);
   if (view === "fix") return panelFix(panel, song, P, refresh);
   if (view === "lyrics") return panelLyrics(panel, song, P, refresh);
-  if (view === "review") return panelReview(panel, song, P, refresh);
-  if (view === "record") return panelRecord(panel, song, P, refresh);
+  if (view === "review") return panelReview(panel, song, P, refresh, actions);
+  if (view === "record") return panelRecord(panel, song, P, refresh, actions);
   if (view === "upload") return panelUpload(panel, song, P, refresh);
 }
 
@@ -1066,19 +1165,43 @@ async function lyricsManual(panel, song, P, refresh) {
   panel.append(el("div", { className: "floatbar" }, importBtn));
 }
 
-function panelReview(panel, song, P, refresh) {
-  panel.append(el("h2", {}, "Review"),
-    el("p", { className: "sub" }, "Final check of notes + lyrics before producing tracks."),
-    verificationView(song.verification_summary),
-    el("div", { className: "row" },
-      el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
-      el("button", { onclick: async () => { await postJSON(`${P}/stage/record`); refresh(); } }, "Looks good → Record")));
+function panelReview(panel, song, P, refresh, actions) {
+  const approve = el("button", { className: "primary review-approve", onclick: async () => {
+    approve.disabled = true;
+    try {
+      Object.assign(song, await postJSON(`${P}/approve-review`, {
+        cleaned_fingerprint: song.verification_summary?.cleaned_fingerprint,
+      }));
+      actions.selectStage("record");
+    } catch (error) {
+      approve.disabled = false;
+      alert(error.message);
+    }
+  } }, "✓ Approve → Record");
+  panel.append(el("section", { className: "review-panel" },
+    el("h2", {}, "Review"),
+    el("p", { className: "sub" }, "Final check before recording."),
+    compactReview(song.verification_summary),
+    el("div", { className: "review-full" }, verificationView(song.verification_summary)),
+    el("div", { className: "review-secondary row" },
+      el("button", { onclick: async () => {
+        Object.assign(song, await postJSON(`${P}/rescan`));
+        refresh();
+      } }, "Re-run health check"),
+      el("button", { onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore")),
+    el("div", { className: "review-actions" }, approve)));
 }
 
-function panelRecord(panel, song, P, refresh) {
+function panelRecord(panel, song, P, refresh, actions) {
   const rec = song.record || {};
   const recording = song.recording;
   const recorded = !!(rec.outputs && rec.outputs.length);
+  const summary = song.verification_summary || {};
+  const parts = summary.expected_parts || [];
+  const approvedAgainst = song.review?.approved_against;
+  const currentScore = summary.cleaned_fingerprint;
+  const approved = !!approvedAgainst && approvedAgainst === currentScore;
+  const approvalStale = !!approvedAgainst && approvedAgainst !== currentScore;
   // Two ways to make the videos. The scrolling renderer draws them from the score
   // and is the default; the screen recorder drives MuseScore and needs macOS.
   let renderer = rec.renderer || "scroll";
@@ -1086,7 +1209,14 @@ function panelRecord(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Record"));
   const sub = el("p", { className: "sub" }, "");
   panel.append(sub);
-  panel.append(verificationView(song.verification_summary));
+
+  const approval = el("div", { className: `approval-summary ${approved ? "approved" : "attention"}` },
+    el("strong", {}, approved ? "✓ Score approved" : approvalStale ? "⚠ Score changed after approval" : "⚠ Review not approved"),
+    el("span", {}, approved
+      ? `${parts.length} part${parts.length === 1 ? "" : "s"} · ${summary.lyrics?.status === "passed" ? "Lyrics ready" : "Check lyric status"}`
+      : approvalStale ? "Return to Review before rendering the changed score." : "Approve the score in Review before rendering."),
+    approved ? "" : el("button", { onclick: () => actions.selectStage("review") }, "Back to Review"));
+  panel.append(approval);
 
   if (recording) {
     panel.append(el("div", { className: "banner" }, "● Rendering… leave this running."));
@@ -1134,7 +1264,7 @@ function panelRecord(panel, song, P, refresh) {
     } catch (e) { appendLog(e.message, true); }
   };
 
-  const runBtn = el("button", { className: "primary", disabled: recording, onclick: () =>
+  const runBtn = el("button", { className: "primary", disabled: recording || !approved, onclick: () =>
     renderer === "scroll"
       ? post({ quality: quality.value, hardware_encoding: hardwareEncoding.checked,
                top_margin: Number(topMargin.value) || 0,
@@ -1147,36 +1277,25 @@ function panelRecord(panel, song, P, refresh) {
     post({ merge_only: true, audio_delay_ms: Number(delay.value) || 1300 },
          "Re-merging with new offset…") }, "Re-merge only (apply offset)");
 
-  const scrollOpts = el("div", {},
-    el("label", {}, "Size"),
-    el("div", { className: "row" }, quality,
+  const scrollCommon = el("div", { className: "record-common" },
+    el("label", {}, "Output"),
+    el("div", { className: "row output-row" }, quality,
       el("span", { className: "hint" }, "4K keeps panning smooth and text sharp")),
+    ...(song.needs_initial_bpm ? [
+      el("label", {}, "Tempo (BPM)"),
+      el("div", { className: "row" }, bpm,
+        el("span", { className: "hint" }, "this score has no opening tempo marking"))
+    ] : []));
+  const scrollAdvanced = el("div", {},
     el("label", {}, "Vertical margins"),
     el("div", { className: "row" },
       el("span", {}, "Top margin"), topMargin, el("span", {}, "%")),
     el("div", { className: "row" },
       el("span", {}, "Bottom margin"), bottomMargin, el("span", {}, "%")),
     el("p", { className: "hint" }, "0 = current layout; positive adds white space; negative crops that edge"),
-    ...(song.needs_initial_bpm ? [
-      el("label", {}, "Tempo (BPM)"),
-      el("div", { className: "row" }, bpm,
-        el("span", { className: "hint" }, "this score has no opening tempo marking"))
-    ] : []),
     el("div", { className: "row" }, hardwareEncoding,
-      el("span", {}, "Use NVIDIA hardware encoding when available")),
-    // The picture before it costs a render: same engraving, same viewport, same
-    // clock. It reads the controls above at the moment it is asked for, so a
-    // margin can be nudged and previewed without rendering anything.
-    el("label", {}, "Preview"),
-    window.scrollPreviewPanel(P, () => ({
-      quality: quality.value,
-      top_margin: Number(topMargin.value) || 0,
-      bottom_margin: Number(bottomMargin.value) || 0,
-      ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
-    })),
-    el("p", { className: "hint" },
-      "Nothing is encoded — check the picture, timing and selected mix before rendering"));
-  const screenOpts = el("div", {},
+      el("span", {}, "Use NVIDIA hardware encoding when available")));
+  const screenAdvanced = el("div", {},
     el("label", {}, "Audio sync offset (ms)"),
     el("div", { className: "row" }, delay,
       el("span", { className: "hint" }, "shift audio vs. video; re-merge to apply")),
@@ -1184,12 +1303,40 @@ function panelRecord(panel, song, P, refresh) {
     el("div", { className: "row" }, redoVideo, el("span", {}, "Re-record video")),
     el("div", { className: "row" }, remergeBtn));
 
+  const scrollCard = el("label", { className: "renderer-card" }, scrollRadio,
+    el("span", {}, el("strong", {}, "Scrolling score"),
+      el("small", {}, "Unattended · recommended")));
+  const screenCard = el("label", { className: "renderer-card" }, screenRadio,
+    el("span", {}, el("strong", {}, "Screen recording"),
+      el("small", {}, "MuseScore + QuickRecorder · macOS")));
+  const advanced = el("details", { className: "record-advanced" },
+    el("summary", {}, "Framing & advanced settings"),
+    scrollAdvanced, screenAdvanced);
+  const previewBtn = el("button", { className: "preview-action", onclick: actions.openPreview }, "Preview");
+
+  actions.setPreviewSettings(() => ({
+    quality: quality.value,
+    top_margin: Number(topMargin.value) || 0,
+    bottom_margin: Number(bottomMargin.value) || 0,
+    ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
+  }));
+  for (const control of [quality, topMargin, bottomMargin, bpm]) {
+    control.addEventListener("input", actions.previewInputsChanged);
+  }
+
   const applyRenderer = () => {
     scrollRadio.checked = renderer === "scroll";
     screenRadio.checked = renderer === "screen";
-    scrollOpts.style.display = renderer === "scroll" ? "" : "none";
-    screenOpts.style.display = renderer === "screen" ? "" : "none";
-    runBtn.textContent = renderer === "scroll" ? "Render videos" : "Run recording";
+    scrollCard.classList.toggle("selected", renderer === "scroll");
+    screenCard.classList.toggle("selected", renderer === "screen");
+    scrollCommon.style.display = renderer === "scroll" ? "" : "none";
+    scrollAdvanced.style.display = renderer === "scroll" ? "" : "none";
+    screenAdvanced.style.display = renderer === "screen" ? "" : "none";
+    previewBtn.style.display = renderer === "scroll" ? "" : "none";
+    if (renderer === "screen") actions.pausePreview();
+    previewBtn.parentElement?.classList.toggle("screen", renderer === "screen");
+    const count = parts.length ? ` all ${parts.length} parts` : " videos";
+    runBtn.textContent = renderer === "scroll" ? `Render${count}` : `Record${count}`;
     sub.textContent = renderer === "scroll"
       ? "Draw the scrolling score straight from the notes — nothing on screen, runs unattended."
       : "Export per-voice audio, record + merge the play-along video. macOS only.";
@@ -1197,15 +1344,11 @@ function panelRecord(panel, song, P, refresh) {
   const choose = (which) => { renderer = which; applyRenderer(); };
 
   panel.append(
-    el("label", {}, "How to make the videos"),
-    el("div", { className: "row" }, scrollRadio,
-      el("span", { onclick: () => choose("scroll") }, "Scrolling score "),
-      el("span", { className: "hint" }, "(default)")),
-    el("div", { className: "row" }, screenRadio,
-      el("span", { onclick: () => choose("screen") }, "Screen recording "),
-      el("span", { className: "hint" }, "(MuseScore + QuickRecorder, macOS)")),
-    scrollOpts, screenOpts,
-    el("div", { className: "row" }, runBtn),
+    el("label", {}, "Video style"),
+    el("div", { className: "renderer-choices" }, scrollCard, screenCard),
+    scrollCommon,
+    advanced,
+    el("div", { className: "record-actions" }, previewBtn, runBtn),
     makeLog(song.jobs?.render));
 
   scrollRadio.onclick = () => choose("scroll");

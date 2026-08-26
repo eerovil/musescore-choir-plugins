@@ -119,6 +119,7 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); }
 }
 .log .err { color: var(--bad); }
 .log .progress { color: var(--accent); }
+.log:empty { display: none; }
 
 /* punch list */
 .issue { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
@@ -166,6 +167,45 @@ table.grid input.unset { border-color: var(--warn); }
 .verify .check.passed { color: var(--good); }
 .verify .check.warning, .verify .check.stale { color: var(--warn); }
 .verify .check.file { margin-left: 14px; font-size: 12px; }
+.compact-review { display: none; }
+.compact-review ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.compact-check {
+  display: grid; grid-template-columns: 20px 64px minmax(0, 1fr); gap: 6px;
+  align-items: start; padding: 7px 0; border-top: 1px solid var(--line);
+}
+.compact-check:first-child { border-top: 0; }
+.compact-check.passed .compact-icon { color: var(--good); }
+.compact-check.warning .compact-icon, .compact-check.stale .compact-icon { color: var(--warn); }
+.compact-detail { color: var(--muted); min-width: 0; }
+.review-state { font-weight: 700; }
+.compact-review.ready .review-state { color: var(--good); }
+.compact-review.recommended .review-state { color: var(--warn); }
+.compact-review.attention .review-state { color: var(--bad); }
+.review-actions { margin-top: 12px; }
+.review-approve { width: 100%; }
+.approval-summary {
+  display: grid; gap: 2px; padding: 10px 12px; margin: 8px 0 12px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+}
+.approval-summary.approved strong { color: var(--good); }
+.approval-summary.attention strong { color: var(--warn); }
+.approval-summary span { color: var(--muted); }
+.approval-summary button { justify-self: start; margin-top: 6px; }
+.renderer-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.renderer-card {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+  color: var(--text); cursor: pointer;
+}
+.renderer-card.selected { border-color: var(--accent); background: rgba(110,168,254,.1); }
+.renderer-card > span { display: grid; min-width: 0; }
+.renderer-card small { color: var(--muted); line-height: 1.3; }
+.record-common { margin-top: 10px; }
+.record-advanced { margin: 12px 0; border: 1px solid var(--line); border-radius: 9px; padding: 0 10px; }
+.record-advanced summary { cursor: pointer; padding: 10px 0; color: var(--muted); }
+.record-actions { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+.record-actions.screen { grid-template-columns: 1fr; }
+.record-actions .primary { width: 100%; }
 .result { margin: 12px 0; }
 .result .rlabel { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
 .result video { width: 100%; border-radius: 8px; background: #000; }
@@ -255,6 +295,8 @@ table.grid input.unset { border-color: var(--warn); }
 .pvaudio { flex: 1 1 16rem; min-width: 12rem; max-width: 100%; height: 34px; }
 .pvaudio-status { color: var(--muted); font-size: .8rem; }
 .pvaudio-status.err { color: #b3261e; }
+.recordpreview { padding: 14px; text-align: left; background: #0e0f13; }
+.recordpreview .svgpreview { width: min(100%, 1100px); margin: 0 auto; }
 
 /* ---- Phone ---------------------------------------------------------------
    The bar that switches panes is in the DOM at every width; here is the only
@@ -316,6 +358,29 @@ table.grid input.unset { border-color: var(--warn); }
   .viewer { flex-direction: column; }    /* if a split is already open, stack it */
   .vslot { border-left: 0; border-top: 1px solid var(--line); }
   .vslot:first-child { border-top: 0; }
+
+  /* Review is an approval task on a phone: concise evidence first and the main
+     action held within thumb reach. Desktop keeps the complete verification card. */
+  .review-panel { min-height: 100%; display: flex; flex-direction: column; }
+  .review-panel .compact-review { display: block; }
+  .review-panel .review-full { display: none; }
+  .review-secondary { margin-top: 8px; }
+  .review-secondary button { flex: 1 1 0; }
+  .review-actions {
+    position: sticky; bottom: -14px; margin-top: auto; padding: 10px 0 14px;
+    background: linear-gradient(transparent, var(--bg) 16px);
+  }
+
+  .approval-summary { padding: 8px 10px; }
+  .renderer-card { padding: 9px 8px; }
+  .renderer-card small { font-size: 11px; }
+  .record-common label { margin-top: 8px; }
+  .output-row { align-items: center; }
+  .output-row .hint { font-size: 11px; }
+  .record-advanced { margin: 10px 0; }
+  .record-actions { position: sticky; bottom: -14px; padding: 8px 0 14px; background: var(--bg); }
+  .recordpreview { padding: 8px; }
+  .recordpreview .svgpreview { min-height: 100%; }
 
   /* The clean grid is four columns of a table on a 390px screen. One card per staff
      instead, header row dropped — the cells label themselves. */

@@ -408,6 +408,9 @@
     show();
     loadMix("ALL");
 
+    // Two ways to stop, and the difference is the whole point of the pane switch.
+    // `destroy` throws the audio away with the picture; `pause` only stops the
+    // sound and the frames, so coming back to a hidden preview costs nothing.
     function destroy() {
       ++request;
       if (controller) controller.abort();
@@ -416,13 +419,13 @@
       preparing = true;
       clearAudio();
     }
-    return { stop: destroy };
+    return { stop: destroy, pause };
   }
 
   // The Record panel's preview block: a button, a status line, and the player once
   // the picture is ready. Preparing it engraves and rasterises the score, which
   // takes seconds — against the minutes the render it stands in for costs.
-  window.scrollPreviewPanel = function (base, settings) {
+  window.scrollPreviewPanel = function (base, settings, fingerprint) {
     const box = document.createElement("div");
     box.className = "svgpreview";
     const status = document.createElement("div");
@@ -432,11 +435,48 @@
     button.setAttribute("data-preview", "open");
     button.textContent = "Preview scroll";
     let live = null;
+    let request = 0;
+    let preparedSignature = null;
+    let loadingSignature = null;
+    let preparing = false;
 
-    button.onclick = async () => {
+    const signature = () => JSON.stringify({
+      cleaned_fingerprint: fingerprint ? fingerprint() : null,
+      ...settings(),
+    });
+
+    const invalidate = (message) => {
+      const hadPreview = live || loadingSignature;
+      request += 1;
       if (live) live.stop();
       live = null;
-      holder.textContent = "";
+      preparedSignature = null;
+      loadingSignature = null;
+      holder.replaceChildren();
+      status.className = "pvstatus";
+      status.textContent = message && hadPreview ? message : "";
+      button.disabled = preparing;
+    };
+
+    box._pausePreview = () => {
+      if (live) live.pause();
+    };
+    box._stopPreview = () => invalidate("");
+    box._syncPreview = () => {
+      const current = signature();
+      if ((live && preparedSignature !== current)
+          || (loadingSignature && loadingSignature !== current)) {
+        invalidate("Preview inputs changed — prepare it again.");
+      }
+    };
+
+    button.onclick = async () => {
+      if (preparing) return;
+      invalidate("");
+      const token = request;
+      const requestedSignature = signature();
+      loadingSignature = requestedSignature;
+      preparing = true;
       button.disabled = true;
       status.className = "pvstatus";
       status.textContent = "Preparing the preview (drawing the score)…";
@@ -445,6 +485,7 @@
         const query = new URLSearchParams(chosen).toString();
         const data = await loadPreview(`${base}/scroll-preview?${query}`,
                                        (name) => `${base}/scroll-preview/${name}`);
+        if (token !== request || requestedSignature !== signature()) return;
         status.textContent = "Preview ready — sound is prepared one selected mix at a time.";
         live = mount(holder, data, (mix) => {
           const audioQuery = new URLSearchParams({
@@ -452,10 +493,15 @@
           }).toString();
           return `${base}/scroll-preview-audio?${audioQuery}`;
         });
+        preparedSignature = requestedSignature;
+        loadingSignature = null;
       } catch (err) {
+        if (token !== request) return;
+        loadingSignature = null;
         status.className = "pvstatus err";
         status.textContent = err.message;
       } finally {
+        preparing = false;
         button.disabled = false;
       }
     };

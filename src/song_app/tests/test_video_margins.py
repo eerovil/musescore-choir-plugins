@@ -23,6 +23,7 @@ def song(tmp_path, monkeypatch):
         fh.write("<museScore><Score/></museScore>")
     s.data["cleaned"] = os.path.basename(cleaned)
     s.data["stage"] = "record"
+    s.data["review"] = {"approved_against": state.file_fingerprint(cleaned)}
     s.save()
     return s
 
