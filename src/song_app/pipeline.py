@@ -6,6 +6,7 @@ non-interactively. No musical logic lives here; this only orchestrates.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -606,9 +607,15 @@ PREVIEW_PAYLOAD = "preview.json"
 def _preview_key(cleaned_path: str, settings: Dict) -> str:
     """What a cached preview is a preview *of*: this score, under these settings."""
     from . import state
+    from src.scrollvideo.audio import musescore_identity
 
-    return json.dumps({"score": state.file_fingerprint(cleaned_path), **settings},
-                      sort_keys=True)
+    return json.dumps({"score": state.file_fingerprint(cleaned_path),
+                       "musescore": musescore_identity(), **settings}, sort_keys=True)
+
+
+def _preview_revision(key: str) -> str:
+    """Opaque identity the browser returns when asking for matching audio."""
+    return hashlib.sha256(key.encode()).hexdigest()
 
 
 def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
@@ -628,7 +635,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     Rebuilding empties the folder first. Tile names are positional (`strip-3.png`),
     so a shorter score would otherwise be played against the tail of a longer one.
     """
-    from src.scrollvideo.preview import preview
+    from src.scrollvideo.preview import AUDIO_SOURCE, preview
 
     width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
     settings = {"quality": quality, "width": width, "height": height, "fps": fps,
@@ -641,7 +648,8 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     try:
         with open(path) as fh:
             cached = json.load(fh)
-        if cached.get("key") == key:
+        if (cached.get("key") == key
+                and os.path.isfile(os.path.join(cache_dir, AUDIO_SOURCE))):
             return cached["preview"]
     except (OSError, ValueError, KeyError):
         pass
@@ -651,12 +659,73 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                       initial_bpm=initial_bpm,
                       top_margin_percent=top_margin_percent,
                       bottom_margin_percent=bottom_margin_percent, log=log)
+    payload["revision"] = _preview_revision(key)
     os.makedirs(cache_dir, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         json.dump({"key": key, "preview": payload}, fh)
     os.replace(tmp, path)
     return payload
+
+
+def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: str, *,
+                         quality: str = "4k", initial_bpm: Optional[int] = None,
+                         top_margin_percent: float = 0.0,
+                         bottom_margin_percent: float = 0.0,
+                         log: Logger = _noop) -> Tuple[str, bool]:
+    """Return one lazy preview WAV made from the final renderer's prepared score.
+
+    The caller supplies the revision of the picture it already has. It must match
+    the current score, settings and persisted source; this refuses an edited score
+    rather than silently pairing new sound with old pixels. The audio cache is the
+    final renderer's cache, so a mix prepared here is reused by a later MP4 render
+    and vice versa.
+    """
+    from src.scrollvideo.audio import render_mix_cached
+    from src.scrollvideo.build import COMBINED
+    from src.scrollvideo.preview import AUDIO_SOURCE
+
+    width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
+    settings = {"quality": quality, "width": width, "height": height, "fps": fps,
+                "bpm": initial_bpm, "top": top_margin_percent,
+                "bottom": bottom_margin_percent}
+    key = _preview_key(cleaned_path, settings)
+    cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
+    source = os.path.join(cache_dir, AUDIO_SOURCE)
+    try:
+        with open(os.path.join(cache_dir, PREVIEW_PAYLOAD)) as fh:
+            cached = json.load(fh)
+        payload = cached["preview"]
+    except (OSError, ValueError, KeyError):
+        raise ValueError("The preview is no longer available — reopen it.") from None
+    if (not revision or revision != _preview_revision(key)
+            or cached.get("key") != key or not os.path.isfile(source)):
+        raise ValueError("The score or preview settings changed — reopen the preview.")
+    parts = payload.get("parts", [])
+    dropped = payload.get("dropped", [])
+    if mix != COMBINED and mix not in parts:
+        available = ", ".join([COMBINED, *parts])
+        detail = f"No such preview mix: {mix}. Available: {available}"
+        if dropped:
+            detail += f" (left out because silent: {', '.join(dropped)})"
+        raise ValueError(detail)
+
+    audio_cache = os.path.join(song_dir, "media", ".scrollvideo-audio")
+    result = render_mix_cached(source, None if mix == COMBINED else mix, audio_cache)
+
+    # MuseScore export can take minutes. Refuse the completed old mix if the score,
+    # settings or renderer changed while it was being made; the content-addressed
+    # WAV may remain cached, but it is never attached to the newer picture.
+    if _preview_key(cleaned_path, settings) != key:
+        raise ValueError("The score or preview settings changed — reopen the preview.")
+    try:
+        with open(os.path.join(cache_dir, PREVIEW_PAYLOAD)) as fh:
+            current = json.load(fh)
+    except (OSError, ValueError):
+        raise ValueError("The preview changed while audio was prepared — reopen it.") from None
+    if current.get("key") != key or current.get("preview", {}).get("revision") != revision:
+        raise ValueError("The preview changed while audio was prepared — reopen it.")
+    return result
 
 
 def scroll_preview_tile(song_dir: str, name: str) -> Optional[str]:

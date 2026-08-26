@@ -104,23 +104,27 @@ def _valid_wav(path: str) -> bool:
         return False
 
 
-def _cache_key(mscx_path: str, focus: Optional[str], **volumes) -> str:
-    with open(mscx_path, "rb") as source:
-        score_digest = hashlib.sha256(source.read()).hexdigest()
+def musescore_identity() -> list:
+    """The configured renderer binary, for caches whose output depends on it."""
     configured = musescore_cli()
     executable = shutil.which(configured) or configured
     try:
         stat = os.stat(executable)
-        executable_identity = [os.path.realpath(executable), stat.st_size, stat.st_mtime_ns]
+        return [os.path.realpath(executable), stat.st_size, stat.st_mtime_ns]
     except FileNotFoundError:
-        executable_identity = [executable]
+        return [executable]
+
+
+def _cache_key(mscx_path: str, focus: Optional[str], **volumes) -> str:
+    with open(mscx_path, "rb") as source:
+        score_digest = hashlib.sha256(source.read()).hexdigest()
     payload = {
         "version": AUDIO_CACHE_VERSION,
         "score": score_digest,
         "focus": focus,
         "focus_volume": volumes.get("focus_volume", FOCUS_VOLUME),
         "background_volume": volumes.get("background_volume", BACKGROUND_VOLUME),
-        "musescore": executable_identity,
+        "musescore": musescore_identity(),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 

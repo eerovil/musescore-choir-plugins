@@ -53,7 +53,7 @@
     const response = await fetch(url);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || response.statusText);
-    const all = [...data.strip.tiles, ...data.lit.tiles];
+    const all = [...data.strip.tiles, ...data.lit.tiles, ...data.background.tiles];
     const images = await Promise.all(all.map((tile) => loadImage(tileUrl(tile.name))));
     all.forEach((tile, index) => { tile.image = images[index]; });
     return data;
@@ -107,7 +107,7 @@
       return null;
     };
 
-    function draw(t) {
+    function draw(t, focusStaff = null) {
       // The same three steps, in the same order, as one turn of `video.render`'s
       // loop: the window, the beat marker over it, then the lit symbols on top.
       const left = Math.trunc(positionAt(data.scroll, t) - data.playhead * frame.width);
@@ -122,21 +122,33 @@
       }
 
       for (const e of sounding(t)) {
-        copy(data.lit.tiles, e.x0, e.y0, e.x1 - e.x0, e.y1 - e.y0, e.x0 - left);
+        const tiles = focusStaff === null || e.staff === focusStaff
+          ? data.lit.tiles : data.background.tiles;
+        copy(tiles, e.x0, e.y0, e.x1 - e.x0, e.y1 - e.y0, e.x0 - left);
       }
     }
 
-    return { stage, draw, duration: data.duration };
+    return { stage, draw, duration: data.duration, parts: data.parts };
   }
 
-  // A control strip and a clock over the picture: play/pause, restart, and a
-  // scrubber that moves the score the moment it is dragged.
-  function mount(host, data) {
+  // Audio is the clock while it exists. The short visual tail after MuseScore's
+  // WAV ends uses wall time only because there is no longer an audio time to read.
+  function mount(host, data, audioUrl) {
     const player = makePlayer(data);
     let time = 0;
     let playing = false;
+    let wantedPlay = false;
     let raf = null;
     let last = 0;
+    let audioReady = false;
+    let loading = false;
+    let preparing = false;
+    let audioFailed = false;
+    let tail = false;
+    let focusStaff = null;
+    let request = 0;
+    let controller = null;
+    let objectUrl = null;
 
     const playBtn = document.createElement("button");
     playBtn.setAttribute("data-preview", "play");
@@ -154,50 +166,257 @@
     const readout = document.createElement("span");
     readout.className = "pvtime";
     readout.setAttribute("data-preview", "time");
+    const mix = document.createElement("select");
+    mix.setAttribute("data-preview", "mix");
+    for (const name of ["ALL", ...player.parts]) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      mix.append(option);
+    }
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.preload = "auto";
+    audio.className = "pvaudio";
+    audio.setAttribute("data-preview", "audio");
+    const audioStatus = document.createElement("span");
+    audioStatus.className = "pvaudio-status";
+    audioStatus.setAttribute("data-preview", "audio-status");
+    const retryBtn = document.createElement("button");
+    retryBtn.textContent = "Retry audio";
+    retryBtn.hidden = true;
+    retryBtn.setAttribute("data-preview", "retry-audio");
 
     const show = () => {
       seek.value = String(time);
       readout.textContent = `${clock(time)} / ${clock(player.duration)}`;
-      playBtn.textContent = playing ? "Pause" : "Play";
-      player.draw(time);
+      playBtn.textContent = playing || wantedPlay ? "Pause" : "Play";
+      playBtn.disabled = !audioReady;
+      retryBtn.hidden = !audioFailed;
+      player.draw(time, focusStaff);
     };
 
-    const stop = () => {
+    const stopFrames = () => {
       playing = false;
       if (raf) cancelAnimationFrame(raf);
       raf = null;
     };
 
+    const startFrames = () => {
+      if (raf) return;
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    };
+
     const frame = (now) => {
       // The panel is rebuilt from scratch on every refresh, so a player whose
       // picture has left the page must let go rather than animate a stray node.
-      if (!player.stage.isConnected) return stop();
-      time = Math.min(player.duration, time + (now - last) / 1000);
+      if (!player.stage.isConnected) return destroy();
+      if (audioReady && !tail && !audio.paused && !audio.ended) {
+        time = Math.min(player.duration, audio.currentTime);
+      } else {
+        time = Math.min(player.duration, time + (now - last) / 1000);
+      }
       last = now;
-      if (time >= player.duration) { stop(); show(); return; }
+      if (time >= player.duration) {
+        wantedPlay = false;
+        loading = true;
+        audio.pause();
+        loading = false;
+        stopFrames();
+        show();
+        return;
+      }
       show();
       raf = requestAnimationFrame(frame);
     };
 
-    const play = () => {
-      if (playing) return;
-      if (time >= player.duration) time = 0;
+    const pause = () => {
+      wantedPlay = false;
+      if (audioReady && !tail) time = audio.currentTime;
+      audio.pause();
+      stopFrames();
+      show();
+    };
+
+    const play = async () => {
+      if (time >= player.duration) {
+        time = 0;
+        tail = false;
+      }
+      wantedPlay = true;
+      if (!audioReady) {
+        if (!preparing) loadMix(mix.value);
+        show();
+        return;
+      }
+      if (time < audio.duration) {
+        tail = false;
+        audio.currentTime = time;
+        try {
+          await audio.play();
+        } catch (_err) {
+          wantedPlay = false;
+          audioStatus.textContent = "Audio is ready — press Play again.";
+          show();
+          return;
+        }
+      } else {
+        tail = true;
+      }
+      if (!wantedPlay) return;
       playing = true;
-      last = performance.now();
-      raf = requestAnimationFrame(frame);
+      startFrames();
       show();
     };
 
-    playBtn.onclick = () => (playing ? (stop(), show()) : play());
-    restartBtn.onclick = () => { time = 0; show(); };
-    seek.oninput = () => { time = Number(seek.value); last = performance.now(); show(); };
+    const seekTo = (value) => {
+      time = Math.max(0, Math.min(player.duration, value));
+      if (audioReady) {
+        tail = time >= audio.duration;
+        audio.currentTime = Math.min(time, audio.duration);
+      }
+      last = performance.now();
+      show();
+    };
+
+    const clearAudio = () => {
+      loading = true;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      loading = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+      audioReady = false;
+    };
+
+    const attach = (url) => new Promise((resolve, reject) => {
+      const ready = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new Error("The browser could not play this WAV.")); };
+      const cleanup = () => {
+        audio.removeEventListener("loadedmetadata", ready);
+        audio.removeEventListener("error", failed);
+      };
+      audio.addEventListener("loadedmetadata", ready);
+      audio.addEventListener("error", failed);
+      audio.src = url;
+      audio.load();
+    });
+
+    const loadMix = async (name) => {
+      const token = ++request;
+      if (controller) controller.abort();
+      controller = new AbortController();
+      if (audioReady && !tail) time = audio.currentTime;
+      const resume = wantedPlay || playing;
+      stopFrames();
+      preparing = true;
+      clearAudio();
+      audioFailed = false;
+      wantedPlay = resume;
+      focusStaff = name === "ALL" || !data.focus_staves
+        ? null : player.parts.indexOf(name);
+      audioStatus.className = "pvaudio-status";
+      audioStatus.textContent = `Preparing ${name} audio…`;
+      show();
+      try {
+        const response = await fetch(audioUrl(name), { signal: controller.signal });
+        const blob = await response.blob();
+        if (!response.ok) {
+          let detail = response.statusText;
+          try { detail = JSON.parse(await blob.text()).detail || detail; } catch (_err) {}
+          throw new Error(detail);
+        }
+        const url = URL.createObjectURL(blob);
+        if (token !== request || mix.value !== name) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        await attach(url);
+        if (token !== request || mix.value !== name) return;
+        audioReady = true;
+        preparing = false;
+        tail = time >= audio.duration;
+        audio.currentTime = Math.min(time, audio.duration);
+        audioStatus.textContent = `${name} audio ready`;
+        show();
+        if (wantedPlay) await play();
+      } catch (err) {
+        if (err.name === "AbortError" || token !== request) return;
+        preparing = false;
+        audioFailed = true;
+        audioStatus.className = "pvaudio-status err";
+        audioStatus.textContent = err.message;
+        wantedPlay = false;
+        show();
+      }
+    };
+
+    playBtn.onclick = () => (playing || wantedPlay ? pause() : play());
+    restartBtn.onclick = () => seekTo(0);
+    seek.oninput = () => seekTo(Number(seek.value));
+    mix.onchange = () => loadMix(mix.value);
+    retryBtn.onclick = () => loadMix(mix.value);
+
+    audio.addEventListener("play", () => {
+      if (loading) return;
+      wantedPlay = true;
+      playing = true;
+      tail = false;
+      time = audio.currentTime;
+      startFrames();
+      show();
+    });
+    audio.addEventListener("pause", () => {
+      if (loading || preparing || audio.ended) return;
+      wantedPlay = false;
+      time = audio.currentTime;
+      stopFrames();
+      show();
+    });
+    audio.addEventListener("seeking", () => {
+      if (!tail) {
+        time = audio.currentTime;
+        show();
+      }
+    });
+    audio.addEventListener("ended", () => {
+      if (wantedPlay && time < player.duration) {
+        tail = true;
+        time = Math.max(time, audio.duration);
+        playing = true;
+        startFrames();
+      } else {
+        wantedPlay = false;
+        stopFrames();
+      }
+      show();
+    });
 
     const controls = document.createElement("div");
     controls.className = "row pvcontrols";
     controls.append(playBtn, restartBtn, seek, readout);
-    host.append(player.stage, controls);
+    const audioControls = document.createElement("div");
+    audioControls.className = "row pvaudio-controls";
+    const label = document.createElement("label");
+    label.textContent = "Mix ";
+    label.append(mix);
+    audioControls.append(label, audio, audioStatus, retryBtn);
+    host.append(player.stage, controls, audioControls);
     show();
-    return { stop };
+    loadMix("ALL");
+
+    function destroy() {
+      ++request;
+      if (controller) controller.abort();
+      wantedPlay = false;
+      stopFrames();
+      preparing = true;
+      clearAudio();
+    }
+    return { stop: destroy };
   }
 
   // The Record panel's preview block: a button, a status line, and the player once
@@ -222,11 +441,17 @@
       status.className = "pvstatus";
       status.textContent = "Preparing the preview (drawing the score)…";
       try {
-        const query = new URLSearchParams(settings()).toString();
+        const chosen = settings();
+        const query = new URLSearchParams(chosen).toString();
         const data = await loadPreview(`${base}/scroll-preview?${query}`,
                                        (name) => `${base}/scroll-preview/${name}`);
-        status.textContent = "Silent preview — the render's own picture, without the sound.";
-        live = mount(holder, data);
+        status.textContent = "Preview ready — sound is prepared one selected mix at a time.";
+        live = mount(holder, data, (mix) => {
+          const audioQuery = new URLSearchParams({
+            ...chosen, mix, revision: data.revision,
+          }).toString();
+          return `${base}/scroll-preview-audio?${audioQuery}`;
+        });
       } catch (err) {
         status.className = "pvstatus err";
         status.textContent = err.message;

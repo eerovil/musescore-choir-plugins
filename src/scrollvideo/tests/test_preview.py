@@ -22,8 +22,8 @@ from lxml import etree
 from PIL import Image
 
 from src.scrollvideo import build, preview as preview_mod, video as video_mod
-from src.scrollvideo.preview import PREVIEW_HEIGHT, preview
-from src.scrollvideo.video import BAND_ALPHA, HIGHLIGHT
+from src.scrollvideo.preview import AUDIO_SOURCE, PREVIEW_HEIGHT, preview
+from src.scrollvideo.video import BACKGROUND_ALPHA, BAND_ALPHA, HIGHLIGHT
 
 from .conftest import FILES, needs_ffmpeg, needs_musescore
 
@@ -114,6 +114,11 @@ def test_a_lit_symbol_is_the_blue_the_renderer_paints(fermata_mscx, prepared_pre
     if solid.any():
         assert np.array_equal(np.unique(lit[:, :, :3][solid].reshape(-1, 3), axis=0),
                               np.array([HIGHLIGHT], dtype=np.uint8))
+
+    background = _joined(payload, out_dir, "background")
+    assert np.array_equal(
+        background[:, :, :3][covered],
+        video_mod.lit_pixels(drawn.coverage, BACKGROUND_ALPHA)[covered])
 
 
 @needs_ffmpeg
@@ -318,8 +323,14 @@ def test_nothing_is_encoded_and_no_voice_is_mixed(fermata_mscx, tmp_path, monkey
     monkeypatch.setattr("src.scrollvideo.audio.render_mix", refuse)
     out = str(tmp_path / "out")
     preview(fermata_mscx, out, **SIZE)
-    # And nothing is left behind but the picture.
-    assert all(name.endswith(".png") for name in os.listdir(out))
+    # Audio remains lazy, but the exact renderer-prepared score survives so a later
+    # selected mix can use it after `preview()`'s temporary directory is gone.
+    assert set(os.listdir(out)) == {
+        AUDIO_SOURCE,
+        *[name for name in os.listdir(out) if name.endswith(".png")],
+    }
+    assert open(os.path.join(out, AUDIO_SOURCE), "rb").read() == open(
+        fermata_mscx, "rb").read()
 
 
 def test_a_long_score_is_sent_as_tiles_a_browser_can_decode(fermata_mscx, tmp_path,
@@ -338,3 +349,9 @@ def test_a_long_score_is_sent_as_tiles_a_browser_can_decode(fermata_mscx, tmp_pa
 def test_the_playhead_is_the_renderers(payload):
     """Where the sung note sits across the frame is a render decision, not a UI one."""
     assert payload["playhead"] == preview_mod.PLAYHEAD
+
+
+def test_part_focus_is_off_when_parts_do_not_map_one_to_one_to_staves(
+        fermata_mscx, payload):
+    ready = _prepared(fermata_mscx)
+    assert payload["focus_staves"] is (ready.singing_staves == len(ready.names))

@@ -487,7 +487,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         if emphasise:
             for name, focus in mixes:
                 staff = (names.index(focus)
-                         if focus and len(layout.staff_tops) == len(names) else None)
+                         if focus and ready.singing_staves == len(names) else None)
                 log(f"{name}: rendering video (emphasised)")
                 out = os.path.join(out_dir, f"{base} {name}.mp4")
                 render(strip, placed, anchors, out, px_per_unit=px_per_unit, width=width,
