@@ -139,13 +139,13 @@ def test_sparse_score_is_not_widened_for_a_problem_it_does_not_have(tmp_path):
     score = _two_bars(quarters, quarters)
     source, spaced, root = _adaptive_spacer(tmp_path, score)
 
+    # No approximation here: if the natural widths already satisfy the cap, the
+    # minimum-width answer is to add no spacer staff and engrave the source itself.
+    assert spaced == ""
+    assert root is None
     natural = _bar_widths(engrave(str(source)).svg)
-    adaptive = _bar_widths(engrave(spaced).svg)
-    assert adaptive == pytest.approx(natural, rel=0.01)
-
-    spacer = root.findall("part")[-1]
-    assert all(note.get("print-spacing") == "no"
-               for note in spacer.iter("note"))
+    adaptive = _bar_widths(engrave(spaced or str(source)).svg)
+    assert adaptive == natural
 
 
 def test_adaptive_spacing_caps_the_real_four_note_to_32_note_jump(tmp_path):
