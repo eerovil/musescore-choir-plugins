@@ -466,7 +466,7 @@ state model are in `DESIGN.md`.
   `build_videos(basename=...)` so the names come out right); `server._run_record`
   branches on `renderer` and records which one it used in `record.renderer`.
   `find_merged_outputs` matches `.mp4` as well as `.mov` for the same reason.
-- The Record panel has a **silent scroll preview**, so the layout question can be
+- The Record panel already has a **silent scroll preview**, so the layout question can be
   answered before the encoding one. Whether the margins are right, whether the staff
   size reads, where the beat marker sits, whether a repeat lands on the right bar —
   all of that used to cost a full render to find out, and video encoding is the wrong
@@ -480,6 +480,17 @@ state model are in `DESIGN.md`.
   margins, the tempo the app supplies), so a score edited in MuseScore or a margin
   nudged is prepared again rather than reused. Preparing costs seconds, which is why
   it is cached at all.
+- This pull request proposes adding **lazy synchronized audio** to that player. The
+  visual preview keeps a private copy of `build.prepare`'s exact render source;
+  `GET /scroll-preview-audio` validates the picture's revision and selected `ALL`
+  or singing-part mix, then calls `audio.render_mix_cached` in the same
+  `media/.scrollvideo-audio` cache the final renderer uses. Opening the picture
+  still renders no audio. The browser prepares only the selected mix, uses the
+  native audio element's `currentTime` as the picture clock, and falls back to wall
+  time only for the renderer's short silent tail after the WAV ends. Switching a
+  part keeps the current position, ignores stale requests, and swaps between
+  pre-painted focus/background highlight tiles without engraving or rasterising
+  again. An audio error leaves the picture and controls available.
 - This pull request changes **what the preview is made of: the renderer's own
   pixels**, not its SVG. The preview drew the engraving in the browser, and a browser
   is not what draws the video. Verovio writes lyrics, measure numbers and part names

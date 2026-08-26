@@ -12,6 +12,7 @@ stubbed, so these run without MuseScore.
 
 import json
 import os
+import wave
 
 import pytest
 
@@ -24,6 +25,9 @@ PAYLOAD = {"duration": 12.0, "frame": {"width": 853, "height": 480},
            "strip": {"width": 1000, "tiles": [{"name": "strip-0.png", "x": 0,
                                                "width": 1000}]},
            "lit": {"tiles": [{"name": "lit-0.png", "x": 0, "width": 1000}]},
+           "background": {"tiles": [{"name": "background-0.png", "x": 0,
+                                        "width": 1000}]},
+           "parts": ["S1", "B1"], "dropped": ["Piano"],
            "scroll": {"times": [0.0], "xs": [0.0], "jump": 1.0}}
 
 
@@ -55,9 +59,11 @@ def prepared(monkeypatch):
     def fake(mscx_path, out_dir, **kwargs):
         calls.append({"path": mscx_path, "out_dir": out_dir, **kwargs})
         os.makedirs(out_dir, exist_ok=True)
-        for tile in ("strip-0.png", "lit-0.png"):
+        for tile in ("strip-0.png", "lit-0.png", "background-0.png"):
             with open(os.path.join(out_dir, tile), "wb") as fh:
                 fh.write(b"\x89PNG" + str(len(calls)).encode())
+        with open(os.path.join(out_dir, "audio-source.mscx"), "wb") as fh:
+            fh.write(open(mscx_path, "rb").read())
         return dict(PAYLOAD, call=len(calls))
 
     monkeypatch.setattr("src.scrollvideo.preview.preview", fake)
@@ -115,6 +121,15 @@ def test_the_tempo_the_app_supplies_is_part_of_what_the_preview_is_of(client, so
     assert prepared[1]["initial_bpm"] == 120
 
 
+def test_changing_the_musescore_renderer_invalidates_the_preview(song, prepared,
+                                                                 monkeypatch):
+    monkeypatch.setenv("MUSESCORE_CLI_PATH", "/missing/musescore-one")
+    pipeline.scroll_preview(song.dir, song.cleaned_path())
+    monkeypatch.setenv("MUSESCORE_CLI_PATH", "/missing/musescore-two")
+    pipeline.scroll_preview(song.dir, song.cleaned_path())
+    assert len(prepared) == 2
+
+
 def test_a_score_with_its_own_tempo_ignores_the_offered_one(client, song, prepared,
                                                             monkeypatch):
     monkeypatch.setattr(pipeline, "has_opening_tempo", lambda _path: True)
@@ -132,6 +147,126 @@ def test_previewing_changes_nothing_about_the_song(client, song, prepared):
     assert data["stage"] == "record"
     assert not data["recording"]
     assert not data.get("record", {}).get("outputs")
+
+
+def test_visual_preview_does_not_prepare_any_audio(client, song, prepared, monkeypatch):
+    monkeypatch.setattr(
+        "src.scrollvideo.audio.render_mix_cached",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("opening the picture must not render a mix")))
+    assert client.get(f"/api/songs/{song.slug}/scroll-preview").status_code == 200
+
+
+@pytest.mark.parametrize(("mix", "focus"), [("ALL", None), ("B1", "B1")])
+def test_audio_uses_the_prepared_score_and_requested_mix(song, prepared, monkeypatch,
+                                                         mix, focus):
+    payload = pipeline.scroll_preview(song.dir, song.cleaned_path())
+    seen = {}
+
+    def fake(source, selected, cache):
+        seen.update(source=source, focus=selected, cache=cache)
+        return os.path.join(cache, "mix.wav"), False
+
+    monkeypatch.setattr("src.scrollvideo.audio.render_mix_cached", fake)
+    path, reused = pipeline.scroll_preview_audio(
+        song.dir, song.cleaned_path(), mix, payload["revision"])
+
+    assert reused is False
+    assert path.endswith("mix.wav")
+    assert seen["focus"] == focus
+    assert seen["cache"] == song.path("media", ".scrollvideo-audio")
+    assert open(seen["source"], "rb").read() == open(song.cleaned_path(), "rb").read()
+
+
+@pytest.mark.parametrize("mix", ["Unknown", "Piano"])
+def test_unknown_or_dropped_audio_mix_is_rejected(song, prepared, monkeypatch, mix):
+    payload = pipeline.scroll_preview(song.dir, song.cleaned_path())
+    monkeypatch.setattr(
+        "src.scrollvideo.audio.render_mix_cached",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("an invalid mix must not be rendered")))
+
+    with pytest.raises(ValueError, match="No such preview mix"):
+        pipeline.scroll_preview_audio(
+            song.dir, song.cleaned_path(), mix, payload["revision"])
+
+
+def test_audio_refuses_an_open_preview_after_the_score_changes(song, prepared):
+    payload = pipeline.scroll_preview(song.dir, song.cleaned_path())
+    with open(song.cleaned_path(), "w") as fh:
+        fh.write("<museScore><Score><Staff/></Score></museScore>")
+
+    with pytest.raises(ValueError, match="reopen"):
+        pipeline.scroll_preview_audio(
+            song.dir, song.cleaned_path(), "ALL", payload["revision"])
+
+
+def test_preview_audio_reuses_the_final_renderer_cache(song, prepared, monkeypatch):
+    payload = pipeline.scroll_preview(song.dir, song.cleaned_path())
+    rendered = []
+
+    def fake_render(_source, focus, out, **_volumes):
+        rendered.append(focus)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with wave.open(out, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(8000)
+            wav.writeframes(b"\0\0" * 10)
+        return out
+
+    monkeypatch.setattr("src.scrollvideo.audio.render_mix", fake_render)
+    first = pipeline.scroll_preview_audio(
+        song.dir, song.cleaned_path(), "ALL", payload["revision"])
+    second = pipeline.scroll_preview_audio(
+        song.dir, song.cleaned_path(), "ALL", payload["revision"])
+
+    assert first[0] == second[0]
+    assert (first[1], second[1]) == (False, True)
+    assert rendered == [None]
+
+
+def test_audio_completed_after_a_score_edit_is_not_served(song, prepared, monkeypatch):
+    payload = pipeline.scroll_preview(song.dir, song.cleaned_path())
+
+    def edit_during_render(_source, _focus, out, **_volumes):
+        with open(song.cleaned_path(), "w") as fh:
+            fh.write("<museScore><Score><Staff/></Score></museScore>")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with wave.open(out, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(8000)
+            wav.writeframes(b"\0\0" * 10)
+        return out
+
+    monkeypatch.setattr("src.scrollvideo.audio.render_mix", edit_during_render)
+    with pytest.raises(ValueError, match="reopen"):
+        pipeline.scroll_preview_audio(
+            song.dir, song.cleaned_path(), "ALL", payload["revision"])
+
+
+def test_audio_endpoint_serves_the_lazy_wav(client, song, monkeypatch, tmp_path):
+    wav = tmp_path / "mix.wav"
+    wav.write_bytes(b"RIFF preview audio")
+    seen = {}
+
+    def fake(song_dir, cleaned, mix, revision, **settings):
+        seen.update(song_dir=song_dir, cleaned=cleaned, mix=mix,
+                    revision=revision, settings=settings)
+        return str(wav), True
+
+    monkeypatch.setattr(pipeline, "scroll_preview_audio", fake)
+    response = client.get(
+        f"/api/songs/{song.slug}/scroll-preview-audio",
+        params={"mix": "S1", "revision": "rev", "quality": "720p", "bpm": 96})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.headers["x-scroll-audio-cache"] == "hit"
+    assert response.content == b"RIFF preview audio"
+    assert (seen["mix"], seen["revision"]) == ("S1", "rev")
+    assert seen["settings"]["initial_bpm"] == 96
 
 
 def test_what_a_render_would_refuse_comes_back_as_a_message(client, song, monkeypatch):

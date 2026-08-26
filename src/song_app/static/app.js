@@ -1175,7 +1175,7 @@ function panelRecord(panel, song, P, refresh) {
       ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
     })),
     el("p", { className: "hint" },
-      "Silent, and nothing is rendered — check the layout and the scrolling first"));
+      "Nothing is encoded — check the picture, timing and selected mix before rendering"));
   const screenOpts = el("div", {},
     el("label", {}, "Audio sync offset (ms)"),
     el("div", { className: "row" }, delay,

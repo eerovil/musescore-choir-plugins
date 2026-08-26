@@ -251,6 +251,10 @@ table.grid input.unset { border-color: var(--warn); }
 .pvtime { font-variant-numeric: tabular-nums; color: var(--muted); }
 .pvstatus { margin: .3rem 0; color: var(--muted); font-size: .85rem; }
 .pvstatus.err { color: #b3261e; }
+.pvaudio-controls { align-items: center; gap: .5rem; margin-top: .35rem; }
+.pvaudio { flex: 1 1 16rem; min-width: 12rem; max-width: 100%; height: 34px; }
+.pvaudio-status { color: var(--muted); font-size: .8rem; }
+.pvaudio-status.err { color: #b3261e; }
 
 /* ---- Phone ---------------------------------------------------------------
    The bar that switches panes is in the DOM at every width; here is the only

@@ -24,6 +24,7 @@ works out nothing about music, layout, time or colour.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from typing import Callable, Dict, List, Optional
 
@@ -33,7 +34,8 @@ from PIL import Image
 from . import spacing as spacing_mod
 from .build import Raster, prepare, raster
 from .timing import JUMP_FRACTION, SMOOTH_SECONDS
-from .video import BAND_ALPHA, HIGHLIGHT, Placed, lit_pixels
+from .video import (BACKGROUND_ALPHA, BAND_ALPHA, FOCUS_ALPHA, HIGHLIGHT, Placed,
+                    lit_pixels)
 
 Logger = Callable[[str], None]
 
@@ -46,6 +48,12 @@ PLAYHEAD = 0.35
 # hundred pixels wide. This is the same picture at a size a page can hold, sharp
 # enough on a desktop panel that the browser is scaling it down rather than up.
 PREVIEW_HEIGHT = 480
+
+# The exact score `build.prepare` gives MuseScore for the final video's audio:
+# silent parts removed and an opening BPM inserted when the app supplied one.
+# Keeping a copy beside the preview lets mixes be rendered lazily after the
+# expensive preparation has finished, without inventing a second preparation path.
+AUDIO_SOURCE = "audio-source.mscx"
 
 # Cairo caps surface dimensions and so do browsers: Chrome refuses images past
 # 16384px on a side, and a long score is wider than that even at this height. The
@@ -75,7 +83,7 @@ def _tiles(array: np.ndarray, out_dir: str, prefix: str, mode: str) -> List[Dict
     return tiles
 
 
-def lit_strip(drawn: Raster) -> np.ndarray:
+def lit_strip(drawn: Raster, strength: float = FOCUS_ALPHA) -> np.ndarray:
     """The whole strip with every playable symbol already repainted blue.
 
     Which symbol is sounding changes forty times a second; what a sounding symbol
@@ -89,7 +97,7 @@ def lit_strip(drawn: Raster) -> np.ndarray:
     """
     covered = drawn.coverage > 0
     alpha = np.where(covered, 255, 0).astype(np.uint8)
-    return np.dstack([lit_pixels(drawn.coverage), alpha])
+    return np.dstack([lit_pixels(drawn.coverage, strength), alpha])
 
 
 def marker_band(marker: Placed) -> List[int]:
@@ -142,6 +150,9 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
         log("Writing the preview tiles")
         strip_tiles = _tiles(drawn.strip, out_dir, "strip", "RGB")
         lit_tiles = _tiles(lit_strip(drawn), out_dir, "lit", "RGBA")
+        background_tiles = _tiles(lit_strip(drawn, BACKGROUND_ALPHA), out_dir,
+                                  "background", "RGBA")
+        shutil.copyfile(ready.source, os.path.join(out_dir, AUDIO_SOURCE))
 
         times, xs = ready.anchors
         return {
@@ -149,6 +160,7 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
             "frame": {"width": frame_width, "height": preview_height},
             "strip": {"width": drawn.width, "tiles": strip_tiles},
             "lit": {"tiles": lit_tiles},
+            "background": {"tiles": background_tiles},
             "playhead": PLAYHEAD,
             "duration": round(ready.duration, TIME_DP),
             "fps": fps,
@@ -165,7 +177,12 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
                                      * drawn.px_per_unit, PX_DP)},
             "events": _events(drawn),
             "highlight": {"colour": "#%02x%02x%02x" % HIGHLIGHT,
-                          "marker_alpha": BAND_ALPHA},
+                          "marker_alpha": BAND_ALPHA,
+                          "focus_alpha": FOCUS_ALPHA,
+                          "background_alpha": BACKGROUND_ALPHA},
             "parts": list(ready.names),
             "dropped": list(ready.dropped),
+            # A part maps to one visible staff only in this shape. Otherwise the
+            # renderer highlights every staff equally rather than guessing.
+            "focus_staves": ready.singing_staves == len(ready.names),
         }

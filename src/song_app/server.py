@@ -844,6 +844,35 @@ async def api_scroll_preview_tile(slug: str, name: str):
     return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
+@app.get("/api/songs/{slug}/scroll-preview-audio")
+async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
+                                   quality: str = "4k",
+                                   top_margin: float = 0.0,
+                                   bottom_margin: float = 0.0,
+                                   bpm: Optional[int] = None):
+    """One selected MuseScore mix, prepared lazily for the browser preview."""
+    song = _require(slug)
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise HTTPException(400, "No cleaned score yet — clean the song first.")
+    settings = {
+        "quality": quality if quality in pipeline.SCROLL_QUALITY else "4k",
+        "top_margin_percent": _margin(top_margin, "Top"),
+        "bottom_margin_percent": _margin(bottom_margin, "Bottom"),
+        "initial_bpm": bpm if bpm and not pipeline.has_opening_tempo(cleaned) else None,
+    }
+    try:
+        path, reused = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: pipeline.scroll_preview_audio(
+                song.dir, cleaned, mix, revision, **settings))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, str(exc) or exc.__class__.__name__)
+    headers = {**REVALIDATE, "X-Scroll-Audio-Cache": "hit" if reused else "miss"}
+    return FileResponse(path, media_type="audio/wav", headers=headers)
+
+
 # --------------------------------------------------------------------------
 # Record stage
 # --------------------------------------------------------------------------

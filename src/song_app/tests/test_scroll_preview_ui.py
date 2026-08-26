@@ -16,6 +16,7 @@ import os
 import socket
 import threading
 import time
+import wave
 
 import pytest
 
@@ -44,7 +45,7 @@ if not _browser_installed():
 
 import uvicorn  # noqa: E402
 
-from src.song_app import server, state  # noqa: E402
+from src.song_app import pipeline, server, state  # noqa: E402
 
 pytestmark = pytest.mark.browser
 
@@ -54,6 +55,8 @@ TILE = 2048
 PLAYHEAD = 0.35
 HIGHLIGHT = (42, 95, 171)
 BAND_ALPHA = 0.18
+BACKGROUND_ALPHA = 0.45
+BACKGROUND = tuple(int(255 - BACKGROUND_ALPHA * (255 - c)) for c in HIGHLIGHT)
 
 # A curve that walks forward, jumps back to a repeated section a third of the way
 # in, and walks forward again. `jump` is the step size past which the player must
@@ -66,8 +69,10 @@ SCROLL = {
 EVENTS = [
     {"id": "n1", "on": 0.0, "off": 3.0, "staff": 0,
      "x0": 400, "x1": 440, "y0": 100, "y1": 140, "marker": [380, 460]},
-    {"id": "n2", "on": 3.0, "off": 8.0, "staff": 0,
-     "x0": 500, "x1": 540, "y0": 150, "y1": 190, "marker": [480, 560]},
+    {"id": "n3", "on": 0.0, "off": 3.0, "staff": 1,
+     "x0": 500, "x1": 540, "y0": 150, "y1": 190, "marker": None},
+    {"id": "n2", "on": 3.0, "off": 8.0, "staff": 1,
+     "x0": 500, "x1": 540, "y0": 200, "y1": 240, "marker": [480, 560]},
 ]
 
 
@@ -84,12 +89,15 @@ def _write_tiles(out_dir: str) -> dict:
     strip[:, :, 1] = (columns & 255)[None, :]
 
     lit = np.zeros((FRAME["height"], STRIP_WIDTH, 4), dtype=np.uint8)
+    background = np.zeros((FRAME["height"], STRIP_WIDTH, 4), dtype=np.uint8)
     for event in EVENTS:
         box = (slice(event["y0"], event["y1"]), slice(event["x0"], event["x1"]))
         lit[box] = (*HIGHLIGHT, 255)
+        background[box] = (*BACKGROUND, 255)
 
     described = {}
-    for part, array, mode in (("strip", strip, "RGB"), ("lit", lit, "RGBA")):
+    for part, array, mode in (("strip", strip, "RGB"), ("lit", lit, "RGBA"),
+                              ("background", background, "RGBA")):
         tiles = []
         for index, x in enumerate(range(0, STRIP_WIDTH, TILE)):
             width = min(TILE, STRIP_WIDTH - x)
@@ -109,7 +117,8 @@ def _payload(duration: float, out_dir: str) -> dict:
         "scroll": SCROLL, "events": EVENTS,
         "highlight": {"colour": "#%02x%02x%02x" % HIGHLIGHT,
                       "marker_alpha": BAND_ALPHA},
-        "parts": ["S1"], "dropped": [], **_write_tiles(out_dir),
+        "parts": ["S1", "B1"], "dropped": [], "focus_staves": True,
+        **_write_tiles(out_dir),
     }
 
 
@@ -136,13 +145,33 @@ def live(tmp_path_factory):
     previous_cli = os.environ.get("MUSESCORE_CLI_PATH")
     os.environ["MUSESCORE_CLI_PATH"] = str(tmp / "no-musescore-here")
     previous_preview = preview_mod.preview
+    previous_audio = pipeline.scroll_preview_audio
+
+    audio_paths = {}
+    for name in ("ALL", "S1", "B1"):
+        path = tmp / f"{name}.wav"
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(8000)
+            wav.writeframes(b"\0\0" * 8000 * 6)
+        audio_paths[name] = str(path)
 
     def fake_preview(mscx_path, out_dir, **_kwargs):
         # Two scores, so a rebuild is visible: the edited one previews shorter.
         edited = "<Staff/>" in open(mscx_path).read()
-        return _payload(5.0 if edited else 8.0, out_dir)
+        payload = _payload(5.0 if edited else 8.0, out_dir)
+        with open(os.path.join(out_dir, preview_mod.AUDIO_SOURCE), "wb") as fh:
+            fh.write(open(mscx_path, "rb").read())
+        return payload
+
+    def fake_audio(_song_dir, _cleaned, mix, _revision, **_settings):
+        if mix == "S1":
+            time.sleep(0.25)
+        return audio_paths[mix], True
 
     preview_mod.preview = fake_preview
+    pipeline.scroll_preview_audio = fake_audio
 
     song = state.create("Preview Song", per_system=False)
     cleaned = song.path("preview_cleaned.mscx")
@@ -167,6 +196,7 @@ def live(tmp_path_factory):
         srv.should_exit = True
         thread.join(timeout=10)
         preview_mod.preview = previous_preview
+        pipeline.scroll_preview_audio = previous_audio
         state.SONGS_DIR = previous_dir
         if previous_cli is None:
             os.environ.pop("MUSESCORE_CLI_PATH", None)
@@ -189,6 +219,7 @@ def player(live, page):
     _open_record(page, base, slug)
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
     yield page, cleaned
     assert not errors, f"the player raised: {errors}"
 
@@ -249,11 +280,15 @@ def test_seeking_moves_the_score_at_once(player):
     page, _ = player
     page.locator('[data-preview="seek"]').fill("2")
     assert page.locator('[data-preview="time"]').inner_text() == "0:02 / 0:08"
+    assert page.locator('[data-preview="audio"]').evaluate("a => a.currentTime") == \
+        pytest.approx(2.0, abs=0.05)
     # Half way along the first stretch of the curve.
     assert _left(page) == pytest.approx(_left_for(200.0), abs=1)
 
     page.locator('[data-preview="restart"]').click()
     assert page.locator('[data-preview="time"]').inner_text() == "0:00 / 0:08"
+    assert page.locator('[data-preview="audio"]').evaluate("a => a.currentTime") == \
+        pytest.approx(0.0, abs=0.05)
     assert _left(page) == pytest.approx(_left_for(0.0), abs=1)
 
 
@@ -287,12 +322,105 @@ def test_the_sounding_symbol_is_the_blue_the_renderer_painted(player):
 
     seek.fill("1")
     assert _on_screen(page, EVENTS[0]) == HIGHLIGHT
-    silent = EVENTS[1]["x0"] + 5
-    assert _on_screen(page, EVENTS[1]) == _strip_colour(silent)
+    silent = EVENTS[2]["x0"] + 5
+    assert _on_screen(page, EVENTS[2]) == _strip_colour(silent)
 
     seek.fill("3.5")
-    assert _on_screen(page, EVENTS[1]) == HIGHLIGHT
+    assert _on_screen(page, EVENTS[2]) == HIGHLIGHT
     assert _on_screen(page, EVENTS[0]) == _strip_colour(EVENTS[0]["x0"] + 5)
+
+
+def test_a_part_mix_changes_focus_without_rebuilding_the_picture(player):
+    page, _ = player
+    page.locator('[data-preview="seek"]').fill("1")
+    original_canvas = page.locator('[data-preview="canvas"]').evaluate(
+        "c => (c.__issue64 = 'same-canvas')")
+
+    page.locator('[data-preview="mix"]').select_option("S1")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("S1 audio ready")')
+    assert _on_screen(page, EVENTS[0]) == HIGHLIGHT
+    assert _on_screen(page, EVENTS[1]) == BACKGROUND
+    assert page.locator('[data-preview="time"]').inner_text() == "0:01 / 0:08"
+
+    page.locator('[data-preview="mix"]').select_option("ALL")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    assert _on_screen(page, EVENTS[0]) == HIGHLIGHT
+    assert _on_screen(page, EVENTS[1]) == HIGHLIGHT
+    assert page.locator('[data-preview="canvas"]').evaluate("c => c.__issue64") == \
+        original_canvas
+
+
+def test_a_late_mix_request_cannot_replace_the_new_selection(player):
+    page, _ = player
+    page.locator('[data-preview="mix"]').select_option("S1")
+    page.locator('[data-preview="mix"]').select_option("B1")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("B1 audio ready")')
+    page.wait_for_timeout(350)
+    assert page.locator('[data-preview="mix"]').input_value() == "B1"
+    assert page.locator('[data-preview="audio-status"]').inner_text() == "B1 audio ready"
+
+
+def test_switching_mix_while_playing_preserves_position_and_playback(player):
+    page, _ = player
+    page.locator('[data-preview="seek"]').fill("1")
+    page.locator('[data-preview="play"]').click()
+    page.wait_for_timeout(250)
+    before = page.locator('[data-preview="audio"]').evaluate("a => a.currentTime")
+
+    page.locator('[data-preview="mix"]').select_option("B1")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("B1 audio ready")')
+    page.wait_for_timeout(250)
+
+    assert page.locator('[data-preview="play"]').inner_text() == "Pause"
+    assert page.locator('[data-preview="audio"]').evaluate("a => a.currentTime") > before
+
+
+def test_play_waits_until_the_selected_audio_is_ready(player):
+    page, _ = player
+    page.locator('[data-preview="mix"]').select_option("S1")
+    assert page.locator('[data-preview="play"]').is_disabled()
+    assert "Preparing S1 audio" in page.locator('[data-preview="audio-status"]').inner_text()
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("S1 audio ready")')
+    assert page.locator('[data-preview="play"]').is_enabled()
+
+
+def test_audio_failure_keeps_the_picture_and_can_retry_the_same_mix(player):
+    page, _ = player
+    pattern = "**/scroll-preview-audio?*mix=S1*"
+    page.route(pattern, lambda route: route.fulfill(
+        status=500, content_type="application/json", body='{"detail":"audio failed"}'))
+    page.locator('[data-preview="mix"]').select_option("S1")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("audio failed")')
+    assert page.locator(".pvviewport > canvas").is_visible()
+    assert page.locator('[data-preview="retry-audio"]').is_visible()
+
+    page.unroute(pattern)
+    page.locator('[data-preview="retry-audio"]').click()
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("S1 audio ready")')
+    assert page.locator('[data-preview="retry-audio"]').is_hidden()
+
+
+def test_audio_time_is_the_picture_clock(player):
+    page, _ = player
+    page.locator('[data-preview="audio"]').evaluate(
+        "a => { a.currentTime = 2.5; a.dispatchEvent(new Event('seeking')); }")
+    assert _left(page) == pytest.approx(_left_for(250.0), abs=1)
+    assert float(page.locator('[data-preview="seek"]').input_value()) == \
+        pytest.approx(2.5)
+
+
+def test_the_picture_finishes_its_tail_after_the_wav_ends(player):
+    page, _ = player
+    page.locator('[data-preview="seek"]').fill("5.9")
+    page.locator('[data-preview="play"]').click()
+    page.wait_for_timeout(900)
+    assert float(page.locator('[data-preview="seek"]').input_value()) > 6.4
+
+    page.locator('[data-preview="seek"]').fill("7.8")
+    page.wait_for_timeout(350)
+    assert float(page.locator('[data-preview="seek"]').input_value()) == \
+        pytest.approx(8.0)
+    assert page.locator('[data-preview="play"]').inner_text() == "Play"
 
 
 def test_the_beat_marker_follows_the_note_that_just_started(player):
@@ -313,7 +441,7 @@ def test_the_beat_marker_follows_the_note_that_just_started(player):
 
     page.locator('[data-preview="seek"]').fill("3.5")
     left = _left(page)
-    second = EVENTS[1]["marker"][0] + 10
+    second = EVENTS[2]["marker"][0] + 10
     assert _pixel(page, second - left, 300) != _strip_colour(second)
     assert _pixel(page, EVENTS[0]["marker"][0] + 10 - left, 300) == \
         _strip_colour(EVENTS[0]["marker"][0] + 10)
@@ -328,6 +456,9 @@ def test_the_preview_is_prepared_again_once_the_score_changes(player):
     try:
         with open(cleaned, "w") as fh:
             fh.write("<museScore><Score><Staff/></Score></museScore>")
+        # Let the real file watcher refresh the panel first; the click should open
+        # the new revision, not race a DOM replacement caused by that same edit.
+        page.wait_for_timeout(500)
         page.locator('[data-preview="open"]').click()
         page.wait_for_selector('[data-preview="time"]:has-text("0:05")')
     finally:
@@ -349,7 +480,7 @@ def test_the_player_fits_a_phone(live, page):
     panel = page.locator(".pvviewport")
     assert panel.bounding_box()["width"] <= 390
     # The controls are on screen and usable, not off the side of the panel.
-    for control in ("play", "restart", "seek"):
+    for control in ("play", "restart", "seek", "mix", "audio"):
         assert page.locator(f'[data-preview="{control}"]').is_visible()
     page.locator('[data-preview="play"]').click()
     page.wait_for_timeout(400)
