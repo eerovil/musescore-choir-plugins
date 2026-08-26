@@ -432,11 +432,20 @@
     button.setAttribute("data-preview", "open");
     button.textContent = "Preview scroll";
     let live = null;
+    let request = 0;
 
-    button.onclick = async () => {
+    box._stopPreview = () => {
+      request += 1;
       if (live) live.stop();
       live = null;
-      holder.textContent = "";
+      holder.replaceChildren();
+      status.textContent = "";
+      button.disabled = false;
+    };
+
+    button.onclick = async () => {
+      box._stopPreview();
+      const token = request;
       button.disabled = true;
       status.className = "pvstatus";
       status.textContent = "Preparing the preview (drawing the score)…";
@@ -445,6 +454,7 @@
         const query = new URLSearchParams(chosen).toString();
         const data = await loadPreview(`${base}/scroll-preview?${query}`,
                                        (name) => `${base}/scroll-preview/${name}`);
+        if (token !== request) return;
         status.textContent = "Preview ready — sound is prepared one selected mix at a time.";
         live = mount(holder, data, (mix) => {
           const audioQuery = new URLSearchParams({
@@ -453,10 +463,11 @@
           return `${base}/scroll-preview-audio?${audioQuery}`;
         });
       } catch (err) {
+        if (token !== request) return;
         status.className = "pvstatus err";
         status.textContent = err.message;
       } finally {
-        button.disabled = false;
+        if (token === request) button.disabled = false;
       }
     };
 

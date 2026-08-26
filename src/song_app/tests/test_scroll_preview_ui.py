@@ -208,7 +208,7 @@ def _open_record(page, base, slug):
     page.goto(f"{base}/#/song/{slug}")
     page.wait_for_selector(".stagebar")
     page.locator(".stagebar .step", has_text="Record").click()
-    page.wait_for_selector("text=How to make the videos")
+    page.wait_for_selector("text=Video style")
 
 
 @pytest.fixture
@@ -473,7 +473,8 @@ def test_the_player_fits_a_phone(live, page):
     # One pane at a time on a phone: the stage rail is behind the bottom bar.
     page.locator(".mobilebar").get_by_role("button", name="Stages").click()
     page.locator(".stagebar .step", has_text="Record").click()
-    page.wait_for_selector("text=How to make the videos")
+    page.wait_for_selector("text=Video style")
+    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
 
@@ -485,6 +486,35 @@ def test_the_player_fits_a_phone(live, page):
     page.locator('[data-preview="play"]').click()
     page.wait_for_timeout(400)
     assert _left(page) > _left_for(SCROLL["xs"][0])
+    if evidence := os.getenv("ISSUE_66_EVIDENCE_DIR"):
+        os.makedirs(evidence, exist_ok=True)
+        page.screenshot(path=os.path.join(evidence, "issue-66-preview-390.png"),
+                        full_page=True)
+    page.locator(".mobilebar").get_by_role("button", name="Record").click()
+    assert page.locator(".pvviewport").count() == 0, "a hidden preview must be torn down"
+
+
+def test_hiding_preview_while_it_is_preparing_discards_the_late_player(live, page):
+    base, slug, _ = live
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{base}/#/song/{slug}")
+    page.evaluate("""() => {
+        const original = window.fetch;
+        window.fetch = (...args) => String(args[0]).includes('/scroll-preview?')
+          ? new Promise((resolve, reject) => setTimeout(
+              () => original(...args).then(resolve, reject), 500))
+          : original(...args);
+    }""")
+    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
+    page.locator('[data-preview="open"]').click()
+    page.locator(".mobilebar").get_by_role("button", name="Record").click()
+    page.wait_for_timeout(800)
+
+    assert page.locator(".pvviewport").count() == 0
+
+    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
 
 
 def test_a_refused_score_says_so_instead_of_playing(live, page):

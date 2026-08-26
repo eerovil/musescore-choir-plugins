@@ -507,6 +507,23 @@ def api_set_stage(slug: str, stage: str) -> Dict:
     return _derived(song)
 
 
+@app.post("/api/songs/{slug}/approve-review")
+def api_approve_review(slug: str, body: Dict = None) -> Dict:
+    """Record which cleaned score a person approved, then advance to Record."""
+    song = _require(slug)
+    cleaned = song.cleaned_path()
+    approved_against = state.file_fingerprint(cleaned) if cleaned else None
+    if not approved_against:
+        raise HTTPException(400, "There is no cleaned score to approve")
+    expected = (body or {}).get("cleaned_fingerprint")
+    if not expected or expected != approved_against:
+        raise HTTPException(409, "The score changed; review the current version before approving")
+    song.data["review"] = {"approved_against": approved_against}
+    song.set_stage("record")
+    song.save()
+    return _derived(song)
+
+
 # --------------------------------------------------------------------------
 # Lyrics stage
 # --------------------------------------------------------------------------
@@ -1028,6 +1045,12 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
     if is_recording(song):
         raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
     opts = body or {}
+    source_fingerprint = state.file_fingerprint(song.cleaned_path())
+    if not (opts.get("upload_only") or opts.get("merge_only")):
+        if not source_fingerprint:
+            raise HTTPException(400, "Clean the score before rendering")
+        if song.data.get("review", {}).get("approved_against") != source_fingerprint:
+            raise HTTPException(409, "Review and approve the current score before rendering")
     scrolling_render = (opts.get("renderer") or "scroll") == "scroll" \
         and not (opts.get("merge_only") or opts.get("upload_only"))
     cleaned = song.cleaned_path()
@@ -1048,7 +1071,6 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
     else:
         opts.pop("bpm", None)
     kind = "upload" if opts.get("upload_only") else "render"
-    source_fingerprint = state.file_fingerprint(song.cleaned_path())
     if not job_state.start_if_idle(
             song.dir, kind, ("clean", "render", "upload"), source_fingerprint):
         raise HTTPException(409, "Another clean, render, or upload is already running for this song.")

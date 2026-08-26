@@ -93,7 +93,7 @@ def _open_record(page, live):
     # Make this a deliberate selection so the companion script stores it.
     _choose_stage(page, "Review")
     _choose_stage(page, "Record")
-    page.wait_for_selector("text=How to make the videos")
+    page.wait_for_selector("text=Video style")
     return slug
 
 
@@ -103,7 +103,7 @@ def test_workflow_mobile_pane_and_viewer_tab_survive_a_reload(live, page):
     page.set_viewport_size(PHONE)
     slug = _open_record(page, live)
 
-    page.locator(".mobilebar").get_by_role("button", name="Score").click()
+    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
     cleaned_tab = page.locator(".viewtabs .vtab", has_text="Cleaned MSCX").first
     cleaned_tab.click()
     assert cleaned_tab.evaluate("node => node.classList.contains('active')")
@@ -123,7 +123,7 @@ def test_workflow_mobile_pane_and_viewer_tab_survive_a_reload(live, page):
         """)
         page.wait_for_function("""
             () => [...document.querySelectorAll('.mobilebar .mtab')]
-              .some(tab => tab.classList.contains('active') && tab.textContent.trim() === 'Score')
+              .some(tab => tab.classList.contains('active') && tab.textContent.trim() === 'Preview')
         """)
         assert not errors, f"the reloaded workspace raised: {errors}"
     finally:
