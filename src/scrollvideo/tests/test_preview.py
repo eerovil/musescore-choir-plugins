@@ -207,15 +207,17 @@ def test_the_scroll_curve_is_the_renderers_own(fermata_mscx, payload):
     ready = _prepared(fermata_mscx)
     times, xs = ready.anchors
     px = _px(ready)
-    assert payload["scroll"]["times"] == [round(t, 3) for t in times]
-    assert payload["scroll"]["xs"] == [round(x * px, 2) for x in xs]
+    assert payload["scroll"]["times"] == [float(t) for t in times]
+    assert payload["scroll"]["xs"] == [float(x * px) for x in xs]
 
-    # And so the position at a moment agrees, which is what is actually looked at.
+    # Interpolation now differs only by doing the linear scaling before rather
+    # than after it; there is no payload quantisation left to move the crop by a
+    # source pixel.
     for moment in np.linspace(0, ready.duration, 25):
         rendered = float(np.interp(moment, times, xs)) * px
         previewed = float(np.interp(moment, payload["scroll"]["times"],
                                     payload["scroll"]["xs"]))
-        assert abs(rendered - previewed) < 1.0
+        assert previewed == pytest.approx(rendered, abs=1e-9)
 
 
 def test_a_fermata_is_timed_on_musescores_clock(fermata_mscx, payload):
