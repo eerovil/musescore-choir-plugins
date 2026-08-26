@@ -216,13 +216,22 @@ def _open_record(page, base, slug):
 def player(live, page):
     base, slug, cleaned = live
     errors = []
+    audio_requests = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("request", lambda request: audio_requests.append(request.url)
+            if "/scroll-preview-audio?" in request.url else None)
     _open_record(page, base, slug)
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
-    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("Audio off")')
+    page._preview_audio_requests = audio_requests
     yield page, cleaned
     assert not errors, f"the player raised: {errors}"
+
+
+def _enable_audio(page):
+    page.locator('[data-preview="audio-enabled"]').check()
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
 
 
 def _pixel(page, x, y):
@@ -257,6 +266,43 @@ def test_the_player_shows_the_start_of_the_score_in_the_video_s_own_frame(player
     assert page.locator('[data-preview="time"]').inner_text() == "0:00 / 0:08"
 
 
+def test_audio_is_off_until_the_user_enables_it(player):
+    page, _ = player
+    assert page._preview_audio_requests == []
+    assert page.locator('[data-preview="audio-enabled"]').is_checked() is False
+    assert page.locator('[data-preview="mix"]').is_hidden()
+    assert page.locator('[data-preview="audio"]').is_hidden()
+    assert page.locator('[data-preview="play"]').is_enabled()
+
+    _enable_audio(page)
+    assert len(page._preview_audio_requests) == 1
+    assert "mix=ALL" in page._preview_audio_requests[0]
+    assert page.locator('[data-preview="mix"]').is_visible()
+    assert page.locator('[data-preview="audio"]').is_visible()
+
+
+def test_disabling_audio_returns_active_playback_to_the_silent_clock(player):
+    page, _ = player
+    _enable_audio(page)
+    page.locator('[data-preview="play"]').click()
+    page.wait_for_timeout(250)
+    before = float(page.locator('[data-preview="seek"]').input_value())
+    requests = len(page._preview_audio_requests)
+    page.locator('[data-preview="audio"]').evaluate(
+        "a => { a.pause = () => setTimeout(() => "
+        "a.dispatchEvent(new Event('pause')), 50); }")
+
+    page.locator('[data-preview="audio-enabled"]').uncheck()
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("Audio off")')
+    page.wait_for_timeout(250)
+
+    assert page.locator('[data-preview="play"]').inner_text() == "Pause"
+    assert float(page.locator('[data-preview="seek"]').input_value()) > before
+    assert len(page._preview_audio_requests) == requests
+    assert page.locator('[data-preview="mix"]').is_hidden()
+    assert page.locator('[data-preview="audio"]').is_hidden()
+
+
 def test_past_the_end_of_the_strip_is_white_as_the_renderer_leaves_it(player):
     """The frame starts before the music does, so its left edge is off the strip."""
     page, _ = player
@@ -281,15 +327,11 @@ def test_seeking_moves_the_score_at_once(player):
     page, _ = player
     page.locator('[data-preview="seek"]').fill("2")
     assert page.locator('[data-preview="time"]').inner_text() == "0:02 / 0:08"
-    assert page.locator('[data-preview="audio"]').evaluate("a => a.currentTime") == \
-        pytest.approx(2.0, abs=0.05)
     # Half way along the first stretch of the curve.
     assert _left(page) == pytest.approx(_left_for(200.0), abs=1)
 
     page.locator('[data-preview="restart"]').click()
     assert page.locator('[data-preview="time"]').inner_text() == "0:00 / 0:08"
-    assert page.locator('[data-preview="audio"]').evaluate("a => a.currentTime") == \
-        pytest.approx(0.0, abs=0.05)
     assert _left(page) == pytest.approx(_left_for(0.0), abs=1)
 
 
@@ -333,6 +375,7 @@ def test_the_sounding_symbol_is_the_blue_the_renderer_painted(player):
 
 def test_a_part_mix_changes_focus_without_rebuilding_the_picture(player):
     page, _ = player
+    _enable_audio(page)
     page.locator('[data-preview="seek"]').fill("1")
     original_canvas = page.locator('[data-preview="canvas"]').evaluate(
         "c => (c.__issue64 = 'same-canvas')")
@@ -353,6 +396,7 @@ def test_a_part_mix_changes_focus_without_rebuilding_the_picture(player):
 
 def test_a_late_mix_request_cannot_replace_the_new_selection(player):
     page, _ = player
+    _enable_audio(page)
     page.locator('[data-preview="mix"]').select_option("S1")
     page.locator('[data-preview="mix"]').select_option("B1")
     page.wait_for_selector('[data-preview="audio-status"]:has-text("B1 audio ready")')
@@ -363,6 +407,7 @@ def test_a_late_mix_request_cannot_replace_the_new_selection(player):
 
 def test_switching_mix_while_playing_preserves_position_and_playback(player):
     page, _ = player
+    _enable_audio(page)
     page.locator('[data-preview="seek"]').fill("1")
     page.locator('[data-preview="play"]').click()
     page.wait_for_timeout(250)
@@ -378,6 +423,7 @@ def test_switching_mix_while_playing_preserves_position_and_playback(player):
 
 def test_play_waits_until_the_selected_audio_is_ready(player):
     page, _ = player
+    _enable_audio(page)
     page.locator('[data-preview="mix"]').select_option("S1")
     assert page.locator('[data-preview="play"]').is_disabled()
     assert "Preparing S1 audio" in page.locator('[data-preview="audio-status"]').inner_text()
@@ -387,6 +433,7 @@ def test_play_waits_until_the_selected_audio_is_ready(player):
 
 def test_audio_failure_keeps_the_picture_and_can_retry_the_same_mix(player):
     page, _ = player
+    _enable_audio(page)
     pattern = "**/scroll-preview-audio?*mix=S1*"
     page.route(pattern, lambda route: route.fulfill(
         status=500, content_type="application/json", body='{"detail":"audio failed"}'))
@@ -403,6 +450,7 @@ def test_audio_failure_keeps_the_picture_and_can_retry_the_same_mix(player):
 
 def test_audio_time_is_the_picture_clock(player):
     page, _ = player
+    _enable_audio(page)
     page.locator('[data-preview="audio"]').evaluate(
         "a => { a.currentTime = 2.5; a.dispatchEvent(new Event('seeking')); }")
     assert _left(page) == pytest.approx(_left_for(250.0), abs=1)
@@ -412,6 +460,7 @@ def test_audio_time_is_the_picture_clock(player):
 
 def test_the_picture_finishes_its_tail_after_the_wav_ends(player):
     page, _ = player
+    _enable_audio(page)
     page.locator('[data-preview="seek"]').fill("5.9")
     page.locator('[data-preview="play"]').click()
     page.wait_for_timeout(900)
@@ -537,17 +586,18 @@ def test_the_player_fits_a_phone(live, page):
     panel = page.locator(".pvviewport")
     assert panel.bounding_box()["width"] <= 390
     # The controls are on screen and usable, not off the side of the panel.
-    for control in ("play", "restart", "seek", "mix", "audio"):
+    for control in ("play", "restart", "seek", "audio-enabled"):
         assert page.locator(f'[data-preview="{control}"]').is_visible()
-    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    assert page.locator('[data-preview="mix"]').is_hidden()
+    assert page.locator('[data-preview="audio"]').is_hidden()
     page.locator('[data-preview="play"]').click()
     page.wait_for_timeout(400)
     assert _left(page) > _left_for(SCROLL["xs"][0])
     if evidence := os.getenv("ISSUE_66_EVIDENCE_DIR"):
-        # The evidence has to show the UI as it actually settles: picture, mix
-        # picker and the WAV's own controls, with a mix prepared.
-        assert page.locator('[data-preview="mix"]').is_visible()
-        assert "ALL audio ready" in \
+        # The evidence has to show the UI as it actually settles: the picture is
+        # playable immediately and audio remains an explicit opt-in.
+        assert page.locator('[data-preview="audio-enabled"]').is_visible()
+        assert "Audio off" in \
             page.locator('[data-preview="audio-status"]').inner_text()
         os.makedirs(evidence, exist_ok=True)
         page.screenshot(path=os.path.join(evidence, "issue-66-preview-390.png"),
@@ -626,6 +676,7 @@ def test_hiding_preview_pauses_the_sound_but_keeps_it_prepared(live, page):
     page.locator(".mobilebar").get_by_role("button", name="Preview").click()
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
+    _enable_audio(page)
     page.locator('[data-preview="mix"]').select_option("S1")
     page.wait_for_selector('[data-preview="audio-status"]:has-text("S1 audio ready")')
     prepared = (_count(page, "/scroll-preview?"), _count(page, "/scroll-preview-audio?"))
@@ -664,7 +715,7 @@ def test_changing_a_setting_invalidates_the_sound_with_the_picture(live, page):
     _watch(page)
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
-    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    _enable_audio(page)
     assert _blobs(page)["made"] == 1
 
     page.locator(".record-common select").select_option("720p")
@@ -676,7 +727,7 @@ def test_changing_a_setting_invalidates_the_sound_with_the_picture(live, page):
 
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
-    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    _enable_audio(page)
     assert "quality=720p" in page.evaluate(
         "() => window.__seen.filter(u => u.includes('/scroll-preview-audio?')).pop()")
 
@@ -687,7 +738,7 @@ def test_a_changed_score_invalidates_the_sound_with_the_picture(live, page):
     _watch(page)
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
-    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    _enable_audio(page)
 
     original = open(cleaned).read()
     try:
@@ -699,7 +750,7 @@ def test_a_changed_score_invalidates_the_sound_with_the_picture(live, page):
 
         page.locator('[data-preview="open"]').click()
         page.wait_for_selector('[data-preview="time"]:has-text("0:05")')
-        page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+        _enable_audio(page)
     finally:
         with open(cleaned, "w") as fh:
             fh.write(original)
@@ -728,6 +779,7 @@ def test_a_late_audio_response_cannot_reattach_to_an_invalidated_preview(live, p
     }""")
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
+    page.locator('[data-preview="audio-enabled"]').check()
     page.wait_for_selector('[data-preview="audio-status"]:has-text("Preparing ALL audio")')
 
     page.locator(".record-common select").select_option("720p")

@@ -480,12 +480,14 @@ state model are in `DESIGN.md`.
   margins, the tempo the app supplies), so a score edited in MuseScore or a margin
   nudged is prepared again rather than reused. Preparing costs seconds, which is why
   it is cached at all.
-- This pull request proposes adding **lazy synchronized audio** to that player. The
+- The player also has **opt-in synchronized audio**. It stays silent and uses its
+  wall clock until the user checks Audio, so opening or playing the picture does
+  not generate a WAV. The
   visual preview keeps a private copy of `build.prepare`'s exact render source;
   `GET /scroll-preview-audio` validates the picture's revision and selected `ALL`
   or singing-part mix, then calls `audio.render_mix_cached` in the same
   `media/.scrollvideo-audio` cache the final renderer uses. Opening the picture
-  still renders no audio. The browser prepares only the selected mix, uses the
+  still renders no audio. Once enabled, the browser prepares only the selected mix, uses the
   native audio element's `currentTime` as the picture clock, and falls back to wall
   time only for the renderer's short silent tail after the WAV ends. Switching a
   part keeps the current position, ignores stale requests, and swaps between

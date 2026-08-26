@@ -140,9 +140,11 @@
     let wantedPlay = false;
     let raf = null;
     let last = 0;
+    let audioEnabled = false;
     let audioReady = false;
     let loading = false;
     let preparing = false;
+    let ignorePause = false;
     let audioFailed = false;
     let tail = false;
     let focusStaff = null;
@@ -176,7 +178,7 @@
     }
     const audio = document.createElement("audio");
     audio.controls = true;
-    audio.preload = "auto";
+    audio.preload = "none";
     audio.className = "pvaudio";
     audio.setAttribute("data-preview", "audio");
     const audioStatus = document.createElement("span");
@@ -186,12 +188,18 @@
     retryBtn.textContent = "Retry audio";
     retryBtn.hidden = true;
     retryBtn.setAttribute("data-preview", "retry-audio");
+    const enableAudio = document.createElement("input");
+    enableAudio.type = "checkbox";
+    enableAudio.setAttribute("data-preview", "audio-enabled");
 
     const show = () => {
       seek.value = String(time);
       readout.textContent = `${clock(time)} / ${clock(player.duration)}`;
       playBtn.textContent = playing || wantedPlay ? "Pause" : "Play";
-      playBtn.disabled = !audioReady;
+      playBtn.disabled = audioEnabled && !audioReady;
+      mix.hidden = !audioEnabled;
+      if (mix.parentElement) mix.parentElement.hidden = !audioEnabled;
+      audio.hidden = !audioEnabled;
       retryBtn.hidden = !audioFailed;
       player.draw(time, focusStaff);
     };
@@ -245,6 +253,12 @@
         tail = false;
       }
       wantedPlay = true;
+      if (!audioEnabled) {
+        playing = true;
+        startFrames();
+        show();
+        return;
+      }
       if (!audioReady) {
         if (!preparing) loadMix(mix.value);
         show();
@@ -282,6 +296,7 @@
 
     const clearAudio = () => {
       loading = true;
+      ignorePause = !audio.paused;
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
@@ -359,6 +374,31 @@
     seek.oninput = () => seekTo(Number(seek.value));
     mix.onchange = () => loadMix(mix.value);
     retryBtn.onclick = () => loadMix(mix.value);
+    enableAudio.onchange = () => {
+      audioEnabled = enableAudio.checked;
+      if (audioEnabled) {
+        loadMix(mix.value);
+        return;
+      }
+
+      ++request;
+      if (controller) controller.abort();
+      controller = null;
+      if (audioReady && !tail) time = audio.currentTime;
+      const resume = wantedPlay || playing;
+      preparing = true;
+      clearAudio();
+      preparing = false;
+      audioFailed = false;
+      tail = false;
+      focusStaff = null;
+      wantedPlay = resume;
+      playing = resume;
+      audioStatus.className = "pvaudio-status";
+      audioStatus.textContent = "Audio off";
+      if (resume) startFrames();
+      show();
+    };
 
     audio.addEventListener("play", () => {
       if (loading) return;
@@ -370,6 +410,10 @@
       show();
     });
     audio.addEventListener("pause", () => {
+      if (ignorePause) {
+        ignorePause = false;
+        return;
+      }
       if (loading || preparing || audio.ended) return;
       wantedPlay = false;
       time = audio.currentTime;
@@ -400,13 +444,15 @@
     controls.append(playBtn, restartBtn, seek, readout);
     const audioControls = document.createElement("div");
     audioControls.className = "row pvaudio-controls";
-    const label = document.createElement("label");
-    label.textContent = "Mix ";
-    label.append(mix);
-    audioControls.append(label, audio, audioStatus, retryBtn);
+    const enableLabel = document.createElement("label");
+    enableLabel.append(enableAudio, " Audio");
+    const mixLabel = document.createElement("label");
+    mixLabel.textContent = "Mix ";
+    mixLabel.append(mix);
+    audioControls.append(enableLabel, mixLabel, audio, audioStatus, retryBtn);
     host.append(player.stage, controls, audioControls);
+    audioStatus.textContent = "Audio off";
     show();
-    loadMix("ALL");
 
     // Two ways to stop, and the difference is the whole point of the pane switch.
     // `destroy` throws the audio away with the picture; `pause` only stops the
@@ -486,7 +532,7 @@
         const data = await loadPreview(`${base}/scroll-preview?${query}`,
                                        (name) => `${base}/scroll-preview/${name}`);
         if (token !== request || requestedSignature !== signature()) return;
-        status.textContent = "Preview ready — sound is prepared one selected mix at a time.";
+        status.textContent = "Preview ready — enable audio if you want a synchronized mix.";
         live = mount(holder, data, (mix) => {
           const audioQuery = new URLSearchParams({
             ...chosen, mix, revision: data.revision,
