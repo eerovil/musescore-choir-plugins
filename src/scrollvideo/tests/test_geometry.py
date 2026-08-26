@@ -195,6 +195,46 @@ def test_coverage_marks_the_note_and_leaves_the_staff_lines_alone(fermata_musicx
     assert not ((coverage > 200) & ~ink).any()
 
 
+def _page_without_playable_glyphs(svg_text):
+    """The same page with every notehead and rest taken off it."""
+    root = etree.fromstring(svg_text.encode())
+    for group in list(root.iter(geometry._tag("g"))):
+        if group.get("class") in geometry.REST_CLASSES:
+            group.getparent().remove(group)
+    for note in list(root.iter(geometry._tag("g"))):
+        if note.get("class") != "note":
+            continue
+        for head in note.findall(f".//{geometry._tag('g')}[@class='notehead']"):
+            head.getparent().remove(head)
+    return etree.tostring(root, encoding="unicode")
+
+
+def test_coverage_is_the_glyphs_own_ink_down_to_the_antialiased_edge(fermata_musicxml):
+    """A lit note is drawn through this mask, so a soft edge here is a soft edge on screen.
+
+    Verovio's stylesheet strokes the shapes it names in `currentColor`, and that
+    rule beats a style inherited from the `<use>` above them — so marking used to
+    leave the glyph outlined in black around a red fill. Coverage is read back as
+    red-minus-green, so the whole antialiased edge came back at well under half its
+    real value, the edge pixels were repainted almost white instead of part-blue,
+    and the lit notehead had a staircase for a border (#63).
+
+    Wherever nothing else on the page is drawn, coverage therefore has to equal the
+    engraving's own ink exactly, partial pixels included.
+    """
+    eng = engrave(fermata_musicxml)
+    height = 480
+    strip = rasterise(eng.svg, eng.layout, height)
+    coverage = geometry.playing_coverage(eng.svg, eng.layout, height)
+    bare = rasterise(_page_without_playable_glyphs(eng.svg), eng.layout, height)
+
+    ink = 255 - strip[:, :, 0].astype(int)
+    alone = (bare == 255).all(axis=2)            # the glyph is the only thing here
+    edge = alone & (ink > 0) & (ink < 255)
+    assert edge.sum() > 100, "no antialiased glyph edge to check"
+    assert np.array_equal(coverage[alone].astype(int), ink[alone])
+
+
 def test_playing_coverage_adds_rest_glyphs(fermata_musicxml):
     eng = engrave(fermata_musicxml)
     note_only = geometry.note_coverage(eng.svg, eng.layout, 240)

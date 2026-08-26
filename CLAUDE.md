@@ -908,6 +908,27 @@ to `entry["tstamp"]`.
   One gotcha is load-bearing: verovio ships a stylesheet
   (`#id ellipse, #id path, ... {stroke:currentColor}`) that outranks presentation
   attributes on the shapes it names, so marking uses an **inline style**.
+  This pull request proposes taking that gotcha one level further down. A notehead
+  is a `<use>` of a glyph kept in `<defs>`, so the shapes actually painted are paths
+  the rule names by id — and a rule on the path beats a style inherited from the
+  `<use>` above it. Marking therefore left the glyph outlined in **black** around its
+  red fill, and red-minus-green read that outline as almost no coverage: the whole
+  antialiased edge came back at well under half its true value (74 measured as 32 on
+  one edge pixel, 157 as 111 on another), the edge was repainted nearly white instead
+  of part-blue, and a lit notehead had a staircase for a border — thin open heads,
+  half and whole notes, worst of all (#63). Adding `color` to the marker style
+  resolves that `currentColor` to the marker too, and coverage then equals the
+  engraving's own ink exactly. `test_geometry` pins that: wherever nothing else on
+  the page is drawn, coverage must equal the strip's ink, partial pixels included.
+  What is left at the border after that is the **codec**, not the picture. h264 4:2:0
+  stores colour at half resolution each way, and a notehead is only ~50px across in a
+  4K frame, so a thin blue ring picks up blocky colour fringes while the black stem
+  beside it stays crisp — luma is full resolution. Measured on one frame against the
+  composite it was made from, mean error over the notehead: 4:2:0 1.48, 4:4:4 1.74 at
+  x264's own bitrate, i.e. subsampling and not quantisation is the limit
+  (`chroma-qp-offset=-6` bought 12%, `-12` no more). 4:4:4 is the only real cure and
+  it is not shippable — these are watched on a phone and sent to YouTube, and neither
+  decodes High 4:4:4 Predictive.
 - `video.py` composites: the engraving is rasterised **once** and a frame is a crop
   of that strip plus the recolouring above. Nothing is
   re-engraved per frame — a four-voice minute of music costs about a minute of CPU
