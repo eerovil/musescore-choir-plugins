@@ -539,10 +539,16 @@ def test_the_player_fits_a_phone(live, page):
     # The controls are on screen and usable, not off the side of the panel.
     for control in ("play", "restart", "seek", "mix", "audio"):
         assert page.locator(f'[data-preview="{control}"]').is_visible()
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
     page.locator('[data-preview="play"]').click()
     page.wait_for_timeout(400)
     assert _left(page) > _left_for(SCROLL["xs"][0])
     if evidence := os.getenv("ISSUE_66_EVIDENCE_DIR"):
+        # The evidence has to show the UI as it actually settles: picture, mix
+        # picker and the WAV's own controls, with a mix prepared.
+        assert page.locator('[data-preview="mix"]').is_visible()
+        assert "ALL audio ready" in \
+            page.locator('[data-preview="audio-status"]').inner_text()
         os.makedirs(evidence, exist_ok=True)
         page.screenshot(path=os.path.join(evidence, "issue-66-preview-390.png"),
                         full_page=True)
@@ -580,6 +586,158 @@ def test_hiding_preview_while_it_is_preparing_keeps_the_result(live, page):
     page.locator(".mobilebar").get_by_role("button", name="Preview").click()
     assert page.locator(".pvviewport").is_visible()
     assert len(requests) == 1
+
+
+def _count(page, fragment):
+    """How many requests for `fragment` the page has made since `_watch`."""
+    return page.evaluate("f => window.__seen.filter(u => u.includes(f)).length",
+                         fragment)
+
+
+def _watch(page):
+    """Record every request, and every object URL made and let go of.
+
+    The object URLs are the honest way to ask whether the sound was really
+    dropped: a preview that is torn down but still holds a blob URL is one that
+    could be heard again, and nothing in the DOM would show it.
+    """
+    page.evaluate("""() => {
+        window.__seen = [];
+        window.__blobs = { made: 0, freed: 0 };
+        const fetched = window.fetch;
+        window.fetch = (...args) => { window.__seen.push(String(args[0])); return fetched(...args); };
+        const make = URL.createObjectURL.bind(URL);
+        const free = URL.revokeObjectURL.bind(URL);
+        URL.createObjectURL = (b) => { window.__blobs.made++; return make(b); };
+        URL.revokeObjectURL = (u) => { window.__blobs.freed++; return free(u); };
+    }""")
+
+
+def _blobs(page):
+    return page.evaluate("() => window.__blobs")
+
+
+def test_hiding_preview_pauses_the_sound_but_keeps_it_prepared(live, page):
+    """Switching to Record to nudge a margin is the normal move, not a teardown."""
+    base, slug, _ = live
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{base}/#/song/{slug}")
+    _watch(page)
+    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    page.locator('[data-preview="mix"]').select_option("S1")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("S1 audio ready")')
+    prepared = (_count(page, "/scroll-preview?"), _count(page, "/scroll-preview-audio?"))
+
+    page.locator('[data-preview="play"]').click()
+    page.wait_for_timeout(300)
+    assert not page.locator('[data-preview="audio"]').evaluate("a => a.paused")
+
+    page.locator(".mobilebar").get_by_role("button", name="Record").click()
+    page.wait_for_timeout(300)
+    audio = page.locator('[data-preview="audio"]')
+    assert audio.evaluate("a => a.paused"), "hiding the pane must stop the sound"
+    held = audio.evaluate("a => a.currentTime")
+    assert held > 0
+    assert page.locator('[data-preview="play"]').inner_text() == "Play"
+    # Paused, not thrown away: the picture and the prepared WAV are both still here.
+    page.wait_for_timeout(300)
+    assert audio.evaluate("a => a.currentTime") == pytest.approx(held, abs=0.05)
+    assert audio.evaluate("a => !!a.src")
+    assert page.locator(".pvviewport").count() == 1
+
+    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
+    page.locator('[data-preview="play"]').click()
+    page.wait_for_timeout(300)
+    assert not audio.evaluate("a => a.paused"), "coming back must resume, not re-prepare"
+    assert audio.evaluate("a => a.currentTime") > held
+    assert page.locator('[data-preview="mix"]').input_value() == "S1"
+    assert (_count(page, "/scroll-preview?"), _count(page, "/scroll-preview-audio?")) \
+        == prepared
+
+
+def test_changing_a_setting_invalidates_the_sound_with_the_picture(live, page):
+    """A stale mix is a wrong tempo or a wrong crop — it must not survive either."""
+    base, slug, _ = live
+    _open_record(page, base, slug)
+    _watch(page)
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    assert _blobs(page)["made"] == 1
+
+    page.locator(".record-common select").select_option("720p")
+    page.wait_for_selector(".pvviewport", state="detached")
+    assert "inputs changed" in page.locator(".pvstatus").inner_text()
+    assert page.locator('[data-preview="audio"]').count() == 0
+    assert page.evaluate("() => document.querySelectorAll('audio').length") == 0
+    assert _blobs(page) == {"made": 1, "freed": 1}, "the WAV must be let go of too"
+
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    assert "quality=720p" in page.evaluate(
+        "() => window.__seen.filter(u => u.includes('/scroll-preview-audio?')).pop()")
+
+
+def test_a_changed_score_invalidates_the_sound_with_the_picture(live, page):
+    base, slug, cleaned = live
+    _open_record(page, base, slug)
+    _watch(page)
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+
+    original = open(cleaned).read()
+    try:
+        with open(cleaned, "w") as fh:
+            fh.write("<museScore><Score><Staff/></Score></museScore>")
+        page.wait_for_selector(".pvviewport", state="detached", timeout=5000)
+        assert page.locator('[data-preview="audio"]').count() == 0
+        assert _blobs(page) == {"made": 1, "freed": 1}
+
+        page.locator('[data-preview="open"]').click()
+        page.wait_for_selector('[data-preview="time"]:has-text("0:05")')
+        page.wait_for_selector('[data-preview="audio-status"]:has-text("ALL audio ready")')
+    finally:
+        with open(cleaned, "w") as fh:
+            fh.write(original)
+        page.wait_for_selector(".pvviewport", state="detached", timeout=5000)
+
+
+def test_a_late_audio_response_cannot_reattach_to_an_invalidated_preview(live, page):
+    """The WAV comes back after the preview it belongs to is already gone."""
+    base, slug, _ = live
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    _open_record(page, base, slug)
+    _watch(page)
+    # Read the body straight away, then hold the response back. The sound is
+    # therefore already fetched — and cannot be cancelled — when the preview it
+    # was asked for is invalidated underneath it.
+    page.evaluate("""() => {
+        const original = window.fetch;
+        window.fetch = async (...args) => {
+          const response = await original(...args);
+          if (!String(args[0]).includes('/scroll-preview-audio?')) return response;
+          const blob = await response.blob();
+          await new Promise((r) => setTimeout(r, 700));
+          return new Response(blob, { status: response.status });
+        };
+    }""")
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("Preparing ALL audio")')
+
+    page.locator(".record-common select").select_option("720p")
+    page.wait_for_selector(".pvviewport", state="detached")
+    page.wait_for_timeout(1200)
+
+    assert "inputs changed" in page.locator(".pvstatus").inner_text()
+    assert page.evaluate("() => document.querySelectorAll('audio').length") == 0
+    assert _blobs(page)["made"] == _blobs(page)["freed"], "a late WAV was kept"
+    assert not errors, f"the late response raised: {errors}"
 
 
 def test_a_refused_score_says_so_instead_of_playing(live, page):

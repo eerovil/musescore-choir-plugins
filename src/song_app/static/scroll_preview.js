@@ -149,7 +149,6 @@
     let request = 0;
     let controller = null;
     let objectUrl = null;
-    let dead = false;
 
     const playBtn = document.createElement("button");
     playBtn.setAttribute("data-preview", "play");
@@ -336,13 +335,7 @@
         }
         objectUrl = url;
         await attach(url);
-        // A destroy can land between the fetch and the WAV's metadata. Attaching
-        // has already put the sound on the element by then, so let go of it here
-        // rather than leaving a dead player holding playable audio.
-        if (token !== request || mix.value !== name || dead) {
-          if (dead) clearAudio();
-          return;
-        }
+        if (token !== request || mix.value !== name) return;
         audioReady = true;
         preparing = false;
         tail = time >= audio.duration;
@@ -419,7 +412,6 @@
     // `destroy` throws the audio away with the picture; `pause` only stops the
     // sound and the frames, so coming back to a hidden preview costs nothing.
     function destroy() {
-      dead = true;
       ++request;
       if (controller) controller.abort();
       wantedPlay = false;
