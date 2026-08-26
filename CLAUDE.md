@@ -478,7 +478,12 @@ state model are in `DESIGN.md`.
   fills a setting nobody answered — a song that recorded at 0 keeps 0, and typing 0
   still means 0. `_run_record` now always passes both margins to the renderer instead
   of only when one is non-zero, which was the same call anyway (the renderer's own
-  defaults are 0).
+  defaults are 0). It also **remembers a chosen margin the way it remembers the BPM**
+  — written into `record` when the request arrives, and falling back to what this song
+  chose last before the app-wide default. They used to be written only after a render
+  succeeded, so framing decided against a render that then failed was gone by the next
+  page load. Previewing still writes nothing: the preview is a look at the score, not
+  a stage of the work, so a margin nudged and only previewed is not remembered.
 - The Record panel already has a **silent scroll preview**, so the layout question can be
   answered before the encoding one. Whether the margins are right, whether the staff
   size reads, where the beat marker sits, whether a repeat lands on the right bar —

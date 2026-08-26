@@ -74,6 +74,39 @@ def test_top_and_bottom_margins_reach_the_renderer_and_are_remembered(
     assert data["record"]["bottom_margin"] == -8
 
 
+def test_a_chosen_margin_is_remembered_even_when_the_render_fails(
+        client, song, monkeypatch):
+    """Framing is a decision, and a failed render must not throw it away.
+
+    The margins used to be written into the song only after a render succeeded,
+    so a framing choice made against a render that then failed was gone by the
+    next page load and the panel offered the default again.
+    """
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("MuseScore fell over")
+
+    monkeypatch.setattr(pipeline, "run_scroll_video", boom)
+    assert client.post(f"/api/songs/{song.slug}/record",
+                       json={"bottom_margin": 14}).status_code == 200
+    data = _finished(client, song.slug)
+
+    assert data["record"]["error"], "the render really did fail"
+    assert data["record"]["bottom_margin"] == 14
+
+
+def test_a_later_render_inherits_the_margins_this_song_last_chose(
+        client, song, monkeypatch):
+    """The default only fills a setting this song has never answered."""
+    seen = _record_watching_the_renderer(monkeypatch)
+    client.post(f"/api/songs/{song.slug}/record", json={"bottom_margin": 14})
+    _finished(client, song.slug)
+
+    client.post(f"/api/songs/{song.slug}/record", json={})
+    _finished(client, song.slug)
+
+    assert seen["bottom_margin_percent"] == 14
+
+
 def test_a_song_nobody_framed_renders_with_the_default_bottom_margin(
         client, song, monkeypatch):
     """Asking for nothing is not asking for zero.

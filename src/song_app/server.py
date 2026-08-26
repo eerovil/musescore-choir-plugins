@@ -1063,10 +1063,19 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
         and not (opts.get("merge_only") or opts.get("upload_only"))
     cleaned = song.cleaned_path()
     if scrolling_render:
+        # Remembered the way the BPM is: at request time, and falling back to what
+        # this song chose last before the app-wide default. Writing them only after
+        # a render succeeded meant a margin nudged against a render that then failed
+        # was gone by the next page load, and the panel offered the default again.
+        remembered = song.data.get("record", {})
         for key, label, default in (
                 ("top_margin", "Top", DEFAULT_TOP_MARGIN_PERCENT),
                 ("bottom_margin", "Bottom", DEFAULT_BOTTOM_MARGIN_PERCENT)):
-            opts[key] = _margin(opts.get(key, default), label)
+            opts[key] = _margin(opts.get(key, remembered.get(key, default)), label)
+        rec = song.data.setdefault("record", {})
+        rec["top_margin"] = opts["top_margin"]
+        rec["bottom_margin"] = opts["bottom_margin"]
+        song.save()
     if scrolling_render and cleaned and os.path.exists(cleaned) \
             and not pipeline.has_opening_tempo(cleaned):
         try:
