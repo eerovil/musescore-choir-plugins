@@ -172,21 +172,236 @@ def parse_layout(svg_text: str) -> Layout:
     return Layout(vb[2], vb[3], notes, sorted(staff_tops), rests)
 
 
+_NUMBER = re.compile(r"[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")
+_COMMAND = re.compile(r"[MmLlHhVvCcSsQqTtAaZz]")
+_OP = re.compile(r"(translate|scale)\(([^)]*)\)")
+_HREF = "{http://www.w3.org/1999/xlink}href"
+
+# How many numbers each path command takes per point group. `A` is the odd one
+# out: its first five numbers are radii and flags, and only the last two are a
+# point, so its x is the second from the end rather than the first.
+_ARGS = {"M": 2, "L": 2, "T": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "A": 7}
+
+# Something whose horizontal reach we could not work out. It counts as drawing
+# across the whole page, so the measure holding it is never cropped away.
+_UNBOUNDED = object()
+
+
+def _numbers(text: str) -> List[float]:
+    return [float(n) for n in _NUMBER.findall(text or "")]
+
+
+def _path_x_range(d: str):
+    """The smallest and largest x a path's own coordinates reach.
+
+    Curves are bounded by their control points, so taking every control point
+    gives a range that contains the drawn curve rather than approximating it —
+    which is what cropping needs: too wide only costs a little speed, too narrow
+    would rub ink off the page.
+    """
+    xs: List[float] = []
+    x = 0.0
+    tokens = [(m.group(0), m.start(), m.end()) for m in _COMMAND.finditer(d or "")]
+    for index, (command, _start, end) in enumerate(tokens):
+        stop = tokens[index + 1][1] if index + 1 < len(tokens) else len(d)
+        upper = command.upper()
+        relative = command.islower()
+        if upper == "Z":
+            continue
+        if upper not in _ARGS:
+            return _UNBOUNDED
+        args = _numbers(d[end:stop])
+        step = _ARGS[upper]
+        if not args or len(args) % step:
+            return _UNBOUNDED
+        for offset in range(0, len(args), step):
+            group = args[offset:offset + step]
+            points = [group[-2]] if upper == "A" else (
+                [group[0]] if upper == "H" else
+                [] if upper == "V" else group[0::2])
+            for value in points:
+                xs.append(x + value if relative else value)
+            if points:
+                x = xs[-1]
+    return (min(xs), max(xs)) if xs else _UNBOUNDED
+
+
+def _transform(attribute: str) -> Tuple[float, float]:
+    """An element's own transform as (x offset, x scale), applied in order."""
+    offset, scale = 0.0, 1.0
+    for name, args in _OP.findall(attribute or ""):
+        values = _numbers(args)
+        if name == "translate" and values:
+            offset += scale * values[0]
+        elif name == "scale" and values:
+            scale *= values[0]
+    return offset, scale
+
+
+def _own_x_range(element, glyphs: Dict[str, Tuple[float, float]]):
+    """Where one element draws, in its parent's coordinates — or None if nowhere."""
+    name = etree.QName(element).localname
+    pad = float(element.get("stroke-width") or 0) / 2.0
+    if name == "path":
+        span = _path_x_range(element.get("d") or "")
+    elif name == "use":
+        reference = (element.get(_HREF) or element.get("href") or "").lstrip("#")
+        # A glyph we could not measure has to count as drawing everywhere, or
+        # cropping would rub it off the page.
+        span = glyphs.get(reference, _UNBOUNDED)
+    elif name == "rect":
+        x = _numbers(element.get("x") or "0")
+        width = _numbers(element.get("width") or "0")
+        span = (x[0], x[0] + width[0]) if x and width else None
+    elif name in ("polygon", "polyline"):
+        xs = _numbers(element.get("points") or "")[0::2]
+        span = (min(xs), max(xs)) if xs else None
+    elif name == "ellipse":
+        cx = _numbers(element.get("cx") or "")
+        rx = _numbers(element.get("rx") or "0")
+        span = (cx[0] - rx[0], cx[0] + rx[0]) if cx else None
+    elif name in ("text", "tspan"):
+        # Writing, whose width needs the font to know. One em per character is
+        # more than any glyph is wide, and the anchor may put the string either
+        # side of x, so this covers every way it can be laid out.
+        x = _numbers(element.get("x") or "")
+        if not x:
+            return None
+        sizes = [_numbers(node.get("font-size") or "0")[0]
+                 for node in element.iter() if node.get("font-size")]
+        # Collapsed, because the SVG is indented and the layout whitespace
+        # between tags is not writing anyone can see.
+        letters = len(" ".join("".join(element.itertext()).split()))
+        reach = letters * max(sizes or [0.0])
+        span = (x[0] - reach, x[0] + reach)
+    else:
+        return None
+    if span is None or span is _UNBOUNDED:
+        return span
+    offset, scale = _transform(element.get("transform"))
+    low, high = sorted((offset + scale * span[0], offset + scale * span[1]))
+    return low - pad, high + pad
+
+
+def _glyph_extents(root) -> Dict[str, Tuple[float, float]]:
+    """How wide each glyph in <defs> is, so a <use> of it can be placed."""
+    extents: Dict[str, Tuple[float, float]] = {}
+    for defs in root.iter(_tag("defs")):
+        for glyph in defs:
+            identifier = glyph.get("id")
+            if not identifier:
+                continue
+            # `_subtree_x_range` already applies the glyph's own transform, which
+            # is what a `<use>` of it draws.
+            span = _subtree_x_range(glyph, {})
+            if span and span is not _UNBOUNDED:
+                extents[identifier] = span
+    return extents
+
+
+def _subtree_x_range(element, glyphs: Dict[str, Tuple[float, float]]):
+    """Where an element and everything inside it draws, in its parent's coordinates."""
+    own = _own_x_range(element, glyphs)
+    if own is _UNBOUNDED:
+        return _UNBOUNDED
+    spans = [own] if own else []
+    offset, scale = _transform(element.get("transform"))
+    for child in element:
+        inner = _subtree_x_range(child, glyphs)
+        if inner is _UNBOUNDED:
+            return _UNBOUNDED
+        if inner:
+            spans.append((offset + scale * inner[0], offset + scale * inner[1]))
+    if not spans:
+        return None
+    return min(s[0] for s in spans), max(s[1] for s in spans)
+
+
+def measure_spans(root) -> List[Tuple[object, float, float]]:
+    """Every engraved measure and the horizontal band of page it draws in."""
+    glyphs = _glyph_extents(root)
+    offsets: Dict[object, Tuple[float, float]] = {}
+    spans = []
+    for group in root.iter(_tag("g")):
+        offset, scale = _transform(group.get("transform"))
+        parent_offset, parent_scale = offsets.get(group.getparent(), (0.0, 1.0))
+        offsets[group] = (parent_offset + parent_scale * offset, parent_scale * scale)
+        if group.get("class") != "measure":
+            continue
+        # `_subtree_x_range` already applies the measure's own transform, so what
+        # it returns is in the parent's coordinates and only the ancestors are left.
+        inner = _subtree_x_range(group, glyphs)
+        if inner is None:
+            continue
+        if inner is _UNBOUNDED:
+            spans.append((group, float("-inf"), float("inf")))
+            continue
+        spans.append((group, parent_offset + parent_scale * inner[0],
+                      parent_offset + parent_scale * inner[1]))
+    return spans
+
+
+class _Croppable:
+    """One parsed engraving, handing out the part of itself a tile can see.
+
+    Rasterising in tiles used to give cairosvg the whole score every time and only
+    move the viewBox. Cairo then clips, but cairosvg has already walked and drawn
+    every node in the document — so an 8000px tile and a 1765px tile of the same
+    score cost the same, and a strip cut into eight tiles costs eight full passes
+    over the music. Handing each tile only the measures inside it makes the whole
+    strip cost about one pass however many tiles it is cut into.
+
+    Nothing about the picture changes: a measure is dropped only when the band of
+    page it draws in — glyph widths, curve control points and the widest a piece
+    of writing could be, all measured off the engraving itself — lies outside the
+    window entirely.
+    """
+
+    def __init__(self, svg_text: str):
+        self._text = svg_text
+        self._root = etree.fromstring(svg_text.encode())
+        self._spans = measure_spans(self._root)
+
+    def window(self, x0: float, x1: float) -> str:
+        """This engraving with the measures outside [x0, x1) taken out."""
+        hidden = [(measure, measure.getparent())
+                  for measure, low, high in self._spans if high < x0 or low > x1]
+        if not hidden:
+            return self._text
+        places = [(parent.index(measure), measure, parent)
+                  for measure, parent in hidden]
+        for _index, measure, parent in places:
+            parent.remove(measure)
+        try:
+            return etree.tostring(self._root, encoding="unicode")
+        finally:
+            for index, measure, parent in sorted(places, key=lambda p: p[0]):
+                parent.insert(index, measure)
+
+
 def _tiles(svg_text: str, layout: Layout, height_px: int) -> Iterator[Tuple[int, int, np.ndarray]]:
     """Render the strip in tiles: (x offset, width, RGB tile).
 
     Cairo caps surface dimensions and a 3-minute score is wider than the cap.
     Tile edges are cut on the output pixel grid, not by converting a fixed unit
     width, so the seams abut exactly instead of accumulating rounding drift.
+
+    Each tile is given only the measures it shows (`_Croppable`), because the cost
+    of drawing one is the number of nodes in the document handed over and not the
+    size of the window onto it.
     """
-    tag, _ = _definition_scale(svg_text)
     scale = height_px / layout.height
     total_px = int(round(layout.width * scale))
+    single = total_px <= MAX_TILE_PX
+    croppable = None if single else _Croppable(svg_text)
 
     x_px = 0
     while x_px < total_px:
         w_px = min(MAX_TILE_PX, total_px - x_px)
-        doc = _window(svg_text, tag, x_px / scale, w_px / scale, layout.height,
+        text = svg_text if croppable is None else croppable.window(x_px / scale,
+                                                                  (x_px + w_px) / scale)
+        tag, _ = _definition_scale(text)
+        doc = _window(text, tag, x_px / scale, w_px / scale, layout.height,
                       w_px, height_px)
         png = cairosvg.svg2png(bytestring=doc.encode(), background_color="white")
         tile = np.asarray(Image.open(io.BytesIO(png)).convert("RGB"), dtype=np.uint8)
