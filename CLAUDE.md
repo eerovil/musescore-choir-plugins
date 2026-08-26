@@ -513,6 +513,26 @@ state model are in `DESIGN.md`.
   music, ~900 KB of PNG. Still seconds against the render's minutes, and it fixes a
   real disagreement as well as a cosmetic one — a bottom margin revealed the spacer
   rest staff in the preview, which the video deliberately crops to white.
+- This pull request proposes moving the preview **out of the Record panel and into
+  the viewer**, as a `preview` tab beside the score documents, because on a phone the
+  panel is a task screen and the preview is a full-screen visual — the same split the
+  rest of the mobile Review/Record redesign makes. The Record panel keeps only the
+  controls plus a **Preview** button that opens that tab, and the third mobile tab
+  reads **Preview** while in Record rather than Score.
+  That move is what makes the preview's **lifecycle** a question at all, and the
+  answer is that hiding is not destroying. Switching Preview → Record to nudge a
+  margin is the normal move, so `_pausePreview` stops the sound and the frames and
+  leaves the prepared picture and the prepared WAV mounted; coming back is instant
+  and costs no second rasterisation. Destroying is reserved for the case where the
+  preview is *wrong*: the panel keeps a signature of every input that moves the
+  picture (quality, both margins, the tempo the app supplies) **plus the cleaned
+  score's fingerprint**, and when that signature changes it tears the player down and
+  says so. Tearing down takes the sound with it — the audio request is aborted, the
+  element cleared and the object URL revoked — because a stale mix heard against a
+  new picture is the wrong tempo or the wrong crop, and sounds like neither. Late
+  responses cannot undo any of that: a picture that arrives after its signature
+  stopped matching is dropped, and a WAV that arrives after its player was destroyed
+  is revoked rather than attached.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
