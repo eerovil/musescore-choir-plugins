@@ -185,13 +185,46 @@ it: they build their own songs in a tmp dir and read `fixtures/` from the worktr
 
 ### Tests
 
+**While working, run only the tests related to what you changed.** The whole suite
+is CI's job, not yours:
+
+```bash
+.venv/bin/python -m pytest src/song_app/tests/test_scroll_preview.py -q   # one module
+.venv/bin/python -m pytest src/scrollvideo/tests/ -q                      # one package
+```
+
+`.github/workflows/ci.yml` runs everything on every pull request and every push to
+`main`, in two parallel jobs (the suite, and the browser tests on their own), and
+finishes in **2–3 minutes**. The same run locally takes **8+ minutes** on this host —
+it is serial, and `src/scrollvideo/tests/test_preview.py` alone is over half of it
+because each of its tests shells out to MuseScore. Running it before every PR was the
+habit from before CI existed (added 2026-08-25); there is no reason to keep paying it.
+
+So: **verify your change with its own tests, push, and read CI.** Cite the CI run in
+the PR body rather than a local "full suite passed" count.
+
+Two things follow from that, because **nothing is gated**. `main` has no branch
+protection and no required checks — deliberately, this is a one-person project merged
+by hand — and `scripts/deploy-song-app.sh` runs no tests, so a merge is on the live
+app within two minutes. **Check CI is green before commenting `/merge`.** It is the
+only thing that ran the suite, and nothing will stop you merging while it is red or
+still running.
+
+The full run is still the right thing before a release you are nervous about, or when
+you have touched something with reach (`lyric_txt.py`, `main.py`, `build.py`):
+
 ```bash
 .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
-# 180 passed              — with poppler, Playwright and MUSESCORE_CLI_PATH all set
+# 467 passed              — with poppler, Playwright and MUSESCORE_CLI_PATH all set
 # fewer                   — without Playwright the browser tests skip; without
 #                           poppler the pdf_systems and bounds tests skip; without
 #                           a MuseScore CLI the scrollvideo sync tests skip too
 ```
+
+One trap when timing or trusting it: the scrollvideo tests call the MuseScore CLI
+under a timeout, so anything else heavy running on the host at the same time makes
+them fail for no reason of their own. Two `test_preview.py` failures chased in this
+way turned out to be a concurrent job starving them; they pass in seconds alone.
 
 The six extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
 marked `browser`. They need a two-step install, and the module skips unless **both**
