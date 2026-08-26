@@ -224,7 +224,18 @@ def playing_coverage(svg_text: str, layout: Layout, height_px: int) -> np.ndarra
 # An inline style, not fill/stroke attributes: verovio ships a stylesheet
 # ("#id ellipse, #id path, ... {stroke:currentColor}") that outranks presentation
 # attributes on the shapes it names.
-_MARK_STYLE = f"fill:{MARKER};stroke:{MARKER}"
+#
+# `color` is here for that same stylesheet, one level further down. A notehead is a
+# `<use>` of a glyph kept in `<defs>`, so the shapes that actually get painted are
+# paths the rule names by id — and a rule on the path itself beats a style inherited
+# from the `<use>` above it. Marking the `<use>` therefore left the glyph outlined
+# in black around a red fill, and since coverage is read back as red-minus-green,
+# the whole antialiased edge came back at well under half its real value. Those edge
+# pixels were then repainted almost white instead of part-blue, which is what gave a
+# lit notehead a staircase for a border (#63). Setting `color` resolves that
+# `currentColor` to the marker as well, so the outline is marked too and coverage
+# matches the engraving's own ink pixel for pixel.
+_MARK_STYLE = f"fill:{MARKER};stroke:{MARKER};color:{MARKER}"
 _DRAWN = ("use", "ellipse", "polygon", "polyline", "rect", "path")
 
 
