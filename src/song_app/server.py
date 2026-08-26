@@ -817,6 +817,27 @@ def _margin(value, label: str) -> float:
     return margin
 
 
+def _remember_margins(song: state.Song, top: float, bottom: float) -> None:
+    """Keep the framing this song was last shown at.
+
+    Written when a render is asked for and when a preview succeeds, so nudging a
+    margin to see what it looks like is enough to keep it — that is the moment the
+    choice is actually made. Only a real change is written, and never while a job
+    is running: the state file is saved whole, so a needless write here could land
+    on top of what a finishing render just recorded. Pass a freshly loaded song for
+    the same reason.
+    """
+    rec = song.data.get("record", {})
+    if (rec.get("top_margin"), rec.get("bottom_margin")) == (top, bottom):
+        return
+    if is_recording(song):
+        return
+    rec = song.data.setdefault("record", {})
+    rec["top_margin"] = top
+    rec["bottom_margin"] = bottom
+    song.save()
+
+
 @app.get("/api/songs/{slug}/scroll-preview")
 async def api_scroll_preview(slug: str, quality: str = "4k",
                              top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
@@ -826,8 +847,11 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
 
     This is the picture without the encoding: the same engraving, viewport, clock,
     scroll curve and *pixels* `build_videos` would use, drawn by the same code at a
-    height a page can carry. It writes nothing into the song's state and does not
-    count as a render — the only files it leaves behind are its own cache.
+    height a page can carry. It does not count as a render — no stage moves and no
+    video appears; the only files it leaves behind are its own cache. The one thing
+    it does record is the framing it was asked for (`_remember_margins`), because
+    nudging a margin and looking at the result *is* how the choice gets made, and
+    having to render before it would stick lost it every time.
 
     It also fails where a render would, and that is half its value: a D.C./D.S.
     jump or margins that leave no picture come back here as an ordinary error
@@ -852,6 +876,10 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
         raise
     except Exception as exc:
         raise HTTPException(400, str(exc) or exc.__class__.__name__)
+    # Only once the picture came out: a framing the renderer refuses is not one to
+    # come back to. Reloaded, because preparing can take seconds.
+    _remember_margins(_require(slug), settings["top_margin_percent"],
+                      settings["bottom_margin_percent"])
     return JSONResponse(payload, headers=dict(REVALIDATE))
 
 
@@ -1072,10 +1100,7 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
                 ("top_margin", "Top", DEFAULT_TOP_MARGIN_PERCENT),
                 ("bottom_margin", "Bottom", DEFAULT_BOTTOM_MARGIN_PERCENT)):
             opts[key] = _margin(opts.get(key, remembered.get(key, default)), label)
-        rec = song.data.setdefault("record", {})
-        rec["top_margin"] = opts["top_margin"]
-        rec["bottom_margin"] = opts["bottom_margin"]
-        song.save()
+        _remember_margins(song, opts["top_margin"], opts["bottom_margin"])
     if scrolling_render and cleaned and os.path.exists(cleaned) \
             and not pipeline.has_opening_tempo(cleaned):
         try:
