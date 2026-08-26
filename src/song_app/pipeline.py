@@ -642,7 +642,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     settings = {"quality": quality, "width": width, "height": height, "fps": fps,
                 "bpm": initial_bpm, "top": top_margin_percent,
                 "bottom": bottom_margin_percent,
-                "spacer": spacing_mod.DEFAULT_PER_QUARTER}
+                "ratio": spacing_mod.DEFAULT_MAX_RATIO}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     path = os.path.join(cache_dir, PREVIEW_PAYLOAD)
@@ -659,7 +659,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     shutil.rmtree(cache_dir, ignore_errors=True)
     payload = preview(cleaned_path, cache_dir, width=width, height=height, fps=fps,
                       initial_bpm=initial_bpm,
-                      spacer_per_quarter=settings["spacer"],
+                      spacing_ratio=settings["ratio"],
                       top_margin_percent=top_margin_percent,
                       bottom_margin_percent=bottom_margin_percent, log=log)
     payload["revision"] = _preview_revision(key)
@@ -693,7 +693,7 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
     settings = {"quality": quality, "width": width, "height": height, "fps": fps,
                 "bpm": initial_bpm, "top": top_margin_percent,
                 "bottom": bottom_margin_percent,
-                "spacer": spacing_mod.DEFAULT_PER_QUARTER}
+                "ratio": spacing_mod.DEFAULT_MAX_RATIO}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     source = os.path.join(cache_dir, AUDIO_SOURCE)

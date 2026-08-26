@@ -125,7 +125,7 @@ def _events(drawn: Raster) -> List[Dict]:
 
 def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 2160,
             fps: int = 60, keep_silent: bool = False, initial_bpm: Optional[int] = None,
-            spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
+            spacing_ratio: float = spacing_mod.DEFAULT_MAX_RATIO,
             smooth_seconds: float = SMOOTH_SECONDS,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
             preview_height: int = PREVIEW_HEIGHT, log: Logger = _noop) -> Dict:
@@ -142,7 +142,7 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
     os.makedirs(out_dir, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         ready = prepare(mscx_path, tmp, keep_silent=keep_silent,
-                        initial_bpm=initial_bpm, spacer_per_quarter=spacer_per_quarter,
+                        initial_bpm=initial_bpm, spacing_ratio=spacing_ratio,
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent, log=log)
