@@ -192,7 +192,7 @@ class Prepared:
 
 def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
             keep_silent: bool = False, initial_bpm: Optional[int] = None,
-            spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
+            spacing_ratio: float = spacing_mod.DEFAULT_MAX_RATIO,
             smooth_seconds: float = SMOOTH_SECONDS, fps: int = 60,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
             log: Logger = _noop) -> Prepared:
@@ -236,17 +236,12 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
     musicxml = audio_mod.run_musescore(source, os.path.join(tmp, "score.musicxml"))
     midi = audio_mod.run_musescore(source, os.path.join(tmp, "score.mid"))
 
-    # A rest-only staff makes measure width follow beats rather than note
-    # density; it is engraved and then cropped off the bottom.
-    spaced = None
-    if spacer_per_quarter:
-        spaced = spacing_mod.add_spacer_staff(
-            musicxml, os.path.join(tmp, "spaced.musicxml"), spacer_per_quarter)
-        if spaced is None:
-            log("Could not build the spacer staff; engraving as-is")
-
+    # Bars that would scroll much faster than their neighbours are widened with a
+    # hidden staff of rests, which is engraved and then cropped off the bottom.
+    # A score already scrolling evenly is engraved as it came out.
     log("Engraving one continuous system (verovio)")
-    eng = engrave(spaced or musicxml)
+    eng, spaced = spacing_mod.even_engraving(musicxml, tmp, engrave,
+                                             max_ratio=spacing_ratio, log=log)
     layout = eng.layout
     singing_staves = len(layout.staff_tops) - (1 if spaced else 0)
     if singing_staves != len(names):
@@ -393,7 +388,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  height: int = 2160, width: int = 3840, fps: int = 60,
                  with_audio: bool = True, keep_silent: bool = False,
                  emphasise: bool = False, combined: bool = True,
-                 spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
+                 spacing_ratio: float = spacing_mod.DEFAULT_MAX_RATIO,
                  smooth_seconds: float = SMOOTH_SECONDS,
                  top_margin_percent: float = 0.0,
                  bottom_margin_percent: float = 0.0,
@@ -435,7 +430,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         # Everything up to the pixels, and every refusal, is decided here — the same
         # call the browser preview makes, so what a singer previews is what renders.
         ready = prepare(mscx_path, tmp, parts=parts, keep_silent=keep_silent,
-                        initial_bpm=initial_bpm, spacer_per_quarter=spacer_per_quarter,
+                        initial_bpm=initial_bpm, spacing_ratio=spacing_ratio,
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent, log=log)

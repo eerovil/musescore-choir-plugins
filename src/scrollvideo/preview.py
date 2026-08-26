@@ -61,10 +61,12 @@ AUDIO_SOURCE = "audio-source.mscx"
 # internally to draw it.
 TILE_WIDTH = 4096
 
-# Seconds are rounded to a millisecond and positions to a hundredth of a pixel.
-# Both are finer than anything visible, and rounding keeps the payload small.
+# Event times and total duration only choose musical state, so milliseconds are
+# plenty there. Scroll anchors are different: their interpolation is truncated to
+# an integer source pixel by both the renderer and browser. Rounding an anchor before
+# interpolation can therefore move the preview by one pixel even when the numeric
+# error is tiny, so the curve itself is sent at full float precision.
 TIME_DP = 3
-PX_DP = 2
 
 
 def _noop(_message: str) -> None:
@@ -123,7 +125,7 @@ def _events(drawn: Raster) -> List[Dict]:
 
 def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 2160,
             fps: int = 60, keep_silent: bool = False, initial_bpm: Optional[int] = None,
-            spacer_per_quarter: int = spacing_mod.DEFAULT_PER_QUARTER,
+            spacing_ratio: float = spacing_mod.DEFAULT_MAX_RATIO,
             smooth_seconds: float = SMOOTH_SECONDS,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
             preview_height: int = PREVIEW_HEIGHT, log: Logger = _noop) -> Dict:
@@ -140,7 +142,7 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
     os.makedirs(out_dir, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         ready = prepare(mscx_path, tmp, keep_silent=keep_silent,
-                        initial_bpm=initial_bpm, spacer_per_quarter=spacer_per_quarter,
+                        initial_bpm=initial_bpm, spacing_ratio=spacing_ratio,
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent, log=log)
@@ -164,17 +166,18 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
             "playhead": PLAYHEAD,
             "duration": round(ready.duration, TIME_DP),
             "fps": fps,
-            # In strip pixels, so the player interpolates the curve and subtracts the
-            # playhead exactly as `video.render` does.
-            "scroll": {"times": [round(t, TIME_DP) for t in times],
-                       "xs": [round(x * drawn.px_per_unit, PX_DP) for x in xs],
+            # In strip pixels, so the player interpolates the exact curve and
+            # subtracts the playhead exactly as `video.render` does. Cast NumPy
+            # scalars to ordinary floats for JSON without quantising them.
+            "scroll": {"times": [float(t) for t in times],
+                       "xs": [float(x * drawn.px_per_unit) for x in xs],
                        # How far back the page has to go before it counts as a
                        # repeat rather than spacing noise — the same line
                        # `smooth_scroll` draws. A step past it is a jump, and the
                        # player must land on the far side of it rather than slide
                        # across the music in between.
-                       "jump": round(JUMP_FRACTION * ready.layout.width
-                                     * drawn.px_per_unit, PX_DP)},
+                       "jump": float(JUMP_FRACTION * ready.layout.width
+                                     * drawn.px_per_unit)},
             "events": _events(drawn),
             "highlight": {"colour": "#%02x%02x%02x" % HIGHLIGHT,
                           "marker_alpha": BAND_ALPHA,

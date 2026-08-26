@@ -801,12 +801,15 @@ shortcuts, and it can run unattended. One video per voice: the score scrolls
 horizontally as a single continuous system, every sounding note lights up, and the
 voice the track is for is highlighted strongly while the others stay faint.
 
-Interface — everything else is an implementation detail of these calls:
+Interface — everything else is an implementation detail of these calls. This pull
+request proposes replacing the `spacer_per_quarter` grid shown here with
+`spacing_ratio`, the biggest step in width-per-beat allowed between neighbouring
+bars:
 
 ```python
 build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
              fps=60, with_audio=True, keep_silent=False, emphasise=False,
-             combined=True, spacer_per_quarter=2, smooth_seconds=2.0,
+             combined=True, spacing_ratio=1.3, smooth_seconds=2.0,
              basename=None, log=...) -> [video paths]
 preview(mscx_path, out_dir, width=3840, height=2160, fps=60, ...) -> payload
 ```
@@ -869,21 +872,52 @@ the MIDI's own note-ons — every highlight lands within 20ms of a note MuseScor
 actually plays. This is what `tests/test_sync.py` pins; don't "simplify" it back
 to `entry["tstamp"]`.
 
-- `spacing.py` makes **measure width follow beats instead of note density**. Verovio
-  spaces a measure by what is in it, so a bar of sixteenths under lyrics comes out
-  1.9x wider *per beat* than a bar of half notes — and since the scroll follows the
-  notes, the video speeds up and slows down with the engraving. The fix is the one
-  `add_rest_track.qml` already used in MuseScore: a staff of evenly spaced rests, so
-  every measure holds the same number of slots per beat and verovio's per-slot
-  minimum sets the width. It is injected into the **MusicXML** (after MuseScore has
-  produced it, so it never reaches the MIDI or the audio) and cropped back off the
-  bottom of the strip by `visible_height` — `build_videos` rasterises proportionally
-  taller so the singing staves still fill the frame. The crop margin is deliberately
-  tiny: the last staff's lyrics sit in the gap above the spacer, and a generous
-  margin clips them. Default is eighth rests (`--spacer 2`): sixteenths are more even
-  (1.21x) but show 3.5 bars per screen instead of 4.6. Verovio's own spacing options
-  cannot do this job — `spacingNonLinear: 1.0` gets the spread to 1.04x but makes the
-  page 7x wider, leaving less than one bar on screen.
+- `spacing.py` stops the scroll **lurching**, and this pull request changes what it
+  does about it. Verovio spaces a measure by what is in it, so a bar of 32nds comes
+  out five times wider *per beat* than an equally long bar of quarters — and since
+  the scroll follows the notes, the video surges through the sparse bar and crawls
+  through the busy one. The fix used to be a staff of evenly spaced rests at one
+  subdivision over the whole song (the trick `add_rest_track.qml` already used in
+  MuseScore), which works but charges every bar in the song for the worst bar in it.
+  Now the rest count is chosen **per bar**, and a song that already scrolls evenly
+  gets no rest staff at all.
+  What is capped is **width per quarter note**, not raw width, so a 3/4 bar next to
+  a 4/4 one is not mistaken for a lurch. The narrowest widths-per-beat that keep
+  every neighbouring step inside `DEFAULT_MAX_RATIO` (1.3, `--spacing-ratio`) have a
+  closed form — `x_i = max_j natural_j / cap**|i - j|` — so a dense bar widens the
+  bars around it and dies away geometrically, rather than lifting the whole song.
+  Reaching a target is **measured, not predicted**: verovio spaces each separate
+  moment in a bar, so rests laid where the music already sounds change nothing, and
+  past that what one more is worth falls away as the bar fills (about a fifth as
+  much in a bar of 32nds as in a bar of quarters). `even_engraving` engraves, reads
+  the bars back off the SVG's staff lines, works out from that engraving what a rest
+  was worth in each bar, and solves again — three or four engravings for a score
+  that needs widening, one for a score that does not.
+  Two things were got wrong on the way here. The rests must be written as **real
+  note values** (`slot_durations` splits a bar into as few as it takes, then halves
+  the longest until there are enough): verovio reads what a rest is *written* as and
+  not its `<duration>`, so a rest of "one fifth of a bar" is taken for a whole rest
+  and quietly drags the part out of time with the audio, with nothing wrong in the
+  picture to show it. And the targets are settled **before** any rest is written and
+  never moved again — re-solving the cap against the widths a plan produced looks
+  like the way to tidy away the last few percent of rounding, and instead it walks
+  outwards bar by bar and inflates the whole score by a third and rising. That
+  leftover stays, so an engraved step can sit a few percent past the cap.
+  A bar's length is read by following the MusicXML cursor (`note`/`forward` advance
+  it, `backup` winds it back), not by adding up every note: a two-voice bar is
+  written as one voice after the other and summing reports it as twice as long, so
+  every target computed for it would be half what it should be. And everything about
+  the staff that can be told not to print is (`print-object="no"` on its name, clef
+  and time signature) — it is cropped off the bottom of the strip, but those are
+  drawn in the left margin where the crop cannot reach them.
+  The staff is injected into the **MusicXML** (after MuseScore has produced it, so
+  it never reaches the MIDI or the audio) and cropped back off the bottom of the
+  strip by `visible_height` — `build_videos` rasterises proportionally taller so the
+  singing staves still fill the frame. The crop margin is deliberately tiny: the
+  last staff's lyrics sit in the gap above the spacer, and a generous margin clips
+  them. Verovio's own spacing options cannot do this job — `spacingNonLinear: 1.0`
+  gets the spread to 1.04x but makes the page 7x wider, leaving less than one bar on
+  screen.
 - `score.py` is the only edit made to the score before engraving: parts with nothing
   to sing (percussion, or a staff of only rests — the click track
   `add_rest_track.qml` adds) are dropped, along with the staves they own. They would
@@ -1111,9 +1145,17 @@ without it, like the browser tests:
   one pixel off the canvas says exactly where the player has scrolled to and every
   assertion is made by looking at what is on screen. The drawing is stubbed in both,
   so neither needs MuseScore.
-- `test_spacing.py` — rest slots per measure follow its length (a chord does not
-  lengthen one), the subdivision scales them, the singing parts come back untouched,
-  an impossible subdivision gives up rather than guessing, and where the crop falls.
+- `test_spacing.py` — this pull request rewrites it around the adaptive rule: a
+  score of ordinary bars is engraved at its natural width with no rest staff, the
+  reported 4-note/32-note pair comes back inside the cap, one dense bar among
+  sixteen sparse ones widens its neighbours and leaves the far end untouched, and a
+  2/4 bar among 4/4 bars is not widened for being short. Plus the mechanism's own
+  rules: more rests widen a bar and never narrow it, a bar does not budge until it
+  is asked for more moments than its music already has, the rests keep the music in
+  time (the written-value bug, caught by comparing the timemap against the unspaced
+  score), a two-voice bar is not read as twice as long, a bar of a length no rest
+  spells gets a whole-measure rest rather than an approximation, a count that
+  divides the bar unevenly is still written, and where the crop falls.
 - `test_timing.py` also pins the smoothing: an already-even scroll is left exactly
   even (the edge-ramp bug), uneven spacing is evened out, and a repeat stays one
   clean jump rather than three smeared ones.

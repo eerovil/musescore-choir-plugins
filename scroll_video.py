@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 
 from src.scrollvideo import build_videos
+from src.scrollvideo.spacing import DEFAULT_MAX_RATIO
 
 load_dotenv(".env") or load_dotenv(".env.default")
 
@@ -38,10 +39,12 @@ def main() -> None:
     parser.add_argument("--no-audio", action="store_true", help="video only, no audio mix")
     parser.add_argument("--keep-silent", action="store_true",
                         help="keep click/percussion staves (dropped by default)")
-    parser.add_argument("--spacer", type=int, default=2, choices=[0, 1, 2, 4, 8],
-                        metavar="N",
-                        help="rests per quarter in the hidden spacing staff, which makes "
-                             "measure width follow beats (0 disables; default 2 = eighths)")
+    parser.add_argument("--spacing-ratio", type=float, default=DEFAULT_MAX_RATIO,
+                        metavar="RATIO",
+                        help="most a bar's width per beat may differ from the bar next "
+                             "to it; bars that would scroll faster than this are widened "
+                             f"with a hidden rest staff (1 or 0 disables; default "
+                             f"{DEFAULT_MAX_RATIO})")
     parser.add_argument("--smooth", type=float, default=2.0, metavar="SECONDS",
                         help="seconds to average the scroll speed over (0 disables)")
     parser.add_argument("--top-margin", type=float, default=0.0, metavar="PERCENT",
@@ -69,7 +72,7 @@ def main() -> None:
                                keep_silent=args.keep_silent, emphasise=args.emphasise,
                                combined=not args.no_combined,
                                hardware_encoding=not args.software_encoder,
-                               spacer_per_quarter=args.spacer, smooth_seconds=args.smooth,
+                               spacing_ratio=args.spacing_ratio, smooth_seconds=args.smooth,
                                top_margin_percent=args.top_margin,
                                bottom_margin_percent=args.bottom_margin,
                                log=lambda m: print(m, flush=True),

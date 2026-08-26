@@ -635,12 +635,14 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     Rebuilding empties the folder first. Tile names are positional (`strip-3.png`),
     so a shorter score would otherwise be played against the tail of a longer one.
     """
+    from src.scrollvideo import spacing as spacing_mod
     from src.scrollvideo.preview import AUDIO_SOURCE, preview
 
     width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
     settings = {"quality": quality, "width": width, "height": height, "fps": fps,
                 "bpm": initial_bpm, "top": top_margin_percent,
-                "bottom": bottom_margin_percent}
+                "bottom": bottom_margin_percent,
+                "ratio": spacing_mod.DEFAULT_MAX_RATIO}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     path = os.path.join(cache_dir, PREVIEW_PAYLOAD)
@@ -657,6 +659,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     shutil.rmtree(cache_dir, ignore_errors=True)
     payload = preview(cleaned_path, cache_dir, width=width, height=height, fps=fps,
                       initial_bpm=initial_bpm,
+                      spacing_ratio=settings["ratio"],
                       top_margin_percent=top_margin_percent,
                       bottom_margin_percent=bottom_margin_percent, log=log)
     payload["revision"] = _preview_revision(key)
@@ -683,12 +686,14 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
     """
     from src.scrollvideo.audio import render_mix_cached
     from src.scrollvideo.build import COMBINED
+    from src.scrollvideo import spacing as spacing_mod
     from src.scrollvideo.preview import AUDIO_SOURCE
 
     width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
     settings = {"quality": quality, "width": width, "height": height, "fps": fps,
                 "bpm": initial_bpm, "top": top_margin_percent,
-                "bottom": bottom_margin_percent}
+                "bottom": bottom_margin_percent,
+                "ratio": spacing_mod.DEFAULT_MAX_RATIO}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     source = os.path.join(cache_dir, AUDIO_SOURCE)
