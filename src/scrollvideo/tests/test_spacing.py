@@ -1,5 +1,7 @@
 """The spacing staff: cap scroll-speed jumps without widening everything."""
 
+from types import SimpleNamespace
+
 import pytest
 from lxml import etree
 
@@ -132,6 +134,36 @@ def test_minimum_width_envelope_changes_only_as_far_as_the_cap_requires():
 def test_width_cap_is_about_width_per_quarter_not_raw_bar_width():
     target = _minimum_normalized_widths([200, 100], [2, 1], 1.30)
     assert target == pytest.approx([100, 100])
+
+
+def test_grid_overshoot_is_remeasured_and_propagated(tmp_path, monkeypatch):
+    """A discrete spacer may widen more than requested; the cap must follow reality.
+
+    Natural widths are 100/200 per quarter, so the first bar initially needs only
+    153.8. After its first grid is added, pretend Verovio also makes the second bar
+    jump to 300. The old one-shot target would stop at first-bar width 160 and ship
+    a 1.875x jump. Re-measuring must promote the first bar again to 240/300 = 1.25x.
+    """
+    quarters = _note(8) * 4
+    source = _source(tmp_path, _two_bars(quarters, quarters))
+    out = tmp_path / "out.musicxml"
+    measured = iter(([400.0, 800.0], [640.0, 1200.0], [960.0, 1200.0]))
+    writes = []
+
+    monkeypatch.setattr("src.scrollvideo.spacing.engrave",
+                        lambda _path: SimpleNamespace(svg="candidate"))
+    monkeypatch.setattr("src.scrollvideo.spacing._bar_widths",
+                        lambda _svg: list(next(measured)))
+
+    def fake_write(_source_path, out_path, levels, _per_quarter):
+        writes.append(list(levels))
+        return out_path
+
+    monkeypatch.setattr("src.scrollvideo.spacing._write_spacer_staff", fake_write)
+
+    assert add_spacer_staff(str(source), str(out)) == str(out)
+    assert writes[:2] == [[1, 0], [2, 0]]
+    assert writes[-1] == [2, 0]
 
 
 def test_sparse_score_is_not_widened_for_a_problem_it_does_not_have(tmp_path):
