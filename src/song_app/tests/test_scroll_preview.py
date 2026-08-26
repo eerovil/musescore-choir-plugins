@@ -149,16 +149,41 @@ def test_a_score_with_its_own_tempo_ignores_the_offered_one(client, song, prepar
     assert prepared[0]["initial_bpm"] is None
 
 
-def test_previewing_changes_nothing_about_the_song(client, song, prepared):
+def test_previewing_does_not_advance_the_song(client, song, prepared):
     """It is a look at the score, not a step in the workflow."""
-    before = open(song.path(".song.json")).read()
     client.get(f"/api/songs/{song.slug}/scroll-preview")
-    assert open(song.path(".song.json")).read() == before
 
     data = client.get(f"/api/songs/{song.slug}").json()
     assert data["stage"] == "record"
     assert not data["recording"]
     assert not data.get("record", {}).get("outputs")
+
+
+def test_the_framing_a_preview_was_asked_for_is_remembered(client, song, prepared):
+    """Nudging a margin and looking is how the choice gets made.
+
+    Everything else about the preview leaves the song alone, but a framing that
+    only stuck once you had rendered a video was lost every time.
+    """
+    client.get(f"/api/songs/{song.slug}/scroll-preview",
+               params={"top_margin": 3, "bottom_margin": 11})
+
+    rec = client.get(f"/api/songs/{song.slug}").json()["record"]
+    assert (rec["top_margin"], rec["bottom_margin"]) == (3, 11)
+
+
+def test_a_framing_the_renderer_refuses_is_not_remembered(client, song, monkeypatch):
+    """Coming back to a margin that cannot be drawn would be a trap."""
+    def refuse(*_args, **_kwargs):
+        raise ValueError("top and bottom video margins leave no visible picture")
+
+    monkeypatch.setattr("src.scrollvideo.preview.preview", refuse)
+    response = client.get(f"/api/songs/{song.slug}/scroll-preview",
+                          params={"bottom_margin": 99})
+
+    assert response.status_code == 400
+    assert "bottom_margin" not in client.get(f"/api/songs/{song.slug}").json().get(
+        "record", {})
 
 
 def test_visual_preview_does_not_prepare_any_audio(client, song, prepared, monkeypatch):

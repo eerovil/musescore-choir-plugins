@@ -482,8 +482,13 @@ state model are in `DESIGN.md`.
   — written into `record` when the request arrives, and falling back to what this song
   chose last before the app-wide default. They used to be written only after a render
   succeeded, so framing decided against a render that then failed was gone by the next
-  page load. Previewing still writes nothing: the preview is a look at the score, not
-  a stage of the work, so a margin nudged and only previewed is not remembered.
+  page load. **A successful preview records it too** — nudging a margin and looking at
+  the result is how the choice actually gets made, and requiring a render first lost it
+  every time. Both paths go through `_remember_margins`, which writes only a real change
+  and never while a job is running, since the state file is saved whole. A framing the
+  renderer refuses is not recorded: coming back to a margin that cannot be drawn would
+  be a trap. Nothing else about the preview writes to the song — no stage moves, no
+  video appears.
 - The Record panel already has a **silent scroll preview**, so the layout question can be
   answered before the encoding one. Whether the margins are right, whether the staff
   size reads, where the beat marker sits, whether a repeat lands on the right bar —
@@ -491,8 +496,10 @@ state model are in `DESIGN.md`.
   feedback loop for it. `GET /scroll-preview` prepares the render's own data
   (`pipeline.scroll_preview` → `src.scrollvideo.preview`) off the worker thread and
   hands it to a player in the page (`static/scroll_preview.js`, `.pvviewport` in the
-  stylesheet), with play/pause/restart/scrub. No ffmpeg, no audio, and nothing
-  written into the song's state: it is a look at the score, not a stage of the work.
+  stylesheet), with play/pause/restart/scrub. No ffmpeg, no audio, and — apart from
+  the framing it was asked for, which this pull request proposes recording (see the
+  margin note above) — nothing written into the song's state: it is a look at the
+  score, not a stage of the work.
   The prepared payload is cached beside the song under a key naming the cleaned
   score's fingerprint **and** every setting that moves the picture (size, both
   margins, the tempo the app supplies), so a score edited in MuseScore or a margin
