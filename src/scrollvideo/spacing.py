@@ -9,8 +9,8 @@ must not be global: a song made only of quarter notes should not be stretched ju
 because another song might contain 32nds. We therefore engrave the unmodified
 MusicXML first, measure each bar's natural width per quarter, and compute the
 smallest widths that keep neighbouring bars within ``MAX_WIDTH_RATIO``. Only bars
-that need widening get progressively finer rest grids; the rest carry an invisible
-whole-measure rest with no spacing of its own.
+that need widening get progressively finer rest grids; scores that already satisfy
+the cap are engraved unchanged.
 
 The spacer is injected after MuseScore has produced the MusicXML, so it never
 reaches MIDI or audio, and the renderer crops it off the bottom afterwards.
@@ -218,8 +218,8 @@ def _write_spacer_staff(musicxml_path: str, out_path: str, levels: Sequence[int]
 
         measure_units = source_length * spacer_divisions // source_divisions
         if level == 0:
-            # Keep the part temporally valid without putting a spacing floor under
-            # a measure that was already narrow enough naturally.
+            # Keep a mixed-score spacer temporally valid without putting a spacing
+            # floor under a measure that was already narrow enough naturally.
             _append_rest(measure, measure_units, measure_rest=True, invisible=True)
             continue
 
@@ -241,8 +241,10 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
     """Append the minimum adaptive rest grid needed to cap adjacent width changes.
 
     ``per_quarter`` is the finest grid allowed, not the grid forced everywhere.
-    Measures start at level 0 and are promoted through quarter/eighth/16th/32nd
-    grids only until their measured width reaches the minimum feasible target.
+    Measures are promoted through quarter/eighth/16th/32nd grids only until their
+    measured width reaches the minimum feasible target. An empty string means the
+    natural engraving already satisfies the cap and must be used unchanged; None
+    means a spacer could not be built.
     """
     allowed = _allowed_levels(per_quarter)
     tree = etree.parse(musicxml_path)
@@ -263,8 +265,14 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
     target = _minimum_normalized_widths(natural_widths, quarters, max_ratio)
     current = [width / float(duration)
                for width, duration in zip(natural_widths, quarters)]
-    levels = [0] * len(measures)
 
+    if all(actual >= wanted * (1.0 - _TOLERANCE)
+           for actual, wanted in zip(current, target)):
+        # No hidden part at all: even an invisible extra staff can perturb Verovio's
+        # first-measure layout. The true minimum-width solution is the source itself.
+        return ""
+
+    levels = [0] * len(measures)
     for _round in range(len(allowed) - 1):
         changed = False
         for index, (actual, wanted) in enumerate(zip(current, target)):
@@ -286,9 +294,6 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
         current = [width / float(duration)
                    for width, duration in zip(candidate_widths, quarters)]
 
-    # All-natural songs never entered the loop, so write their level-0 invisible
-    # timing rests now. Measures that needed help keep only the coarsest grid that
-    # reached their mathematically minimal target.
     return _write_spacer_staff(musicxml_path, out_path, levels, per_quarter)
 
 
