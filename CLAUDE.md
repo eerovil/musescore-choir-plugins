@@ -894,6 +894,24 @@ to `entry["tstamp"]`.
   because cairo caps surface dimensions at 32767px and a 3-minute score is wider;
   tile edges are cut on the **output pixel grid**, not by converting a fixed unit
   width, so seams don't accumulate rounding drift.
+  This pull request proposes **giving each tile only the measures it shows**. A tile
+  used to be the entire engraving with the viewBox moved, and cairo then clips — but
+  cairosvg has already walked and drawn every node in the document in Python, so the
+  clip saves nothing. Measured on Kaksi laulua krapulasta 2 (86 bars, 4 minutes,
+  a 1.8 MB SVG of 27 000 nodes): a 1765px-wide tile cost the same 13s as an 8000px
+  one. Cost was nodes x tiles, not nodes x picture, and the 4K render pays it nine
+  times over. `_Croppable` parses the engraving once and hands each tile the
+  measures inside its window; `measure_spans` works out how far a measure's ink
+  actually reaches from the shapes themselves — glyph widths taken from `<defs>`,
+  curve control points, and the widest a piece of writing could be at its font size
+  — so a slur drawn in one bar and carrying on over the next still comes with the
+  tile it reaches. **Anything whose reach cannot be worked out counts as drawing
+  across the whole page** and is never left out: a tile that took too long is a far
+  smaller bug than a notehead rubbed off the score. The picture is byte-identical,
+  which is the property under test rather than a hope — `test_geometry` asserts the
+  cropped strip and coverage equal the uncropped ones pixel for pixel. Measured on
+  that song: `build.raster` for the preview 58s -> 11s (whole preview preparation
+  113s -> 27s), and at the video's 2160 rows, 107s -> 28s.
 - `timing.smooth_scroll` finishes the job the spacer starts: it averages the scroll
   **speed** over a couple of seconds and integrates it back into positions. Averaging
   positions directly would flatten the curve at both ends — a perfectly even scroll
@@ -1039,7 +1057,10 @@ without it, like the browser tests:
   raw pixels so the comparison is not arguing with a codec.
 - `test_geometry.py` — the ancestor-translate offset, the definition-scale viewBox,
   and that tiled rasterisation matches single-shot (alignment pinned; antialiasing
-  along a seam is allowed to differ by a pixel).
+  along a seam is allowed to differ by a pixel). This pull request adds the
+  cropping's own rules: cropped tiles equal uncropped ones pixel for pixel, a tile
+  really is handed less of the score, a slur running past its own barline still
+  comes with the tile it reaches, and a shape we cannot measure is never left out.
 - `test_timing.py` — TempoMap arithmetic (a 3x fermata window), notes still sounding
   at the end being closed rather than dropped.
 - `test_video.py` — highlights land on the right staff, and are present while a note

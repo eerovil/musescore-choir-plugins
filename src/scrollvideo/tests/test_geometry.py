@@ -152,6 +152,95 @@ def test_tiled_and_single_shot_rasterisation_agree(fermata_musicxml, monkeypatch
     assert differing < 0.001 * tiled.shape[0] * tiled.shape[1]
 
 
+def _without_cropping(monkeypatch):
+    """Hand every tile the whole engraving, the way tiling used to."""
+    monkeypatch.setattr(geometry._Croppable, "window",
+                        lambda self, x0, x1: self._text)
+
+
+def test_giving_a_tile_only_its_own_measures_changes_no_pixel(fermata_musicxml,
+                                                              monkeypatch):
+    """The whole point of cropping is that it is invisible.
+
+    A tile used to be the entire engraving with the viewBox moved, which cost the
+    same whether it showed four bars or one. It is now the measures inside the
+    window — and the picture has to come out identical, byte for byte, or the
+    preview has stopped being the render's own pixels.
+    """
+    eng = engrave(fermata_musicxml)
+    monkeypatch.setattr(geometry, "MAX_TILE_PX", 37)
+    cropped = rasterise(eng.svg, eng.layout, 120)
+    covered = geometry.playing_coverage(eng.svg, eng.layout, 120)
+
+    _without_cropping(monkeypatch)
+    assert np.array_equal(cropped, rasterise(eng.svg, eng.layout, 120))
+    assert np.array_equal(covered, geometry.playing_coverage(eng.svg, eng.layout, 120))
+
+
+def test_a_tile_is_handed_less_of_the_score_than_the_whole_of_it(fermata_musicxml):
+    """Cost is the nodes cairosvg walks, so the saving is measures left out."""
+    eng = engrave(fermata_musicxml)
+    croppable = geometry._Croppable(eng.svg)
+    spans = geometry.measure_spans(croppable._root)
+    assert len(spans) > 1, "fixture should have more than one measure to leave out"
+
+    start = spans[0][1]
+    window = croppable.window(start, start + 1.0)
+    assert window.count('class="measure"') < eng.svg.count('class="measure"')
+    assert window.count('class="measure"') >= 1
+
+
+TWO_MEASURES = """<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs><g id="head"><path d="M0 0 L60 0 L60 40 L0 40 Z" /></g></defs>
+  <svg class="definition-scale" viewBox="0 0 2000 500">
+    <g class="page-margin" transform="translate(100, 0)">
+      <g id="m1" class="measure">
+        <g class="staff"><path d="M0 0 L400 0" /></g>
+        <g class="slur"><path d="M100 20 C 400 -80 700 -80 900 20" /></g>
+      </g>
+      <g id="m2" class="measure">
+        <g class="staff"><path d="M500 0 L900 0" /></g>
+        <use xlink:href="#head" transform="translate(600, 0)" />
+      </g>
+    </g>
+  </svg>
+</svg>"""
+
+
+def test_a_measure_reaches_as_far_as_its_ink_not_as_far_as_its_bar():
+    """A slur is drawn in the bar it starts in and carries on over the next one.
+
+    Cropping by where the barlines are would rub it off the second tile. The span
+    is read off the shapes themselves — curve control points included — so the
+    measure that draws it is still handed to any tile it reaches.
+    """
+    root = etree.fromstring(TWO_MEASURES.encode())
+    spans = {measure.get("id"): (low, high)
+             for measure, low, high in geometry.measure_spans(root)}
+    assert spans["m1"][1] >= 1000.0, "the slur's far end is at x=900 plus the margin"
+    assert spans["m2"] == (600.0, 1000.0)
+
+    croppable = geometry._Croppable(TWO_MEASURES)
+    over_second = croppable.window(700.0, 1000.0)
+    assert 'id="m1"' in over_second, "the slur reaching in must come with the window"
+    over_first = croppable.window(0.0, 300.0)
+    assert 'id="m2"' not in over_first
+
+
+def test_something_we_cannot_measure_is_never_cropped_away():
+    """A shape whose reach we cannot work out counts as drawing everywhere.
+
+    Guessing narrow would take ink off the page, and a missing notehead is a far
+    worse bug than a tile that took longer to draw than it needed to.
+    """
+    unknown = TWO_MEASURES.replace('xlink:href="#head"', 'xlink:href="#mystery"')
+    spans = {measure.get("id"): (low, high) for measure, low, high
+             in geometry.measure_spans(etree.fromstring(unknown.encode()))}
+    assert spans["m2"] == (float("-inf"), float("inf"))
+    assert 'id="m2"' in geometry._Croppable(unknown).window(0.0, 300.0)
+
+
 def test_the_note_box_is_the_head_and_stops_short_of_the_stem():
     """Only the head is recoloured, so the box need not chase the stem."""
     note = parse_layout(MINI_SVG).notes["n1"]
