@@ -189,7 +189,9 @@ def _write_spacer_staff(musicxml_path: str, out_path: str, levels: Sequence[int]
 
     score_part = etree.SubElement(part_list, "score-part")
     score_part.set("id", SPACER_ID)
-    etree.SubElement(score_part, "part-name").text = "Spacer"
+    part_name = etree.SubElement(score_part, "part-name")
+    part_name.set("print-object", "no")
+    part_name.text = "Spacer"
 
     part = etree.SubElement(root, "part")
     part.set("id", SPACER_ID)
@@ -206,9 +208,12 @@ def _write_spacer_staff(musicxml_path: str, out_path: str, levels: Sequence[int]
             if index == 0:
                 etree.SubElement(attributes, "divisions").text = str(spacer_divisions)
             if source_time is not None:
-                attributes.append(copy.deepcopy(source_time))
+                hidden_time = copy.deepcopy(source_time)
+                hidden_time.set("print-object", "no")
+                attributes.append(hidden_time)
             if index == 0:
                 clef = etree.SubElement(attributes, "clef")
+                clef.set("print-object", "no")
                 etree.SubElement(clef, "sign").text = "percussion"
 
         measure_units = source_length * spacer_divisions // source_divisions
