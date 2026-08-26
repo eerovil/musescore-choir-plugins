@@ -178,6 +178,7 @@ def live(tmp_path_factory):
     with open(cleaned, "w") as fh:
         fh.write("<museScore><Score/></museScore>")
     song.data["cleaned"] = "preview_cleaned.mscx"
+    song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
     song.data["stage"] = "record"
     song.save()
 
@@ -447,7 +448,7 @@ def test_the_beat_marker_follows_the_note_that_just_started(player):
         _strip_colour(EVENTS[0]["marker"][0] + 10)
 
 
-def test_the_preview_is_prepared_again_once_the_score_changes(player):
+def test_a_score_fingerprint_refresh_invalidates_the_prepared_preview(player):
     """A preview of a score that is no longer on disk is worse than none."""
     page, cleaned = player
     assert page.locator('[data-preview="time"]').inner_text() == "0:00 / 0:08"
@@ -456,18 +457,72 @@ def test_the_preview_is_prepared_again_once_the_score_changes(player):
     try:
         with open(cleaned, "w") as fh:
             fh.write("<museScore><Score><Staff/></Score></museScore>")
-        # Let the real file watcher refresh the panel first; the click should open
-        # the new revision, not race a DOM replacement caused by that same edit.
-        page.wait_for_timeout(500)
+        page.wait_for_selector(".pvviewport", state="detached", timeout=5000)
+        assert "inputs changed" in page.locator(".pvstatus").inner_text()
         page.locator('[data-preview="open"]').click()
         page.wait_for_selector('[data-preview="time"]:has-text("0:05")')
     finally:
         with open(cleaned, "w") as fh:
             fh.write(original)
+        page.wait_for_selector(".pvviewport", state="detached", timeout=5000)
+
+
+def test_changing_preview_settings_invalidates_before_preparing_again(live, page):
+    base, slug, _ = live
+    requests = []
+    page.on("request", lambda request: requests.append(request.url)
+            if "/scroll-preview?" in request.url else None)
+    _open_record(page, base, slug)
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    assert len(requests) == 1
+
+    page.locator(".record-common select").select_option("720p")
+    page.wait_for_selector(".pvviewport", state="detached")
+    assert "inputs changed" in page.locator(".pvstatus").inner_text()
+    assert len(requests) == 1
+
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    assert len(requests) == 2
+    assert "quality=720p" in requests[-1]
+
+
+def test_changing_settings_during_preparation_waits_before_replacing_it(live, page):
+    base, slug, _ = live
+    requests = []
+    page.on("request", lambda request: requests.append(request.url)
+            if "/scroll-preview?" in request.url else None)
+    _open_record(page, base, slug)
+    page.evaluate("""() => {
+        const original = window.fetch;
+        window.fetch = (...args) => String(args[0]).includes('/scroll-preview?')
+          ? new Promise((resolve, reject) => setTimeout(
+              () => original(...args).then(resolve, reject), 500))
+          : original(...args);
+    }""")
+
+    button = page.locator('[data-preview="open"]')
+    button.click()
+    page.locator(".record-common select").select_option("720p")
+    assert button.is_disabled()
+    assert len(requests) == 0
+    page.wait_for_function("!document.querySelector('[data-preview=\"open\"]').disabled")
+    assert page.locator(".pvviewport").count() == 0
+    assert len(requests) == 1
+    assert "quality=4k" in requests[0]
+
+    button.click()
+    page.wait_for_selector(".pvviewport > canvas")
+    assert len(requests) == 2
+    assert "quality=720p" in requests[-1]
 
 
 def test_the_player_fits_a_phone(live, page):
     base, slug, _ = live
+    requests = []
+    page.on("request", lambda request: requests.append(request.url)
+            if "/scroll-preview?" in request.url else None)
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(f"{base}/#/song/{slug}")
     # One pane at a time on a phone: the stage rail is behind the bottom bar.
@@ -477,6 +532,7 @@ def test_the_player_fits_a_phone(live, page):
     page.locator(".mobilebar").get_by_role("button", name="Preview").click()
     page.locator('[data-preview="open"]').click()
     page.wait_for_selector(".pvviewport > canvas")
+    assert len(requests) == 1
 
     panel = page.locator(".pvviewport")
     assert panel.bounding_box()["width"] <= 390
@@ -491,11 +547,19 @@ def test_the_player_fits_a_phone(live, page):
         page.screenshot(path=os.path.join(evidence, "issue-66-preview-390.png"),
                         full_page=True)
     page.locator(".mobilebar").get_by_role("button", name="Record").click()
-    assert page.locator(".pvviewport").count() == 0, "a hidden preview must be torn down"
+    assert page.locator(".pvviewport").count() == 1
+    assert page.locator('[data-preview="play"]').inner_text() == "Play"
+    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
+    assert page.locator(".pvviewport").is_visible()
+    assert len(requests) == 1, "pane switching must reuse the prepared preview"
 
 
-def test_hiding_preview_while_it_is_preparing_discards_the_late_player(live, page):
+def test_hiding_preview_while_it_is_preparing_keeps_the_result(live, page):
     base, slug, _ = live
+    requests = []
+    page.on("request", lambda request: requests.append(request.url)
+            if "/scroll-preview?" in request.url else None)
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(f"{base}/#/song/{slug}")
     page.evaluate("""() => {
@@ -510,11 +574,12 @@ def test_hiding_preview_while_it_is_preparing_discards_the_late_player(live, pag
     page.locator(".mobilebar").get_by_role("button", name="Record").click()
     page.wait_for_timeout(800)
 
-    assert page.locator(".pvviewport").count() == 0
+    assert page.locator(".pvviewport").count() == 1
+    assert not page.locator(".pvviewport").is_visible()
 
     page.locator(".mobilebar").get_by_role("button", name="Preview").click()
-    page.locator('[data-preview="open"]').click()
-    page.wait_for_selector(".pvviewport > canvas")
+    assert page.locator(".pvviewport").is_visible()
+    assert len(requests) == 1
 
 
 def test_a_refused_score_says_so_instead_of_playing(live, page):

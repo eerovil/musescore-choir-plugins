@@ -168,7 +168,7 @@ async function renderWorkspace(slug) {
   const paneBtns = {};
   let pane = "panel";
   const showPane = (p) => {
-    if (p !== "viewer") viewerEl._deactivatePreview();
+    if (p !== "viewer") viewerEl._pausePreview();
     pane = p;
     for (const k of ["stages", "panel", "viewer"]) wsGrid.classList.toggle("m-" + k, k === p);
     for (const k in paneBtns) paneBtns[k].className = "mtab" + (k === p ? " active" : "");
@@ -214,7 +214,8 @@ async function renderWorkspace(slug) {
         else selectStage(stage);
       },
       openPreview: () => { viewerEl._showFirst("preview"); showPane("viewer"); },
-      stopPreview: () => viewerEl._deactivatePreview(),
+      pausePreview: () => viewerEl._pausePreview(),
+      previewInputsChanged: () => viewerEl._syncPreview(),
       setPreviewSettings: (settings) => { recordPreviewSettings = settings; },
     });
   }
@@ -233,7 +234,7 @@ async function renderWorkspace(slug) {
   function rebuildViewer() {
     const next = viewer(song, slug, panes, rebuildViewer, view,
       () => recordPreviewSettings);
-    viewerEl._deactivatePreview();
+    viewerEl._destroyPreview();
     wsGrid.replaceChild(next, viewerEl);
     viewerEl = next;
     builtTabs = tabKeys();
@@ -260,6 +261,7 @@ async function renderWorkspace(slug) {
       viewFp = song.cleaned_fingerprint;
       viewerEl._refreshFp(viewFp);
     }
+    viewerEl._syncPreview();
   }
 
   drawStagebar();
@@ -555,7 +557,9 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
   const refreshers = [];
   const wakers = [];
   const selectors = [];
-  const previewDeactivators = [];
+  const previewPausers = [];
+  const previewDestroyers = [];
+  const previewSyncers = [];
 
   const slot = (i) => {
     const frames = {};                  // doc -> scrollable pdfview div (kept alive)
@@ -576,7 +580,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
     };
     const show = (doc) => {
       const previous = panes[i];
-      if (previous === "preview" && doc !== "preview") frames.preview?._deactivate?.();
+      if (previous === "preview" && doc !== "preview") frames.preview?._pause?.();
       panes[i] = doc;
       if (!frames[doc]) {
         const v = el("div", { className: "pdfview" });
@@ -603,8 +607,10 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
           const preview = window.scrollPreviewPanel(P, () => {
             const settings = previewSettings();
             return settings ? settings() : {};
-          });
-          v._deactivate = () => preview._stopPreview?.();
+          }, () => song.cleaned_fingerprint);
+          v._pause = () => preview._pausePreview?.();
+          v._destroy = () => preview._stopPreview?.();
+          v._sync = () => preview._syncPreview?.();
           v.append(preview);
         }
         else v._url = docUrl(slug, doc, song.cleaned_fingerprint);
@@ -645,7 +651,9 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
     const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), ctrl);
     show(panes[i]);
     selectors.push(show);
-    previewDeactivators.push(() => frames.preview?._deactivate?.());
+    previewPausers.push(() => frames.preview?._pause?.());
+    previewDestroyers.push(() => frames.preview?._destroy?.());
+    previewSyncers.push(() => frames.preview?._sync?.());
     wakers.push(() => ensureRendered(panes[i]));
     // Re-render only the cleaned previews; their scroll is preserved by renderPdf.
     refreshers.push((fp) => {
@@ -661,7 +669,9 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
   const root = el("div", { className: "viewer" }, panes.map((_, i) => slot(i)));
   root._refreshFp = (fp) => refreshers.forEach((f) => f(fp));
   root._wake = () => wakers.forEach((f) => f());
-  root._deactivatePreview = () => previewDeactivators.forEach((stop) => stop());
+  root._pausePreview = () => previewPausers.forEach((pause) => pause());
+  root._destroyPreview = () => previewDestroyers.forEach((destroy) => destroy());
+  root._syncPreview = () => previewSyncers.forEach((sync) => sync());
   root._showFirst = (doc) => {
     if (keys.includes(doc) && selectors[0]) selectors[0](doc);
   };
@@ -1310,6 +1320,9 @@ function panelRecord(panel, song, P, refresh, actions) {
     bottom_margin: Number(bottomMargin.value) || 0,
     ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
   }));
+  for (const control of [quality, topMargin, bottomMargin, bpm]) {
+    control.addEventListener("input", actions.previewInputsChanged);
+  }
 
   const applyRenderer = () => {
     scrollRadio.checked = renderer === "scroll";
@@ -1320,7 +1333,7 @@ function panelRecord(panel, song, P, refresh, actions) {
     scrollAdvanced.style.display = renderer === "scroll" ? "" : "none";
     screenAdvanced.style.display = renderer === "screen" ? "" : "none";
     previewBtn.style.display = renderer === "scroll" ? "" : "none";
-    if (renderer === "screen") actions.stopPreview();
+    if (renderer === "screen") actions.pausePreview();
     previewBtn.parentElement?.classList.toggle("screen", renderer === "screen");
     const count = parts.length ? ` all ${parts.length} parts` : " videos";
     runBtn.textContent = renderer === "scroll" ? `Render${count}` : `Record${count}`;
