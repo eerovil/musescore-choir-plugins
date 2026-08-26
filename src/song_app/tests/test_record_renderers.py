@@ -50,10 +50,13 @@ def _finished(client, slug):
 def _fake_scroll(monkeypatch, seen, parts=("S1", "A1")):
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
              initial_bpm=None,
+             top_margin_percent=0.0, bottom_margin_percent=0.0,
              log=lambda m: None,
              progress=lambda m: None):
         seen.update(song_dir=song_dir, cleaned=cleaned, name=name, quality=quality,
-                    hardware_encoding=hardware_encoding, initial_bpm=initial_bpm)
+                    hardware_encoding=hardware_encoding, initial_bpm=initial_bpm,
+                    top_margin_percent=top_margin_percent,
+                    bottom_margin_percent=bottom_margin_percent)
         out = os.path.join(song_dir, "media", "video")
         os.makedirs(out, exist_ok=True)
         made = []
@@ -253,6 +256,7 @@ def test_render_status_and_logs_are_available_after_a_fresh_song_read(
         client, song, monkeypatch):
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
              initial_bpm=None,
+             top_margin_percent=0.0, bottom_margin_percent=0.0,
              log=lambda m: None,
              progress=lambda m: None):
         log("Engraving")
@@ -280,6 +284,7 @@ def test_render_status_and_logs_are_available_after_a_fresh_song_read(
 def test_a_score_edit_during_render_marks_the_outputs_stale(client, song, monkeypatch):
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
              initial_bpm=None,
+             top_margin_percent=0.0, bottom_margin_percent=0.0,
              log=lambda m: None,
              progress=lambda m: None):
         with open(cleaned, "a") as f:

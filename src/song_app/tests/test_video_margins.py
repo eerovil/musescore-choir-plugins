@@ -42,8 +42,8 @@ def _finished(client, slug):
     raise AssertionError("the record run never finished")
 
 
-def test_top_and_bottom_margins_reach_the_renderer_and_are_remembered(
-        client, song, monkeypatch):
+def _record_watching_the_renderer(monkeypatch) -> dict:
+    """Stand in for the renderer and report the settings it was handed."""
     seen = {}
 
     def fake(song_dir, cleaned, name, **kwargs):
@@ -55,6 +55,12 @@ def test_top_and_bottom_margins_reach_the_renderer_and_are_remembered(
         return [path]
 
     monkeypatch.setattr(pipeline, "run_scroll_video", fake)
+    return seen
+
+
+def test_top_and_bottom_margins_reach_the_renderer_and_are_remembered(
+        client, song, monkeypatch):
+    seen = _record_watching_the_renderer(monkeypatch)
     response = client.post(f"/api/songs/{song.slug}/record", json={
         "top_margin": 12,
         "bottom_margin": -8,
@@ -66,6 +72,33 @@ def test_top_and_bottom_margins_reach_the_renderer_and_are_remembered(
     assert seen["bottom_margin_percent"] == -8
     assert data["record"]["top_margin"] == 12
     assert data["record"]["bottom_margin"] == -8
+
+
+def test_a_song_nobody_framed_renders_with_the_default_bottom_margin(
+        client, song, monkeypatch):
+    """Asking for nothing is not asking for zero.
+
+    The renderer's own default is 0 — leave the framing alone — but the app wants
+    a little white space under the bottom staff so its lyrics are not against the
+    frame edge, and nobody should have to type that in every song.
+    """
+    seen = _record_watching_the_renderer(monkeypatch)
+    assert client.post(f"/api/songs/{song.slug}/record", json={}).status_code == 200
+    data = _finished(client, song.slug)
+
+    assert seen["top_margin_percent"] == server.DEFAULT_TOP_MARGIN_PERCENT == 0
+    assert seen["bottom_margin_percent"] == server.DEFAULT_BOTTOM_MARGIN_PERCENT == 5
+    assert data["record"]["bottom_margin"] == 5
+
+
+def test_an_explicit_zero_bottom_margin_is_not_overridden_by_the_default(
+        client, song, monkeypatch):
+    """Choosing 0 has to survive — the default only fills an unanswered setting."""
+    seen = _record_watching_the_renderer(monkeypatch)
+    assert client.post(f"/api/songs/{song.slug}/record",
+                       json={"bottom_margin": 0}).status_code == 200
+    _finished(client, song.slug)
+    assert seen["bottom_margin_percent"] == 0
 
 
 @pytest.mark.parametrize("payload", [
