@@ -13,8 +13,9 @@ produced it, so it never reaches the MIDI or the audio — and cropped back off
 the bottom of the rendered strip.
 
 It does not make spacing exactly proportional: a measure whose own content needs
-more room than the rest slots demand still gets it. It cuts the spread to ~1.3x,
-and `timing.smooth_scroll` absorbs what is left.
+more room than the rest slots demand still gets it. A 32nd-note grid keeps the
+ordinary 4-note/32-note case within ~1.3x, and `timing.smooth_scroll` absorbs what
+is left.
 """
 
 from __future__ import annotations
@@ -26,9 +27,10 @@ from lxml import etree
 
 SPACER_ID = "P-SCROLLVIDEO-SPACER"
 
-# Rests per quarter note. Eighths tighten spacing without costing bars on screen;
-# sixteenths are more even but show noticeably less music at once.
-DEFAULT_PER_QUARTER = 2
+# Rests per quarter note. The default covers 32nd-note passages: a coarser floor
+# still lets a busy measure become several times wider than an equally long sparse
+# one, which is exactly the speed change this staff exists to prevent.
+DEFAULT_PER_QUARTER = 8
 _TYPE = {1: "quarter", 2: "eighth", 4: "16th", 8: "32nd"}
 
 
@@ -58,13 +60,15 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
     if first is None or part_list is None:
         return None
 
-    divisions_text = first.findtext(".//divisions")
-    if not divisions_text:
-        return None
-    divisions = int(divisions_text)
-    step = divisions // per_quarter
-    if step < 1:
-        return None                      # too coarse a division to subdivide
+    measures = []
+    source_divisions = None
+    for source in first.findall("measure"):
+        divisions_text = source.findtext("attributes/divisions")
+        if divisions_text:
+            source_divisions = int(divisions_text)
+        if source_divisions is None:
+            return None
+        measures.append((source, source_divisions))
 
     score_part = etree.SubElement(part_list, "score-part")
     score_part.set("id", SPACER_ID)
@@ -72,22 +76,26 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
 
     part = etree.SubElement(root, "part")
     part.set("id", SPACER_ID)
-    for index, source in enumerate(first.findall("measure")):
+    for index, (source, source_divisions) in enumerate(measures):
         measure = etree.SubElement(part, "measure")
         if source.get("number"):
             measure.set("number", source.get("number"))
         if index == 0:
             attributes = etree.SubElement(measure, "attributes")
-            etree.SubElement(attributes, "divisions").text = str(divisions)
+            # A MusicXML part owns its divisions. Give the spacer one unit per
+            # requested slot instead of inheriting a coarse source grid that may
+            # be unable to express 32nd rests at all.
+            etree.SubElement(attributes, "divisions").text = str(per_quarter)
             time = source.find(".//time")
             if time is not None:
                 attributes.append(copy.deepcopy(time))
             clef = etree.SubElement(attributes, "clef")
             etree.SubElement(clef, "sign").text = "percussion"
-        for _ in range(max(1, _measure_length(source) // step)):
+        slots = _measure_length(source) * per_quarter // source_divisions
+        for _ in range(max(1, slots)):
             note = etree.SubElement(measure, "note")
             etree.SubElement(note, "rest")
-            etree.SubElement(note, "duration").text = str(step)
+            etree.SubElement(note, "duration").text = "1"
             etree.SubElement(note, "voice").text = "1"
             etree.SubElement(note, "type").text = _TYPE[per_quarter]
 

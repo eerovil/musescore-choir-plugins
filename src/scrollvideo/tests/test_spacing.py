@@ -3,8 +3,10 @@
 import pytest
 from lxml import etree
 
-from src.scrollvideo.geometry import Layout, NoteGeom
-from src.scrollvideo.spacing import SPACER_ID, add_spacer_staff, visible_height
+from src.scrollvideo.engrave import engrave
+from src.scrollvideo.geometry import Layout, NoteGeom, measure_spans
+from src.scrollvideo.spacing import (DEFAULT_PER_QUARTER, SPACER_ID,
+                                     add_spacer_staff, visible_height)
 
 SCORE = """<score-partwise version="3.1">
   <part-list><score-part id="P1"><part-name>T1</part-name></score-part></part-list>
@@ -23,7 +25,7 @@ SCORE = """<score-partwise version="3.1">
 </score-partwise>"""
 
 
-def _spacer(tmp_path, per_quarter=2, xml=SCORE):
+def _spacer(tmp_path, per_quarter=DEFAULT_PER_QUARTER, xml=SCORE):
     tmp_path.mkdir(parents=True, exist_ok=True)
     source = tmp_path / "in.musicxml"
     source.write_text(xml)
@@ -55,10 +57,36 @@ def test_a_chord_does_not_lengthen_a_measure(tmp_path):
 
 
 def test_subdivision_scales_the_slot_count(tmp_path):
-    for per_quarter, expected in ((1, 4), (2, 8), (4, 16)):
+    for per_quarter, expected in ((1, 4), (2, 8), (4, 16), (8, 32)):
         _, root = _spacer(tmp_path / f"q{per_quarter}", per_quarter)
         spacer = root.findall("part")[-1]
         assert len(spacer.findall("measure")[0].findall("note")) == expected
+
+
+def test_default_spacing_keeps_sparse_and_busy_measures_similar(tmp_path):
+    """Four quarters and 32 thirty-seconds fill the same 4/4 measure.
+
+    The hidden staff exists to stop note density deciding how long a measure looks,
+    so the default must cover the densest ordinary subdivision it advertises.
+    """
+    quarter = ("<note><pitch><step>C</step><octave>4</octave></pitch>"
+               "<duration>8</duration><type>quarter</type></note>")
+    thirty_second = ("<note><pitch><step>C</step><octave>4</octave></pitch>"
+                     "<duration>1</duration><type>32nd</type></note>")
+    score = SCORE.replace(
+        '<divisions>4</divisions>', '<divisions>8</divisions>').replace(
+        '<note><pitch><step>C</step><octave>4</octave></pitch><duration>16</duration></note>',
+        quarter * 4).replace(
+        '<note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration></note>\n'
+        '      <note><chord/><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration></note>\n'
+        '      <note><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration></note>',
+        thirty_second * 32)
+
+    spaced, _ = _spacer(tmp_path, xml=score)
+    root = etree.fromstring(engrave(spaced).svg.encode())
+    widths = [high - low for _measure, low, high in measure_spans(root)[:2]]
+
+    assert max(widths) / min(widths) < 1.30
 
 
 def test_the_spacer_holds_only_rests(tmp_path):
@@ -81,11 +109,29 @@ def test_an_unusable_subdivision_is_refused(tmp_path):
         _spacer(tmp_path, per_quarter=3)
 
 
-def test_too_coarse_divisions_give_up_rather_than_guess(tmp_path):
-    """divisions=1 cannot be split into sixteenths; the caller engraves as-is."""
-    coarse = SCORE.replace("<divisions>4</divisions>", "<divisions>1</divisions>")
-    result, _ = _spacer(tmp_path, per_quarter=4, xml=coarse)
-    assert result is None
+def test_the_spacer_uses_its_own_divisions_when_the_source_is_coarse(tmp_path):
+    """A quarter-only source can still carry a 16th-note spacing grid."""
+    coarse = SCORE.replace("<divisions>4</divisions>", "<divisions>1</divisions>") \
+        .replace("<duration>16</duration>", "<duration>WHOLE</duration>") \
+        .replace("<duration>4</duration>", "<duration>1</duration>") \
+        .replace("<duration>WHOLE</duration>", "<duration>4</duration>")
+    _result, root = _spacer(tmp_path, per_quarter=4, xml=coarse)
+    spacer = root.findall("part")[-1]
+    assert spacer.findtext(".//divisions") == "4"
+    assert len(spacer.find("measure").findall("note")) == 16
+    assert {note.findtext("duration") for note in spacer.iter("note")} == {"1"}
+
+
+def test_source_division_changes_are_applied_to_the_measure_that_declares_them(tmp_path):
+    changed = SCORE.replace(
+        '<measure number="2">',
+        '<measure number="2"><attributes><divisions>8</divisions></attributes>')
+
+    _result, root = _spacer(tmp_path, per_quarter=8, xml=changed)
+    spacer = root.findall("part")[-1]
+    counts = [len(measure.findall("note")) for measure in spacer.findall("measure")]
+
+    assert counts == [32, 8]
 
 
 def _layout(staff_tops, spacing=100.0, height=1000.0):

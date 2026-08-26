@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 
 from src.scrollvideo import build_videos
+from src.scrollvideo.spacing import DEFAULT_PER_QUARTER
 
 load_dotenv(".env") or load_dotenv(".env.default")
 
@@ -38,10 +39,11 @@ def main() -> None:
     parser.add_argument("--no-audio", action="store_true", help="video only, no audio mix")
     parser.add_argument("--keep-silent", action="store_true",
                         help="keep click/percussion staves (dropped by default)")
-    parser.add_argument("--spacer", type=int, default=2, choices=[0, 1, 2, 4, 8],
+    parser.add_argument("--spacer", type=int, default=DEFAULT_PER_QUARTER,
+                        choices=[0, 1, 2, 4, 8],
                         metavar="N",
                         help="rests per quarter in the hidden spacing staff, which makes "
-                             "measure width follow beats (0 disables; default 2 = eighths)")
+                             "measure width follow beats (0 disables; default 8 = 32nds)")
     parser.add_argument("--smooth", type=float, default=2.0, metavar="SECONDS",
                         help="seconds to average the scroll speed over (0 disables)")
     parser.add_argument("--top-margin", type=float, default=0.0, metavar="PERCENT",

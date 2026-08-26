@@ -130,6 +130,17 @@ def test_changing_the_musescore_renderer_invalidates_the_preview(song, prepared,
     assert len(prepared) == 2
 
 
+def test_changing_the_spacing_grid_invalidates_the_preview(song, prepared, monkeypatch):
+    """A cached picture must not survive a renderer-default spacing change."""
+    from src.scrollvideo import spacing
+
+    pipeline.scroll_preview(song.dir, song.cleaned_path())
+    monkeypatch.setattr(spacing, "DEFAULT_PER_QUARTER", 4)
+    pipeline.scroll_preview(song.dir, song.cleaned_path())
+
+    assert [call["spacer_per_quarter"] for call in prepared] == [8, 4]
+
+
 def test_a_score_with_its_own_tempo_ignores_the_offered_one(client, song, prepared,
                                                             monkeypatch):
     monkeypatch.setattr(pipeline, "has_opening_tempo", lambda _path: True)
