@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 
 from src.scrollvideo import build_videos
-from src.scrollvideo.spacing import DEFAULT_PER_QUARTER
+from src.scrollvideo.spacing import DEFAULT_PER_QUARTER, MAX_WIDTH_RATIO
 
 load_dotenv(".env") or load_dotenv(".env.default")
 
@@ -42,8 +42,10 @@ def main() -> None:
     parser.add_argument("--spacer", type=int, default=DEFAULT_PER_QUARTER,
                         choices=[0, 1, 2, 4, 8],
                         metavar="N",
-                        help="rests per quarter in the hidden spacing staff, which makes "
-                             "measure width follow beats (0 disables; default 8 = 32nds)")
+                        help=("finest hidden rest grid adaptive spacing may use; narrower "
+                              "measures use coarser or no spacing as needed to keep adjacent "
+                              f"width-per-beat changes within {MAX_WIDTH_RATIO:.2f}x "
+                              "(0 disables; default 8 = up to 32nds)"))
     parser.add_argument("--smooth", type=float, default=2.0, metavar="SECONDS",
                         help="seconds to average the scroll speed over (0 disables)")
     parser.add_argument("--top-margin", type=float, default=0.0, metavar="PERCENT",

@@ -801,13 +801,12 @@ shortcuts, and it can run unattended. One video per voice: the score scrolls
 horizontally as a single continuous system, every sounding note lights up, and the
 voice the track is for is highlighted strongly while the others stay faint.
 
-Interface — everything else is an implementation detail of these calls. This pull
-request proposes changing the spacer default shown here from 2 to 8:
+Interface — everything else is an implementation detail of these calls:
 
 ```python
 build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
              fps=60, with_audio=True, keep_silent=False, emphasise=False,
-             combined=True, spacer_per_quarter=8, smooth_seconds=2.0,
+             combined=True, spacer_per_quarter=2, smooth_seconds=2.0,
              basename=None, log=...) -> [video paths]
 preview(mscx_path, out_dir, width=3840, height=2160, fps=60, ...) -> payload
 ```
@@ -881,11 +880,10 @@ to `entry["tstamp"]`.
   bottom of the strip by `visible_height` — `build_videos` rasterises proportionally
   taller so the singing staves still fill the frame. The crop margin is deliberately
   tiny: the last staff's lyrics sit in the gap above the spacer, and a generous
-  margin clips them. This pull request proposes 32nd rests (`--spacer 8`) as the
-  default so the 4-note/32-note case stays within about 1.3x; that deliberately
-  shows less music on screen than the previous eighth-rest default. Verovio's own
-  spacing options cannot do this job — `spacingNonLinear: 1.0` gets the spread to
-  1.04x but makes the page 7x wider, leaving less than one bar on screen.
+  margin clips them. Default is eighth rests (`--spacer 2`): sixteenths are more even
+  (1.21x) but show 3.5 bars per screen instead of 4.6. Verovio's own spacing options
+  cannot do this job — `spacingNonLinear: 1.0` gets the spread to 1.04x but makes the
+  page 7x wider, leaving less than one bar on screen.
 - `score.py` is the only edit made to the score before engraving: parts with nothing
   to sing (percussion, or a staff of only rests — the click track
   `add_rest_track.qml` adds) are dropped, along with the staves they own. They would

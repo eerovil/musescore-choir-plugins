@@ -178,11 +178,9 @@ Measure width is forced to follow the number of beats rather than how many notes
 happen to be in the bar, so the scroll runs at a steady speed instead of surging
 through sparse bars and crawling through busy ones. This replaces what the
 `add_rest_track.qml` click staff used to do: a hidden staff of evenly spaced rests
-is engraved and then cropped off the picture. This pull request proposes using
-32nd rests by default (`--spacer 8`) so a 32-note bar stays close in width to an
-equally long 4-note bar; the tradeoff is less music on screen. `--spacer 0` turns
-the grid off. `--smooth SECONDS` sets how long the scroll speed is averaged over
-(default 2; 0 disables).
+is engraved and then cropped off the picture. `--spacer 4` uses sixteenths (more
+even, less music on screen), `--spacer 0` turns it off. `--smooth SECONDS` sets how
+long the scroll speed is averaged over (default 2; 0 disables).
 
 The render is deterministic: same score in, byte-identical videos out.
 
