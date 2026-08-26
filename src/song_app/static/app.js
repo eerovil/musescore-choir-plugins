@@ -22,6 +22,8 @@ const getJSON = (p) => api(p);
 const postJSON = (p, body) =>
   api(p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
 
+const DEFAULT_TOP_MARGIN = 0;
+const DEFAULT_BOTTOM_MARGIN = 5;
 const STAGE_LABEL = { register: "Start", clean: "Clean", fix: "Fix", lyrics: "Lyrics", review: "Review", record: "Record", upload: "Upload" };
 
 // ---- router --------------------------------------------------------------
@@ -1237,12 +1239,15 @@ function panelRecord(panel, song, P, refresh, actions) {
     el("option", { value: "4k", selected: (rec.quality || "4k") === "4k" }, "4K, 60fps"),
     el("option", { value: "1080p", selected: rec.quality === "1080p" }, "1080p, 30fps (faster)"),
     el("option", { value: "720p", selected: rec.quality === "720p" }, "720p, 30fps (test)"));
+  // What a song that has never been asked starts at. The server prefills the same
+  // numbers (DEFAULT_TOP/BOTTOM_MARGIN_PERCENT); keep the two in step. A little
+  // white space under the bottom staff keeps its lyrics off the frame edge.
   const topMargin = el("input", {
-    type: "number", value: rec.top_margin ?? 0, min: -40, max: 100, step: 1,
+    type: "number", value: rec.top_margin ?? DEFAULT_TOP_MARGIN, min: -40, max: 100, step: 1,
     style: "width:100px", "data-video-margin": "top"
   });
   const bottomMargin = el("input", {
-    type: "number", value: rec.bottom_margin ?? 0, min: -40, max: 100, step: 1,
+    type: "number", value: rec.bottom_margin ?? DEFAULT_BOTTOM_MARGIN, min: -40, max: 100, step: 1,
     style: "width:100px", "data-video-margin": "bottom"
   });
   const hardwareEncoding = el("input", {

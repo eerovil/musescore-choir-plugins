@@ -466,6 +466,24 @@ state model are in `DESIGN.md`.
   `build_videos(basename=...)` so the names come out right); `server._run_record`
   branches on `renderer` and records which one it used in `record.renderer`.
   `find_merged_outputs` matches `.mp4` as well as `.mov` for the same reason.
+  This pull request proposes that the app's **vertical margins start at 0% top and
+  5% bottom** rather than 0/0. The renderer's own default stays 0 — there the number
+  means "leave the framing alone", and moving it would silently move `scroll_video.py`
+  too — so this is a product default, held twice: `server.DEFAULT_TOP_MARGIN_PERCENT`
+  / `DEFAULT_BOTTOM_MARGIN_PERCENT` (the record API's fallback and both
+  `scroll-preview*` query defaults) and `DEFAULT_TOP_MARGIN` / `DEFAULT_BOTTOM_MARGIN`
+  in `static/app.js`, which prefill the panel. The two have to agree or the preview
+  frames the music differently from the video. The bottom edge is the one that needs
+  the space: the lowest staff's lyrics otherwise sit against the frame. A default only
+  fills a setting nobody answered — a song that recorded at 0 keeps 0, and typing 0
+  still means 0. `_run_record` now always passes both margins to the renderer instead
+  of only when one is non-zero, which was the same call anyway (the renderer's own
+  defaults are 0). It also **remembers a chosen margin the way it remembers the BPM**
+  — written into `record` when the request arrives, and falling back to what this song
+  chose last before the app-wide default. They used to be written only after a render
+  succeeded, so framing decided against a render that then failed was gone by the next
+  page load. Previewing still writes nothing: the preview is a look at the score, not
+  a stage of the work, so a margin nudged and only previewed is not remembered.
 - The Record panel already has a **silent scroll preview**, so the layout question can be
   answered before the encoding one. Whether the margins are right, whether the staff
   size reads, where the beat marker sits, whether a repeat lands on the right bar —

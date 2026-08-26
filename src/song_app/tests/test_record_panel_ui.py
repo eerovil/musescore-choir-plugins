@@ -148,7 +148,7 @@ def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(record_
     top = view.locator('input[data-video-margin="top"]')
     bottom = view.locator('input[data-video-margin="bottom"]')
     assert top.input_value() == "0"
-    assert bottom.input_value() == "0"
+    assert bottom.input_value() == "5"
     advanced.locator("summary").click()
     assert view.get_by_text("Top margin", exact=True).is_visible()
     assert view.get_by_text("Bottom margin", exact=True).is_visible()
@@ -162,6 +162,10 @@ def test_the_panel_offers_both_renderers_and_starts_on_the_scrolling_one(record_
     if evidence := os.getenv("ISSUE_28_EVIDENCE_DIR"):
         view.get_by_text("Tempo (BPM)", exact=True).scroll_into_view_if_needed()
         view.screenshot(path=os.path.join(evidence, "issue-28-bpm.png"))
+    if evidence := os.getenv("ISSUE_74_EVIDENCE_DIR"):
+        view.get_by_text("Bottom margin", exact=True).scroll_into_view_if_needed()
+        assert bottom.input_value() == "5"
+        view.screenshot(path=os.path.join(evidence, "issue-74-bottom-margin.png"))
 
 
 def test_choosing_the_screen_recorder_swaps_the_controls(record_panel):
@@ -198,7 +202,9 @@ def test_the_run_button_posts_the_chosen_renderer(record_panel):
     assert sent[0]["hardware_encoding"] is True
     assert sent[0]["bpm"] == 80
     assert sent[0]["top_margin"] == 0
-    assert sent[0]["bottom_margin"] == 0
+    # A song nobody has framed by hand renders with a little space under the
+    # bottom staff, so its lowest lyrics are not against the frame edge.
+    assert sent[0]["bottom_margin"] == 5
 
 
 def test_margin_adjustments_are_posted_independently(record_panel):

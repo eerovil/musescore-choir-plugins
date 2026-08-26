@@ -796,6 +796,13 @@ def api_reveal_pdf(slug: str) -> Dict:
 
 MARGIN_LIMITS = (-40.0, 100.0)
 
+# What the margins start at when a song has never been asked. The renderer's own
+# default is 0 — "leave the framing alone" — but the app wants a little white
+# space under the bottom staff, so the lowest lyrics are not against the frame
+# edge. `static/app.js` prefills the same numbers; keep the two in step.
+DEFAULT_TOP_MARGIN_PERCENT = 0.0
+DEFAULT_BOTTOM_MARGIN_PERCENT = 5.0
+
 
 def _margin(value, label: str) -> float:
     """One video margin, as a number inside the range the renderer accepts."""
@@ -811,8 +818,10 @@ def _margin(value, label: str) -> float:
 
 
 @app.get("/api/songs/{slug}/scroll-preview")
-async def api_scroll_preview(slug: str, quality: str = "4k", top_margin: float = 0.0,
-                             bottom_margin: float = 0.0, bpm: Optional[int] = None):
+async def api_scroll_preview(slug: str, quality: str = "4k",
+                             top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
+                             bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
+                             bpm: Optional[int] = None):
     """The scrolling render as pictures the browser can play, before any video exists.
 
     This is the picture without the encoding: the same engraving, viewport, clock,
@@ -864,8 +873,8 @@ async def api_scroll_preview_tile(slug: str, name: str):
 @app.get("/api/songs/{slug}/scroll-preview-audio")
 async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
                                    quality: str = "4k",
-                                   top_margin: float = 0.0,
-                                   bottom_margin: float = 0.0,
+                                   top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
+                                   bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
                                    bpm: Optional[int] = None):
     """One selected MuseScore mix, prepared lazily for the browser preview."""
     song = _require(slug)
@@ -931,14 +940,13 @@ def _run_record(slug: str, opts: Dict) -> None:
                 raise FileNotFoundError("No cleaned score yet — clean the song first.")
             quality = opts.get("quality") or "4k"
             hardware_encoding = opts.get("hardware_encoding") is not False
-            top_margin = float(opts.get("top_margin", 0.0))
-            bottom_margin = float(opts.get("bottom_margin", 0.0))
-            margin_options = {}
-            if top_margin or bottom_margin:
-                margin_options = {
-                    "top_margin_percent": top_margin,
-                    "bottom_margin_percent": bottom_margin,
-                }
+            top_margin = float(opts.get("top_margin", DEFAULT_TOP_MARGIN_PERCENT))
+            bottom_margin = float(opts.get("bottom_margin",
+                                           DEFAULT_BOTTOM_MARGIN_PERCENT))
+            margin_options = {
+                "top_margin_percent": top_margin,
+                "bottom_margin_percent": bottom_margin,
+            }
             log(f"Rendering the scrolling video ({quality})…")
             outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
                                                 quality=quality,
@@ -1055,8 +1063,19 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
         and not (opts.get("merge_only") or opts.get("upload_only"))
     cleaned = song.cleaned_path()
     if scrolling_render:
-        for key, label in (("top_margin", "Top"), ("bottom_margin", "Bottom")):
-            opts[key] = _margin(opts.get(key, 0.0), label)
+        # Remembered the way the BPM is: at request time, and falling back to what
+        # this song chose last before the app-wide default. Writing them only after
+        # a render succeeded meant a margin nudged against a render that then failed
+        # was gone by the next page load, and the panel offered the default again.
+        remembered = song.data.get("record", {})
+        for key, label, default in (
+                ("top_margin", "Top", DEFAULT_TOP_MARGIN_PERCENT),
+                ("bottom_margin", "Bottom", DEFAULT_BOTTOM_MARGIN_PERCENT)):
+            opts[key] = _margin(opts.get(key, remembered.get(key, default)), label)
+        rec = song.data.setdefault("record", {})
+        rec["top_margin"] = opts["top_margin"]
+        rec["bottom_margin"] = opts["bottom_margin"]
+        song.save()
     if scrolling_render and cleaned and os.path.exists(cleaned) \
             and not pipeline.has_opening_tempo(cleaned):
         try:
