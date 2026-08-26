@@ -241,10 +241,11 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
     """Append the minimum adaptive rest grid needed to cap adjacent width changes.
 
     ``per_quarter`` is the finest grid allowed, not the grid forced everywhere.
-    Measures are promoted through quarter/eighth/16th/32nd grids only until their
-    measured width reaches the minimum feasible target. An empty string means the
-    natural engraving already satisfies the cap and must be used unchanged; None
-    means a spacer could not be built.
+    Measures are promoted through quarter/eighth/16th/32nd grids only as needed.
+    Every candidate engraving is measured again: if a discrete grid overshoots its
+    target, that new width is propagated through the same ratio envelope before the
+    next promotion. An empty string means the natural engraving already satisfies
+    the cap and must be used unchanged; None means a spacer could not be built.
     """
     allowed = _allowed_levels(per_quarter)
     tree = etree.parse(musicxml_path)
@@ -262,9 +263,9 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
             musicxml_path, out_path, [per_quarter] * len(measures), per_quarter)
 
     quarters = [Fraction(length, divisions) for _source, divisions, length in measures]
-    target = _minimum_normalized_widths(natural_widths, quarters, max_ratio)
     current = [width / float(duration)
                for width, duration in zip(natural_widths, quarters)]
+    target = _minimum_normalized_widths(current, [1.0] * len(current), max_ratio)
 
     if all(actual >= wanted * (1.0 - _TOLERANCE)
            for actual, wanted in zip(current, target)):
@@ -273,7 +274,12 @@ def add_spacer_staff(musicxml_path: str, out_path: str,
         return ""
 
     levels = [0] * len(measures)
-    for _round in range(len(allowed) - 1):
+    # Levels only ever increase, so this loop is finite even when a coarse rest grid
+    # overshoots and makes a new neighbour need widening. Most scores converge in a
+    # handful of engravings because every newly required measure promotes in parallel.
+    max_promotions = (len(allowed) - 1) * len(levels)
+    for _round in range(max_promotions):
+        target = _minimum_normalized_widths(current, [1.0] * len(current), max_ratio)
         changed = False
         for index, (actual, wanted) in enumerate(zip(current, target)):
             if actual >= wanted * (1.0 - _TOLERANCE):
