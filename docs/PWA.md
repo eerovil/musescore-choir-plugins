@@ -59,3 +59,14 @@ The manifest supplies regular 192/512 icons and a maskable 512 icon. The HTML
 and additive `pwa.css` include standalone metadata plus all four safe-area
 insets, so the header, one-pane workspace, score tabs, and bottom switcher stay
 outside notches and the home indicator.
+
+This pull request proposes making `viewport-fit=cover` conditional. Painting
+under the notch and the home indicator is only wanted where the app owns the
+whole screen; in an ordinary browser tab the same setting moves the page's
+bottom edge under the browser's own toolbar, and the phone layout's pane-switcher
+bar sits exactly there, so the app looks like it has lost its bottom nav (#54).
+The shipped `<meta name="viewport">` therefore leaves it off, and a small inline
+script in the head adds it back when `navigator.standalone` or
+`(display-mode: standalone)` says the app is installed. The safe-area rules are
+unchanged: without `cover`, `env(safe-area-inset-*)` is `0`, so every
+`max(<pad>, inset)` falls back to the plain padding it had before.

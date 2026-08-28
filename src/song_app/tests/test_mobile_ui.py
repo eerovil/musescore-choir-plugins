@@ -282,3 +282,36 @@ def test_desktop_layout_is_unchanged(live_app, own_answers, page):
     expect(page.locator(".viewer")).to_be_visible()
     expect(page.locator(".mobilebar")).to_be_hidden()
     assert not _page_scrolls(page)
+
+
+def test_the_switcher_bar_survives_a_plain_browser_tab(live_app, own_answers, page):
+    """`viewport-fit=cover` belongs to the installed app, not to a browser tab.
+
+    In a tab it moves the page's bottom edge under the browser's own toolbar, and the
+    switcher bar sits exactly there, so it goes under the toolbar with it — the app
+    looks like it has lost its bottom nav (#54). The shipped meta therefore leaves it
+    off and a head script adds it back only when the app is actually standalone, where
+    the safe-area rules pad it and there is no toolbar to hide behind.
+    """
+    page.set_viewport_size(PHONE)
+    _new_song(page, live_app, "Viewport song")
+
+    tab = page.locator("meta#viewport").get_attribute("content")
+    assert "viewport-fit=cover" not in tab, tab
+    expect(page.locator(".mobilebar")).to_be_visible()
+    assert not _page_scrolls(page)
+    if evidence := os.getenv("ISSUE_54_EVIDENCE_DIR"):
+        os.makedirs(evidence, exist_ok=True)
+        page.screenshot(path=os.path.join(evidence, "issue-54-browser-tab.png"))
+
+    # Now the same page as an installed iOS app. `navigator.standalone` is the flag
+    # iOS itself sets; the script reads it before the first paint.
+    page.add_init_script("Object.defineProperty(navigator, 'standalone', { value: true });")
+    page.reload()
+    expect(page.locator(".ws")).to_be_visible()
+
+    installed = page.locator("meta#viewport").get_attribute("content")
+    assert "viewport-fit=cover" in installed, installed
+    expect(page.locator(".mobilebar")).to_be_visible()
+    if evidence := os.getenv("ISSUE_54_EVIDENCE_DIR"):
+        page.screenshot(path=os.path.join(evidence, "issue-54-installed-app.png"))

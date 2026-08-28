@@ -31,3 +31,4 @@ playlists.txt
 /*.musicxml
 /*.mscx
 /*.mscz
+.venv

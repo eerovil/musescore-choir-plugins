@@ -2,7 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta id="viewport" name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    // `viewport-fit=cover` is what lets the installed app paint under the notch and
+    // the home indicator, and pwa.css pads those safe areas back. In an ordinary
+    // browser tab it does the opposite of a favour: the page's bottom edge moves
+    // under the browser's own toolbar, and the workspace's pane-switcher bar sits
+    // exactly there, so it goes with it (#54). Opt in only where the app owns the
+    // whole screen. Inline and in the head, so the viewport is settled before the
+    // first paint rather than after a visible reflow.
+    (() => {
+      const standalone = window.navigator.standalone === true
+        || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+      if (!standalone) return;
+      document.getElementById("viewport").setAttribute(
+        "content", "width=device-width, initial-scale=1, viewport-fit=cover");
+    })();
+  </script>
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#14151a" />
   <meta name="apple-mobile-web-app-title" content="Choir" />
