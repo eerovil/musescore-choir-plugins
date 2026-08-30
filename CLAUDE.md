@@ -868,7 +868,7 @@ bars:
 build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
              fps=60, with_audio=True, keep_silent=False, emphasise=False,
              combined=True, spacing_ratio=1.3, smooth_seconds=2.0,
-             basename=None, log=...) -> [video paths]
+             basename=None, system_starts=None, log=...) -> [video paths]
 preview(mscx_path, out_dir, width=3840, height=2160, fps=60, ...) -> payload
 ```
 
@@ -1000,6 +1000,29 @@ to `entry["tstamp"]`.
   renderer picked, and a symbol in the wrong place is worse than a box. A page with
   no such symbol is returned untouched, so renders that never had the problem stay
   byte-identical.
+  This pull request proposes that it also own **which bars print their number**.
+  A number on every bar is what one continuous system gets today, and about four
+  bars fit on screen, so the picture carries four numbers at once and none of them
+  means anything (#78). The useful grouping is the one the singer already has: the
+  systems of the printed page. So a number goes on the **first bar of each printed
+  system**, even though the video has no systems of its own.
+  Verovio has no way to say "these bars and no others", so it is still asked for
+  every bar and `engrave.keep_measure_numbers` rubs out the rest. Asking for all of
+  them is deliberate rather than lazy: the width of a bar is settled when the page
+  is laid out, so the bars `spacing.even_engraving` measures come out the same
+  whichever numbers survive, and the choice cannot move the scroll. `None` skips
+  the whole pass and returns the page verovio drew, byte for byte.
+  Where the grouping comes from is the awkward half. `score.system_starts` reads it
+  off the score's own line breaks, which works for a per-system score and for the
+  `scroll_video.py` CLI — but **normal-mode cleaning strips line breaks**, so the
+  score the app renders usually has none. The app therefore reads them off the
+  converted input (`pipeline.printed_system_starts`, the same file the score
+  previews already take their breaks from) and passes them as `system_starts`. A
+  score with no breaks anywhere — a native MuseScore file never laid out for print
+  — falls back to a number every `build.FALLBACK_NUMBER_INTERVAL` bars, which is
+  about what a system holds. Falling back to *every* bar would be falling back to
+  the complaint. The preview is given the same grouping and it is part of the
+  preview's cache key, or a relaid-out source would be played against old numbers.
 - `geometry.py` owns two verovio-SVG facts. Coordinates live in the **nested**
   `<svg class="definition-scale" viewBox=...>`, not the root (whose px size is 1/25
   of it), and a note's position is its notehead `<use transform="translate(x, y)">`
@@ -1154,6 +1177,12 @@ without it, like the browser tests:
 - `test_sync.py` — the clock, end to end on a fixture with a 3x fermata: every
   highlight lands within 20ms of a MIDI note-on, the last note ends with the audio,
   and a guard test spelling out what verovio's own clock *would* have shipped.
+- `test_measure_numbers.py` — added by this pull request: a line break starts the
+  *next* system and one on the last bar starts nothing, the caller's grouping beats
+  the score's, a score with no breaks gets an interval and not every bar, and — the
+  two that guard the render — the chosen page has the same bar widths, page width
+  and notes as the fully numbered one, and every pixel of it is the same or lighter,
+  so removing a number cannot have moved anything.
 - `test_symbol_text.py` — a tempo mark's note is drawn rather than left to a font, it
   is ink on the page above the music (measured against the same page with the drawing
   taken out again, so the "= 80" beside it cannot satisfy the reading), the writing

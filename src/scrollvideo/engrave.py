@@ -13,7 +13,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import verovio
 from lxml import etree
@@ -23,12 +23,14 @@ from .geometry import SVG_NS, Layout, parse_layout
 # One system, no page breaks: the score becomes a single horizontal strip.
 #
 # `mnumInterval` prints bar numbers, which a single continuous system otherwise
-# shows only once (they are normally drawn per system). Every bar, not every
-# fifth: only ~4 bars fit on screen, so a wider interval leaves stretches of the
-# video with no number visible at all. `xmlIdSeed` fixes
-# verovio's element ids, which are otherwise random per run — the ids do not
-# affect what is drawn, but pinning them makes a render byte-for-byte
-# reproducible and failures easier to compare.
+# shows only once (they are normally drawn per system). Verovio is asked for one
+# on *every* bar and `numbered_measures` then rubs out the ones we do not want:
+# verovio has no way to say "these bars and no others", and asking for all of
+# them keeps the engraved spacing identical whichever bars end up numbered — the
+# widths `spacing.even_engraving` measures do not shift when the choice changes.
+# `xmlIdSeed` fixes verovio's element ids, which are otherwise random per run —
+# the ids do not affect what is drawn, but pinning them makes a render
+# byte-for-byte reproducible and failures easier to compare.
 MEASURE_NUMBER_INTERVAL = 1
 XML_ID_SEED = 1
 
@@ -61,8 +63,13 @@ class Engraving:
         return self.layout.notes
 
 
-def engrave(musicxml_path: str, options: Dict | None = None) -> Engraving:
-    """Render `musicxml_path` as one system and return SVG + geometry + timemap."""
+def engrave(musicxml_path: str, options: Dict | None = None,
+            numbered_measures: Optional[Iterable[int]] = None) -> Engraving:
+    """Render `musicxml_path` as one system and return SVG + geometry + timemap.
+
+    `numbered_measures` is the 0-based bars allowed to keep their printed bar
+    number; every other number is removed from the page. `None` keeps them all.
+    """
     tk = verovio.toolkit(False)
     if not tk.setResourcePath(RESOURCE_PATH):
         raise RuntimeError(f"Verovio could not load its resources from {RESOURCE_PATH}")
@@ -72,7 +79,7 @@ def engrave(musicxml_path: str, options: Dict | None = None) -> Engraving:
     pages = tk.getPageCount()
     if pages != 1:
         raise RuntimeError(f"Expected one continuous system, got {pages} pages.")
-    svg = draw_symbol_text(tk.renderToSVG(1))
+    svg = keep_measure_numbers(draw_symbol_text(tk.renderToSVG(1)), numbered_measures)
     layout = parse_layout(svg)
     timemap = tk.renderToTimemap({"includeMeasures": True, "includeRests": True})
     return Engraving(svg, layout, timemap, _drawn_ids(tk, timemap, layout))
@@ -132,6 +139,42 @@ def _font_size(element: etree._Element) -> Optional[float]:
             return float(size.group(1))
         element = element.getparent()
     return None
+
+
+# Verovio draws a bar number as a `<g class="mNum ...">` inside the bar it belongs
+# to, so choosing which bars keep one is a matter of taking the others out again.
+MEASURE_CLASS = "measure"
+MEASURE_NUMBER_CLASS = "mNum"
+
+
+def _has_class(node: etree._Element, name: str) -> bool:
+    return name in (node.get("class") or "").split()
+
+
+def keep_measure_numbers(svg: str, wanted: Optional[Iterable[int]]) -> str:
+    """The same SVG with bar numbers left only on the 0-based bars in `wanted`.
+
+    `None` changes nothing, so a caller that wants verovio's own choice — every
+    bar, at `MEASURE_NUMBER_INTERVAL` — gets the page byte for byte as drawn.
+    Removing the number does not move anything: the width was decided when the
+    page was laid out, and this only takes the ink away.
+    """
+    if wanted is None:
+        return svg
+    keep = set(wanted)
+    root = etree.fromstring(svg.encode())
+    # Collected before anything is removed: removing a node while walking the tree
+    # skips the rest of the branch, and the measures after it went unvisited.
+    measures = [g for g in root.iter(_tag("g")) if _has_class(g, MEASURE_CLASS)]
+    changed = False
+    for index, measure in enumerate(measures):
+        if index in keep:
+            continue
+        for number in [g for g in measure.iter(_tag("g"))
+                       if _has_class(g, MEASURE_NUMBER_CLASS)]:
+            number.getparent().remove(number)
+            changed = True
+    return etree.tostring(root, encoding="unicode") if changed else svg
 
 
 def _runs(text: etree._Element) -> List[etree._Element]:

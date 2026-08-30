@@ -675,6 +675,17 @@ def api_page(slug: str, page: int, dpi: int = 150, grid: bool = False):
     return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
+def _printed_systems(song) -> list:
+    """The bars that begin a printed system, for the scrolling video's bar numbers.
+
+    Read off the converted input rather than the cleaned score: normal-mode
+    cleaning strips the line breaks, so the cleaned file usually cannot say where
+    the page's systems were. Empty when the source never had breaks — the renderer
+    then falls back to numbering at a regular interval.
+    """
+    return pipeline.printed_system_starts(_bounds_score(song))
+
+
 def _cleaned_breaks(song) -> tuple:
     """(cleaned .mscx, printed line breaks) for the compare view, or (None, [])."""
     cleaned = song.cleaned_path()
@@ -868,6 +879,9 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
         # A score with its own opening tempo ignores this, so it is only part of
         # what the preview is *of* when the app is the one supplying the tempo.
         "initial_bpm": bpm if bpm and not pipeline.has_opening_tempo(cleaned) else None,
+        # The picture shows a bar number where the page started a system, so the
+        # preview has to be told the same grouping the render is told.
+        "system_starts": _printed_systems(song),
     }
     try:
         payload = await asyncio.get_running_loop().run_in_executor(
@@ -914,6 +928,7 @@ async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
         "top_margin_percent": _margin(top_margin, "Top"),
         "bottom_margin_percent": _margin(bottom_margin, "Bottom"),
         "initial_bpm": bpm if bpm and not pipeline.has_opening_tempo(cleaned) else None,
+        "system_starts": _printed_systems(song),
     }
     try:
         path, reused = await asyncio.get_running_loop().run_in_executor(
@@ -980,6 +995,7 @@ def _run_record(slug: str, opts: Dict) -> None:
                                                 quality=quality,
                                                 hardware_encoding=hardware_encoding,
                                                 initial_bpm=opts.get("bpm"),
+                                                system_starts=_printed_systems(song),
                                                 log=log,
                                                 progress=progress,
                                                 **margin_options)

@@ -377,3 +377,40 @@ def test_a_tile_name_cannot_reach_out_of_the_preview_folder(client, song, prepar
     for name in ("../.song.json", "..%2F.song.json", "nothing.png"):
         assert client.get(
             f"/api/songs/{song.slug}/scroll-preview/{name}").status_code == 404
+
+
+def _printed_systems(song, breaks):
+    """An input score with printed line breaks; cleaning strips them from the score
+    the preview draws, so the app has to read them off this one."""
+    from lxml import etree
+
+    root = etree.Element("museScore")
+    staff = etree.SubElement(etree.SubElement(root, "Score"), "Staff")
+    staff.set("id", "1")
+    for i in range(12):
+        measure = etree.SubElement(staff, "Measure")
+        if i in breaks:
+            etree.SubElement(etree.SubElement(measure, "LayoutBreak"),
+                             "subtype").text = "line"
+    with open(song.path("input.mscx"), "wb") as fh:
+        fh.write(etree.tostring(root))
+    song.data.setdefault("sources", {})["xml"] = "input.mscx"
+    song.save()
+
+
+def test_the_preview_numbers_the_bars_the_page_started_a_system_on(client, song,
+                                                                   prepared):
+    """The preview has to be given the same grouping the render is given (#78)."""
+    _printed_systems(song, (3, 7))
+    client.get(f"/api/songs/{song.slug}/scroll-preview")
+    assert prepared[0]["system_starts"] == [0, 4, 8]
+
+
+def test_relaying_out_the_source_throws_the_preview_away(client, song, prepared):
+    """Different systems mean different bar numbers on the page, so it is a new picture."""
+    _printed_systems(song, (3, 7))
+    client.get(f"/api/songs/{song.slug}/scroll-preview")
+    _printed_systems(song, (5,))
+    client.get(f"/api/songs/{song.slug}/scroll-preview")
+
+    assert [call["system_starts"] for call in prepared] == [[0, 4, 8], [0, 6]]

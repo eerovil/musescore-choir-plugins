@@ -60,6 +60,39 @@ def _staff_ids(part: etree._Element) -> List[str]:
     return [s.get("id") for s in part.findall("Staff") if s.get("id")]
 
 
+def system_starts(mscx_path: str) -> List[int]:
+    """0-based bars that begin a printed system, read off the score's line breaks.
+
+    Empty when the score carries none. Normal-mode cleaning strips line breaks, so
+    a cleaned score usually has none and the caller has to supply the printed
+    grouping from the input score instead; a per-system score keeps its own.
+    """
+    try:
+        root = etree.parse(mscx_path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return []
+    for staff in root.findall(".//Score/Staff"):
+        measures = staff.findall("Measure")
+        breaks = [i for i, measure in enumerate(measures)
+                  if any((lb.findtext("subtype") or "").strip() == "line"
+                         for lb in measure.findall("LayoutBreak"))]
+        if breaks:
+            # A break sits on the *last* bar of its system, so the next one starts
+            # the following system. A break on the final bar starts nothing.
+            return [0] + [i + 1 for i in breaks if i + 1 < len(measures)]
+    return []
+
+
+def measure_count(mscx_path: str) -> int:
+    """How many bars the score has, counted on its first staff."""
+    try:
+        root = etree.parse(mscx_path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return 0
+    return max((len(staff.findall("Measure"))
+                for staff in root.findall(".//Score/Staff")), default=0)
+
+
 def silent_parts(root: etree._Element) -> List[str]:
     """Names of parts with nothing to sing: percussion, or only rests."""
     score = root.find("Score")
