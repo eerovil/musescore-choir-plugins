@@ -279,6 +279,18 @@ def line_break_measures(mscx_path: str) -> List[int]:
     return []
 
 
+def printed_system_starts(mscx_path: str) -> List[int]:
+    """0-based measures that *begin* a printed system, from a score with breaks.
+
+    A line break sits on the last bar of its system, so the next bar opens the
+    following one. Empty when the score has no breaks. The scrolling video numbers
+    these bars: it has no systems of its own, so the page's grouping is the only
+    one a singer can recognise.
+    """
+    breaks = line_break_measures(mscx_path)
+    return [0] + [i + 1 for i in breaks] if breaks else []
+
+
 def _apply_line_breaks(root: etree._Element, indices: List[int]) -> int:
     """Put line breaks on the top staff at `indices`. Returns how many were added.
 
@@ -574,6 +586,7 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                      initial_bpm: Optional[int] = None,
                      top_margin_percent: float = 0.0,
                      bottom_margin_percent: float = 0.0,
+                     system_starts: Optional[List[int]] = None,
                      log: Logger = _noop,
                      progress: Logger = _noop) -> List[str]:
     """Render one scrolling practice video per voice into media/video.
@@ -593,6 +606,7 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                         initial_bpm=initial_bpm,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent,
+                        system_starts=system_starts,
                         audio_cache_dir=audio_cache_dir)
 
 
@@ -622,6 +636,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                    initial_bpm: Optional[int] = None,
                    top_margin_percent: float = 0.0,
                    bottom_margin_percent: float = 0.0,
+                   system_starts: Optional[List[int]] = None,
                    log: Logger = _noop) -> Dict:
     """The scrolling render as pictures a browser can play, without rendering it.
 
@@ -642,6 +657,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
     settings = {"quality": quality, "width": width, "height": height, "fps": fps,
                 "bpm": initial_bpm, "top": top_margin_percent,
                 "bottom": bottom_margin_percent,
+                "systems": list(system_starts or []),
                 "ratio": spacing_mod.DEFAULT_MAX_RATIO}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
@@ -661,7 +677,8 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                       initial_bpm=initial_bpm,
                       spacing_ratio=settings["ratio"],
                       top_margin_percent=top_margin_percent,
-                      bottom_margin_percent=bottom_margin_percent, log=log)
+                      bottom_margin_percent=bottom_margin_percent,
+                      system_starts=system_starts, log=log)
     payload["revision"] = _preview_revision(key)
     os.makedirs(cache_dir, exist_ok=True)
     tmp = path + ".tmp"
@@ -675,6 +692,7 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
                          quality: str = "4k", initial_bpm: Optional[int] = None,
                          top_margin_percent: float = 0.0,
                          bottom_margin_percent: float = 0.0,
+                         system_starts: Optional[List[int]] = None,
                          log: Logger = _noop) -> Tuple[str, bool]:
     """Return one lazy preview WAV made from the final renderer's prepared score.
 
@@ -693,6 +711,7 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
     settings = {"quality": quality, "width": width, "height": height, "fps": fps,
                 "bpm": initial_bpm, "top": top_margin_percent,
                 "bottom": bottom_margin_percent,
+                "systems": list(system_starts or []),
                 "ratio": spacing_mod.DEFAULT_MAX_RATIO}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)

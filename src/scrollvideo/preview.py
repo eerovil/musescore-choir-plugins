@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 from PIL import Image
@@ -128,6 +128,7 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
             spacing_ratio: float = spacing_mod.DEFAULT_MAX_RATIO,
             smooth_seconds: float = SMOOTH_SECONDS,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
+            system_starts: Optional[Sequence[int]] = None,
             preview_height: int = PREVIEW_HEIGHT, log: Logger = _noop) -> Dict:
     """Draw this render as tiles in `out_dir` and return what a player needs with them.
 
@@ -145,7 +146,8 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
                         initial_bpm=initial_bpm, spacing_ratio=spacing_ratio,
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
-                        bottom_margin_percent=bottom_margin_percent, log=log)
+                        bottom_margin_percent=bottom_margin_percent,
+                        system_starts=system_starts, log=log)
         drawn = raster(ready, preview_height, log)
         frame_width = max(1, int(round(preview_height * width / height)))
 

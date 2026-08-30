@@ -58,9 +58,33 @@ MAX_MARGIN_PERCENT = 100.0
 # there — the same name the old screen recorder used.
 COMBINED = "ALL"
 
+# Bar numbers are printed once per printed system rather than on every bar (#78):
+# about four bars fit on screen, so a number on each of them is noise, and the
+# grouping the singer already knows from the page is the useful one. A score with
+# no line breaks — a native MuseScore file that was never laid out for print — has
+# no such grouping, so numbers fall back to this many bars, which is about what a
+# printed system holds and keeps one in view.
+FALLBACK_NUMBER_INTERVAL = 4
+
 
 def _noop(_msg: str) -> None:
     pass
+
+
+def numbered_measures(mscx_path: str,
+                      system_starts: Optional[Sequence[int]] = None) -> List[int]:
+    """Which bars print their number: the first bar of each printed system.
+
+    `system_starts` is the printed grouping when the caller knows it — the song
+    app reads it off the input score, because cleaning strips the line breaks the
+    rendered score would otherwise carry. Without it the score's own breaks are
+    used, and a score with none falls back to a regular interval.
+    """
+    starts = list(system_starts) if system_starts else score_mod.system_starts(mscx_path)
+    if not starts:
+        total = max(1, score_mod.measure_count(mscx_path))
+        starts = list(range(0, total, FALLBACK_NUMBER_INTERVAL))
+    return sorted({int(i) for i in starts if int(i) >= 0})
 
 
 def video_encoder(hardware_encoding: bool, width: int, height: int) -> str:
@@ -195,6 +219,7 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
             spacing_ratio: float = spacing_mod.DEFAULT_MAX_RATIO,
             smooth_seconds: float = SMOOTH_SECONDS, fps: int = 60,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
+            system_starts: Optional[Sequence[int]] = None,
             log: Logger = _noop) -> Prepared:
     """Do everything a render needs before rasterising, and check it is renderable.
 
@@ -239,9 +264,16 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
     # Bars that would scroll much faster than their neighbours are widened with a
     # hidden staff of rests, which is engraved and then cropped off the bottom.
     # A score already scrolling evenly is engraved as it came out.
+    # Bar numbers go on the first bar of each printed system. The grouping is read
+    # from the score the caller named, not the temporary render copy: dropping a
+    # silent part cannot move a bar, and the printed breaks are what the singer saw.
+    numbered = numbered_measures(mscx_path, system_starts)
+
     log("Engraving one continuous system (verovio)")
-    eng, spaced = spacing_mod.even_engraving(musicxml, tmp, engrave,
-                                             max_ratio=spacing_ratio, log=log)
+    eng, spaced = spacing_mod.even_engraving(
+        musicxml, tmp,
+        lambda path: engrave(path, numbered_measures=numbered),
+        max_ratio=spacing_ratio, log=log)
     layout = eng.layout
     singing_staves = len(layout.staff_tops) - (1 if spaced else 0)
     if singing_staves != len(names):
@@ -394,6 +426,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  bottom_margin_percent: float = 0.0,
                  basename: Optional[str] = None,
                  initial_bpm: Optional[int] = None,
+                 system_starts: Optional[Sequence[int]] = None,
                  hardware_encoding: bool = True,
                  audio_cache_dir: Optional[str] = None,
                  log: Logger = _noop, progress: Logger = _noop) -> List[str]:
@@ -433,7 +466,8 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                         initial_bpm=initial_bpm, spacing_ratio=spacing_ratio,
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
-                        bottom_margin_percent=bottom_margin_percent, log=log)
+                        bottom_margin_percent=bottom_margin_percent,
+                        system_starts=system_starts, log=log)
         source = ready.source
         layout = ready.layout
         names, wanted = ready.names, ready.wanted
