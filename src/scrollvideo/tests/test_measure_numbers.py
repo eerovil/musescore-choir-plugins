@@ -16,16 +16,17 @@ from src.scrollvideo.geometry import parse_layout, rasterise
 from src.scrollvideo.spacing import measure_widths
 
 
-def _score(tmp_path, measures: int, breaks=()):
-    """A minimal .mscx of `measures` bars, with a line break on each of `breaks`."""
+def _score(tmp_path, measures: int, breaks=(), pages=()):
+    """A minimal .mscx of `measures` bars, broken at `breaks` (line) / `pages` (page)."""
     root = etree.Element("museScore")
     staff = etree.SubElement(etree.SubElement(root, "Score"), "Staff")
     staff.set("id", "1")
     for i in range(measures):
         measure = etree.SubElement(staff, "Measure")
-        if i in breaks:
-            etree.SubElement(etree.SubElement(measure, "LayoutBreak"),
-                             "subtype").text = "line"
+        for i_breaks, kind in ((breaks, "line"), (pages, "page")):
+            if i in i_breaks:
+                etree.SubElement(etree.SubElement(measure, "LayoutBreak"),
+                                 "subtype").text = kind
     path = tmp_path / "score.mscx"
     path.write_bytes(etree.tostring(root))
     return str(path)
@@ -52,6 +53,17 @@ def test_a_line_break_starts_the_next_system_not_its_own_bar(tmp_path):
 
 def test_a_break_on_the_final_bar_starts_nothing(tmp_path):
     assert score_mod.system_starts(_score(tmp_path, 8, breaks=(3, 7))) == [0, 4]
+
+
+def test_a_page_break_ends_a_system_too(tmp_path):
+    """A page turn ends a system, so the bar after it opens the next one.
+
+    A score laid out for print puts a page break at each turn and line breaks in
+    between; counting only the line breaks merged every turn into one system and
+    numbered a bar in the middle of the page instead of the one after the turn.
+    """
+    assert score_mod.system_starts(_score(tmp_path, 12, breaks=(3,), pages=(7,))) == [0, 4, 8]
+    assert score_mod.system_starts(_score(tmp_path, 12, pages=(3, 7))) == [0, 4, 8]
 
 
 def test_a_score_with_no_breaks_offers_no_grouping(tmp_path):

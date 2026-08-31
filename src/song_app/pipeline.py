@@ -23,6 +23,7 @@ from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
 from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text
+from src.clean_score.utils.utils import starts_new_system
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
 Logger = Callable[[str], None]
@@ -261,8 +262,9 @@ BREAK_SCALES = (0.85, 0.75, 0.65)
 
 
 def line_break_measures(mscx_path: str) -> List[int]:
-    """0-based measure indices carrying a printed line break, from the first staff
-    that has any. Empty when the score has none -- not every source does."""
+    """0-based measure indices that end a printed system, from the first staff
+    that has any. A page break ends one as well as a line break does. Empty when
+    the score has none -- not every source does."""
     if not mscx_path or not os.path.exists(mscx_path):
         return []
     try:
@@ -271,9 +273,7 @@ def line_break_measures(mscx_path: str) -> List[int]:
         return []
     for staff in root.findall(".//Score/Staff"):
         measures = staff.findall("Measure")
-        found = [i for i, m in enumerate(measures)
-                 if any((lb.findtext("subtype") or "").strip() == "line"
-                        for lb in m.findall("LayoutBreak"))]
+        found = [i for i, m in enumerate(measures) if starts_new_system(m)]
         if found:
             return found
     return []
@@ -306,8 +306,7 @@ def _apply_line_breaks(root: etree._Element, indices: List[int]) -> int:
         return 0
     added = 0
     for i in indices:
-        if any((lb.findtext("subtype") or "").strip() == "line"
-               for lb in top[i].findall("LayoutBreak")):
+        if starts_new_system(top[i]):     # a page break there already ends the system
             continue
         lb = etree.SubElement(top[i], "LayoutBreak")
         etree.SubElement(lb, "subtype").text = "line"

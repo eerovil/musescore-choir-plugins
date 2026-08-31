@@ -11,6 +11,20 @@ RESOLUTION = GLOBALS.RESOLUTION
 
 logger = logging.getLogger(__name__)
 
+# A page break starts a printed system just as a line break does, so both count.
+# Only "line" used to, and a score whose page turns are page breaks then reported
+# fewer systems than the page shows: one "system" straddling the turn. Every
+# consumer wants the printed grouping (per-system cleaning, the lyric grid, the
+# scrolling video's measure numbers), and none of them cares which kind of break
+# ended the line.
+SYSTEM_BREAK_SUBTYPES = ("line", "page")
+
+
+def starts_new_system(measure: etree._Element) -> bool:
+    """True if a break on this measure ends its printed system."""
+    return any((lb.findtext("subtype") or "").strip() in SYSTEM_BREAK_SUBTYPES
+               for lb in measure.findall(".//LayoutBreak"))
+
 
 def resolve_duration(fraction_or_duration: str, dots: str = "0") -> int:
     """

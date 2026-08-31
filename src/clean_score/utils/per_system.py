@@ -44,7 +44,7 @@ from lxml import etree
 
 from .missing_ties import add_missing_ties
 from .revoice import _voice_summary
-from .utils import delete_all_elements_by_selector
+from .utils import delete_all_elements_by_selector, starts_new_system
 
 logger = logging.getLogger(__name__)
 
@@ -220,15 +220,11 @@ def _score_of(root: etree._Element) -> etree._Element:
 
 
 def _system_bounds(root: etree._Element) -> List[Tuple[int, int]]:
-    """(start, end) 0-based inclusive measure ranges, split at line breaks."""
+    """(start, end) 0-based inclusive measure ranges, split at system breaks."""
     score = _score_of(root)
     staff = score.find("Staff")
     measures = staff.findall("Measure")
-    breaks = set()
-    for i, m in enumerate(measures):
-        for lb in m.findall(".//LayoutBreak"):
-            if (lb.findtext("subtype") or "").strip() == "line":
-                breaks.add(i)
+    breaks = {i for i, m in enumerate(measures) if starts_new_system(m)}
     systems: List[Tuple[int, int]] = []
     start = 0
     for i in range(len(measures)):

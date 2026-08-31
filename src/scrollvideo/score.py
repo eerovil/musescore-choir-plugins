@@ -11,6 +11,8 @@ from typing import List, Optional, Tuple
 
 from lxml import etree
 
+from src.clean_score.utils.utils import starts_new_system
+
 
 def has_opening_tempo(root: etree._Element) -> bool:
     """Whether any staff declares tempo before its first sounding/rest event."""
@@ -61,9 +63,10 @@ def _staff_ids(part: etree._Element) -> List[str]:
 
 
 def system_starts(mscx_path: str) -> List[int]:
-    """0-based bars that begin a printed system, read off the score's line breaks.
+    """0-based bars that begin a printed system, read off the score's own breaks.
 
-    Empty when the score carries none. Normal-mode cleaning strips line breaks, so
+    A page break ends a system too, so both kinds count. Empty when the score
+    carries none. Normal-mode cleaning strips line breaks, so
     a cleaned score usually has none and the caller has to supply the printed
     grouping from the input score instead; a per-system score keeps its own.
     """
@@ -74,8 +77,7 @@ def system_starts(mscx_path: str) -> List[int]:
     for staff in root.findall(".//Score/Staff"):
         measures = staff.findall("Measure")
         breaks = [i for i, measure in enumerate(measures)
-                  if any((lb.findtext("subtype") or "").strip() == "line"
-                         for lb in measure.findall("LayoutBreak"))]
+                  if starts_new_system(measure)]
         if breaks:
             # A break sits on the *last* bar of its system, so the next one starts
             # the following system. A break on the final bar starts nothing.

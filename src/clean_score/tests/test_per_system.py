@@ -79,6 +79,24 @@ def test_system_ranges_are_1_based_measure_spans():
     assert ranges == [(1, 6), (7, 11), (12, 15), (16, 19), (20, 25), (26, 29), (30, 35)]
 
 
+def test_a_page_break_ends_a_system_like_a_line_break():
+    """A page turn starts a new printed system, so it has to cut one here too.
+
+    Only "line" used to count, and a score whose page turns are page breaks then
+    reported one system straddling the turn: the grid asked one question for two
+    printed systems and the lyric editor offered one cell for both.
+    """
+    root = _load()
+    top = root.findall(".//Score/Staff")[0].findall("Measure")
+    before = [(r.start, r.end) for r in system_ranges(root)]
+    # m8 sits inside the first system (m1-6 ends at 6, so m7-11 is the second).
+    etree.SubElement(etree.SubElement(top[7], "LayoutBreak"), "subtype").text = "page"
+    after = [(r.start, r.end) for r in system_ranges(root)]
+    assert (7, 11) in before and (7, 11) not in after
+    assert (7, 8) in after and (9, 11) in after
+    assert len(after) == len(before) + 1
+
+
 def test_layout_reports_the_staves_to_name_per_system():
     layouts = system_layout(_load())
     assert [l.index for l in layouts] == list(range(7))
