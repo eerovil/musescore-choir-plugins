@@ -995,6 +995,162 @@ function panelFix(panel, song, P, refresh) {
   panel.append(el("div", { className: "row" },
     el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
     el("button", { onclick: async () => { await postJSON(`${P}/rescan`); refresh(); } }, "Re-check now")));
+  slurRecorder(panel, song, P, refresh);
+}
+
+// Recording a missing slur. The judgement is a person's — nothing upstream will guess
+// a slur back, because it joins different pitches and cannot be pitch-checked — so all
+// this does is put that judgement into fixes.json, where a re-clean replays it. The
+// alternative people reach for is an empty syllable in the lyric editor, which patches
+// the words and leaves the score saying two attacks where the page says one.
+function slurRecorder(panel, song, P, refresh) {
+  if (!song.has_cleaned) return;
+  const box = el("div", { className: "slurfix" });
+  panel.append(el("h3", {}, "Missing slur"),
+    el("p", { className: "sub" },
+      "The scan drops slurs and nothing puts them back on its own. Pick the two notes and say what the page shows — it is written into fixes.json and re-applied every clean."),
+    box);
+
+  const recorded = song.recorded_slurs || [];
+  if (recorded.length) {
+    box.append(el("div", { className: "issue" },
+      el("div", { className: "top" }, el("span", {}, el("span", { className: "kind" }, `${recorded.length} slur(s) recorded`))),
+      ...recorded.map((f) => el("div", { className: "detail" },
+        `staff ${f.staff}, bar ${f.measure}, note ${(+f.index || 0) + 1} → ${(+f.index || 0) + 1 + (+f.span || 1)}: ${f.why || "no reason recorded"}`))));
+  }
+
+  const part = el("select", { className: "slurpart" });
+  const measure = el("input", { type: "number", min: 1, value: 1, className: "slurbar" });
+  const notes = el("div", { className: "slurnotes" }, el("span", { className: "hint" }, "Loading the score…"));
+  const from = el("select", { className: "slurfrom" });
+  const to = el("select", { className: "slurto" });
+  const why = el("textarea", { rows: 2, className: "slurwhy",
+    placeholder: "What the page shows, e.g. \"Page 1 system 2, bar 8: the tenor slurs E♭ to D over one syllable.\"" });
+  const effect = el("p", { className: "hint slureffect" });
+  const save = el("button", { className: "primary slursave", disabled: true }, "Record slur");
+  const crop = el("div", { className: "slurcrop" });
+  // The Fix stage has no log box, so a refusal said only to the log would be said to
+  // nobody — and a refused fix is exactly what the person has to see.
+  const problem = el("p", { className: "lyerr slurerr" });
+
+  box.append(
+    el("div", { className: "row" }, el("label", {}, "Part"), part, el("label", {}, "Bar"), measure),
+    crop, notes,
+    el("div", { className: "row" }, el("label", {}, "Slur from"), from, el("label", {}, "to"), to),
+    effect,
+    el("label", {}, "Why — what does the page show?"), why,
+    el("div", { className: "row" }, save), problem);
+
+  let bar = null;
+  let systems = null;   // measure ranges of the printed systems, or [] when unavailable
+
+  const loadSystems = async () => {
+    if (systems !== null) return systems;
+    // The compare view renders the cleaned score, which needs MuseScore and takes
+    // seconds. Not having it costs a picture, not the feature.
+    try { systems = (await getJSON(`${P}/compare`)).systems || []; }
+    catch { systems = []; }
+    return systems;
+  };
+
+  const showCrop = async (m) => {
+    const found = (await loadSystems()).find((s) => m >= s.measure_start && m <= s.measure_end);
+    crop.replaceChildren(...(found ? [el("img", { className: "slurcropimg", loading: "lazy",
+      src: `${P}/cleaned-system/${found.index}?dpi=300`, alt: `cleaned system ${found.index + 1}` })] : []));
+  };
+
+  const describe = () => {
+    if (!bar || !bar.notes?.length) return;
+    const a = +from.value, b = +to.value;
+    const ok = Number.isFinite(a) && Number.isFinite(b) && b > a;
+    save.disabled = !ok;
+    if (!ok) { effect.textContent = "The slur has to reach a later note."; return; }
+    // Every note it reaches stops taking a syllable, so the bar loses that many.
+    const losing = bar.notes.slice(a + 1, b + 1).filter((n) => n.carries_syllable).length;
+    effect.textContent =
+      `${bar.notes[a].name} → ${bar.notes[b].name}, held over one syllable. `
+      + `This bar goes from ${bar.syllables} syllable(s) to ${bar.syllables - losing}.`;
+  };
+
+  // Which bar is on screen. Typing a bar number and then clicking Record fires
+  // `change` a second time as the field loses focus, and reloading throws away the
+  // picked notes and disables the button under the click that was already happening.
+  let shown = null;
+
+  const loadBar = async () => {
+    const asked = `${part.value}:${measure.value}`;
+    if (asked === shown) return;
+    shown = asked;
+    notes.replaceChildren(el("span", { className: "hint" }, "Reading the bar…"));
+    from.replaceChildren(); to.replaceChildren(); save.disabled = true;
+    let data;
+    try { data = await getJSON(`${P}/bar?staff=${+part.value}&measure=${+measure.value}`); }
+    catch (e) {
+      bar = null;
+      shown = null;               // so asking for the same bar again really asks
+      notes.replaceChildren(el("span", { className: "hint" }, String(e.message || e)));
+      effect.textContent = "";
+      return;
+    }
+    bar = data;
+    if (!data.notes.length) {
+      notes.replaceChildren(el("span", { className: "hint" }, "No notes in that bar — only rests."));
+      effect.textContent = "";
+      return;
+    }
+    notes.replaceChildren(...data.notes.map((n, i) => el("span", {
+      className: "slurnote" + (n.carries_syllable ? "" : " nosyl") + (n.starts_slur ? " slurred" : ""),
+      title: n.starts_slur ? "already slurred" : (n.carries_syllable ? "takes a syllable" : "no syllable — under a slur or tie"),
+    }, `${i + 1}. ${n.name}`)));
+    for (const [sel, list] of [[from, data.notes.slice(0, -1)], [to, data.notes.slice(1)]]) {
+      sel.replaceChildren(...list.map((n) => {
+        const i = data.notes.indexOf(n);
+        return el("option", { value: String(i), disabled: sel === from && n.starts_slur },
+          `${i + 1}. ${n.name}${sel === from && n.starts_slur ? " (already slurred)" : ""}`);
+      }));
+    }
+    // Start on the first note that can still open a slur; every note but the last can.
+    const first = data.notes.findIndex((n, i) => i < data.notes.length - 1 && !n.starts_slur);
+    from.value = String(first < 0 ? 0 : first);
+    to.value = String(Math.min(+from.value + 1, data.notes.length - 1));
+    describe();
+    showCrop(+measure.value);
+  };
+
+  part.onchange = loadBar;
+  measure.onchange = loadBar;
+  from.onchange = to.onchange = describe;
+
+  save.onclick = async () => {
+    if (song.lyrics?.json && !confirm(
+      "This takes a syllable out of that bar. Lyrics are already imported, so that "
+      + "line will come back one syllable too long and needs re-entering. Record it anyway?")) return;
+    save.disabled = true;
+    problem.textContent = "";
+    try {
+      const fresh = await postJSON(`${P}/fixes/slur`, {
+        staff: +part.value, measure: +measure.value,
+        index: +from.value, span: +to.value - +from.value, why: why.value,
+      });
+      Object.assign(song, fresh);
+      appendLog("Slur recorded in fixes.json and applied to the cleaned score.");
+      refresh();
+    } catch (e) {
+      problem.textContent = `Could not record it: ${e.message || e}`;
+      save.disabled = false;
+    }
+  };
+
+  getJSON(`${P}/bar`).then((data) => {
+    if (!data.parts.length) {
+      notes.replaceChildren(el("span", { className: "hint" }, "No singing parts in the cleaned score."));
+      return;
+    }
+    part.replaceChildren(...data.parts.map((p) =>
+      el("option", { value: String(p.staff) }, p.name)));
+    measure.max = data.measures || 1;
+    return loadBar();
+  }).catch((e) => notes.replaceChildren(el("span", { className: "hint" }, String(e.message || e))));
 }
 
 async function panelLyrics(panel, song, P, refresh) {

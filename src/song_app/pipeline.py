@@ -22,7 +22,7 @@ from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
-from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text
+from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text, read_bar
 from src.clean_score.utils.utils import starts_new_system
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
@@ -231,6 +231,97 @@ def free_text_fixes(song_dir: str) -> List[str]:
         return free_text(_recorded_fixes(song_dir))
     except (RuntimeError, FixError, OSError):
         return []
+
+
+def recorded_slurs(song_dir: str) -> List[Dict]:
+    """The slur fixes already recorded, for showing on the Fix stage.
+
+    Read live off the file for the same reason the sentences are: the record is only
+    worth keeping if someone can see it without opening the folder.
+    """
+    try:
+        return [dict(fix) for fix in _recorded_fixes(song_dir) if fix.get("kind") == "slur"]
+    except (RuntimeError, FixError, OSError):
+        return []
+
+
+def bar_for_fix(cleaned_path: str, staff: int, measure: int) -> Dict:
+    """One bar of the cleaned score, as something a person can point at.
+
+    The chords in the numbering a recorded fix uses, each with the token that fix
+    would carry, the note as it is spelt on the page, and whether the lyrics land on
+    it today (`carries_syllable`). That last flag is why this exists rather than the
+    browser reading the XML: a note in the middle of a slur carries no marker of its
+    own, so whether it takes a syllable cannot be decided by looking at it alone.
+    """
+    root = etree.parse(cleaned_path).getroot()
+    slots = lyric_txt.syllable_slots(root, staff, measure)
+    notes = read_bar(root, staff, measure)
+    for note in notes:
+        # A bar whose voice element is missing gives no slots at all; say nothing
+        # rather than claim every note is sung.
+        note["carries_syllable"] = slots[note["index"]] if note["index"] < len(slots) else None
+    return {"staff": staff, "measure": measure, "notes": notes,
+            "syllables": sum(1 for f in slots if f)}
+
+
+def score_parts_and_measures(cleaned_path: str) -> Tuple[List[Dict], int]:
+    """The singing parts of the cleaned score and how many bars it has.
+
+    What the Fix stage needs to offer a choice: which part, and which bar.
+    """
+    root = etree.parse(cleaned_path).getroot()
+    parts = [{"staff": p.id, "name": p.name} for p in lyric_txt.lyric_parts(root)]
+    measures = 0
+    for staff in root.findall(".//Score/Staff"):
+        measures = max(measures, len(staff.findall("Measure")))
+    return parts, measures
+
+
+def record_slur_fix(song_dir: str, cleaned_path: str, staff: int, measure: int,
+                    index: int, span: int, why: str) -> Dict:
+    """Write one `slur` entry into the song's fixes.json and apply it to the score.
+
+    Two things happen because a recorded fix is worth nothing if only one of them
+    does. It goes on the cleaned score now, so the person who read the page sees the
+    result they asked for; and it goes into fixes.json, so `run_clean` puts it back
+    the next time the score is rebuilt from the scan. Recording it and not applying
+    it would leave the score looking unrepaired until the next clean; applying it and
+    not recording it is the hand edit this file exists to replace.
+
+    Only the new entry is applied, never the whole file: the ones already in it are
+    on the score already, and `slur` is not idempotent — applying it twice writes a
+    second Spanner over the same notes.
+
+    Refuses rather than half-writes. The entry is applied to a parsed copy first, so
+    a span that runs past the end of the bar, a chord that is already slurred, or a
+    reason left blank all leave the score and the file exactly as they were. The file
+    is written before the score deliberately: if the second write is the one that
+    fails, the judgement is still recorded and the next clean carries it out, which is
+    the recoverable half of the pair.
+    """
+    why = (why or "").strip()
+    if not why:
+        raise FixError(
+            "say why. A recorded fix is a judgement about the printed page, and in six "
+            "months the entry is all that says what was read there.")
+    if span < 1:
+        raise FixError("a slur has to reach at least the next note")
+    root = etree.parse(cleaned_path).getroot()
+    bar = read_bar(root, staff, measure)
+    if index < len(bar) and bar[index]["starts_slur"]:
+        raise FixError(
+            f"staff {staff} m{measure} note {index + 1} already starts a slur — "
+            "the score has this one; nothing to record.")
+    entry = {"kind": "slur", "staff": int(staff), "measure": int(measure),
+             "index": int(index), "span": int(span), "why": why}
+    applied = apply_fixes(root, [entry])
+    entries = _recorded_fixes(song_dir) + [entry]
+    with open(os.path.join(song_dir, "fixes.json"), "w", encoding="utf-8") as fh:
+        json.dump(entries, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    etree.ElementTree(root).write(cleaned_path, encoding="UTF-8", xml_declaration=True)
+    return {"entry": entry, "applied": applied[0] if applied else ""}
 
 
 def strip_lyrics_copy(mscx_path: str) -> str:

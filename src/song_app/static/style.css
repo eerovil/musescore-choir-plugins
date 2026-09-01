@@ -129,6 +129,21 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); }
 .issue .detail { color: var(--muted); font-size: 13px; margin-top: 4px; }
 .empty { color: var(--good); padding: 16px 0; }
 
+/* Recording a missing slur. The bar is shown as its own notes so the two being
+   joined are picked off the score rather than counted out by hand. */
+.slurfix { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.slurfix .row { align-items: center; gap: 8px; flex-wrap: wrap; }
+.slurfix label { color: var(--muted); font-size: 13px; }
+.slurfix textarea { width: 100%; }
+.slurbar { width: 5.5em; }
+.slurnotes { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.slurnote { padding: 3px 9px; border: 1px solid var(--line); border-radius: 12px; font-size: 13px; }
+/* A note the lyrics already skip: it is under a slur or a tie and takes no syllable. */
+.slurnote.nosyl { color: var(--muted); border-style: dashed; }
+.slurnote.slurred { border-color: var(--accent); color: var(--accent); }
+.slureffect { margin: 4px 0 8px; }
+.slurcropimg { display: block; width: 100%; margin: 8px 0; background: #fff; }
+
 /* grid form */
 table.grid { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
 table.grid th, table.grid td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }

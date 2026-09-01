@@ -285,13 +285,18 @@ def _tokenize_line(line: str) -> List[str]:
     return tokens
 
 
-def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, int]]:
+def _eligibility_per_measure(score: etree._Element) -> Dict[int, Dict[int, List[bool]]]:
     """
-    Return by_staff[staff_id][measure_1based] = number of lyric-eligible chords (voice 0).
-    Same eligibility as export: no chord for Rest; skip slur/tie continuation and middle.
-    Only considers Staff elements that contain Measure children (skips Part-level stub Staffs).
+    Return by_staff[staff_id][measure_1based] = one flag per voice-0 chord, in order:
+    does that chord take a syllable?
+
+    Eligibility is *stateful along the staff* — a slur opened in one bar silences notes
+    in the next — so it is worked out once here and both the per-measure counts and the
+    per-note flags are read off the same pass. Same rules as the TXT export: no chord
+    for a Rest, and no token for a slur or tie continuation or a note in the middle of
+    one. Only Staff elements that contain Measure children (skips Part-level stubs).
     """
-    out: Dict[int, Dict[int, int]] = {}
+    out: Dict[int, Dict[int, List[bool]]] = {}
     staffs = score.findall(".//Staff")
     staffs = [s for s in staffs if s.find(".//Measure") is not None]
     for staff in staffs:
@@ -305,7 +310,7 @@ def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, 
             if not voices:
                 continue
             voice = voices[0]
-            count = 0
+            flags: List[bool] = []
             for el in voice:
                 if el.tag == "Chord":
                     if _is_continuation_no_lyric(el):
@@ -313,20 +318,31 @@ def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, 
                             slur_active = False
                         if _is_tie_continuation(el):
                             tie_active = False
+                        flags.append(False)
                         continue
                     if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
+                        flags.append(False)
                         continue
                     if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
+                        flags.append(False)
                         continue
-                    count += 1
+                    flags.append(True)
                     if _has_slur_start(el):
                         slur_active = True
                     if _has_tie_start(el):
                         tie_active = True
                 elif el.tag in ("Rest", "location"):
                     continue
-            out.setdefault(staff_id, {})[measure_index + 1] = count
+            out.setdefault(staff_id, {})[measure_index + 1] = flags
     return out
+
+
+def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, int]]:
+    """
+    Return by_staff[staff_id][measure_1based] = number of lyric-eligible chords (voice 0).
+    """
+    return {staff_id: {measure: sum(flags) for measure, flags in by_measure.items()}
+            for staff_id, by_measure in _eligibility_per_measure(score).items()}
 
 
 def _read_lyrics_staff_map(score_root: etree._Element) -> Dict[int, List[int]]:
@@ -1329,6 +1345,47 @@ def slot_counts(score_root: etree._Element) -> Dict[int, Dict[int, int]]:
     )
 
 
+def syllable_slots(score_root: etree._Element, staff_id: int, measure_no: int) -> List[bool]:
+    """`slot_counts` spread out: one flag per voice-0 chord of that bar, in order.
+
+    The same arithmetic, told per note rather than per bar, for a caller that has to
+    point at *which* note — recording a missing slur means naming two of them, and a
+    reader picking them wants to see which ones the lyrics currently land on. Asking
+    here rather than reading the Spanner elements directly keeps one owner: a note in
+    the middle of a slur carries no marker of its own, so eligibility cannot be
+    decided by looking at a chord on its own.
+
+    Empty when the staff or the measure is not there, or the measure has no voice.
+    """
+    score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
+    if score is None:
+        return []
+    return _eligibility_per_measure(score).get(int(staff_id), {}).get(int(measure_no), [])
+
+
+def lyric_parts(score_root: etree._Element) -> List[EditorPart]:
+    """The parts that carry words: name and output staff id, in staff order.
+
+    The score's own track names, minus the click/spacer staff a recording adds — it
+    has nothing to sing, so it is neither a lyric cell nor somewhere a slur belongs.
+    Public because more than the lyric editor needs to offer a person a list of parts
+    to point at, and the exclusion rule should not be written down twice.
+    """
+    score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
+    if score is None:
+        return []
+    parts: List[EditorPart] = []
+    for p in score.findall("Part"):
+        st = p.find("Staff")
+        sid = int(st.get("id")) if st is not None and st.get("id") else 0
+        name = (p.findtext("trackName") or p.findtext("Instrument/trackName") or "").strip()
+        if any(w in name.lower() for w in _NON_LYRIC_PART_WORDS):
+            continue
+        parts.append(EditorPart(id=sid, name=name or f"staff {sid}"))
+    parts.sort(key=lambda p: p.id)
+    return parts
+
+
 def editor_grid(
     score_root: etree._Element,
     systems: Optional[List[Tuple[int, int]]] = None,
@@ -1345,16 +1402,7 @@ def editor_grid(
     no systems left to find and the whole piece collapses into one cell per part. The
     printed systems still exist -- on the page -- and are supplied from there.
     """
-    score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
-    parts: List[EditorPart] = []
-    for p in score.findall("Part"):
-        st = p.find("Staff")
-        sid = int(st.get("id")) if st is not None and st.get("id") else 0
-        name = (p.findtext("trackName") or p.findtext("Instrument/trackName") or "").strip()
-        if any(w in name.lower() for w in _NON_LYRIC_PART_WORDS):
-            continue
-        parts.append(EditorPart(id=sid, name=name or f"staff {sid}"))
-    parts.sort(key=lambda p: p.id)
+    parts = lyric_parts(score_root)
 
     if systems:
         ranges = [EditorSystem(index=i, start=a, end=b)

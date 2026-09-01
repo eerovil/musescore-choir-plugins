@@ -225,6 +225,70 @@ def _append_bar(measure: etree._Element, expect: List[str], add: List[str],
     return f"{dropped}added {list(add)} to the end of the bar"
 
 
+# Reading a bar back out, so a fix can be *picked* rather than typed. The indexing
+# and the token grammar are this module's, and a caller that worked them out for
+# itself would be a second implementation of both — which is exactly how a fix ends
+# up naming the wrong chord.
+
+# MuseScore's tpc read the other way: which letter, and how many sharps or flats.
+_LETTERS = "FCGDAEB"
+_LETTER_SEMITONES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+_ACCIDENTALS = {-2: "bb", -1: "b", 0: "", 1: "#", 2: "##"}
+
+
+def note_name(pitch: int, tpc: Optional[int] = None) -> str:
+    """A pitch as a person reads it — "D4", "Eb4" — using the score's own spelling.
+
+    The spelling matters here in a way it does not to the sound: this is shown to
+    someone comparing the bar against the printed page, and an E flat offered as a
+    D sharp is a note they have to translate before they can agree with it. Without
+    a tpc, fall back to sharps.
+    """
+    if tpc is None or not 1 <= tpc <= 35:
+        letter = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][pitch % 12]
+        return f"{letter}{pitch // 12 - 1}"
+    # 13..19 are the naturals F C G D A E B; every seven up is one sharp more.
+    letter = _LETTERS[(tpc - 13) % 7]
+    alter = (tpc - 13) // 7
+    # The octave follows the letter, not the sound: B sharp 3 sounds like C4.
+    octave = (pitch - _LETTER_SEMITONES[letter] - alter) // 12 - 1
+    return f"{letter}{_ACCIDENTALS.get(alter, '')}{octave}"
+
+
+def read_bar(root: etree._Element, staff_id: int, measure_no: int) -> List[Dict]:
+    """One bar's chords, in the numbering a recorded fix uses. Rests are not chords.
+
+    `index` is what an `undot` or `slur` entry means by `index`, and `token` is the
+    same word that entry's `from` list would carry, so what is shown and what is
+    recorded cannot drift apart. `starts_slur` says a slur already begins there,
+    which is the one thing a caller has to check before offering to add another.
+
+    Raises `FixError` for a staff or measure that is not there, so a caller asking
+    about a bar out of range gets the same answer as a fix recorded against one.
+    """
+    out: List[Dict] = []
+    for index, chord in enumerate(_chords(root, staff_id, measure_no)):
+        notes = []
+        for note in chord.findall("Note"):
+            try:
+                pitch = int((note.findtext("pitch") or "").strip())
+            except ValueError:
+                continue
+            try:
+                tpc = int((note.findtext("tpc") or "").strip())
+            except ValueError:
+                tpc = None
+            notes.append(note_name(pitch, tpc))
+        out.append({
+            "index": index,
+            "token": _token(chord),
+            "name": "+".join(notes) if notes else "?",
+            "starts_slur": any(sp.find(".//next") is not None
+                               for sp in chord.findall(".//Spanner[@type='Slur']")),
+        })
+    return out
+
+
 def free_text(fixes: List[Dict]) -> List[str]:
     """The sentences among the recorded fixes, in file order.
 
