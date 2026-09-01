@@ -23,9 +23,10 @@ to strand, so it expires unless heartbeated and a reaper takes it back.  Hence
 the background thread here.
 
 **Failing to get a slot is fail-open; losing one is not.**  A deck that is
-unconfigured, unreachable, refusing or busy for half an hour has told us nothing
-about what else is running, so the render goes ahead unqueued with a line in the
-song's log saying so — somebody is waiting for a practice track, and refusing to
+unreachable, refusing or busy for half an hour has told us nothing about what
+else is running, so the render goes ahead unqueued with a line in the song's log
+saying so (a host with no deck configured at all says nothing, since a queue
+that does not exist is not news on every render) — somebody is waiting for a practice track, and refusing to
 render because a queue is down would be worse than being slow.  A heartbeat that
 answers 404 is the opposite: the deck is saying this lease is no longer held, so
 the slot may already have been handed to somebody else.  Carrying on there would
@@ -242,8 +243,9 @@ def heavy_slot(label: str, *, log: Logger = _noop, wait_s: float = WAIT_S,
     """
     base = _api_base()
     if not base:
-        log("AgentDeck is not configured, so this work is not queued behind "
-            "other heavy jobs on this host.")
+        # A host with no deck configured is the ordinary case elsewhere, so this
+        # is silent: a line about a queue that does not exist, on every render,
+        # would be noise in the one log a person actually reads.
         yield Slot()
         return
     lease, ttl = _acquire(base, label, log, wait_s, max_total_wait_s)

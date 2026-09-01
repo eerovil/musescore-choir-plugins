@@ -146,8 +146,8 @@ def test_an_unconfigured_deck_renders_anyway(monkeypatch):
                         lambda *a, **k: called.append(a) or httpx.Response(200))
     with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
         assert not slot.held
-    assert called == []
-    assert any("not configured" in line for line in logged)
+    assert called == [], "an unconfigured deck is not asked for anything"
+    assert logged == [], "nor is it mentioned in the song's log on every render"
 
 
 def test_the_lease_is_renewed_while_the_work_runs(monkeypatch):

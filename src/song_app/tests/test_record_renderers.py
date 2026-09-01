@@ -18,6 +18,14 @@ from fastapi.testclient import TestClient
 from src.song_app import heavy_slot, job_state, pipeline, server, state
 
 
+@pytest.fixture(autouse=True)
+def _no_real_deck(monkeypatch):
+    """A render asks AgentDeck for a heavy slot; tests must not take a real
+    one off the host they run on. Each test that cares fakes its own deck."""
+    monkeypatch.delenv("AGENTDECK_API_URL", raising=False)
+    monkeypatch.delenv("AGENTDECK_URL", raising=False)
+
+
 @pytest.fixture
 def song(tmp_path, monkeypatch):
     songs = tmp_path / "songs"
