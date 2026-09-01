@@ -24,7 +24,7 @@ const postJSON = (p, body) =>
 
 const DEFAULT_TOP_MARGIN = 0;
 const DEFAULT_BOTTOM_MARGIN = 5;
-const STAGE_LABEL = { register: "Start", clean: "Clean", fix: "Fix", lyrics: "Lyrics", review: "Review", record: "Record", upload: "Upload" };
+const STAGE_LABEL = { register: "Start", scan: "Scan", clean: "Clean", fix: "Fix", lyrics: "Lyrics", review: "Review", record: "Record", upload: "Upload" };
 
 // ---- router --------------------------------------------------------------
 window.addEventListener("hashchange", route);
@@ -769,12 +769,68 @@ function renderPanel(panel, view, song, slug, refresh, actions) {
   logBox = null;
   const P = `/api/songs/${encodeURIComponent(slug)}`;
   if (view === "register") return panelRegister(panel, song, P, refresh);
+  if (view === "scan") return panelScan(panel, song, P, refresh);
   if (view === "clean") return panelClean(panel, song, slug, P, refresh);
   if (view === "fix") return panelFix(panel, song, P, refresh);
   if (view === "lyrics") return panelLyrics(panel, song, P, refresh);
   if (view === "review") return panelReview(panel, song, P, refresh, actions);
   if (view === "record") return panelRecord(panel, song, P, refresh, actions);
   if (view === "upload") return panelUpload(panel, song, P, refresh);
+}
+
+// A holding panel, not the Scan panel: that is #116, and it will replace this
+// whole function. It exists because inserting `scan` into the rail gave every
+// song a step that could be clicked into a blank pane, and because a song
+// registered from a PDF alone lands here with no way to start the thing it is
+// waiting for. It says what has been read, what is still a hole, and runs a scan.
+function panelScan(panel, song, P, refresh) {
+  const st = song.scan_status || {};
+  const job = song.jobs?.scan;
+  panel.append(el("h2", {}, "Scan"),
+    el("p", { className: "sub" },
+      "Read the score off the PDF, one printed system at a time."));
+
+  if (!song.has_pdf) {
+    panel.append(el("p", { className: "hint" },
+      "This song has no PDF, so there is nothing to read."));
+    return;
+  }
+  if (!st.systems) {
+    panel.append(el("p", { className: "hint" },
+      "Set the printed-system boundaries in the viewer's Systems tab first — "
+      + "the scan reads the bands you mark there."));
+    return;
+  }
+
+  panel.append(el("p", {}, `${st.read} of ${st.systems} system(s) read.`
+    + (st.holes?.length ? ` Still to read: ${st.holes.join(", ")}.` : "")));
+  for (const gone of song.scan_discarded || [])
+    panel.append(el("div", { className: "banner" },
+      `Discarded ${gone}: what it was made from has changed.`));
+
+  const runBtn = el("button", { className: "primary", onclick: async () => {
+    runBtn.disabled = true;
+    appendLog("Starting scan…");
+    try { await postJSON(`${P}/scan`, {}); }
+    catch (e) { runBtn.disabled = false; appendLog(e.message, true); }
+  }}, st.read ? "Read the remaining systems" : "Scan the score");
+  const againBtn = el("button", { onclick: async () => {
+    const which = prompt("Re-read which system(s)? e.g. 2 or 2,5");
+    if (!which) return;
+    const systems = which.split(",").map((n) => parseInt(n.trim(), 10)).filter(Boolean);
+    if (!systems.length) return;
+    appendLog("Re-reading system(s) " + systems.join(", ") + "…");
+    try { await postJSON(`${P}/scan`, { systems }); }
+    catch (e) { appendLog(e.message, true); }
+  }}, "Re-read a system…");
+  panel.append(el("div", { className: "row" }, runBtn, st.read ? againBtn : ""));
+
+  if (song.scanning || job?.status === "running")
+    panel.append(el("div", { className: "banner" },
+      "● Scanning… recent messages are saved below."));
+  else if (job?.status === "failed")
+    panel.append(el("div", { className: "banner err" }, "Last scan failed: " + job.error));
+  panel.append(makeLog(job));
 }
 
 function panelRegister(panel, song, P, refresh) {

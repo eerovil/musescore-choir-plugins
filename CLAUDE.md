@@ -39,6 +39,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   pdf_systems.py         Crop the source PDF into one image per printed system
   omr.py                 Run homr on a page image -> MusicXML (its own venv; see below)
   omr_systems.py         Scan one printed system at a time; flatten + assemble
+  scan.py                The scan stage: crop + read every band, assemble, invalidate
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
@@ -326,6 +327,18 @@ Key test modules:
   with those staves. Nothing here runs homr — whether it can read music is homr's
   business, and the card's own numbers came off the frozen benchmark, which is host
   state.
+- `src/song_app/tests/test_scan.py` — added by this pull request, for the scan stage.
+  Cropping and reading are stubbed (they belong to `pdf_systems` and `omr_systems`, and
+  are pinned there), so what is under test is what this stage adds: that the band is
+  padded and the padding is clamped to the page, that a failed band and a lost lease each
+  cost only the band in flight while the rest are kept and the song stays on `scan`, that
+  filling the hole re-reads only the hole, and then the whole invalidation chain — a
+  moved band discarding its own fragment and answers and nobody else's, an inserted band
+  making every later fragment fail to match the geometry now at its index, a re-read that
+  came out different discarding that system's answers and the reviewer's approval, a
+  re-read that came out the same discarding nothing, and a song that never scanned
+  deriving nothing from any of it. Flattening and assembling are *not* stubbed: they are
+  cheap, need no binary, and stubbing them would leave the seam a hole slips through.
 - `src/song_app/tests/test_clean_flow.py` — the song-app path: grid answers →
   `save_system_answers` → headless `run_clean` → rebuilt parts + lyric routing.
 - `src/song_app/tests/test_ui_flow.py` — the **SPA itself**, in a real browser: it
@@ -363,7 +376,7 @@ state model are in `DESIGN.md`.
 
 - **A Song** = a folder `songs/<slug>/` plus `.song.json` (the state file *is* the
   UX). `state.py` owns the slug, the human display name, the stage machine
-  (`register → clean → fix → lyrics → review → record → upload`), and file
+  (`register → scan → clean → fix → lyrics → review → record → upload`), and file
   fingerprints. Recording produces the per-voice videos; **upload** (YouTube) is a
   separate stage, so a song can be "recorded but not yet uploaded". The folder is
   a slug; the display name lives in the JSON.
@@ -798,8 +811,8 @@ state model are in `DESIGN.md`.
   running it again finds nothing. A parse with nothing to change is left byte for byte
   as homr wrote it.
   Deliberately **not** here yet, because they belong to other cards on #92's map:
-  nothing calls `read_page` (the stage machine and UI are #98), pages are not stitched
-  into one score (#97), and the deploy and `/healthz` do not know homr exists.
+  pages are not stitched into one score (#97), and the deploy and `/healthz` do not
+  know homr exists. `read_page` is called now — by `scan.py`, one band at a time.
 - `omr_systems.py` is added by this pull request, and it settles what the unit of work
   is: **one printed system, not one page.** Given a page, homr builds a part by taking
   staff index N out of *every* system it found, which assumes the score is a rectangle
@@ -847,7 +860,68 @@ state model are in `DESIGN.md`.
   (against a 70-bar single-staff collapse), B4 comes out **2-3-2-3-3** with 18 bars
   (against 26 bars on two staves), and the five two-staff pages — the majority of this
   repertoire — come out of `clean_score` with **the same parts and the same bar counts**
-  as the whole-page route. Nothing calls it yet; the stage machine and UI are #98.
+  as the whole-page route. `scan.py` is what calls it; the panel is #116.
+- `scan.py` is added by this pull request: the **scan stage**, which is what makes the
+  app able to read a score off its PDF rather than be handed one. `omr_systems` could
+  read a band and join the bands up, and nothing called it. This does.
+  `STAGES` gains **`scan`**, between `register` and `clean`, and **registering inverts**:
+  a PDF on its own is now a song and starts at `scan`, while a song handed a score still
+  starts at `clean` — importing MusicXML from elsewhere stays the manual route (#86).
+  The eight-stage rail costs the 48 existing songs nothing, and the reason is worth
+  keeping: the rail marks a stage done when its index is below the current one, so a
+  song sitting at `clean` reads `scan` as satisfied without anything being recorded to
+  say so. **Having an input score is what being past scanning means.** `import_legacy`
+  says the same thing from the other end — a folder with a score is `clean` as it always
+  was, and only a folder with nothing but a PDF is `scan`.
+  Each band is **padded** by `PAD` (2% of page height, env `SCAN_BAND_PAD`) before it is
+  cropped. #112 measured why: B5's second system cropped on its printed bounds came back
+  as 2 parts and padded by 60px came back as 3 — the staves the page prints — with the
+  same bars, notes and slurs, while tightening the same crop lost five slur tokens,
+  because a slur's arc hangs below its staff and a tight edge cuts it off. A fraction
+  rather than pixels, for the same reason bounds are: it has to mean the same thing at
+  any resolution.
+  **One heavy slot per band**, through `omr_systems.read_systems`' own rule, not a
+  second one. And **a failed band is a hole, not a failed song**: twenty homr runs is
+  twenty chances to fail, and losing the nineteenth must not throw away the eighteen
+  that worked. The fragment MusicXML is kept in `songs/<slug>/scan/`, a later run reads
+  only what is missing, and the song cannot leave `scan` while a hole is open — an
+  assembled score quietly short of a system reads as a complete score and would be
+  cleaned, lyricked and sung. A **lost lease** is a hole too: each band takes its own
+  slot, so band N+1 asking for a fresh one queues behind whoever the cores went to
+  rather than competing with them. What is *not* a hole is anything that is not a way of
+  reading a band failing — a missing module, a full disk, a bug — because catching
+  broadly turned one unrelated import error into fifteen identical "homr could not read
+  this band" holes and hid it completely.
+  The assembled input score (`scanned.musicxml`) is **derived**: regenerate it, never
+  hand-edit it.
+  **The invalidation rule is one idea, built once** (`reconcile`), and this is the part
+  most worth reading. Every derived thing records the stamp of what it was made from, and
+  `reconcile` walks the chain in dependency order discarding anything whose recorded
+  stamp no longer matches the current one. A bounds edit throwing away fragments, a
+  re-read throwing away that system's grid answers, and a re-scan clearing the reviewer's
+  approval are three rows of that chain rather than three special cases, the cascade is
+  free (answers whose fragment is already gone find nothing to have been answered
+  against), and a fourth derived thing is a fourth row. Three ad-hoc invalidations is how
+  a fourth gets forgotten.
+  Two details that carry weight. A fragment holds **two** stamps: the *band* it was read
+  from, which decides whether it is still an answer about the page, and the *content*
+  that came back, which is what the grid answers, the assembly and the approval hang off
+  — so a re-read discards them exactly when the reading came out different, and a re-read
+  that came out the same costs a person nothing. And **the band stamp is geometry, not
+  index**: `SystemBounds.index` and `Answers` are both keyed positionally, so an inserted
+  band silently re-points everything after it, and nothing here compares indices — each
+  fragment is checked against the geometry now sitting at its own, which is what makes
+  the shift loud.
+  Reading a song is where the app finds this out (`_derived` calls `reconcile`, which
+  writes only when something really was discarded), so it is said everywhere rather than
+  at one route. A song with no scan returns at once, which is every song that predates
+  the stage.
+  Measured end to end on the fixture, real crops and real homr: **15 systems, 201s, no
+  holes, 52 bars** — the same bar count as the fixture's own cleaned score — every system
+  finding the 2 staves the page prints.
+  The **panel is #116**, so `app.js` gets a holding one: it says what has been read and
+  what is still a hole, and runs a scan. It exists because putting `scan` in the rail
+  gave every song a step that could be clicked into a blank pane.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
