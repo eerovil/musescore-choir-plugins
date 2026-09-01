@@ -2,4 +2,5 @@
 log_cli_level="DEBUG"
 markers = [
     "browser: drives the app in a real browser (Playwright); slow, needs a browser install",
+    "omr: runs homr on a real scan; slow (~10s a system), needs scripts/install-homr.sh",
 ]

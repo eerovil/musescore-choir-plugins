@@ -59,7 +59,8 @@ src/stemmanauha/         Audio/video recording automation (macOS, AppleScript + 
   create_video.py        Orchestrates mp3 export -> video record -> merge -> upload
   upload_to_youtube.py   YouTube Data API upload
   *.scpt                 AppleScript files driving MuseScore + QuickRecorder
-fixtures/                In-repo prototyping song (see fixtures/*/README.md, STEPS.md)
+fixtures/                In-repo prototyping song + the OMR benchmark's PD slice
+                         (see fixtures/*/README.md, STEPS.md)
 songs/                   Per-song working dirs (gitignored, output lives here)
 backup/                  Gitignored .mscz backups (created by backup.sh)
 *.txt prompts            lyric_json_prompt.txt, lyrics_txt_prompt.txt (LLM prompts for lyric fixing)
@@ -184,6 +185,36 @@ lower voice holds one syllable while the others sing two, which is a rhythm
 difference and was fixed in the text. `STEPS.md` records how each stage
 was produced, including a wrong conclusion and its correction — worth reading before
 trusting a tidy-looking diagnosis of a scanned score.
+
+### The OMR benchmark's public-domain slice
+
+`fixtures/omr-benchmark/` is added by this pull request: three real scanned pages the
+scanning code can be tested against, and the one page with **note-level ground truth**.
+Everything #92's map concluded rested on `~/omr-benchmark/`, which is host state — a
+fresh clone had none of it and CI could not run against real music, so #111 tested
+flattening against synthetic documents in the shapes homr produced. Three of the seven
+benchmark pages are public domain and those travel; the in-copyright ones (Fazer,
+Breitkopf, Fennica Gehrman, Sulasol), their parses and the benchmark's `out/` stay on
+the host, which remains the fuller set and where judging happens.
+
+`pages.json` is the file of record — ids, page numbers, printed staff counts, and
+system bounds as fractions of page height, the same units `.systems.json` uses.
+`src/song_app/tests/benchmark.py` reads it so no test knows its layout. **B2 has no
+file of its own**: page 2 of `fixtures/virta-venhetta-vie/00-registered/` *is* that
+page, so the manifest points at it rather than committing the same paper twice. B1a and
+B1b are the same printed page at 287 dpi and at 150 dpi with dropout, so scan quality
+is isolated from everything else. **Only PDFs are committed** — the tests rasterise with
+poppler, and a 300 dpi PNG of one of these pages is 1.0–1.7 MB on its own.
+
+Two things about the truth, both pinned by tests. It is **derived, so it is
+re-derived**: `test_the_truth_table_is_what_the_transcription_says` rebuilds the CSV's
+120 note events out of the hand transcription bar by bar, which is what makes it
+evidence rather than a claim. And the page boundary — bars 11–17, systems 11–13 /
+14–15 / 16–17 — comes from the transcription's own page and line breaks, not from
+counting bars off a scan. One exception a scoring rule has to allow for: in bar 15 the
+two basses are in unison and the print has a single line, so the truth is one voice.
+
+See `fixtures/omr-benchmark/README.md`.
 
 ### Working in a worktree (agents, read this first)
 
@@ -326,6 +357,20 @@ Key test modules:
   with those staves. Nothing here runs homr — whether it can read music is homr's
   business, and the card's own numbers came off the frozen benchmark, which is host
   state.
+- `src/song_app/tests/test_benchmark.py` — added by this pull request, and the first
+  thing in the suite that meets a **real scan**. Three tiers, so each dependency buys
+  something and none is required. **No dependencies**: the manifest's files are on disk
+  and its bounds are ordered non-overlapping bands whose bars run on; the truth table is
+  re-derived from the hand transcription bar for bar; the page boundary is read off that
+  transcription's own breaks; B2 is the song fixture's page rather than a second copy;
+  and no PNG has crept in. **poppler**: each page crops into the bands its bounds name,
+  each band wider than it is tall and holding a plausible amount of ink. **homr**
+  (marked `omr`, ~3 minutes): both Herää Suomi scans and the Virta venhettä vie page
+  read back as the staves the page prints and the bars the bounds declare — B1b at 150
+  dpi with dropout has to match B1a — and B1a assembles into one 7-bar score with a
+  break at each join. The last tier skips without homr or poppler, the same way the
+  MuseScore-CLI and Playwright tests skip; CI has no homr and should not grow one.
+  `benchmark.py` beside it is the manifest reader, not a test module.
 - `src/song_app/tests/test_clean_flow.py` — the song-app path: grid answers →
   `save_system_answers` → headless `run_clean` → rebuilt parts + lyric routing.
 - `src/song_app/tests/test_ui_flow.py` — the **SPA itself**, in a real browser: it
