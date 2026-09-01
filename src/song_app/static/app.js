@@ -137,8 +137,13 @@ async function renderWorkspace(slug) {
   const song = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
   crumb.textContent = "› " + song.name;
   let view = song.stage; // which panel is shown
+  // Scanning opens on the Systems editor, not on the PDF: drawing the bands is
+  // the thing that must happen before anything else can, so it is the thing in
+  // front of you (#103).
   const firstDoc = song.stage === "review" && song.lyrics
-    ? "cleaned" : song.stage === "record" ? "preview" : song.has_pdf ? "pdf" : "original";
+    ? "cleaned" : song.stage === "record" ? "preview"
+    : song.stage === "scan" && song.has_pdf ? "systems"
+    : song.has_pdf ? "pdf" : "original";
   const panes = [firstDoc]; // 1 or 2 docs shown side by side
   let viewFp = song.cleaned_fingerprint; // viewer is only rebuilt when this changes
   let recordPreviewSettings = null;
@@ -216,6 +221,9 @@ async function renderWorkspace(slug) {
         else selectStage(stage);
       },
       openPreview: () => { viewerEl._showFirst("preview"); showPane("viewer"); },
+      // The panel is a task screen and the score is a full-screen visual, so a
+      // panel that says "look at this" has to be able to put it in front of you.
+      openDoc: (doc) => { viewerEl._showFirst(doc); showPane("viewer"); },
       pausePreview: () => viewerEl._pausePreview(),
       previewInputsChanged: () => viewerEl._syncPreview(),
       setPreviewSettings: (settings) => { recordPreviewSettings = settings; },
@@ -226,6 +234,7 @@ async function renderWorkspace(slug) {
     view = stage;
     if (view === "review" && song.lyrics) panes[0] = "cleaned";
     else if (view === "record") panes[0] = "preview";
+    else if (view === "scan" && song.has_pdf) panes[0] = "systems";
     drawStagebar();
     drawPanel();
     if (tabKeys() !== builtTabs) rebuildViewer();
@@ -262,6 +271,8 @@ async function renderWorkspace(slug) {
       // Score changed: reload only the cleaned renders, keep PDF/original scroll.
       viewFp = song.cleaned_fingerprint;
       viewerEl._refreshFp(viewFp);
+    } else {
+      viewerEl._refreshScan();
     }
     viewerEl._syncPreview();
   }
@@ -285,6 +296,10 @@ function viewerTabs(song, view) {
   const tabs = [];
   if (song.has_pdf) tabs.push(["pdf", "Original PDF"]);
   if (song.has_pdf) tabs.push(["systems", "Systems"]);
+  // The scan against the page it was read off, system by system. Offered as soon
+  // as one band has been read — checking the first few while the rest are still
+  // being read is exactly when a bad reading is cheapest to catch.
+  if (song.has_pdf && song.scan_status?.read) tabs.push(["scanned", "Scan vs page"]);
   if (song.systems) tabs.push(["system", "One system"]);
   if (song.systems && song.has_cleaned) tabs.push(["compare", "Compare"]);
   tabs.push(["original", "Original XML"]);
@@ -403,6 +418,47 @@ async function compareView(view, slug) {
     const row = byIndex[n];
     if (!row) return;
     for (const el_ of Object.values(byIndex)) el_.classList.remove("cmpon");
+    row.classList.add("cmpon");
+    row.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+}
+
+// ---- Scan vs page: each printed system above what the scan read off it -------
+// The same idiom as Compare, one stage earlier and against the parse rather than
+// the cleaned score. Cropping first is not a nicety: a whole A4 rendered small
+// enough to look at cannot show a slur, which is how a confident and wrong
+// reading got made here once already.
+function scannedView(view, song, slug) {
+  const P = `/api/songs/${encodeURIComponent(slug)}`;
+  const st = song.scan_status || {};
+  const errors = st.errors || {};
+  const fresh = new Set(st.new_since_ok || []);
+  const rows = [];
+  const byIndex = {};
+  for (let i = 1; i <= (st.systems || 0); i++) {
+    const bad = errors[String(i)];
+    const label = fresh.has(i) && st.ever_approved
+      ? el("span", { className: "newbadge" }, "new since your OK") : "";
+    rows.push(byIndex[i] = el("div", { className: "cmprow" },
+      el("div", { className: "cmphead" }, `System ${i}`, label),
+      el("div", { className: "cmplabel" }, "page"),
+      el("img", { className: "cmpimg", loading: "lazy",
+                  src: `${P}/system/${i}?dpi=300`, alt: `printed system ${i}` }),
+      el("div", { className: "cmplabel" }, "scan"),
+      // A hole shows its reason where its music would be. Leaving the row out
+      // instead is how a score quietly short of a system reads as complete.
+      bad ? el("div", { className: "cmperr" }, "Could not be read: " + bad)
+          : el("img", { className: "cmpimg", loading: "lazy",
+                        src: `${P}/scan-system/${i}?dpi=200`,
+                        alt: `scanned system ${i}` }),
+    ));
+  }
+  view.replaceChildren(...(rows.length ? rows
+    : [el("p", { className: "warn" }, "Nothing has been read yet.")]));
+  view._focusSystem = (n) => {
+    const row = byIndex[n];
+    if (!row) return;
+    for (const other of Object.values(byIndex)) other.classList.remove("cmpon");
     row.classList.add("cmpon");
     row.scrollIntoView({ block: "start", behavior: "smooth" });
   };
@@ -557,6 +613,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
   const keys = tabs.map(([k]) => k);
   for (let i = 0; i < panes.length; i++) if (!keys.includes(panes[i])) panes[i] = keys[0];
   const refreshers = [];
+  const scanRefreshers = [];
   const wakers = [];
   const selectors = [];
   const previewPausers = [];
@@ -590,6 +647,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
         body.append(v);
         if (doc === "systems") { v._systems = true; systemsEditor(v, slug); }
         else if (doc === "compare") { v._systems = true; v.className = "pdfview compare"; compareView(v, slug); }
+        else if (doc === "scanned") { v._systems = true; v.className = "pdfview compare"; scannedView(v, song, slug); }
         else if (doc === "system") {
           v._systems = true;                       // draws itself, not a PDF
           v.className = "pdfview onesystem";
@@ -625,7 +683,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
       className: "vtab", onclick: () => show(k),
     }, label)));
 
-    if (keys.includes("system")) {
+    if (keys.includes("system") || keys.includes("scanned")) {
       const onAsk = (ev) => {
         const n = ev.detail && ev.detail.index;
         if (!n) return;
@@ -633,12 +691,19 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
         // document in view while the other tracks what is being typed.
         if (i !== 0) return;
         const here = frames[panes[i]];
-        if (panes[i] === "compare" && here && here._focusSystem) {
+        if (here && here._focusSystem) {
           here._focusSystem(n);       // already comparing: scroll to that pair
           return;
         }
-        show("system");
-        frames.system._setSystem(n);
+        if (keys.includes("system")) {
+          show("system");
+          frames.system._setSystem(n);
+        } else {
+          // Before cleaning there is no "one system" tab to fall back on: the
+          // pair worth showing is the band and what was read off it.
+          show("scanned");
+          frames.scanned._focusSystem?.(n);
+        }
       };
       window.addEventListener(SYSTEM_EVENT, onAsk);
       body._cleanup = () => window.removeEventListener(SYSTEM_EVENT, onAsk);
@@ -657,6 +722,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
     previewDestroyers.push(() => frames.preview?._destroy?.());
     previewSyncers.push(() => frames.preview?._sync?.());
     wakers.push(() => ensureRendered(panes[i]));
+    scanRefreshers.push(() => { if (frames.scanned) scannedView(frames.scanned, song, slug); });
     // Re-render only the cleaned previews; their scroll is preserved by renderPdf.
     refreshers.push((fp) => {
       for (const d in frames)
@@ -669,6 +735,16 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
   };
 
   const root = el("div", { className: "viewer" }, panes.map((_, i) => slot(i)));
+  // A system read while the comparison is open must appear in it, and nothing
+  // else must: redrawing reloads every crop, so it happens only when the scan
+  // itself moved.
+  let builtScan = `${song.scan_status?.revision}:${song.scan_status?.approved}`;
+  root._refreshScan = () => {
+    const now = `${song.scan_status?.revision}:${song.scan_status?.approved}`;
+    if (now === builtScan) return;
+    builtScan = now;
+    scanRefreshers.forEach((f) => f());
+  };
   root._refreshFp = (fp) => refreshers.forEach((f) => f(fp));
   root._wake = () => wakers.forEach((f) => f());
   root._pausePreview = () => previewPausers.forEach((pause) => pause());
@@ -769,7 +845,7 @@ function renderPanel(panel, view, song, slug, refresh, actions) {
   logBox = null;
   const P = `/api/songs/${encodeURIComponent(slug)}`;
   if (view === "register") return panelRegister(panel, song, P, refresh);
-  if (view === "scan") return panelScan(panel, song, P, refresh);
+  if (view === "scan") return panelScan(panel, song, P, refresh, actions);
   if (view === "clean") return panelClean(panel, song, slug, P, refresh);
   if (view === "fix") return panelFix(panel, song, P, refresh);
   if (view === "lyrics") return panelLyrics(panel, song, P, refresh);
@@ -778,14 +854,16 @@ function renderPanel(panel, view, song, slug, refresh, actions) {
   if (view === "upload") return panelUpload(panel, song, P, refresh);
 }
 
-// A holding panel, not the Scan panel: that is #116, and it will replace this
-// whole function. It exists because inserting `scan` into the rail gave every
-// song a step that could be clicked into a blank pane, and because a song
-// registered from a PDF alone lands here with no way to start the thing it is
-// waiting for. It says what has been read, what is still a hole, and runs a scan.
-function panelScan(panel, song, P, refresh) {
+// The Scan panel. It has one job the other panels do not: it has to stop a parse
+// that looks tidy from becoming a practice track. So the stage never advances on
+// its own — the operator compares the parse against the page system by system and
+// then says, once for the song, that it is right (#99).
+function panelScan(panel, song, P, refresh, actions) {
   const st = song.scan_status || {};
   const job = song.jobs?.scan;
+  const running = !!(song.scanning || job?.status === "running");
+  const gaps = st.pages_without_bands || [];
+  const openScanned = () => actions?.openDoc?.("scanned");
   panel.append(el("h2", {}, "Scan"),
     el("p", { className: "sub" },
       "Read the score off the PDF, one printed system at a time."));
@@ -795,42 +873,104 @@ function panelScan(panel, song, P, refresh) {
       "This song has no PDF, so there is nothing to read."));
     return;
   }
-  if (!st.systems) {
-    panel.append(el("p", { className: "hint" },
-      "Set the printed-system boundaries in the viewer's Systems tab first — "
-      + "the scan reads the bands you mark there."));
-    return;
-  }
 
-  panel.append(el("p", {}, `${st.read} of ${st.systems} system(s) read.`
-    + (st.holes?.length ? ` Still to read: ${st.holes.join(", ")}.` : "")));
+  // Bounds first, always: they are drawn by hand and nothing proposes them, so
+  // the panel says what is missing and the Scan button waits for it.
+  const ready = st.systems && !gaps.length;
+  panel.append(el("div", { className: ready ? "banner" : "banner err" },
+    ready ? `${st.systems} printed system(s) marked.`
+      : !st.systems
+      ? "No printed systems marked yet. Draw a band around each system in the Systems tab — the scan reads exactly those bands."
+      : `Page(s) ${gaps.join(", ")} have no systems marked. Every page has to be marked, or its music is simply never read.`,
+    " ",
+    el("button", { onclick: () => actions?.openDoc?.("systems") }, "Open the Systems editor")));
+
+  if (st.systems)
+    panel.append(el("p", {}, `${st.read} of ${st.systems} system(s) read.`
+      + (st.holes?.length ? ` Still to read: ${st.holes.join(", ")}.` : "")));
   for (const gone of song.scan_discarded || [])
     panel.append(el("div", { className: "banner" },
       `Discarded ${gone}: what it was made from has changed.`));
 
-  const runBtn = el("button", { className: "primary", onclick: async () => {
-    runBtn.disabled = true;
-    appendLog("Starting scan…");
-    try { await postJSON(`${P}/scan`, {}); }
-    catch (e) { runBtn.disabled = false; appendLog(e.message, true); }
-  }}, st.read ? "Read the remaining systems" : "Scan the score");
-  const againBtn = el("button", { onclick: async () => {
-    const which = prompt("Re-read which system(s)? e.g. 2 or 2,5");
-    if (!which) return;
-    const systems = which.split(",").map((n) => parseInt(n.trim(), 10)).filter(Boolean);
-    if (!systems.length) return;
-    appendLog("Re-reading system(s) " + systems.join(", ") + "…");
-    try { await postJSON(`${P}/scan`, { systems }); }
+  const rerun = async (systems) => {
+    appendLog(systems ? "Re-reading system(s) " + systems.join(", ") + "…"
+                      : "Starting scan…");
+    try { await postJSON(`${P}/scan`, systems ? { systems } : {}); refresh(); }
     catch (e) { appendLog(e.message, true); }
-  }}, "Re-read a system…");
-  panel.append(el("div", { className: "row" }, runBtn, st.read ? againBtn : ""));
+  };
+  // Only offered while there is something to read: a band already read at its
+  // current geometry is skipped, so a button on a finished scan would say it was
+  // going to do something and then do nothing.
+  const outstanding = !st.read || st.holes?.length;
+  const runBtn = el("button", { className: "primary", disabled: !ready || running,
+    onclick: async () => { runBtn.disabled = true; await rerun(null); } },
+    st.read ? "Read the remaining systems" : "Scan the score");
+  panel.append(el("div", { className: "row" }, outstanding ? runBtn : "",
+    st.read ? el("button", { disabled: running, onclick: openScanned },
+                 "Compare with the page") : ""));
 
-  if (song.scanning || job?.status === "running")
+  // A hole is blocking and it is retried on its own: twenty homr runs is twenty
+  // chances to fail, and losing the nineteenth must not cost the eighteen that
+  // worked.
+  if (st.holes?.length && st.read) {
+    panel.append(el("h3", {}, "Systems still to read"));
+    for (const index of st.holes) {
+      const why = (st.errors || {})[String(index)];
+      panel.append(el("div", { className: "banner err scanhole" },
+        el("div", {}, `System ${index}`
+          + (why ? " could not be read: " + why : " has not been read yet.")),
+        el("div", { className: "row" },
+          el("button", { disabled: running, onclick: () => rerun([index]) },
+            "Read system " + index + " again"),
+          el("button", { onclick: () => { openScanned(); showSystem(index); } },
+            "Look at it"))));
+    }
+  }
+
+  if (running)
     panel.append(el("div", { className: "banner" },
       "● Scanning… recent messages are saved below."));
   else if (job?.status === "failed")
     panel.append(el("div", { className: "banner err" }, "Last scan failed: " + job.error));
+
+  // The gate. One OK for the whole song, and only when there is a whole score to
+  // approve — per-system ticking was rejected as friction that produces false
+  // diligence rather than more looking.
+  if (st.complete && !running)
+    panel.append(scanApproval(st, song, P, refresh, actions, openScanned));
+
   panel.append(makeLog(job));
+}
+
+function scanApproval(st, song, P, refresh, actions, openScanned) {
+  if (st.approved)
+    return el("div", { className: "banner good" },
+      "You have said this reading of the page is right. The song is on Clean.");
+  const fresh = st.new_since_ok || [];
+  const okBtn = el("button", { className: "primary", onclick: async () => {
+    okBtn.disabled = true;
+    try {
+      Object.assign(song, await postJSON(`${P}/approve-scan`, { revision: st.revision }));
+      // Saying it is right is also saying "get on with it", so the panel follows
+      // the song to the stage it just unlocked rather than sitting on a done one.
+      if (actions?.selectStage) actions.selectStage("clean");
+      else refresh();
+    } catch (e) { okBtn.disabled = false; appendLog(e.message, true); }
+  }}, "This reading is right — continue to Clean");
+  return el("section", { className: "scanok" },
+    el("h3", {}, "Say it is right"),
+    el("p", { className: "hint" },
+      "Nothing checks this for you. The parse that hurts is the tidy-looking one, "
+      + "so compare each system against the page before you press it."),
+    // Re-reading a system lapses the OK, and the systems that changed are where
+    // to look. A hint, not per-system bookkeeping.
+    st.ever_approved
+      ? el("p", { className: "warn" }, fresh.length
+        ? `Your OK lapsed. Changed since it: system(s) ${fresh.join(", ")}.`
+        : "Your OK lapsed because the scan changed.")
+      : "",
+    el("div", { className: "row" }, okBtn,
+      el("button", { onclick: openScanned }, "Compare with the page")));
 }
 
 function panelRegister(panel, song, P, refresh) {

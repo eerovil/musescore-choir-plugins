@@ -350,6 +350,9 @@ SPATIUM_SCALE = float(os.getenv("RENDER_SPATIUM_SCALE", "0.65"))
 # Staff sizes to try when the printed line breaks are being kept, largest first.
 # Larger is more legible; too large and a wide system gets split anyway.
 BREAK_SCALES = (0.85, 0.75, 0.65)
+# A wedged MuseScore process would otherwise hold a request open forever; one
+# system is seconds, so this is generous rather than tight.
+MUSESCORE_TIMEOUT = float(os.getenv("MUSESCORE_CLI_TIMEOUT", "120"))
 
 
 def line_break_measures(mscx_path: str) -> List[int]:
@@ -563,6 +566,35 @@ def system_crop(song_dir: str, pdf_path: str, index: int, dpi: int) -> str:
         raise ValueError(f"No stored bounds for system {index}")
     images = pdf_systems.crop_systems(pdf_path, match, _page_cache(song_dir), dpi=dpi)
     return images[0].path
+
+
+def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str:
+    """Engrave one scanned system as a PNG, cached under the song folder.
+
+    The parse as a picture, so it can be read against the band it was read from.
+    `-T` trims the page down to the music: a fragment is one system on an
+    otherwise blank A4, and a page shrunk to fit a phone shows neither.
+    """
+    cache = os.path.join(_page_cache(song_dir), "scan")
+    os.makedirs(cache, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(musicxml_path))[0]
+    out = os.path.join(cache, f"{stem}@{dpi}.png")
+    if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(musicxml_path):
+        return out
+    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    result = subprocess.run(
+        [cli, "-T", "10", "-r", str(dpi), musicxml_path, "-o", out],
+        capture_output=True, text=True, timeout=MUSESCORE_TIMEOUT)
+    # MuseScore numbers the pages it writes, so a one-page export lands as
+    # <name>-1.png rather than under the name it was asked for.
+    numbered = f"{os.path.splitext(out)[0]}-1.png"
+    if not os.path.exists(out) and os.path.exists(numbered):
+        os.replace(numbered, out)
+    if result.returncode != 0 or not os.path.exists(out):
+        raise RuntimeError(
+            "MuseScore CLI could not engrave the scanned system. Check "
+            "MUSESCORE_CLI_PATH.\n" + (result.stderr or result.stdout or ""))
+    return out
 
 
 def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None) -> str:

@@ -370,6 +370,20 @@ Key test modules:
   re-read that came out the same discarding nothing, and a song that never scanned
   deriving nothing from any of it. Flattening and assembling are *not* stubbed: they are
   cheap, need no binary, and stubbing them would leave the seam a hole slips through.
+  This pull request adds the **gate** to it: a finished scan waits on `scan` rather than
+  advancing, there is nothing to approve while a system is a hole, a re-read that came out
+  different lapses the OK and names the system while one that came out the same costs
+  nothing, an unmarked page is refused before any band is read while a missing poppler is
+  not, the route refuses a click aimed at an older reading, and a hole has no fragment to
+  render.
+- `src/song_app/tests/test_scan_panel_ui.py` — added by this pull request: the Scan panel
+  in a real browser, which is where most of #116 actually lives. It opens on the Systems
+  editor with the Scan button waiting for the bands; a hole shows what homr said, offers a
+  retry of its own and withholds the OK; the OK is a wall that has to be pressed and moves
+  the song to Clean; a lapsed OK says which system changed; and it all fits 390x844.
+  Nothing here runs homr, poppler or MuseScore — the fragments are written into the song
+  the way a scan would leave them, **with real band stamps**, or the app discards them all
+  on the next read, which is the invalidation rule working rather than a test detail.
 - `src/song_app/tests/test_benchmark.py` — added by this pull request, and the first
   thing in the suite that meets a **real scan**. Three tiers, so each dependency buys
   something and none is required. **No dependencies**: the manifest's files are on disk
@@ -964,9 +978,60 @@ state model are in `DESIGN.md`.
   Measured end to end on the fixture, real crops and real homr: **15 systems, 201s, no
   holes, 52 bars** — the same bar count as the fixture's own cleaned score — every system
   finding the 2 staves the page prints.
-  The **panel is #116**, so `app.js` gets a holding one: it says what has been read and
-  what is still a hole, and runs a scan. It exists because putting `scan` in the rail
-  gave every song a step that could be clicked into a blank pane.
+  **The stage does not advance on its own, and this pull request is what makes that
+  true.** Assembling used to set the song to `clean`; now only `scan.approve` does, and
+  only a person calls it (#99). The reasoning is worth keeping because it is the opposite
+  of how `clean` behaves: the dangerous parse is the **tidy** one, so advancing on a parse
+  that looks fine would skip exactly the parses most worth looking at. The OK is a claim
+  about one reading of the page, so it is recorded against `revision` — every fragment's
+  content in order — and lapses the moment any system is read again. It also keeps the
+  **content stamp each system had when it was approved**, which is the only reason the
+  panel can say *which* systems have changed since anybody looked; the lapse itself needs
+  no code of its own, because the assembly and the OK are recorded against the same
+  revision, so `reconcile` already puts the song back on `scan`.
+  **A page nobody marked is refused, not scanned.** `pages_without_bands` is a
+  precondition rather than a hole to fill later: the scan reads the bands and nothing
+  else, so an unmarked page is music that would never be read at all and the assembled
+  score would still look complete. Without poppler it answers "no gaps" rather than "every
+  page is a gap" — a missing binary must not be indistinguishable from an operator who has
+  not drawn them yet.
+
+- The **Scan panel** is added by this pull request (#116), replacing the holding one that
+  #115 left. Its whole job is to stop a tidy-looking parse becoming a practice track, and
+  every piece of it follows from that.
+  **It opens on the Systems editor** (`renderWorkspace` picks `systems` as the first
+  document for a song at `scan`), and the Scan button stays disabled until every page has
+  bands. No fourth stage for bounds: one stage, one screen, and the thing that must happen
+  is the thing in front of you (#103). Bounds are dragged by hand, always — nothing
+  proposes them, and #80 measured why.
+  **During the scan** it is the raw log, the same one `clean` and `record` show, streamed
+  over the per-slug WebSocket. ~20 systems at 16–20s, and on a busy host it stalls between
+  them waiting for a heavy slot — `heavy_slot` already says so in that log, which is the
+  whole mitigation.
+  **A hole is visible, blocking, and retried on its own**: each one is listed with what
+  homr said and a button that re-reads that system alone. It was a `prompt()` asking for
+  comma-separated numbers.
+  **Comparison is system by system**, in a `Scan vs page` viewer tab: each printed crop
+  (`/system/{index}`) above what was read off it, engraved through MuseScore
+  (`/scan-system/{index}` → `pipeline.scan_system_render`, `-T` so a one-system fragment
+  comes back as that system rather than a mostly blank A4). The Fix panel's `/compare`
+  idiom, one stage earlier. Page-against-page is not offered, because a whole A4 rendered
+  small enough to look at cannot show a slur — this repo has made a confident and
+  substantially wrong reading that way once already. A system that could not be read shows
+  its reason **in its own row**, so the sequence stays intact instead of the comparison
+  quietly skipping a system: that is what "a refused parse is kept and shown" comes to
+  here, since nothing in the app refuses a parse on its shape today.
+  **One explicit OK**, offered only when there is a whole score to approve, sending the
+  revision it was looking at so a scan that finished under the operator's cursor cannot be
+  approved by a click aimed at the reading it replaced (409). No per-system ticking: 20
+  taps is a gate people learn to click through blind, and friction that produces false
+  diligence is worse than trusting the operator to have looked.
+  **After a re-scan the OK is gone and the panel says where to look** — "Changed since it:
+  system(s) 7" — a hint, not per-system bookkeeping.
+  The comparison is redrawn when the scan moves and not otherwise (`_refreshScan`), since
+  redrawing reloads every crop; a system read while it is open therefore appears in it.
+  On a phone it is the existing pane switcher and the compare rows, both already built
+  for 390px.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a

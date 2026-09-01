@@ -134,7 +134,10 @@ def test_scan_reads_every_band_and_assembles_one_score(songs, reader):
     assert reader.read == [1, 2, 3]
     assert result["complete"] and result["holes"] == []
     fresh = _reload(song)
-    assert fresh.stage == "clean"
+    # Complete is not approved: a finished scan is a score the app has, not one
+    # anybody has looked at, and only `approve` moves a song off this stage.
+    assert fresh.stage == "scan"
+    assert not result["approved"]
     assert fresh.data["sources"]["xml"] == scan.ASSEMBLED_NAME
     assert os.path.isfile(fresh.path(scan.ASSEMBLED_NAME))
     # Fragments are kept: the assembled score is derived from them, so they are
@@ -215,7 +218,7 @@ def test_filling_the_hole_reads_only_the_hole_and_then_assembles(songs, reader):
 
     assert reader.read == [2], "a band already read at its current geometry is not re-read"
     assert result["complete"]
-    assert _reload(song).stage == "clean"
+    assert _reload(song).stage == "scan", "filling a hole does not approve the scan"
 
 
 def test_a_song_with_no_bounds_refuses_rather_than_guessing(songs, reader):
@@ -453,3 +456,157 @@ def test_saving_bounds_says_what_it_threw_away(client, songs, reader):
 
     assert r.status_code == 200
     assert "the scan of system 2" in r.json()["discarded"]
+
+
+# --- the gate: one explicit OK per song ------------------------------------
+#
+# The scan stage is the one stage that must not advance on its own. Everything
+# below is about that: what the OK records, what lapses it, and what it says
+# afterwards about where to look.
+
+
+def test_a_finished_scan_waits_for_a_person_and_then_moves(songs, reader):
+    song = _song(songs)
+    scan.run(song)
+    song = _reload(song)
+    assert song.stage == "scan"
+
+    result = scan.approve(song)
+
+    assert result["approved"] is True
+    assert _reload(song).stage == "clean"
+    assert song.data["scan"]["ok"]["revision"] == scan.revision(song)
+
+
+def test_there_is_nothing_to_approve_while_a_system_is_a_hole(songs, reader):
+    song = _song(songs)
+    reader.fail[2] = omr.HomrError("homr fell over")
+    scan.run(song)
+    song = _reload(song)
+
+    with pytest.raises(scan.ScanError, match="2"):
+        scan.approve(song)
+    assert song.stage == "scan"
+
+
+def test_re_reading_a_system_lapses_the_ok_and_says_which_one(songs, reader):
+    song = _song(songs)
+    scan.run(song)
+    song = _reload(song)
+    scan.approve(song)
+
+    # The same band, read again and coming back different: this is the case the
+    # OK exists for, since what was approved is no longer what would be cleaned.
+    reader.staves = 3
+    scan.run(_reload(song), only=[2])
+    st = scan.status(_reload(song))
+
+    assert st["approved"] is False
+    assert st["ever_approved"] is True
+    assert st["new_since_ok"] == [2]
+    assert _reload(song).stage == "scan", "a lapsed OK puts the song back on Scan"
+
+
+def test_a_re_read_that_came_out_the_same_costs_the_operator_nothing(songs, reader):
+    song = _song(songs)
+    scan.run(song)
+    song = _reload(song)
+    scan.approve(song)
+
+    scan.run(_reload(song), only=[2])
+    st = scan.status(_reload(song))
+
+    assert st["approved"] is True and st["new_since_ok"] == []
+    assert _reload(song).stage == "clean"
+
+
+def test_a_page_with_no_bands_on_it_is_refused_rather_than_left_out(songs, reader, monkeypatch):
+    song = _song(songs, bands=2)                 # every band is on page 1
+    monkeypatch.setattr(pdf_systems, "page_count", lambda path: 3)
+
+    assert scan.pages_without_bands(song) == [2, 3]
+    with pytest.raises(scan.ScanError, match="2, 3"):
+        scan.run(song)
+    assert reader.read == [], "nothing is read while a page is unmarked"
+
+
+def test_no_poppler_is_not_the_same_as_no_bands(songs, reader, monkeypatch):
+    """A missing binary must not read as an operator who has not drawn them."""
+    def boom(path):
+        raise RuntimeError("pdfinfo: not found")
+
+    monkeypatch.setattr(pdf_systems, "page_count", boom)
+    song = _song(songs, bands=2)
+
+    assert scan.pages_without_bands(song) == []
+    scan.run(song)
+    assert reader.read == [1, 2]
+
+
+def test_the_ok_route_advances_the_song(client, songs, reader):
+    song = _song(songs)
+    scan.run(song)
+    revision = scan.status(_reload(song))["revision"]
+
+    r = client.post(f"/api/songs/{song.slug}/approve-scan", json={"revision": revision})
+
+    assert r.status_code == 200
+    assert r.json()["stage"] == "clean"
+    assert r.json()["scan_status"]["approved"] is True
+
+
+def test_the_ok_route_refuses_a_click_aimed_at_an_older_reading(client, songs, reader):
+    song = _song(songs)
+    scan.run(song)
+
+    r = client.post(f"/api/songs/{song.slug}/approve-scan",
+                    json={"revision": "not-what-is-on-disk"})
+
+    assert r.status_code == 409
+    assert _reload(song).stage == "scan"
+
+
+def test_the_ok_route_refuses_an_unfinished_scan(client, songs, reader):
+    song = _song(songs)
+    reader.fail[2] = omr.HomrError("homr fell over")
+    scan.run(song)
+
+    r = client.post(f"/api/songs/{song.slug}/approve-scan")
+
+    assert r.status_code == 400
+    assert _reload(song).stage == "scan"
+
+
+def test_scanning_a_song_whose_pages_are_not_all_marked_is_refused_at_the_door(
+        client, songs, reader, monkeypatch):
+    song = _song(songs, bands=2)
+    monkeypatch.setattr(pdf_systems, "page_count", lambda path: 2)
+
+    r = client.post(f"/api/songs/{song.slug}/scan")
+
+    assert r.status_code == 400 and "Page(s) 2" in r.json()["detail"]
+
+
+# --- the parse as a picture, beside the band it was read from --------------
+
+
+def test_a_scanned_system_is_rendered_from_its_own_fragment(client, songs, reader,
+                                                            monkeypatch):
+    song = _song(songs)
+    reader.fail[2] = omr.HomrError("homr fell over")
+    scan.run(song)
+    rendered = []
+
+    def fake_render(song_dir, musicxml, dpi=200):
+        rendered.append((musicxml, dpi))
+        out = os.path.join(song_dir, "rendered.png")
+        open(out, "wb").close()
+        return out
+
+    monkeypatch.setattr(server.pipeline, "scan_system_render", fake_render)
+
+    assert client.get(f"/api/songs/{song.slug}/scan-system/1").status_code == 200
+    assert rendered[0][0].endswith("system-01.musicxml")
+    # The hole has no fragment, so there is nothing to render and the comparison
+    # shows the reason instead of a picture of the system before it.
+    assert client.get(f"/api/songs/{song.slug}/scan-system/2").status_code == 404
