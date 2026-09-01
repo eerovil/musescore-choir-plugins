@@ -34,6 +34,16 @@ derived from the bands, the grid answers from the fragments, the input score fro
 the fragments, and the reviewer's approval from all of it. When an input changes,
 everything downstream of it stops being true -- see :func:`reconcile`, which is
 the only place that idea is written down.
+
+**The stage does not advance on its own.** Assembling a score does not move the
+song to ``clean``; :func:`approve` does, and only a person calls it. This is the
+opposite of how ``clean`` behaves and it is deliberate (#99): the dangerous parse
+is the *tidy* one, so advancing automatically on a parse that looks fine would
+skip exactly the parses most worth looking at. The OK is a claim about a
+particular reading of the page, so it is recorded against :func:`revision` and
+lapses the moment any system is read again -- and the content stamps it was given
+are kept, so the panel can say **which** systems have changed since anybody
+looked.
 """
 
 from __future__ import annotations
@@ -156,11 +166,37 @@ def _write_fragments(song: state.Song, fragments: Dict[int, Dict]) -> None:
     _scan(song)["systems"] = {str(k): v for k, v in sorted(fragments.items())}
 
 
+def pages_without_bands(song: state.Song,
+                        bands: Optional[Sequence[SystemBounds]] = None) -> List[int]:
+    """Pages of the PDF nobody has drawn a system on.
+
+    Scanning reads the bands and nothing else, so a page with none is a page that
+    would be silently left out of the score. The panel disables its Scan button on
+    this and :func:`run`'s caller refuses on it.
+
+    A page count needs poppler. Without it this answers "no gaps" rather than
+    "every page is a gap": a missing binary must not be indistinguishable from an
+    operator who has not drawn the bands yet.
+    """
+    pdf = song.source_path("pdf")
+    if not pdf or not os.path.exists(pdf):
+        return []
+    try:
+        total = pdf_systems.page_count(pdf)
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return []
+    drawn = {b.page for b in (pdf_systems.load_bounds(song.dir)
+                              if bands is None else bands)}
+    return [page for page in range(1, total + 1) if page not in drawn]
+
+
 def status(song: state.Song) -> Dict:
     """What the scan stage has and has not got, for the app to show and act on.
 
-    ``complete`` is the gate: every printed band read, at least one band, and an
-    assembled score that matches what was read.
+    ``complete`` is the gate on assembling: every printed band read, at least one
+    band, and an assembled score that matches what was read. ``approved`` is the
+    gate on *leaving* the stage, and it is a separate thing: complete says the app
+    has a score, approved says a person has looked at it.
     """
     bands = pdf_systems.load_bounds(song.dir)
     fragments = _fragments(song)
@@ -168,6 +204,12 @@ def status(song: state.Song) -> Dict:
              if b.index not in fragments or fragments[b.index].get("error")]
     scan = song.data.get("scan", {})
     assembled = scan.get("assembled")
+    current = revision(song)
+    ok = scan.get("ok") or {}
+    # What each system read as when it was last approved. A system missing from
+    # it, or reading differently now, is one nobody has looked at -- which is a
+    # hint about where to look, not a second gate.
+    seen = ok.get("systems") or {}
     return {
         "systems": len(bands),
         "read": sum(1 for f in fragments.values() if not f.get("error")),
@@ -176,9 +218,50 @@ def status(song: state.Song) -> Dict:
                    if fragments[i].get("error")},
         "assembled": assembled,
         "complete": bool(bands) and not holes
-        and scan.get("assembled_revision") == revision(song),
-        "revision": revision(song),
+        and scan.get("assembled_revision") == current,
+        "revision": current,
+        "pages_without_bands": pages_without_bands(song, bands),
+        "approved": bool(ok.get("revision")) and ok["revision"] == current,
+        "ever_approved": bool(ok),
+        "new_since_ok": [i for i in sorted(fragments)
+                         if not fragments[i].get("error")
+                         and seen.get(str(i)) != fragments[i].get("content")]
+        if ok else [],
     }
+
+
+def fragment_path(song: state.Song, index: int) -> Optional[str]:
+    """The MusicXML read off one band, or None while that system is a hole."""
+    entry = _fragments(song).get(int(index)) or {}
+    name = entry.get("musicxml")
+    if not name:
+        return None
+    path = song.path(name)
+    return path if os.path.exists(path) else None
+
+
+def approve(song: state.Song) -> Dict:
+    """Record that a person looked at this reading of the page, and move on.
+
+    The one explicit OK per song. It is recorded against the revision it approved
+    and against each system's content, so re-reading a system both lapses it and
+    says which system did it.
+    """
+    result = status(song)
+    if not result["complete"]:
+        raise ScanError(
+            "This scan is not finished: system(s) "
+            f"{', '.join(str(i) for i in result['holes']) or 'none'} still need "
+            "reading, so there is nothing whole to approve."
+        )
+    fragments = _fragments(song)
+    _scan(song)["ok"] = {
+        "revision": result["revision"],
+        "systems": {str(i): f.get("content") for i, f in sorted(fragments.items())},
+    }
+    song.set_stage("clean")
+    song.save()
+    return status(song)
 
 
 # --- the invalidation rule -----------------------------------------------
@@ -356,6 +439,14 @@ def run(
             "No printed systems to read. Set the system boundaries in the "
             "Systems viewer before scanning."
         )
+    gaps = pages_without_bands(song, bands)
+    if gaps:
+        # Not a hole to be filled later: a page nobody marked is music that would
+        # never be read at all, and the score would come out looking complete.
+        raise ScanError(
+            "Page(s) " + ", ".join(str(p) for p in gaps) + " have no printed "
+            "systems marked. Mark every page in the Systems viewer before scanning."
+        )
 
     source = pdf_systems.file_version(pdf)
     out_dir = song.path(FRAGMENT_DIR)
@@ -449,6 +540,10 @@ def _assemble(song: state.Song, log: Logger) -> Dict:
     song.data.setdefault("sources", {})["xml"] = ASSEMBLED_NAME
     _scan(song)["assembled"] = ASSEMBLED_NAME
     _scan(song)["assembled_revision"] = revision(song)
-    song.set_stage("clean")
+    # The stage deliberately stays where it is. A finished scan is a score the app
+    # has, not a score anybody has looked at, and `approve` is the only thing that
+    # moves a song out of `scan` (#99). The lapse in the other direction needs no
+    # code of its own: re-reading a system moves `revision`, which is what both the
+    # assembly and the OK are recorded against.
     song.save()
     return status(song)

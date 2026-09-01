@@ -291,6 +291,20 @@ table.grid input.unset { border-color: var(--warn); }
 .cmplabel { font-size: .7rem; color: #888; text-transform: uppercase;
             letter-spacing: .05em; margin: .3rem 0 .1rem; }
 .cmprow.cmpon { background: #eef4ff; box-shadow: 0 0 0 3px #cddffb; border-radius: 4px; }
+/* A system that could not be read says so where its music would be, so the row
+   stays in the sequence instead of the comparison quietly skipping a system. */
+.cmperr { border: 1px solid #a33; color: #a33; background: #fff4f4;
+          border-radius: 4px; padding: .5rem .6rem; font-size: .8rem; }
+.newbadge { margin-left: .5rem; padding: .05rem .35rem; border-radius: 999px;
+            background: #ffe9c2; color: #7a4a00; font-weight: 600; font-size: .7rem; }
+
+/* Scan panel: a hole and the gate. Both are things the operator has to act on,
+   so they sit in the panel rather than in the log. */
+.scanhole .row { margin-top: .4rem; }
+.scanok { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line);
+          border-radius: 8px; background: var(--panel2); }
+.scanok h3 { margin: 0 0 4px; }
+.panel .warn { color: var(--warn); }
 
 /* ---- Scroll preview ------------------------------------------------------
    The video before it is a video: a canvas the exact shape of the frame, holding

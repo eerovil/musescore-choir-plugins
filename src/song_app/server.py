@@ -398,7 +398,7 @@ def _run_scan(slug: str, opts: Dict) -> None:
         holes = result["holes"]
         log(f"Read {result['read']} of {result['systems']} system(s)."
             + (f" Still to read: {', '.join(str(i) for i in holes)}." if holes
-               else " Ready to clean."))
+               else " Check it against the page, then say it is right."))
         _job_finish(song, "scan")
     except Exception as exc:
         traceback.print_exc()
@@ -420,6 +420,11 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
     if not pdf_systems.load_bounds(song.dir):
         raise HTTPException(
             400, "Set the printed-system boundaries in the Systems viewer first")
+    gaps = scan.pages_without_bands(song)
+    if gaps:
+        raise HTTPException(
+            400, "Page(s) " + ", ".join(str(p) for p in gaps) + " have no "
+            "printed systems marked. Mark every page in the Systems viewer first.")
     opts = dict(body or {})
     try:
         opts["systems"] = [int(i) for i in (opts.get("systems") or [])]
@@ -440,6 +445,47 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         raise
     asyncio.get_running_loop().run_in_executor(None, _run_scan, slug, opts)
     return {"started": True}
+
+
+@app.post("/api/songs/{slug}/approve-scan")
+def api_approve_scan(slug: str, body: Dict = None) -> Dict:
+    """The one explicit OK: a person looked at this parse, so the song may leave.
+
+    The revision comes back from the browser and has to match what is on disk. A
+    scan that finished while the panel was open would otherwise be approved by a
+    click aimed at the reading it replaced.
+    """
+    song = _require(slug)
+    expected = (body or {}).get("revision")
+    current = scan.revision(song)
+    if expected and expected != current:
+        raise HTTPException(
+            409, "The scan changed while you were looking at it; check the new "
+                 "systems before saying it is right.")
+    try:
+        scan.approve(song)
+    except scan.ScanError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return _derived(_require(slug))
+
+
+@app.get("/api/songs/{slug}/scan-system/{index}")
+def api_scan_system(slug: str, index: int, dpi: int = 200):
+    """One scanned system, engraved — the parse as a picture, beside its band.
+
+    Rendering the fragment rather than the assembled score is what keeps the
+    comparison honest while a system is still a hole: the fragments either side of
+    it are shown as they were read, and the missing one is missing.
+    """
+    song = _require(slug)
+    fragment = scan.fragment_path(song, index)
+    if not fragment:
+        raise HTTPException(404, "That system has not been read")
+    try:
+        path = pipeline.scan_system_render(song.dir, fragment, max(50, min(dpi, 600)))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
 # --------------------------------------------------------------------------
