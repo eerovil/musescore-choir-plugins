@@ -504,11 +504,43 @@ state model are in `DESIGN.md`.
   `malformed-measure` rather than reported twice. It also stays out of music with
   no meter to violate: a score carrying an oversized nominal in place of a
   signature (one here declares 16/2 — eight whole notes — for music printed
-  without a meter), and a score where most bars declare their own length (one
-  overrides 20 of 25). Across the 35 cleaned songs in `songs/` it reports ~35
+  without a meter). Across the 35 cleaned songs in `songs/` it reports ~35
   bars, concentrated in five scores; spot-checked, they are real — including a
   mixed-meter piece that silently changes bar length 16 times, i.e. dropped time
-  signatures. Missing notes that still fill the bar (a
+  signatures.
+  **A score where most bars declare their own length used to switch the meter rule
+  off, and this pull request proposes that it collapse the finding instead** (#124).
+  The escape is not wrong to exist — Venematka overrides 20 of its 25 bars and would
+  otherwise be reported 66 times for being what it is, which is the noise that trains
+  an operator to ignore a check. But "carries a length override" is also what a badly
+  parsed score looks like: `fix_overfull_measures` writes one onto every bar whose
+  content contradicts the running signature, so the check turned itself off exactly
+  when the score was worst. Benchmark page B6 crossed the 50% line **by being more
+  wrong** — misreading an opening 5/4 as 3/4 needed an override on bars 1 and 2 of all
+  four staves, and those eight carried it from 50% to 56% — and reported 3 issues
+  where the same score judged on the same rules has 32. A score bought silence by
+  being worse, which is this project's named failure occurring inside the checker.
+  So the share now decides only **how the finding is said**: above the line the bars
+  are counted into one `meter-collapsed` finding naming how many bars, the first one
+  to look at, and the share itself. Venematka's 66 become one line, B6's 32 stay 32,
+  and the two sides of the line are comparable rather than one of them blank. Nothing
+  to count is nothing to say — a free-metered score that agrees with itself is still
+  clean. The threshold stays at 0.5: across `songs/` every score's override share is
+  ≤0.19 except Venematka's 0.76–0.80, so the line sits in an empty gap, and crossing
+  it now costs presentation instead of silence. The summary's id carries the count
+  (`meter-collapsed-66`), so dismissing "4 bars disagree" does not cover "6 bars
+  disagree".
+  **Collapsing the presentation is the point; collapsing the number would be the same
+  bug one level up**, so the row carries `collapsed` as an integer and every count a
+  person reads goes through `health.finding_count`, which weighs a row by what it
+  stands for: the library badge (`state.to_summary`), the "N issue(s) to review" line
+  the clean finishes on (`server._run_clean`), and the Review stage's health result
+  (`verification.summary`, which also puts `open_count` / `row_count` /
+  `collapsed_count` on the wire and says in its detail how many findings are behind
+  the one line). Counting rows would have put B6 straight back where it started — "4
+  open issue(s)" next to a per-system parse's 28. The cost is that Venematka's Review
+  stage reads 81 rather than 16; that is the true number, and its detail says 66 of
+  them are one line in the Fix panel. Missing notes that still fill the bar (a
   half-rest standing in for lost notes, e.g. the m18 case) are **not**
   tick-detectable — they surface as lyric syllable overflow at import. Missing
   slurs are undetectable and stay manual. `merge_issues` carries over `dismissed`

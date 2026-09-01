@@ -544,7 +544,9 @@ def _run_clean(slug: str) -> None:
         }
         song.set_stage("fix")
         song.save()
-        n = len(_derived(song)["open_issues"])
+        # Findings, not rows: a collapsed meter row stands for many, and this line is
+        # the first number anyone sees about a score. See health.finding_count.
+        n = health.finding_count(_derived(song)["open_issues"])
         final = f"Done. {n} issue(s) to review." if n else "Done. No issues found."
         log(final)
         _job_finish(song, "clean")
