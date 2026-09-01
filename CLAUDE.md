@@ -300,6 +300,15 @@ Key test modules:
   the real thing: a page of the scanned fixture rasterised at 300 dpi goes in and parseable
   MusicXML with parts, measures and notes comes out (~50s). It skips without homr or
   poppler, the same way the MuseScore-CLI and Playwright tests skip.
+  A second half is added for #113: the **slurs**, written as little token streams
+  (`"1( 1) 3( 5)"`) because that is the level the defect lives at. A slur inside a bar
+  and one across a single barline survive; two barlines is dropped and the slurs on
+  either side of it are not; a redundant start, an unmatched stop and a start that
+  never stops all go; B5's own m46 shape resolves in one pass and finds nothing on a
+  second; `read_page` applies it and says so in the log; and a parse with nothing to
+  change comes back byte for byte as homr wrote it. The last needs MuseScore and is the
+  defect where it is felt: twelve notes over three bars offer four lyric slots with the
+  runaway and twelve without it.
 - `src/song_app/tests/test_omr_systems.py` — added by this pull request. Two halves.
   **Flattening** is tested with little documents in the shapes homr actually produced
   on the benchmark — four one-staff "Voice" parts, two two-staff "Piano" parts, and a
@@ -754,6 +763,40 @@ state model are in `DESIGN.md`.
   pages already read are on disk. A caller that would rather hold one lease across a
   whole song passes `queue=False` and wraps the loop itself, so the two never nest
   (nesting would deadlock a one-slot pool).
+  **Every parse comes back with its slurs paired and the runaways dropped**
+  (`resolve_slurs`, proposed by this pull request for #113). homr predicts
+  `slurStart` / `slurStop` one note at a time and never pairs them, and the MusicXML
+  `number` that pairing depends on is the *staff* number — the same for every slur on
+  the staff. So a dropped stop does not merely lose its own slur: it leaves the start
+  open to be closed by whatever stop comes next. On B5's whole page that produces two
+  slurs nobody engraved, one of 5¼ bars and one of 3, covering 21 notes; a slur
+  continuation takes no syllable, so the page offers **91 lyric slots for 132 notes**.
+  Sixteen swallowed. The direction is the trap: it reads as `too_few`, which the
+  playbook below teaches a reader to attribute to a voice sharing another staff's
+  words. So `read_page` pairs the tokens the way MuseScore does and keeps only pairs at
+  most **one barline** apart (`MAX_SLUR_BARS`, env `OMR_MAX_SLUR_BARS`). That threshold
+  is measured, not assumed: across all seven benchmark parses every pair is nought or
+  one bar apart except those two runaways, the human-corrected `Lemmen nosto` has no
+  longer slur in the 68 bars of the page they come from, and one barline is what a
+  genuine melisma crosses (`il-man il-ki-rii-vi-`). It is a claim about *this input*,
+  not about engraving — real scores in `songs/` do print four-bar phrase marks, but
+  homr has no way to write one deliberately.
+  **This is the boundary and not the assembler**, which is where #113 first put it. The
+  `number` the mis-pairing turns on is the staff number, so nothing about the defect is
+  per-page or per-crop: a whole-page parse has it and so does one system cut out of the
+  same page. Normalising it here means every parse gets it however it was cropped, and
+  it does not go down with #103 if that card is thrown away.
+  **The unmatched tokens go as well, and that is the part that cost the most to find.**
+  #112 measured a lone dangler as cosmetic, and in isolation it is — MuseScore drops it.
+  In a stream it is not: an unmatched stop loses *every later slur of that number*, and
+  a redundant start is merely promoted when the runaway in front of it is removed, so it
+  closes on a stop further away still. Measured on B5: dropping the runaway pairs alone
+  left a fresh 2-bar runaway at m51, taking out the redundant starts alone took the page
+  from 21 slurs to 6, and doing all of it in one pass gives 24, none over a bar — five
+  of them short slurs homr got right that the noise had been costing it. What is written
+  back is one alternating stream, so the score and the pairing cannot drift apart, and
+  running it again finds nothing. A parse with nothing to change is left byte for byte
+  as homr wrote it.
   Deliberately **not** here yet, because they belong to other cards on #92's map:
   nothing calls `read_page` (the stage machine and UI are #98), pages are not stitched
   into one score (#97), and the deploy and `/healthz` do not know homr exists.
@@ -1516,9 +1559,21 @@ the numbers bent to fit is wrong. `place_lyrics` returns the same numbers as
 | | means |
 |---|---|
 | `too_many` | the **reading** is wrong — too many syllables for the notes |
-| `too_few`, by a lot | usually a voice **sharing** another staff's words (below) |
+| `too_few`, by a lot | a voice **sharing** another staff's words (below) — **or** a **runaway slur** swallowing the slots (next paragraph) |
 | `too_few`, by exactly one or two | usually a **dropped slur** — a melisma the OCR lost |
 | all `too_few`, never `too_many` | do **not** conclude "missing slurs" from this alone; that inference was made once and was mostly wrong |
+
+**Look at the slurs before you conclude "sharing".** The two readings of a large
+`too_few` want opposite responses — sharing is correct engraving and is written down
+in the lyric JSON, a runaway slur is a defect in the score and has to come out of it —
+and they are easy to confuse, because a runaway is invisible in the numbers and points
+straight at the wrong answer. What tells them apart: sharing shows up as a voice whose
+per-measure note counts match another voice's exactly, while a runaway shows up as
+**one bar losing most of its slots to a slur crossing several barlines**. Look for the
+long slur first, since that is a single check: `lyric_txt.syllable_slots(root, staff,
+measure)` says note by note which are being swallowed. This pull request proposes
+repairing it at the boundary for homr parses (`omr.resolve_slurs`), which would leave
+a score scanned before that, or one from another OMR tool, as the cases to watch for.
 
 **Voices sing words that are not printed under them.** Older choral engraving prints
 a text once and expects more than one voice to use it, so notes with no text beneath

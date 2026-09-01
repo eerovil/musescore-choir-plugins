@@ -14,6 +14,7 @@ import contextlib
 import os
 import shutil
 import stat
+import subprocess
 import time
 
 import pytest
@@ -323,3 +324,189 @@ def test_a_scanned_page_comes_back_as_musicxml(tmp_path):
     assert root.findall(".//note"), "no notes in the MusicXML"
     # It took minutes; it had better have said something while it did.
     assert lines
+
+
+# --- slurs ---------------------------------------------------------------
+#
+# homr writes ``slurStart`` / ``slurStop`` one note at a time and never pairs
+# them, and the ``number`` they would pair by is the staff number, the same for
+# every slur on the staff. These read as little token streams for that reason:
+# ``"1( 1) 3( 5)"`` is a start and a stop in bar 1 and a slur from bar 3 to bar
+# 5, which is the level the defect lives at.
+
+
+def a_slurred_part(stream, bars=8, per_bar=4):
+    """A one-staff part whose slur tokens are ``"1( 2) ..."`` -- bar and end."""
+    wanted = {}
+    for token in stream.split():
+        wanted.setdefault(int(token[:-1]), []).append(
+            "start" if token[-1] == "(" else "stop")
+
+    measures = []
+    for bar in range(1, bars + 1):
+        attributes = ("<attributes><divisions>1</divisions>"
+                      "<key><fifths>0</fifths></key>"
+                      "<time><beats>4</beats><beat-type>4</beat-type></time>"
+                      "<clef><sign>G</sign><line>2</line></clef></attributes>"
+                      if bar == 1 else "")
+        notes = ""
+        for n in range(per_bar):
+            slurs = ""
+            here = wanted.get(bar, [])
+            # One token per note, in the order they were written.
+            if n < len(here):
+                slurs = f'<notations><slur type="{here[n]}" number="1"/></notations>'
+            notes += ("<note><pitch><step>C</step><octave>4</octave></pitch>"
+                      f"<duration>1</duration><type>quarter</type>{slurs}</note>")
+        measures.append(f'<measure number="{bar}">{attributes}{notes}</measure>')
+    return etree.fromstring(f'<part id="P1">{"".join(measures)}</part>')
+
+
+def slur_pairs(part):
+    """The pairs left in a part, as ``(start bar, stop bar)``, in order."""
+    seen, open_bars = [], []
+    for bar, measure in enumerate(part.findall("measure"), 1):
+        for slur in measure.findall("note/notations/slur"):
+            if slur.get("type") == "start":
+                open_bars.append(bar)
+            else:
+                seen.append((open_bars.pop(), bar))
+    assert not open_bars, "a start was left open"
+    return seen
+
+
+def test_a_slur_inside_one_bar_is_kept():
+    part = a_slurred_part("1( 1)")
+    assert omr.resolve_slurs(part) == 0
+    assert slur_pairs(part) == [(1, 1)]
+
+
+def test_a_melisma_across_one_barline_is_kept():
+    """``il-man il-ki-rii-vi-`` is the worked example in the lyric tests: a
+    word whose syllables span a barline is real music, and the rule must not
+    eat it. One barline is the most any slur in the benchmark crosses."""
+    part = a_slurred_part("1( 2)")
+    assert omr.resolve_slurs(part) == 0
+    assert slur_pairs(part) == [(1, 2)]
+
+
+def test_a_slur_across_two_barlines_is_dropped():
+    part = a_slurred_part("1( 3)")
+    assert omr.resolve_slurs(part) == 1
+    assert slur_pairs(part) == []
+
+
+def test_a_runaway_does_not_take_the_slurs_around_it_with_it():
+    part = a_slurred_part("1( 1) 2( 6) 7( 7)")
+    assert omr.resolve_slurs(part) == 1
+    assert slur_pairs(part) == [(1, 1), (7, 7)]
+
+
+def test_a_start_made_while_one_is_open_goes():
+    """MuseScore keeps the first and discards the second, so this changes
+    nothing about how the file reads -- and it is what stops a removed runaway
+    promoting the leftover start onto a stop further away still."""
+    part = a_slurred_part("1( 1( 2)")
+    assert omr.resolve_slurs(part) == 0
+    assert slur_pairs(part) == [(1, 2)]
+
+
+def test_a_stop_that_closes_nothing_goes():
+    """#112 measured a lone dangler as cosmetic, and in isolation it is. In a
+    stream it is not: four bars through the MuseScore CLI with one unmatched
+    stop lose every later slur of that number too."""
+    part = a_slurred_part("1) 2( 2)")
+    assert omr.resolve_slurs(part) == 0
+    assert slur_pairs(part) == [(2, 2)]
+
+
+def test_a_start_that_never_stops_goes():
+    part = a_slurred_part("1( 1) 3(")
+    assert omr.resolve_slurs(part) == 0
+    assert slur_pairs(part) == [(1, 1)]
+
+
+def test_the_b5_shape_leaves_one_alternating_stream():
+    """B5's own m46 region: five starts and one stop, then music that is fine.
+
+    Resolving it once has to settle it -- running again must find nothing, or
+    the fix is a cascade rather than a repair. Removing the runaway pairs alone
+    left the real B5 with a fresh 2-bar runaway at m51.
+    """
+    part = a_slurred_part("1( 1( 2( 3( 3) 4( 4) 5( 6) 7( 7)", bars=8)
+    assert omr.resolve_slurs(part) == 1
+    assert slur_pairs(part) == [(4, 4), (5, 6), (7, 7)]
+    assert omr.resolve_slurs(part) == 0
+
+
+def test_an_empty_notations_element_does_not_survive_its_slur():
+    part = a_slurred_part("1( 3)")
+    omr.resolve_slurs(part)
+    assert part.findall(".//notations") == []
+
+
+def _musescore():
+    import dotenv
+    dotenv.load_dotenv(".env")
+    return os.getenv("MUSESCORE_CLI_PATH")
+
+
+def test_a_page_comes_back_with_its_slurs_resolved(monkeypatch, tmp_path):
+    """The seam: what ``read_page`` hands back has been through the rule.
+
+    A whole page and one cropped system both come through here, which is the
+    reason it lives at this boundary rather than in the assembler -- the
+    ``number`` the mis-pairing turns on is the staff number, and nothing about
+    that is per-crop.
+    """
+    part = etree.tostring(a_slurred_part("1( 1) 2( 6) 7( 7)"), encoding="unicode")
+    score = ('<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0">'
+             '<part-list><score-part id="P1"><part-name>V</part-name></score-part>'
+             f'</part-list>{part}</score-partwise>')
+    written = tmp_path / "homr-said.musicxml"
+    written.write_text(score)
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path, f'cp "{written}" "${{!#%.*}}.musicxml"\n'))
+
+    lines = []
+    produced = omr.read_page(a_page(tmp_path), out_dir=str(tmp_path / "out"),
+                             log=lines.append)
+
+    assert slur_pairs(etree.parse(produced).getroot().find("part")) == [(1, 1), (7, 7)]
+    assert any("slur" in line for line in lines), lines
+
+
+def test_a_page_homr_got_right_is_not_rewritten(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path, 'echo "<score-partwise/>" > "${!#%.*}.musicxml"\n'))
+    produced = omr.read_page(a_page(tmp_path), out_dir=str(tmp_path / "out"))
+    assert open(produced).read() == "<score-partwise/>\n"
+
+
+@pytest.mark.skipif(not _musescore() or not os.path.exists(_musescore() or ""),
+                    reason="needs the MuseScore CLI")
+def test_a_runaway_slur_swallows_syllable_slots_and_the_rule_gives_them_back(tmp_path):
+    """The defect and the repair, measured where they are felt.
+
+    A slur continuation takes no syllable, so a slur nobody engraved is a lyric
+    line that will not fit. This is B5's m46 in miniature: twelve notes over
+    three bars, a start in the first and an unrelated stop in the third.
+    """
+    from src.clean_score.lyric_txt import slot_counts
+
+    def slots(part, name):
+        path = tmp_path / f"{name}.musicxml"
+        path.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0">'
+            '<part-list><score-part id="P1"><part-name>V</part-name></score-part>'
+            f'</part-list>{etree.tostring(part, encoding="unicode")}</score-partwise>')
+        mscx = str(tmp_path / f"{name}.mscx")
+        subprocess.run([_musescore(), "-o", mscx, str(path)],
+                       check=True, capture_output=True, timeout=300)
+        counts = slot_counts(etree.parse(mscx).getroot())
+        return sum(sum(bars.values()) for bars in counts.values())
+
+    assert slots(a_slurred_part("1( 3)", bars=3), "runaway") == 4
+    resolved = a_slurred_part("1( 3)", bars=3)
+    assert omr.resolve_slurs(resolved) == 1
+    assert slots(resolved, "resolved") == 12
