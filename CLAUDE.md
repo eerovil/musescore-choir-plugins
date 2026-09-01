@@ -38,6 +38,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
   pdf_systems.py         Crop the source PDF into one image per printed system
   omr.py                 Run homr on a page image -> MusicXML (its own venv; see below)
+  omr_systems.py         Scan one printed system at a time; flatten + assemble
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
@@ -308,6 +309,23 @@ Key test modules:
   change comes back byte for byte as homr wrote it. The last needs MuseScore and is the
   defect where it is felt: twelve notes over three bars offer four lyric slots with the
   runaway and twelve without it.
+- `src/song_app/tests/test_omr_systems.py` — added by this pull request. Two halves.
+  **Flattening** is tested with little documents in the shapes homr actually produced
+  on the benchmark — four one-staff "Voice" parts, two two-staff "Piano" parts, and a
+  mixture — so a fused grand staff still counts as two staves, the pair in the middle
+  stays in the middle, the name is never read, and a staff comes out with its own clef,
+  its own notes and its voices renumbered from 1. Two of them are about the backups:
+  they are dropped and rebuilt, so two voices sharing a staff still start together, and
+  a third voice winds back one voice rather than the running total. **Assembling** is
+  tested on the seams: continuous bar numbers, a break at each join and none at the
+  start, one `divisions` with the durations rescaled to it, a repeated key dropped and a
+  changed one kept, a meter change inside a crop left alone, a resting column given the
+  system's own bar length, and every part opening with something to read. The last test
+  is the acceptance minus homr and the only one needing MuseScore: systems of 2, 3 and 2
+  staves survive assembly, conversion and `per_system.system_layout` as those systems
+  with those staves. Nothing here runs homr — whether it can read music is homr's
+  business, and the card's own numbers came off the frozen benchmark, which is host
+  state.
 - `src/song_app/tests/test_clean_flow.py` — the song-app path: grid answers →
   `save_system_answers` → headless `run_clean` → rebuilt parts + lyric routing.
 - `src/song_app/tests/test_ui_flow.py` — the **SPA itself**, in a real browser: it
@@ -781,8 +799,55 @@ state model are in `DESIGN.md`.
   as homr wrote it.
   Deliberately **not** here yet, because they belong to other cards on #92's map:
   nothing calls `read_page` (the stage machine and UI are #98), pages are not stitched
-  into one score (#97), the deploy and `/healthz` do not know homr exists, and whether
-  the unit of work is a page or a printed system is #103.
+  into one score (#97), and the deploy and `/healthz` do not know homr exists.
+- `omr_systems.py` is added by this pull request, and it settles what the unit of work
+  is: **one printed system, not one page.** Given a page, homr builds a part by taking
+  staff index N out of *every* system it found, which assumes the score is a rectangle
+  — the same staves, in the same order, in every system. Choral engraving is not a
+  rectangle: a part that rests through a system is simply not printed, so a page really
+  can be 2-3-2-3-3 staves. When the counts disagree homr deletes an edge system and,
+  failing that, breaks every group into singletons, which is how B5 — four vocal staves
+  — came out of a whole-page scan as one monophonic line of 70 bars. Given **one**
+  system there is nothing to reconcile and the assumption becomes vacuous rather than
+  wrong. That is why #105 was closed without a fork change: the defect does not occur
+  on this input.
+  Three calls, and the middle one is the idea. `read_systems` crops each band
+  (`pdf_systems.crop_systems`) and reads it with `omr.read_page`, **one heavy slot per
+  system** — the per-page lease taken one step further, which is if anything better:
+  shorter holds, so a render or a test suite waiting behind it waits less, and an
+  interruption costs the band in flight rather than the page. `flatten` reads a
+  system's MusicXML as an ordered list of **staves**, splitting a part on the `<staff>`
+  its notes carry, so a fused two-staff "Piano" contributes two exactly where a pair of
+  "Voice" parts would. **`part-name` is never read** — homr says "Voice" and "Piano"
+  and means neither, and since the notes of a fused part are fully separable,
+  grand-staff fusion is a labelling detail with no information loss. `assemble` writes
+  the systems out as one score, one part per staff column.
+  **Which voice is absent from a short system is not decided here**, because it is not
+  recoverable from pixels — you need the words, the range, or the piece. Columns are
+  filled from the top and the empty rows are measure rests; naming them is
+  `clean_score`'s `--per-system` grid's job, and that grid already asks a person.
+  Assembly closes the seams that exist only because each crop is its own document: one
+  `divisions` for the score with every duration rescaled to it, continuous bar numbers
+  instead of bar 1 five times over, a key or time signature written only where it says
+  something that was not already true, and a `<print new-system="yes"/>` at each join so
+  the grid cuts the score where the page is cut. **Only the seam is rewritten** — a
+  meter change *inside* a crop is a change the page prints (B4's last system goes 3/4,
+  5/4, 4/4) and correcting it away would be losing music to tidy a join.
+  Two things this cost. **Bounds become a precondition**: `.systems.json` exists for 5
+  of 48 songs and is made by a person dragging in the Systems viewer, or by an AI
+  reading `page_images(grid=True)`. Nothing here detects them — #80 measured that and
+  it failed badly — so `read_systems` refuses with no bounds and says where they come
+  from. And **the crop's resolution turned out to matter**: at 300 dpi, the dpi the
+  whole-page benchmark used, B4's first and fifth systems came back as one staff each
+  when the page plainly prints two and three; at 200 dpi every system of all seven
+  benchmark pages came back with the staves the page prints. `SCAN_DPI` is therefore a
+  measured default (env `OMR_SCAN_DPI`), worth re-measuring rather than nudging if a
+  page ever comes back short of staves.
+  Measured on the frozen benchmark at 200 dpi, ~10s a system: B5 comes out **4-4-4**
+  (against a 70-bar single-staff collapse), B4 comes out **2-3-2-3-3** with 18 bars
+  (against 26 bars on two staves), and the five two-staff pages — the majority of this
+  repertoire — come out of `clean_score` with **the same parts and the same bar counts**
+  as the whole-page route. Nothing calls it yet; the stage machine and UI are #98.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
