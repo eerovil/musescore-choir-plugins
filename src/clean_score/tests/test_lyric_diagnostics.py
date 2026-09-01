@@ -178,7 +178,18 @@ def test_editor_cells_round_trip_through_import_and_back():
         {"measure_start": 3, "lyrics": [{"parts": ["S"], "text": "toi-nen ri"}]},
     ]
     place_lyrics(root, blocks, replace=True)
-    assert editor_grid(root).cells == typed
+    # Each system holds 6 slots and each line fills 3, so the editor comes back
+    # saying which notes were left bare rather than quietly rounding down. Saving
+    # that reads identically -- an `_` places nothing, same as no token at all.
+    assert editor_grid(root).cells == {
+        0: {"S": "en-sim mäi _ _ _", "A": "al-to yk _ _ _"},
+        1: {"S": "toi-nen ri _ _ _"},
+    }
+    assert blocks_from_cells(editor_grid(root), editor_grid(root).cells) == [
+        {"measure_start": 1, "lyrics": [{"parts": ["S"], "text": "en-sim mäi _ _ _"},
+                                        {"parts": ["A"], "text": "al-to yk _ _ _"}]},
+        {"measure_start": 3, "lyrics": [{"parts": ["S"], "text": "toi-nen ri _ _ _"}]},
+    ]
 
 
 def test_blank_editor_cells_are_left_out_rather_than_clearing_a_part():
@@ -226,3 +237,54 @@ def test_slot_counts_are_what_a_mismatch_is_measured_against():
     # Eligibility matches the export: a continuation note takes no syllable, so
     # the totals cannot exceed the notes present.
     assert all(n >= 0 for per in counts.values() for n in per.values())
+
+
+def test_editor_keeps_an_empty_slot_so_a_melisma_survives_a_round_trip():
+    """A note that carries no syllable is `_`, and the editor must show it.
+
+    Dropping it from the cell looks harmless -- the words read the same -- but the
+    editor is also what the next save is built from, so an invisible slot is a
+    deleted one: every syllable after it slides one note earlier and the counts
+    still add up, so nothing is reported. On Herää Suomi one round trip through
+    the grid moved syllables in 22 measures without a single warning.
+    """
+    root = build_score(staff_ids=(1,), measures=2, chords=3, names={1: "S"},
+                       line_breaks=(1,))
+    typed = {0: {"S": "_ yk-si"}, 1: {"S": "kak- _ si"}}
+
+    grid = editor_grid(root)
+    place_lyrics(root, blocks_from_cells(grid, typed), replace=True)
+    assert editor_grid(root).cells == typed
+
+
+def test_a_trailing_empty_slot_is_shown_so_a_no_op_save_reports_nothing():
+    """A note at the end of the line with no word under it is worth seeing.
+
+    Hiding it also left the cell one token short of its own capacity, so saving a
+    system nobody had touched reported `too_few`. A warning raised by a no-op is
+    worse than an underscore on screen.
+    """
+    root = build_score(staff_ids=(1,), measures=1, chords=3, names={1: "S"})
+    typed = {0: {"S": "yk-si _"}}
+
+    place_lyrics(root, blocks_from_cells(editor_grid(root), typed), replace=True)
+    grid = editor_grid(root)
+    assert grid.cells == typed
+    assert grid.capacities[0]["S"] == 3
+    assert place_lyrics(root, blocks_from_cells(grid, grid.cells),
+                        replace=True).mismatches == []
+
+
+def test_a_part_that_sings_nothing_gets_an_empty_cell_not_a_row_of_underscores():
+    root = build_score(staff_ids=(1, 2), measures=1, chords=3, names={1: "S", 2: "A"})
+    place_lyrics(root, blocks_from_cells(editor_grid(root), {0: {"S": "yk-si kak"}}),
+                 replace=True)
+    assert editor_grid(root).cells == {0: {"S": "yk-si kak"}}   # no "A" key at all
+
+
+def test_an_empty_slot_is_never_glued_onto_the_syllable_before_it():
+    """`kär- _ si-net` is three things; `kär-_ si-net` is a word with an underscore in it."""
+    from src.clean_score.lyric_txt import _merge_tokens, _tokenize_line
+
+    assert _merge_tokens(["kär-", "_", "si-", "net"]) == "kär- _ si-net"
+    assert _tokenize_line("kär- _ si-net") == ["kär-", "_", "si-net"]
