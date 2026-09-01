@@ -292,8 +292,11 @@ Key test modules:
   litter does not follow it, that `--gpu no` is actually on the command line, that
   both streams reach the log, and that each way of failing says something — a bad
   exit, a clean exit with no file, a wedged run, a PDF handed in by mistake, homr not
-  installed. The last test is the card's own acceptance and the only one that runs the
-  real thing: a page of the scanned fixture rasterised at 300 dpi goes in and parseable
+  installed. It also pins the heavy slot: a page is read under one, held across the
+  run rather than asked for and dropped; the label names the page; `queue=False`
+  genuinely does not ask; and losing the lease mid-page stops the page *and* takes
+  homr with it. The last test is the card's own acceptance and the only one that runs
+  the real thing: a page of the scanned fixture rasterised at 300 dpi goes in and parseable
   MusicXML with parts, measures and notes comes out (~50s). It skips without homr or
   poppler, the same way the MuseScore-CLI and Playwright tests skip.
 - `src/song_app/tests/test_clean_flow.py` — the song-app path: grid answers →
@@ -717,6 +720,22 @@ state model are in `DESIGN.md`.
   that kills the process group, not `wait(timeout=...)`, because reading the pipe is
   what blocks. Not installed is its own error (`HomrMissing`) naming the install
   script.
+  **A page is read under one of this host's heavy slots**, through the same
+  `heavy_slot` client the scrolling render uses — not a second slot client. A page is
+  ~30s of every core on a four-core host shared with the deck's own suites and a song
+  rendering, which is exactly what that queue is for. Its two backwards-looking rules
+  carry over unchanged and are not re-argued here: **failing** to get a slot is
+  fail-open (the scan runs unqueued with a line in the log), **losing** one is not (a
+  heartbeat answering 404 means the cores may already be somebody else's, so the page
+  stops with `SlotLost`). homr's own output lines are the checkpoints `Slot.guard`
+  needs, and abandoning the read loop kills homr's process group — otherwise it would
+  keep running on cores that have been handed away.
+  **One slot per page, not one per song.** The page is the unit `read_page` owns and
+  each page writes its own MusicXML, so releasing between pages lets a render or a
+  suite in, and an interruption costs the page in flight rather than the song — the
+  pages already read are on disk. A caller that would rather hold one lease across a
+  whole song passes `queue=False` and wraps the loop itself, so the two never nest
+  (nesting would deadlock a one-slot pool).
   Deliberately **not** here yet, because they belong to other cards on #92's map:
   nothing calls `read_page` (the stage machine and UI are #98), pages are not stitched
   into one score (#97), the deploy and `/healthz` do not know homr exists, and whether

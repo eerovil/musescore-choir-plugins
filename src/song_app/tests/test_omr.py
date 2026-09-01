@@ -10,14 +10,24 @@ The last test is the one the card asks for and the only one that runs the real
 thing: a page of the scanned fixture goes in, MusicXML comes out. It needs
 homr installed (scripts/install-homr.sh) and poppler, and skips without them.
 """
+import contextlib
 import os
 import shutil
 import stat
+import time
 
 import pytest
 from lxml import etree
 
-from src.song_app import omr
+from src.song_app import heavy_slot, omr
+
+
+@pytest.fixture(autouse=True)
+def _no_real_deck(monkeypatch):
+    """A scan asks AgentDeck for a heavy slot; tests must not take a real one
+    off the host they run on. Each test that cares fakes its own deck."""
+    monkeypatch.delenv("AGENTDECK_API_URL", raising=False)
+    monkeypatch.delenv("AGENTDECK_URL", raising=False)
 
 
 FIXTURE_PDF = os.path.join(
@@ -141,6 +151,111 @@ def test_progress_reaches_the_log(monkeypatch, tmp_path):
     # Both streams are a progress channel; homr talks on stderr.
     assert "Found 12 staff line fragments" in lines
     assert "Finished parsing 12 staves" in lines
+
+
+# --- the heavy slot ------------------------------------------------------
+
+
+def test_a_page_is_read_under_a_heavy_slot(monkeypatch, tmp_path):
+    """A page is ~30s of every core, so it waits its turn — and the slot is
+    held across the run, not merely asked for and dropped."""
+    order = []
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path,
+        'echo running\n'
+        'echo "<score/>" > "${!#%.*}.musicxml"\n',
+    ))
+
+    @contextlib.contextmanager
+    def fake_slot(label, **kwargs):
+        order.append(f"take {label}")
+        yield heavy_slot.Slot("lease-1")
+        order.append("release")
+
+    monkeypatch.setattr(omr.heavy_slot, "heavy_slot", fake_slot)
+    omr.read_page(
+        a_page(tmp_path),
+        log=lambda line: order.append("homr") if line == "running" else None,
+        label="song app homr MySong page 2",
+    )
+
+    assert order == ["take song app homr MySong page 2", "homr", "release"]
+
+
+def test_the_slot_is_labelled_after_the_page_by_default(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setenv("HOMR_BIN", stub_homr(tmp_path, 'echo "<score/>" > "${!#%.*}.musicxml"\n'))
+
+    @contextlib.contextmanager
+    def fake_slot(label, **kwargs):
+        seen.append(label)
+        yield heavy_slot.Slot()
+
+    monkeypatch.setattr(omr.heavy_slot, "heavy_slot", fake_slot)
+    omr.read_page(a_page(tmp_path, "MySong-page-3.png"))
+    assert seen == ["song app homr MySong-page-3"]
+
+
+def test_a_caller_holding_a_slot_does_not_take_a_second(monkeypatch, tmp_path):
+    """One lease per song is the other way to do this, so queue=False has to
+    genuinely not ask — a nested lease would deadlock a one-slot pool."""
+    monkeypatch.setenv("HOMR_BIN", stub_homr(tmp_path, 'echo "<score/>" > "${!#%.*}.musicxml"\n'))
+
+    @contextlib.contextmanager
+    def never(label, **kwargs):
+        raise AssertionError("asked for a slot when the caller already held one")
+        yield
+
+    monkeypatch.setattr(omr.heavy_slot, "heavy_slot", never)
+    assert omr.read_page(a_page(tmp_path), queue=False).endswith(".musicxml")
+
+
+def test_losing_the_slot_stops_the_page(monkeypatch, tmp_path):
+    """A heartbeat answering 404 means the cores may already be somebody
+    else's. homr's own output is where a page can be stopped."""
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path,
+        'echo "Found 12 staff line fragments"\n'
+        'sleep 20\n'
+        'echo "<score/>" > "${!#%.*}.musicxml"\n',
+    ))
+    slot = heavy_slot.Slot("lease-1")
+
+    @contextlib.contextmanager
+    def fake_slot(label, **kwargs):
+        yield slot
+
+    monkeypatch.setattr(omr.heavy_slot, "heavy_slot", fake_slot)
+
+    def lose_it(_line):
+        slot._lose()          # the heartbeat thread's job, done inline
+
+    with pytest.raises(heavy_slot.SlotLost):
+        omr.read_page(a_page(tmp_path), log=lose_it)
+
+
+def test_a_stopped_page_takes_homr_with_it(monkeypatch, tmp_path):
+    """Abandoning the read loop must not leave homr running on cores that have
+    been handed to somebody else."""
+    marker = tmp_path / "still-running"
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path,
+        'echo starting\n'
+        'sleep 20\n'
+        'touch ' + str(marker) + '\n',
+    ))
+    slot = heavy_slot.Slot("lease-1")
+
+    @contextlib.contextmanager
+    def fake_slot(label, **kwargs):
+        yield slot
+
+    monkeypatch.setattr(omr.heavy_slot, "heavy_slot", fake_slot)
+    with pytest.raises(heavy_slot.SlotLost):
+        omr.read_page(a_page(tmp_path), log=lambda _line: slot._lose())
+
+    time.sleep(1.5)
+    assert not marker.exists(), "homr outlived the page that was stopped"
 
 
 # --- how it fails --------------------------------------------------------

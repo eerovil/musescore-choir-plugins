@@ -24,6 +24,21 @@ Two things about the CLI that this module exists to absorb:
   *registered* and not whether it can run. This host's card is below
   onnxruntime's floor (issue #93), so auto would pick CUDA and die on the
   first segnet node without falling back. Every call passes ``no``.
+
+**A scan takes one of this host's heavy slots**, the same way the video render
+does (:mod:`heavy_slot`, issue #100). A page is ~30s of every core on a
+four-core host shared with the deck's own suites and a song rendering, and
+three such jobs at once finish no sooner than one after another. Failing to
+get a slot is fail-open and losing one stops the work — both of those are
+:mod:`heavy_slot`'s decisions and neither is re-argued here.
+
+**One slot per page, not one for the whole song.** A song is several pages and
+each is a separate homr call writing its own MusicXML, so the page is the unit
+this module has: releasing between pages lets a render or a suite in, and an
+interrupted scan costs the page in flight rather than the song. The pages
+already read are on disk. A caller that would rather hold one lease across a
+whole song passes ``queue=False`` and wraps the loop itself, so the two never
+nest.
 """
 
 from __future__ import annotations
@@ -34,7 +49,10 @@ import signal
 import subprocess
 import tempfile
 import threading
+from contextlib import contextmanager
 from typing import Callable, List, Optional
+
+from . import heavy_slot
 
 Logger = Callable[[str], None]
 
@@ -89,6 +107,8 @@ def read_page(
     out_dir: Optional[str] = None,
     log: Logger = _noop,
     timeout: int = DEFAULT_TIMEOUT,
+    label: Optional[str] = None,
+    queue: bool = True,
 ) -> str:
     """Read one page image and return the path of the MusicXML written for it.
 
@@ -98,7 +118,12 @@ def read_page(
 
     ``log`` is called with each line homr prints — that is the only progress
     this takes minutes to produce, so a caller with a person waiting should
-    pass one.
+    pass one. It is also where the run can be stopped: those lines are the
+    heavy slot's checkpoints, so a lease lost mid-page raises ``SlotLost``
+    there rather than at the end.
+
+    ``label`` is what the queue shows for this page; ``queue=False`` runs
+    without asking for a slot, for a caller already holding one.
     """
     if not os.path.exists(image_path):
         raise HomrError(f"No such image: {image_path}")
@@ -126,8 +151,13 @@ def read_page(
         shutil.copy2(image_path, scratch_image)
         produced = os.path.join(scratch, base + ".musicxml")
 
-        log(f"Reading {os.path.basename(image_path)} with homr")
-        output = _run([binary, "--gpu", "no", scratch_image], log, timeout)
+        with _queued(label or f"song app homr {base}", log, queue) as slot:
+            # homr's own output is the only place a page can be interrupted, so
+            # that is where the lease is checked (heavy_slot.Slot.guard).
+            watched = slot.guard(log)
+            watched(f"Reading {os.path.basename(image_path)} with homr")
+            output = _run([binary, "--gpu", "no", scratch_image], watched, timeout)
+            slot.check()
 
         if not os.path.exists(produced):
             # homr deletes its own output when parsing fails, so a zero exit
@@ -141,6 +171,16 @@ def read_page(
         shutil.move(produced, destination)
 
     return destination
+
+
+@contextmanager
+def _queued(label: str, log: Logger, queue: bool):
+    """A heavy slot for this page, or the un-held Slot when the caller has one."""
+    if not queue:
+        yield heavy_slot.Slot()
+        return
+    with heavy_slot.heavy_slot(label, log=log) as slot:
+        yield slot
 
 
 def _run(command: List[str], log: Logger, timeout: int) -> List[str]:
@@ -167,10 +207,7 @@ def _run(command: List[str], log: Logger, timeout: int) -> List[str]:
 
     def give_up() -> None:
         expired.set()
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            process.kill()
+        _kill(process)
 
     deadline = threading.Timer(timeout, give_up)
     deadline.start()
@@ -184,6 +221,12 @@ def _run(command: List[str], log: Logger, timeout: int) -> List[str]:
                 lines.append(line)
                 log(line)
         returncode = process.wait()
+    except BaseException:
+        # The log callback carries the heavy slot's check, so it can raise
+        # here. Abandoning the loop without this would leave homr running on
+        # cores that have been promised to somebody else.
+        _kill(process)
+        raise
     finally:
         deadline.cancel()
         if process.stdout is not None:
@@ -194,6 +237,18 @@ def _run(command: List[str], log: Logger, timeout: int) -> List[str]:
     if returncode != 0:
         raise HomrError(f"homr exited {returncode}.\n" + _tail(lines))
     return lines
+
+
+def _kill(process: subprocess.Popen) -> None:
+    """Kill homr and anything it started (it runs in its own process group)."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        process.kill()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def _tail(lines: List[str]) -> str:
