@@ -116,3 +116,49 @@ def test_nothing_is_shown_when_there_is_nothing_outstanding(live, page):
     assert not page.get_by_text("not applied automatically").is_visible()
     assert page.get_by_text("No issues").is_visible()
     assert not errors, f"the panel raised: {errors}"
+
+
+# The same panel is where a collapsed meter summary has to land, because a summary
+# nobody can see is the silence this replaces (#124). It is an ordinary finding —
+# it lists, it says how many bars and where to start, and it dismisses — so the
+# only thing worth pinning in a browser is that it really is one.
+COLLAPSED = {
+    "id": "meter-collapsed-66",
+    "kind": "meter-collapsed",
+    "measure": 2,
+    "staff": "whole score",
+    "status": "open",
+    "detail": ("18 bar(s) sit at a length the engraving never prints (66 staff-bars, "
+               "first at m2), listed as one line because 80% of bars carry their own "
+               "length — free or mixed meter looks like this, and so does a badly "
+               "parsed score"),
+}
+
+
+def test_a_collapsed_meter_summary_reads_as_a_finding_not_as_silence(live, page):
+    base, song = live
+    path = os.path.join(song.dir, "fixes.json")
+    if os.path.exists(path):
+        os.remove(path)
+    song.data["health"] = {
+        "checked_against": song.data.get("cleaned_fingerprint"),
+        "issues": [COLLAPSED],
+    }
+    song.save()
+    errors = _open_fix(page, base, song.slug)
+
+    assert page.get_by_text("meter-collapsed").is_visible()
+    assert page.get_by_text("18 bar(s) sit at a length").is_visible()
+    assert not page.get_by_text("No issues").is_visible()
+
+    evidence = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))), "evidence")
+    os.makedirs(evidence, exist_ok=True)
+    page.screenshot(path=os.path.join(evidence, "issue-124-meter-collapsed.png"),
+                    full_page=True)
+
+    page.get_by_role("button", name="Dismiss").click()
+    page.wait_for_selector("text=No issues")
+    assert not errors, f"the panel raised: {errors}"
+    song.data["health"] = {"checked_against": None, "issues": []}
+    song.save()

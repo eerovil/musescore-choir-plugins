@@ -11,8 +11,10 @@ Validation only; never mutates the score. Findings:
     here can be satisfied by a wrong answer that is merely self-consistent. It
     exists because a repair pass once "fixed" a 4/4 bar by padding every voice to
     9/8 and passed everything. It stays out of music that has no meter to violate:
-    scores carrying an oversized nominal instead of a signature, and scores whose
-    bars mostly declare their own length (mixed or free meter).
+    scores carrying an oversized nominal instead of a signature.
+  - meter-collapsed: the same finding, counted instead of listed, for a score
+    whose bars mostly declare their own length. See below — this used to be
+    silence, and silence was the bug.
 
 Missing notes that *do* fill the bar (a half-rest standing in for lost notes)
 aren't tick-detectable; they surface as lyric syllable overflow at import time.
@@ -44,9 +46,30 @@ _DOT_MULT = {0: Fraction(1), 1: Fraction(3, 2), 2: Fraction(7, 4), 3: Fraction(1
 # unprinted-meter rule stays silent under one.
 _PLAUSIBLE_METER = Fraction(2)
 
-# A score where most bars declare their own length is not in a fixed meter -- it is
-# mixed or free, and MuseScore is carrying the length bar by bar. One score here has
-# an override on 20 of 25 bars. There is no meter to violate, so the rule stays out.
+# A score where most bars declare their own length may not be in a fixed meter -- it
+# may be mixed or free, with MuseScore carrying the length bar by bar. One score here
+# (Venematka) has an override on 20 of its 25 bars and would otherwise be reported 66
+# times for being what it is.
+#
+# It used to switch the meter rule off entirely, and that was a hole. "Carries a length
+# override" is also what a badly parsed score looks like: `fix_overfull_measures` writes
+# one on every bar whose content contradicts the running signature, so the check turned
+# itself off exactly when the score was worst. Benchmark page B6 crossed the line by
+# being MORE wrong -- it misread an opening 5/4 as 3/4, which needed an override on bars
+# 1 and 2 of all four staves, and those eight overrides carried it from 50% to 56%. It
+# reported 3 issues where the same score judged on the same rules as its per-system
+# parse has 32. A score bought silence by being worse.
+#
+# So the share no longer decides WHETHER to judge, only HOW TO SAY IT: above the line
+# the bars are counted into one `meter-collapsed` finding instead of listed one by one.
+# The noise the escape exists to prevent is still prevented -- Venematka's 66 become a
+# single line -- and the count is on the wire either way, so the two sides of the line
+# are comparable rather than one of them being blank.
+#
+# 0.5 is left where it was. Across the 35 cleaned scores in `songs/` the override share
+# is 0.19 or below for every score except Venematka at 0.76-0.80, so the line sits in an
+# empty gap and nothing real is near it; B6 is, and that now costs presentation instead
+# of silence.
 _FREE_METER_SHARE = 0.5
 
 
@@ -119,12 +142,15 @@ def scan(cleaned_path: str) -> List[Dict]:
         for st in part.findall("Staff"):
             staff_name[int(st.get("id", "0"))] = name.strip()
 
-    # Is this score in a fixed meter at all? Decided once, for the whole score.
+    # Does this score mostly carry its own bar lengths? Decided once, for the whole
+    # score -- and it decides how the meter finding is *said*, not whether it is made.
     all_measures = score.findall(".//Staff/Measure")
     overridden = sum(1 for m in all_measures if m.get("len"))
-    fixed_meter = bool(all_measures) and overridden / len(all_measures) <= _FREE_METER_SHARE
+    override_share = overridden / len(all_measures) if all_measures else 0.0
+    collapse_meter = bool(all_measures) and override_share > _FREE_METER_SHARE
 
     issues: List[Dict] = []
+    collapsed: List[Dict] = []
     for staff in score.findall("Staff"):
         sid = int(staff.get("id", "0"))
         label = staff_name.get(sid) or f"staff {sid}"
@@ -169,19 +195,19 @@ def scan(cleaned_path: str) -> List[Dict]:
             # Only when the bar is otherwise sound: an uneven bar is already
             # reported, and this is about the case nothing else can see -- every
             # voice agreeing on a meter that was never printed.
-            if (fixed_meter and mi > 1 and ts is None and not uneven
-                    and sig <= _PLAUSIBLE_METER):
+            if mi > 1 and ts is None and not uneven and sig <= _PLAUSIBLE_METER:
                 agreed = {t for t, has, _ in
                           (_voice_length(v, nominal) for v in voices) if has}
                 if len(agreed) == 1 and agreed != {sig}:
                     got = agreed.pop()
-                    issues.append({
+                    found = {
                         "id": f"unprinted-meter-m{mi}-s{sid}",
                         "kind": "unprinted-meter",
                         "measure": mi,
                         "staff": label,
                         "detail": f"bar is {got} but the engraving says {sig}",
-                    })
+                    }
+                    (collapsed if collapse_meter else issues).append(found)
             if note_bearing > 1:
                 issues.append({
                     "id": f"extra-voices-m{mi}-s{sid}",
@@ -190,6 +216,28 @@ def scan(cleaned_path: str) -> List[Dict]:
                     "staff": label,
                     "detail": f"{note_bearing} note-bearing voices on one staff",
                 })
+
+    # One line instead of dozens -- but a line. A score whose bars mostly declare
+    # their own length may be free-metered, in which case this is describing it
+    # rather than accusing it; it may equally be a parse damaged enough that the
+    # repairs wrote a length onto half the bars, and those two look identical from
+    # here. Saying how many bars and where the first one is lets a person tell them
+    # apart in the score, which is where the answer actually is. Nothing to count is
+    # nothing to say: a free-metered score that agrees with itself stays clean.
+    if collapsed:
+        bars = sorted({i["measure"] for i in collapsed})
+        issues.append({
+            "id": f"meter-collapsed-{len(collapsed)}",
+            "kind": "meter-collapsed",
+            "measure": bars[0],
+            "staff": "whole score",
+            "detail": (
+                f"{len(bars)} bar(s) sit at a length the engraving never prints "
+                f"({len(collapsed)} staff-bars, first at m{bars[0]}), listed as one "
+                f"line because {override_share:.0%} of bars carry their own length — "
+                f"free or mixed meter looks like this, and so does a badly parsed score"
+            ),
+        })
     return issues
 
 
