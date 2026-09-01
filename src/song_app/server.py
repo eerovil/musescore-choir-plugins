@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import agentdeck, health, job_state, pdf_systems, pipeline, state, verification
+from src.clean_score.utils.score_fixes import FixError
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -183,6 +184,9 @@ def _derived(song: state.Song) -> Dict:
         # Recorded fixes nothing can apply on its own — a sentence waiting for a
         # person or an agent. Read live, so it goes as soon as the entry does.
         "pending_fixes": pipeline.free_text_fixes(song.dir),
+        # Slurs a person recorded off the page. Shown for the same reason: a record
+        # nobody can see is a file nobody opens.
+        "recorded_slurs": pipeline.recorded_slurs(song.dir),
         "recording": is_recording(song),
         "media": _media_list(song),
         "jobs": job_state.load(song.dir),
@@ -435,6 +439,71 @@ def _rescan(song: state.Song) -> None:
 @app.post("/api/songs/{slug}/rescan")
 def api_rescan(slug: str) -> Dict:
     song = _require(slug)
+    _rescan(song)
+    return _derived(song)
+
+
+def _cleaned_or_400(song: state.Song) -> str:
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise HTTPException(400, "Clean the score first")
+    return cleaned
+
+
+@app.get("/api/songs/{slug}/bar")
+def api_bar(slug: str, staff: int = 0, measure: int = 0) -> Dict:
+    """A bar of the cleaned score to point at, plus the parts and bars to choose from.
+
+    One route rather than two: the panel needs the choices before it can ask for a
+    bar, and both come off the same parse of the same file.
+    """
+    song = _require(slug)
+    cleaned = _cleaned_or_400(song)
+    try:
+        parts, measures = pipeline.score_parts_and_measures(cleaned)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    out = {"parts": parts, "measures": measures,
+           # Said before the write, not after: re-slurring a bar takes a syllable out
+           # of it, so lyrics already imported come back one too long.
+           "lyrics_imported": bool(song.data.get("lyrics", {}).get("json"))}
+    if not staff or not measure:
+        return out
+    try:
+        return {**out, **pipeline.bar_for_fix(cleaned, staff, measure)}
+    except FixError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/api/songs/{slug}/fixes/slur")
+def api_record_slur(slug: str, body: Dict) -> Dict:
+    """Record a missing slur against the cleaned score, and apply it.
+
+    The judgement is a person's — a slur joins different pitches, so nothing upstream
+    will guess one back. All this does is put it somewhere that survives a re-clean.
+    """
+    song = _require(slug)
+    cleaned = _cleaned_or_400(song)
+    body = body or {}
+    try:
+        staff, measure = int(body.get("staff", 0)), int(body.get("measure", 0))
+        index, span = int(body.get("index", 0)), int(body.get("span", 1))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "staff, measure, index and span have to be numbers")
+    try:
+        done = pipeline.record_slur_fix(
+            song.dir, cleaned, staff, measure, index, span, body.get("why", ""))
+    except FixError as exc:
+        raise HTTPException(400, str(exc))
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(500, str(exc))
+    # Straight to the log, not through job_state: this is instant, and opening a job
+    # for it would leave a "fix" job showing as running with nothing to finish it.
+    hub.emit(slug, {"type": "log", "line": f"Recorded a missing slur — {done['applied']}"})
+    # Our own write, so claim it: otherwise the file watcher reads the score as
+    # edited in MuseScore and re-checks it a second time.
     _rescan(song)
     return _derived(song)
 

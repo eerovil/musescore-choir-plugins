@@ -147,6 +147,23 @@ the file, so writing one shows at once and applying it stops showing). Applying 
 a person's job, or an agent asked to do it. Refusing to clean would make the file a
 hostage; skipping in silence is the failure it exists to prevent.
 
+Writing an entry has meant hand-editing the JSON, which means knowing the token
+grammar and the staff/measure/index numbering — and nobody does that from a phone.
+This pull request proposes that the **Fix** panel record a `slur` without any of
+that: pick the part, the bar and the two notes, say why. The judgement still has to
+come from a person reading the page — a slur joins different pitches, so nothing
+upstream will guess one back — but the recording no longer does. `score_fixes.read_bar`
+reads the bar back out in the same numbering and the same tokens a fix writes, so what
+is shown and what is recorded cannot drift apart, and `pipeline.record_slur_fix`
+appends the entry *and* applies it to the cleaned score. Both, because either alone
+fails: recorded-not-applied leaves the score looking unrepaired until the next clean,
+and applied-not-recorded is the hand edit this file exists to replace. Only the new
+entry is applied — `slur` is not idempotent, so replaying the file would double every
+earlier one. The wrong repair people reach for instead is an empty syllable (`_`) in
+the lyric editor, which patches the words while the score still says two attacks: the
+video lights the second note, the grid keeps offering the slot, `slot_counts` keeps
+counting it, and none of it survives a re-clean.
+
 ```bash
 fixtures/virta-venhetta-vie/reset.sh        # drop it into songs/ at the furthest stage
 fixtures/virta-venhetta-vie/reset.sh 00     # or: just registered, ready to clean
@@ -283,6 +300,16 @@ Key test modules:
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` — the re-voicing plan and the
   non-interactive anomaly reduction.
+- `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
+  `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
+  from the app. The first pins that reading a bar and writing a fix agree: the index
+  shown is the index the slur lands on, the token shown is the token an `append`
+  entry would carry, and a note is named the way the page spells it (Eb, not D#).
+  The second pins the pair — entry written *and* score changed, the bar losing a
+  syllable, the entry replayed by `apply_recorded_fixes` on a rebuild — and that a
+  refusal (no reason, a span past the bar, a slur already there) writes neither. The
+  third is the browser: the bar shown as its own notes, the cost said before the
+  write, the warning when lyrics are already imported, and that it fits a phone.
 
 ## The song web app (`src/song_app/`)
 
@@ -593,6 +620,21 @@ state model are in `DESIGN.md`.
   responses cannot undo any of that: a picture that arrives after its signature
   stopped matching is dropped, and a WAV that arrives after its player was destroyed
   is revoked rather than attached.
+- The **Fix** panel lists the health issues and the outstanding free-text fixes, and
+  this pull request proposes it also **record a missing slur** — see the `fixes.json`
+  notes above for why that judgement can only come from a person. Two routes:
+  `GET /bar` hands back the singing parts, the bar count and one bar's chords in the
+  numbering a recorded fix uses (`pipeline.bar_for_fix`), and `POST /fixes/slur`
+  appends the entry and applies it (`pipeline.record_slur_fix`), then claims its own
+  write with `_rescan` so the file watcher does not read it as a MuseScore edit and
+  re-check a second time. `GET /bar` answers with the choices even when no bar is
+  named, because the panel needs the parts before it can ask about a bar and both come
+  off one parse. Each note is shown with whether the lyrics land on it today, so the
+  panel can say *before* the write that the bar is about to lose a syllable — and it
+  warns outright when lyrics are already imported, because that line will come back
+  one syllable too long. The cleaned system crop is shown alongside where one is
+  available (`/compare` + `/cleaned-system/{index}`); it needs a MuseScore render, so
+  not having it costs a picture rather than the feature.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
@@ -780,9 +822,21 @@ export_lyrics(root) -> str                      # the TXT projection of the scor
 place_lyrics(root, source, fmt=, replace=, split=) -> LyricImport
 editor_grid(root, systems=) -> EditorGrid       # parts x printed systems, prefilled
 slot_counts(root) -> {staff: {measure: n}}      # notes that take a syllable
+syllable_slots(root, staff, measure) -> [bool]  # the same, note by note
+lyric_parts(root) -> [EditorPart]               # the parts that carry words
 blocks_from_cells(grid, cells) -> [block]       # those cells as lyric JSON
 export_file(...) / import_file(...) -> LyricImport      # the .txt/.json adapters
 ```
+
+The last two are added by this pull request, for the Fix panel's slur recorder.
+`syllable_slots` is `slot_counts` told per note rather than per bar, and it has to
+live here rather than be read off the chords: a note in the *middle* of a slur
+carries no marker of its own, so eligibility is stateful along the staff and cannot
+be decided by looking at one chord. Both counts now come off a single pass
+(`_eligibility_per_measure`), so the per-note answer and the per-bar one cannot
+disagree. `lyric_parts` is the part list `editor_grid` already built inline — track
+names minus the click/spacer staff — pulled out because more than the lyric editor
+now needs to offer a person a list of parts to point at.
 
 `source` is TXT, JSON text, or already-parsed JSON blocks (`fmt` overrides the
 sniff). **Diagnostics are returned, never printed**: `LyricImport.mismatches` is a

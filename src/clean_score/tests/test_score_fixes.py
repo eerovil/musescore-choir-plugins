@@ -59,6 +59,7 @@ def test_a_fix_that_does_not_match_is_an_error_not_a_shrug():
         {"kind": "undot", "staff": 3, "measure": 1, "index": 0},      # no dot there
         {"kind": "undot", "staff": 9, "measure": 1, "index": 0},      # no such staff
         {"kind": "undot", "staff": 3, "measure": 7, "index": 0},      # no such measure
+        {"kind": "undot", "staff": 3, "measure": 1, "index": -1},    # no negative index
         {"kind": "undot", "staff": 3, "measure": 1, "index": 5},      # no such chord
         {"kind": "slur", "staff": 3, "measure": 1, "index": 0},       # nothing to slur to
         {"kind": "reharmonise", "staff": 3, "measure": 1, "index": 0},
