@@ -19,7 +19,14 @@ SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
 STATE_FILE = ".song.json"
 
 # Linear stages; `fix` and `lyrics` form a loop (lyric overflow can re-open fix).
-STAGES = ["register", "clean", "fix", "lyrics", "review", "record", "upload"]
+#
+# `scan` reads a score off its PDF one printed system at a time, and a song only
+# passes through it when it was registered with a PDF and no score. Registering a
+# score is still the manual route (#86) and starts at `clean` -- which is also
+# where every song that predates this stage sits, so the rail reads `scan` as
+# behind them and satisfied. Having an input score *is* what being past scanning
+# means; nothing has to be recorded to say so.
+STAGES = ["register", "scan", "clean", "fix", "lyrics", "review", "record", "upload"]
 
 
 def slugify(name: str) -> str:
