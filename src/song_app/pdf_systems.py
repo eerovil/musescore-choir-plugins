@@ -222,6 +222,21 @@ def rendered_system_bands(
     return bands
 
 
+def _file_version(path: str) -> str:
+    """What the file holds, cheaply: its size and modification time.
+
+    Content would be exact, but these crops are cut from a render that is itself
+    rebuilt whenever the score is newer, so a rewrite always moves the mtime. A
+    rebuild that happens to be byte-identical costs one wasted crop, which is the
+    right way round to be wrong.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
 def crop_systems(
     pdf_path: str,
     bounds: List[SystemBounds],
@@ -233,14 +248,21 @@ def crop_systems(
     Only the band is rasterised, not the page it sits on. A full A4 at 400 dpi
     takes seconds; a system is a fifth of that, and this is on the path where
     someone clicks a lyric cell and waits to see the music.
+
+    The cache name carries the source as well as the band. The scan never changes,
+    but the compare view cuts its bands out of a render of the *cleaned* score,
+    which changes whenever the score does -- and a name made of the band alone kept
+    serving bar 8 as it looked before a slur was recorded, hours after the slur was
+    in the file and in the render. The page said the fix had not applied.
     """
     os.makedirs(out_dir, exist_ok=True)
     width, height = _page_size_px(pdf_path, dpi)
+    source = _file_version(pdf_path)
     images = []
     for b in bounds:
         top = max(0, min(height - 1, int(height * b.top)))
         band = max(1, min(height - top, int(height * b.bottom) - top))
-        geometry = f"{b.page}:{b.top:.9f}:{b.bottom:.9f}".encode()
+        geometry = f"{source}:{b.page}:{b.top:.9f}:{b.bottom:.9f}".encode()
         version = hashlib.sha1(geometry).hexdigest()[:10]
         path = os.path.join(out_dir, f"system-{b.index:02d}@{dpi}-{version}.png")
         if not os.path.exists(path):
