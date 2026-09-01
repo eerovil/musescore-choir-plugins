@@ -11,7 +11,7 @@ import pytest
 
 DEFAULT_SOURCE = (
     "git+https://github.com/eerovil/homr.git@"
-    "8b5dcf7d7bdd1a47911dc0c661c573b957271eab"
+    "1ebd5933fac352d48d2e44243723e21b7dd783f7"
 )
 
 

@@ -19,11 +19,16 @@
 
 set -euo pipefail
 
-# Where homr comes from. ONE PLACE, deliberately: the fork is pinned to the
-# stock upstream v0.7.0 commit that passed the frozen benchmark. Moving this
-# pin is a deliberate upgrade followed by another benchmark run; it is never
-# advanced automatically. An explicit HOMR_SOURCE still overrides the pin.
-HOMR_SOURCE="${HOMR_SOURCE:-git+https://github.com/eerovil/homr.git@8b5dcf7d7bdd1a47911dc0c661c573b957271eab}"
+# Where homr comes from. ONE PLACE, deliberately: the fork is pinned to one
+# immutable commit that passed the frozen benchmark. Moving this pin is a
+# deliberate upgrade followed by another benchmark run; it is never advanced
+# automatically. An explicit HOMR_SOURCE still overrides the pin.
+#
+# This commit is stock upstream v0.7.0 plus one fix (issue #105, eerovil/homr#3):
+# homr no longer builds a part out of staff index N of every system, so a page
+# whose systems hold different staffs is reported rather than collapsed. The
+# five two-staff benchmark pages come out byte-for-byte as they did before.
+HOMR_SOURCE="${HOMR_SOURCE:-git+https://github.com/eerovil/homr.git@1ebd5933fac352d48d2e44243723e21b7dd783f7}"
 
 # homr 0.7.0 declares >=3.11,<3.16, but every benchmark number recorded for this
 # project came off 3.12. uv fetches the interpreter, so this costs nothing.

@@ -693,12 +693,31 @@ state model are in `DESIGN.md`.
   **`scripts/install-homr.sh`** (idempotent; `HOMR_VENV` moves it), called as a
   subprocess. A fresh clone runs one script.
   **Where homr comes from is one variable in that script, `HOMR_SOURCE`.** It defaults
-  to the immutable `eerovil/homr` commit matching upstream `v0.7.0`; an explicit
-  `HOMR_SOURCE` still wins. #97 put multi-page joining, the staff-grouping fix and PDF
-  input *inside the fork*, because the app only ever sees homr's output and by then the
-  staves are gone. The fork is pinned rather than automatically synced: moving the
-  source commit is a deliberate upgrade followed by the frozen benchmark run. Nothing
-  in `omr.py` or in the rest of the installer moves with it.
+  to an immutable `eerovil/homr` commit; an explicit `HOMR_SOURCE` still wins. #97 put
+  multi-page joining, the staff-grouping fix and PDF input *inside the fork*, because
+  the app only ever sees homr's output and by then the staves are gone. The fork is
+  pinned rather than automatically synced: moving the source commit is a deliberate
+  upgrade followed by the frozen benchmark run. Nothing in `omr.py` or in the rest of
+  the installer moves with it.
+  This pull request proposes moving that pin off stock `v0.7.0` for the first time, to
+  `1ebd593` (eerovil/homr#3), which carries one fix: **homr reports the staves of each
+  printed system instead of assembling parts across them.** Stock homr builds a part
+  out of staff index N of *every* system, which assumes the page is a rectangle — and
+  an engraver prints no empty staff for a part that is resting, so a system where a
+  voice is silent simply has fewer staves. Index 1 of a two-staff system and index 1 of
+  a three-staff system are then different voices spliced into one part, and where the
+  counts disagreed homr either deleted an edge system or broke every group into
+  singletons: twelve staves of a four-part page became one monophonic part of 70 bars.
+  So on a page whose systems disagree, homr now emits **one part per staff per system**
+  in reading order, with each printed system bracketed in the part list
+  (`<part-group>`) so the boundaries survive, and it drops a grand-staff pairing that
+  would leave the systems disagreeing — a wrong pair welds two voices into one part,
+  which renders as tidy music and nothing downstream can see. Which voice a system left
+  out is **not** guessed: it is not in the pixels, and `clean_score`'s `--per-system`
+  grid already answers it by asking a person. **homr reports, the app assembles.** A
+  page whose systems do agree — the two-staff engravings that dominate this repertoire
+  and that homr is strongest on — is assembled exactly as before, and all five
+  two-staff benchmark pages come out byte for byte as they did on stock 0.7.0.
   Two things the earlier notes got wrong
   and this pins: homr 0.7.0 declares `>=3.11,<3.16` and installs on 3.14 too, so the
   version is a choice and not a wall — 3.12 because every benchmark number in #93 and
