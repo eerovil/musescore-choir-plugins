@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "The public-domain slice of the OMR benchmark (eerovil/musescore-choir-plugins#83).",
+    "Paths are relative to the repository root. Bounds are fractions of page height,",
+    "the same units .systems.json uses, so they crop correctly at any resolution.",
+    "See README.md for what travelled and what stayed on the host."
+  ],
+  "pages": [
+    {
+      "id": "B1a",
+      "title": "Herää Suomi! printed p.420, bars 11-17 — good scan",
+      "pdf": "fixtures/omr-benchmark/B1a-heraa-suomi-p420-287dpi.pdf",
+      "page": 1,
+      "scan": "287 dpi, clean",
+      "staves": 2,
+      "voices_per_staff": 2,
+      "parts": "TTBB (T.I/T.II on a treble staff sounding an octave down, B.I/B.II on a bass staff)",
+      "truth": "fixtures/omr-benchmark/B1-heraa-suomi-p420-truth.csv",
+      "transcription": "fixtures/omr-benchmark/B1-heraa-suomi-hand-transcription.mscx",
+      "notes": "The only page with note-level ground truth. 120 note events. Bar 15 in the bass is the exception: the two basses are in unison and the print has a single line, so the truth is one voice there.",
+      "systems": [
+        {"index": 1, "page": 1, "top": 0.16, "bottom": 0.396, "measure_start": 11, "measure_end": 13},
+        {"index": 2, "page": 1, "top": 0.396, "bottom": 0.638, "measure_start": 14, "measure_end": 15},
+        {"index": 3, "page": 1, "top": 0.638, "bottom": 0.9, "measure_start": 16, "measure_end": 17}
+      ]
+    },
+    {
+      "id": "B1b",
+      "title": "Herää Suomi! printed p.420, bars 11-17 — poor scan",
+      "pdf": "fixtures/omr-benchmark/B1b-heraa-suomi-p420-mrc.pdf",
+      "page": 1,
+      "scan": "150 dpi, JBIG2/CCITT segmentation, visible dropout",
+      "staves": 2,
+      "voices_per_staff": 2,
+      "parts": "TTBB (T.I/T.II on a treble staff sounding an octave down, B.I/B.II on a bass staff)",
+      "truth": "fixtures/omr-benchmark/B1-heraa-suomi-p420-truth.csv",
+      "transcription": "fixtures/omr-benchmark/B1-heraa-suomi-hand-transcription.mscx",
+      "notes": "The same music and the same truth as B1a at a worse scan, so scan quality is isolated from everything else. Its own bounds: this copy sits about a tenth of a page lower than B1a's.",
+      "systems": [
+        {"index": 1, "page": 1, "top": 0.26, "bottom": 0.5, "measure_start": 11, "measure_end": 13},
+        {"index": 2, "page": 1, "top": 0.5, "bottom": 0.72, "measure_start": 14, "measure_end": 15},
+        {"index": 3, "page": 1, "top": 0.72, "bottom": 0.95, "measure_start": 16, "measure_end": 17}
+      ]
+    },
+    {
+      "id": "B2",
+      "title": "Virta venhettä vie printed p.119, bars 15-30",
+      "pdf": "fixtures/virta-venhetta-vie/00-registered/Virta venhettä vie.pdf",
+      "page": 2,
+      "scan": "144 dpi",
+      "staves": 2,
+      "voices_per_staff": 2,
+      "parts": "TTBB",
+      "truth": null,
+      "transcription": null,
+      "notes": "No copy of its own: page 2 of the song fixture's source PDF is this page, rasterising pixel for pixel identically to the host benchmark's extract. 19th-c engraving, divisi written as stacked noteheads in most bars, and the meter moves 4/4 -> 3/4 at the end of system 3 and 3/4 -> 2/4 -> 4/4 inside system 4. Structural reference only — nobody has compared the fixture's cleaned score against the print end to end.",
+      "systems": [
+        {"index": 1, "page": 2, "top": 0.04, "bottom": 0.24, "measure_start": 15, "measure_end": 18},
+        {"index": 2, "page": 2, "top": 0.24, "bottom": 0.47, "measure_start": 19, "measure_end": 22},
+        {"index": 3, "page": 2, "top": 0.47, "bottom": 0.71, "measure_start": 23, "measure_end": 26},
+        {"index": 4, "page": 2, "top": 0.71, "bottom": 0.93, "measure_start": 27, "measure_end": 30}
+      ]
+    }
+  ]
+}
