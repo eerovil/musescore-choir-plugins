@@ -19,13 +19,11 @@
 
 set -euo pipefail
 
-# Where homr comes from. ONE PLACE, deliberately: issue #97 decided to fork
-# homr and fix multi-page joining, staff grouping and PDF input inside the
-# fork, because by the time the app sees homr's output the staves are gone. So
-# this line becomes a git URL once #104 stands the fork up —
-#   "git+https://github.com/<owner>/homr@<ref>"
-# — and nothing else in this script or in src/song_app/omr.py changes with it.
-HOMR_SOURCE="${HOMR_SOURCE:-homr==0.7.0}"
+# Where homr comes from. ONE PLACE, deliberately: the fork is pinned to the
+# stock upstream v0.7.0 commit that passed the frozen benchmark. Moving this
+# pin is a deliberate upgrade followed by another benchmark run; it is never
+# advanced automatically. An explicit HOMR_SOURCE still overrides the pin.
+HOMR_SOURCE="${HOMR_SOURCE:-git+https://github.com/eerovil/homr.git@8b5dcf7d7bdd1a47911dc0c661c573b957271eab}"
 
 # homr 0.7.0 declares >=3.11,<3.16, but every benchmark number recorded for this
 # project came off 3.12. uv fetches the interpreter, so this costs nothing.
@@ -39,13 +37,13 @@ fi
 
 echo "Creating $HOMR_VENV (python $HOMR_PYTHON)"
 mkdir -p "$(dirname "$HOMR_VENV")"
-# --allow-existing rather than --clear: re-running this to move HOMR_SOURCE on
-# to the fork must not throw away the 150 MB of weights already downloaded.
+# --allow-existing rather than --clear: re-running this after moving the source
+# pin must not throw away the 150 MB of weights already downloaded.
 uv venv --allow-existing --python "$HOMR_PYTHON" "$HOMR_VENV"
 
 # There is no [cpu] extra on 0.7.0 despite what upstream's README suggests —
-# uv warns and ignores it. Plain homr pulls the CPU onnxruntime, which is all
-# this host can use anyway (see issue #93: the GTX 970 is sm_52, below
+# uv warns and ignores it. The normal source install pulls CPU onnxruntime,
+# which is all this host can use anyway (see issue #93: the GTX 970 is sm_52, below
 # onnxruntime's sm_60 floor).
 echo "Installing $HOMR_SOURCE"
 VIRTUAL_ENV="$HOMR_VENV" uv pip install "$HOMR_SOURCE"

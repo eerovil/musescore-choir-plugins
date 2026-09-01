@@ -692,19 +692,19 @@ state model are in `DESIGN.md`.
   So: a `uv`-managed python 3.12 venv outside the checkout, built by
   **`scripts/install-homr.sh`** (idempotent; `HOMR_VENV` moves it), called as a
   subprocess. A fresh clone runs one script.
-  **Where homr comes from is one variable in that script, `HOMR_SOURCE`, and it is
-  expected to stop being a PyPI pin.** #97 decided to fork homr and build the
-  multi-page joining, the staff-grouping fix and PDF input *inside the fork*, because
-  the app only ever sees homr's output and by then the staves are gone; #104 stands
-  that fork up. So `homr==0.7.0` today becomes a `git+https://...` URL then, changed in
-  one line, and nothing in `omr.py` or in the rest of the script moves with it. Do not
-  be surprised to find a git URL where a version pin is written here.
+  **Where homr comes from is one variable in that script, `HOMR_SOURCE`.** It defaults
+  to the immutable `eerovil/homr` commit matching upstream `v0.7.0`; an explicit
+  `HOMR_SOURCE` still wins. #97 put multi-page joining, the staff-grouping fix and PDF
+  input *inside the fork*, because the app only ever sees homr's output and by then the
+  staves are gone. The fork is pinned rather than automatically synced: moving the
+  source commit is a deliberate upgrade followed by the frozen benchmark run. Nothing
+  in `omr.py` or in the rest of the installer moves with it.
   Two things the earlier notes got wrong
   and this pins: homr 0.7.0 declares `>=3.11,<3.16` and installs on 3.14 too, so the
   version is a choice and not a wall — 3.12 because every benchmark number in #93 and
   #95 came off 3.12; and there is **no `[cpu]` extra** on 0.7.0, so upstream's
-  `uvx --from 'homr[cpu]' homr` recipe silently ignores it. Plain `homr==0.7.0` pulls
-  the CPU onnxruntime, which is all this host can use anyway.
+  `uvx --from 'homr[cpu]' homr` recipe silently ignores it. The normal source install
+  pulls CPU onnxruntime, which is all this host can use anyway.
   What the module absorbs is the CLI's shape. homr takes one image, writes
   `<image>.musicxml` **beside it**, has no `--output`, and drops a `_teaser.png` next
   to the input, so the run happens on a copy in a scratch dir and only the answer is

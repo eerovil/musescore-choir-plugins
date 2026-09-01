@@ -64,8 +64,8 @@ That creates `~/.local/share/musescore-choir-plugins/homr-venv` on python 3.12
 and downloads the model weights, so the first scan is not the slow one.
 Re-running it is safe. Set `HOMR_VENV` to put it elsewhere, and then `HOMR_BIN`
 in `.env` so the app can find it. `HOMR_SOURCE` is where homr is installed
-from — a PyPI pin now, our own fork's git URL once
-[#104](https://github.com/eerovil/musescore-choir-plugins/issues/104) lands.
+from. It defaults to an immutable commit in our fork, pinned to the upstream
+0.7.0 baseline; set `HOMR_SOURCE` explicitly to test another source.
 Without homr, `src/song_app/omr.py` raises a message saying so and its tests
 skip; nothing else in the app is affected.
 
