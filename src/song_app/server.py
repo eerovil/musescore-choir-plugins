@@ -1065,15 +1065,19 @@ def _run_record(slug: str, opts: Dict) -> None:
             # anything else heavy running here — an agent's test suite, a scan,
             # another song's render. The slot is AgentDeck's host-wide pool; a
             # deck that is down or busy costs a log line, never the render.
-            with heavy_slot.heavy_slot(f"song app render {song.slug}", log=log):
+            # Losing a slot we were granted is the other way round: the render is
+            # guarded through its own progress reports and stops, because another
+            # job may already have been told the cores are free.
+            with heavy_slot.heavy_slot(f"song app render {song.slug}", log=log) as slot:
                 outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
                                                     quality=quality,
                                                     hardware_encoding=hardware_encoding,
                                                     initial_bpm=opts.get("bpm"),
                                                     system_starts=_printed_systems(song),
-                                                    log=log,
-                                                    progress=progress,
+                                                    log=slot.guard(log),
+                                                    progress=slot.guard(progress),
                                                     **margin_options)
+                slot.check()
             song = _require(slug)
             rec = song.data.setdefault("record", {})
             rec["exported"] = True

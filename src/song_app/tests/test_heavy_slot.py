@@ -69,8 +69,8 @@ GRANTED = (200, {"json": {"lease": "abc123", "ttl_s": 120.0}})
 
 def test_holds_a_lease_for_the_work_and_gives_it_back(monkeypatch):
     deck = _deck(monkeypatch, [GRANTED])
-    with heavy_slot.heavy_slot("render mysong") as lease:
-        assert lease == "abc123"
+    with heavy_slot.heavy_slot("render mysong") as slot:
+        assert slot.lease == "abc123" and slot.held
         assert deck.of("release") == []  # still held while the work runs
     assert deck.of("release") == [("DELETE", "http://deck.test/api/heavy-slots/abc123")]
 
@@ -100,8 +100,8 @@ def test_the_lease_is_released_when_the_work_raises(monkeypatch):
 def test_a_busy_host_is_waited_out(monkeypatch):
     logged = []
     deck = _deck(monkeypatch, [(503, {}), (503, {}), GRANTED])
-    with heavy_slot.heavy_slot("render mysong", log=logged.append) as lease:
-        assert lease == "abc123"
+    with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
+        assert slot.lease == "abc123"
     assert len(deck.of("acquire")) == 3
     assert any("Waiting" in line for line in logged)
     # Said once, however long the wait: this goes to the song's live log.
@@ -113,8 +113,9 @@ def test_a_host_that_never_frees_up_renders_anyway(monkeypatch):
     deck = _deck(monkeypatch, [(503, {})])
     ran = False
     with heavy_slot.heavy_slot("render mysong", log=logged.append,
-                               max_total_wait_s=0.0) as lease:
-        assert lease is None
+                               max_total_wait_s=0.0) as slot:
+        assert not slot.held and slot.lease is None
+        slot.check()      # nothing to lose, so nothing that can stop the work
         ran = True
     assert ran
     assert deck.of("release") == []
@@ -124,16 +125,16 @@ def test_a_host_that_never_frees_up_renders_anyway(monkeypatch):
 def test_an_unreachable_deck_renders_anyway(monkeypatch):
     logged = []
     _deck(monkeypatch, [httpx.ConnectError("no route")])
-    with heavy_slot.heavy_slot("render mysong", log=logged.append) as lease:
-        assert lease is None
+    with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
+        assert not slot.held
     assert any("Could not reach AgentDeck" in line for line in logged)
 
 
 def test_a_refusal_renders_anyway(monkeypatch):
     logged = []
     _deck(monkeypatch, [(500, {})])
-    with heavy_slot.heavy_slot("render mysong", log=logged.append) as lease:
-        assert lease is None
+    with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
+        assert not slot.held
     assert any("HTTP 500" in line for line in logged)
 
 
@@ -143,8 +144,8 @@ def test_an_unconfigured_deck_renders_anyway(monkeypatch):
     called = []
     monkeypatch.setattr(heavy_slot, "_request",
                         lambda *a, **k: called.append(a) or httpx.Response(200))
-    with heavy_slot.heavy_slot("render mysong", log=logged.append) as lease:
-        assert lease is None
+    with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
+        assert not slot.held
     assert called == []
     assert any("not configured" in line for line in logged)
 
@@ -165,19 +166,74 @@ def test_the_lease_is_renewed_while_the_work_runs(monkeypatch):
     assert len(deck.of("heartbeat")) == before
 
 
-def test_a_lost_lease_does_not_stop_the_work(monkeypatch):
-    """404 means somebody else may be running; a half-rendered video is still
-    worth finishing, so it is said and not acted on."""
+def test_a_lost_lease_stops_the_work(monkeypatch):
+    """404 means the deck may already have handed this slot to somebody else, so
+    carrying on would be exactly the two-jobs-on-four-cores case the queue exists
+    to prevent. The work is stopped where it next reports progress."""
     monkeypatch.setattr(heavy_slot, "MIN_HEARTBEAT_S", 0.01)
     logged = []
     deck = _deck(monkeypatch, [(200, {"json": {"lease": "abc123", "ttl_s": 0.03}})],
                  heartbeat_status=404)
-    finished = False
-    with heavy_slot.heavy_slot("render mysong", log=logged.append):
-        for _ in range(200):
-            if deck.of("heartbeat"):
+    steps = []
+
+    with pytest.raises(heavy_slot.SlotLost):
+        with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
+            report = slot.guard(lambda m: steps.append(m))
+            for n in range(200):          # the work, reporting as it goes
+                report(f"step {n}")
+                time.sleep(0.01)
+
+    assert steps, "the work should have run until the lease went"
+    assert len(steps) < 200, "the work carried on after the slot was lost"
+    assert not slot.held and slot.lost()
+    assert deck.of("release"), "the lease is still given back"
+    assert any("no longer held" in line for line in logged)
+
+
+def test_a_heartbeat_that_cannot_be_sent_is_retried_before_giving_up(monkeypatch):
+    """A deck that is restarting has told us nothing about who owns the slot;
+    only going a whole lease-length without renewing has."""
+    monkeypatch.setattr(heavy_slot, "MIN_HEARTBEAT_S", 0.01)
+    logged = []
+
+    def deck(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if url.endswith("/heartbeat"):
+            raise httpx.ConnectError("deck restarting")
+        if method == "POST":
+            return httpx.Response(200, request=request,
+                                  json={"lease": "abc123", "ttl_s": 0.6})
+        return httpx.Response(200, request=request, json={})
+
+    monkeypatch.setattr(heavy_slot, "_request", deck)
+    with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
+        for _ in range(100):      # a lease that has not expired is still ours
+            slot.check()
+            if any("trying again" in line for line in logged):
                 break
-            time.sleep(0.01)
-        finished = True
-    assert finished
-    assert any("lease is gone" in line for line in logged)
+            time.sleep(0.02)
+        assert slot.held
+    assert any("trying again" in line for line in logged), \
+        "a heartbeat that could not be sent should be retried, not taken as loss"
+
+
+def test_a_lease_that_cannot_be_renewed_for_its_whole_life_is_lost(monkeypatch):
+    monkeypatch.setattr(heavy_slot, "MIN_HEARTBEAT_S", 0.01)
+    logged = []
+
+    def deck(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if url.endswith("/heartbeat"):
+            raise httpx.ConnectError("deck gone")
+        if method == "POST":
+            return httpx.Response(200, request=request,
+                                  json={"lease": "abc123", "ttl_s": 0.05})
+        return httpx.Response(200, request=request, json={})
+
+    monkeypatch.setattr(heavy_slot, "_request", deck)
+    with pytest.raises(heavy_slot.SlotLost):
+        with heavy_slot.heavy_slot("render mysong", log=logged.append) as slot:
+            for _ in range(200):
+                slot.check()
+                time.sleep(0.01)
+    assert any("lease lasts" in line for line in logged)

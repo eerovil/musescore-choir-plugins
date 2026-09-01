@@ -103,7 +103,7 @@ def test_the_scrolling_render_holds_a_host_wide_heavy_slot(client, song, monkeyp
     @contextlib.contextmanager
     def fake_slot(label, **kwargs):
         order.append(f"take {label}")
-        yield "lease-1"
+        yield heavy_slot.Slot("lease-1")
         order.append("release")
 
     monkeypatch.setattr(pipeline, "run_scroll_video", watched)
@@ -113,6 +113,48 @@ def test_the_scrolling_render_holds_a_host_wide_heavy_slot(client, song, monkeyp
     _finished(client, song.slug)
 
     assert order == [f"take song app render {song.slug}", "render", "release"]
+
+
+def test_a_render_stops_when_it_loses_the_heavy_slot(client, song, monkeypatch):
+    """A heartbeat answering 404 means the deck may already have handed these
+    cores to somebody else. Carrying on is the two-renders-at-once case the queue
+    exists to prevent, so the render stops and the song says why."""
+    import httpx
+
+    monkeypatch.setenv("AGENTDECK_API_URL", "http://deck.test")
+    monkeypatch.setattr(heavy_slot, "MIN_HEARTBEAT_S", 0.01)
+
+    def deck(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if url.endswith("/heartbeat"):     # the lease is gone
+            return httpx.Response(404, request=request)
+        if method == "POST":
+            return httpx.Response(200, request=request,
+                                  json={"lease": "lease-1", "ttl_s": 0.03})
+        return httpx.Response(200, request=request, json={})
+
+    monkeypatch.setattr(heavy_slot, "_request", deck)
+    finished = []
+
+    def slow_render(song_dir, cleaned, name, *, progress=lambda m: None, **kwargs):
+        out = os.path.join(song_dir, "media", "video")
+        os.makedirs(out, exist_ok=True)
+        for frame in range(300):           # the render, reporting as it goes
+            progress(f"Rendering video: {frame}%")
+            time.sleep(0.01)
+        finished.append(name)              # only reached by a render that ran on
+        open(os.path.join(out, f"{name} S1.mp4"), "wb").close()
+        return [os.path.join(out, f"{name} S1.mp4")]
+
+    monkeypatch.setattr(pipeline, "run_scroll_video", slow_render)
+
+    assert client.post(f"/api/songs/{song.slug}/record", json={}).json()["started"]
+    data = _finished(client, song.slug)
+
+    assert not finished, "the render carried on after losing the slot"
+    assert data["stage"] == "record", "a stopped render must not claim an upload"
+    assert "no longer held" in (data["record"].get("error") or "")
+    assert not data["record"].get("outputs")
 
 
 def test_the_song_api_reports_when_the_bpm_choice_is_needed(client, song):

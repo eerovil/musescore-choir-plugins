@@ -264,6 +264,13 @@ def render(strip: np.ndarray, placed: Sequence[Placed], anchors: Tuple[Sequence[
         ff.stdin.close()
     except BrokenPipeError as exc:
         raise RuntimeError("ffmpeg exited while frames were being written.") from exc
+    except BaseException:
+        # A render abandoned part-way — the caller's progress callback stopped it,
+        # the process is shutting down — must not leave ffmpeg waiting forever on
+        # a pipe nobody is going to write to again.
+        ff.kill()
+        ff.wait()
+        raise
     if ff.wait() != 0:
         raise RuntimeError(f"ffmpeg failed writing {out_path}")
     return out_path

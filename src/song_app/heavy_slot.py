@@ -22,12 +22,16 @@ a killed render cannot strand a slot.  An HTTP lease can, and there is only one
 to strand, so it expires unless heartbeated and a reaper takes it back.  Hence
 the background thread here.
 
-**Nothing about this may stop a render.**  A deck that is unconfigured,
-unreachable, busy for half an hour, or that loses the lease mid-render leaves
-the render running unqueued, with a line in the song's log saying so.  Somebody
-is waiting for a practice track; being slow because the host is busy is the
-problem this solves, and refusing to render because a queue is down would be a
-worse one.
+**Failing to get a slot is fail-open; losing one is not.**  A deck that is
+unconfigured, unreachable, refusing or busy for half an hour has told us nothing
+about what else is running, so the render goes ahead unqueued with a line in the
+song's log saying so — somebody is waiting for a practice track, and refusing to
+render because a queue is down would be worse than being slow.  A heartbeat that
+answers 404 is the opposite: the deck is saying this lease is no longer held, so
+the slot may already have been handed to somebody else.  Carrying on there would
+be the one thing the queue exists to prevent — two jobs on four cores, each
+believing it has them.  So a lost lease stops the work (``SlotLost``), rather
+than being a line in a log nobody reads.
 """
 
 from __future__ import annotations
@@ -59,6 +63,50 @@ Logger = Callable[[str], None]
 
 def _noop(_message: str) -> None:
     pass
+
+
+class SlotLost(RuntimeError):
+    """The lease this work was running under is not held any more."""
+
+
+class Slot:
+    """What the work is running under: a lease, or nothing and permission anyway.
+
+    ``guard`` is how a long call is stopped part-way.  A render is one function
+    call lasting minutes, so the only places it can be interrupted are the ones
+    where it already reports progress — which it does roughly every percent of
+    the encode, i.e. seconds apart.  Wrapping those callbacks turns "the lease is
+    gone" into an exception raised inside the render, instead of a flag nobody
+    is looking at.
+    """
+
+    def __init__(self, lease: Optional[str] = None) -> None:
+        self.lease = lease
+        self._lost = threading.Event()
+
+    @property
+    def held(self) -> bool:
+        """True while this work holds a slot.  False when it is running unqueued."""
+        return self.lease is not None and not self._lost.is_set()
+
+    def lost(self) -> bool:
+        return self._lost.is_set()
+
+    def _lose(self) -> None:
+        self._lost.set()
+
+    def check(self) -> None:
+        if self._lost.is_set():
+            raise SlotLost(
+                "The host-wide heavy slot is no longer held, so another heavy job "
+                "may already have started; stopped rather than compete with it.")
+
+    def guard(self, callback: Logger) -> Logger:
+        """The callback, plus "and stop if the slot has gone" before each call."""
+        def guarded(message: str) -> None:
+            self.check()
+            callback(message)
+        return guarded
 
 
 def _api_base() -> str:
@@ -124,33 +172,51 @@ def _acquire(base: str, label: str, log: Logger, wait_s: float,
 
 
 class _Heartbeat(threading.Thread):
-    """Renew the lease until the work is done, and say so if it is lost.
+    """Renew the lease until the work is done, and give up the slot if it is lost.
 
     A heartbeat for a lease that is gone answers 404 rather than quietly
-    reissuing one, which is the deck telling us somebody else may be running
-    now.  We stop renewing and say so; we do not abandon a half-rendered video,
-    because throwing away minutes of finished work helps nobody.
+    reissuing one, precisely so a caller can tell "still mine" from "someone else
+    may be running now".  Acting on that means marking the slot lost, which stops
+    the work at its next progress report.
+
+    A heartbeat that could not be *sent* is a weaker fact than a 404 — the deck
+    may simply be restarting — so it is retried.  But only until the lease it was
+    renewing would have expired anyway: past that the deck has given the slot to
+    whoever asked next, and not hearing about it is not the same as it not having
+    happened.
     """
 
-    def __init__(self, base: str, lease: str, ttl_s: float, log: Logger) -> None:
-        super().__init__(daemon=True, name=f"heavy-slot-{lease}")
-        self._base, self._lease, self._log = base, lease, log
+    def __init__(self, base: str, slot: Slot, ttl_s: float, log: Logger) -> None:
+        super().__init__(daemon=True, name=f"heavy-slot-{slot.lease}")
+        self._base, self._slot, self._log = base, slot, log
+        self._ttl_s = ttl_s
         self._interval = max(MIN_HEARTBEAT_S, ttl_s / 3.0)
         self._done = threading.Event()
 
+    def _lose(self, why: str) -> None:
+        self._log(f"{why} Stopping the render rather than competing for the host.")
+        self._slot._lose()
+
     def run(self) -> None:
+        renewed_at = time.monotonic()
         while not self._done.wait(self._interval):
             try:
                 response = _request(
-                    "POST", f"{self._base}/api/heavy-slots/{self._lease}/heartbeat",
+                    "POST", f"{self._base}/api/heavy-slots/{self._slot.lease}/heartbeat",
                     timeout=HEARTBEAT_TIMEOUT_S)
             except httpx.HTTPError as exc:
-                self._log(f"Lost touch with AgentDeck while holding the heavy slot "
-                          f"({exc}); carrying on.")
-                return
+                if time.monotonic() - renewed_at >= self._ttl_s:
+                    self._lose("The heavy slot could not be renewed for longer than "
+                               f"its lease lasts ({exc}).")
+                    return
+                self._log(f"Could not reach AgentDeck to renew the heavy slot "
+                          f"({exc}); trying again.")
+                continue
             if response.status_code != 200:
-                self._log("The heavy slot lease is gone; carrying on with the render.")
+                self._lose("The heavy slot is no longer held — another heavy job "
+                           "may already have it.")
                 return
+            renewed_at = time.monotonic()
 
     def stop(self) -> None:
         self._done.set()
@@ -167,25 +233,28 @@ def _release(base: str, lease: str) -> None:
 
 @contextmanager
 def heavy_slot(label: str, *, log: Logger = _noop, wait_s: float = WAIT_S,
-               max_total_wait_s: float = MAX_TOTAL_WAIT_S) -> Iterator[Optional[str]]:
+               max_total_wait_s: float = MAX_TOTAL_WAIT_S) -> Iterator[Slot]:
     """Hold a host-wide heavy slot for the body, or run without one and say so.
 
-    Yields the lease id, or ``None`` when the work is going ahead unqueued.
+    Yields a `Slot`: pass its `guard` around the work's progress callbacks and
+    losing the lease stops the work.  A slot that was never granted is never
+    lost, so an unqueued run is never interrupted.
     """
     base = _api_base()
     if not base:
         log("AgentDeck is not configured, so this work is not queued behind "
             "other heavy jobs on this host.")
-        yield None
+        yield Slot()
         return
     lease, ttl = _acquire(base, label, log, wait_s, max_total_wait_s)
     if lease is None:
-        yield None
+        yield Slot()
         return
-    beat = _Heartbeat(base, lease, ttl, log)
+    slot = Slot(lease)
+    beat = _Heartbeat(base, slot, ttl, log)
     beat.start()
     try:
-        yield lease
+        yield slot
     finally:
         beat.stop()
         _release(base, lease)
