@@ -222,13 +222,17 @@ def rendered_system_bands(
     return bands
 
 
-def _file_version(path: str) -> str:
+def file_version(path: str) -> str:
     """What the file holds, cheaply: its size and modification time.
 
     Content would be exact, but these crops are cut from a render that is itself
     rebuilt whenever the score is newer, so a rewrite always moves the mtime. A
     rebuild that happens to be byte-identical costs one wasted crop, which is the
     right way round to be wrong.
+
+    Public because a crop is not the only thing derived from a PDF: the scan
+    stage stamps every fragment it reads with the version of the page it read
+    it from, and has to compute that the same way this does.
     """
     try:
         st = os.stat(path)
@@ -257,7 +261,7 @@ def crop_systems(
     """
     os.makedirs(out_dir, exist_ok=True)
     width, height = _page_size_px(pdf_path, dpi)
-    source = _file_version(pdf_path)
+    source = file_version(pdf_path)
     images = []
     for b in bounds:
         top = max(0, min(height - 1, int(height * b.top)))

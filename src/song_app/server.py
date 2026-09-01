@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, health, heavy_slot, job_state, pdf_systems, pipeline,
-               state, verification)
+               scan, state, verification)
 from src.clean_score.utils.score_fixes import FixError
 
 SCRIPT_DIR = state.SCRIPT_DIR
@@ -109,13 +109,16 @@ def _lock_path(song: state.Song) -> str:
     return song.path(".recording.lock")
 
 
-def is_recording(song: state.Song) -> bool:
-    """True if a recording is active in *this* server process.
+def _scan_lock_path(song: state.Song) -> str:
+    return song.path(".scanning.lock")
+
+
+def _holds_lock(path: str) -> bool:
+    """True if the lock at `path` belongs to a live run in *this* server process.
 
     A lock written by a previous (now-dead) server is treated as stale and cleared,
     so a crash can't leave a song permanently locked.
     """
-    path = _lock_path(song)
     if not os.path.exists(path):
         return False
     try:
@@ -127,6 +130,15 @@ def is_recording(song: state.Song) -> bool:
         return True
     os.remove(path)  # stale lock from a different/old process
     return False
+
+
+def is_recording(song: state.Song) -> bool:
+    return _holds_lock(_lock_path(song))
+
+
+def is_scanning(song: state.Song) -> bool:
+    """A scan is minutes long, so a page refresh must not start a second one."""
+    return _holds_lock(_scan_lock_path(song))
 
 
 def _media_version(path: str) -> str:
@@ -168,6 +180,12 @@ def _derived(song: state.Song) -> Dict:
     pdf = song.source_path("pdf")
     issues = song.data.get("health", {}).get("issues", [])
     systems = len([b for b in pdf_systems.load_bounds(song.dir) if b.measure_start])
+    # Reading a song is where the app finds out that something it derived has
+    # stopped being true, and it is the one place that check lives. It writes
+    # only when something really was discarded, so an ordinary read costs a
+    # comparison. A song that never scanned derives nothing here and returns at
+    # once, which is every song that predates the stage.
+    discarded = scan.reconcile(song)
     needs_initial_bpm = bool(
         cleaned and os.path.exists(cleaned) and not pipeline.has_opening_tempo(cleaned))
     return {
@@ -189,6 +207,11 @@ def _derived(song: state.Song) -> Dict:
         # nobody can see is a file nobody opens.
         "recorded_slurs": pipeline.recorded_slurs(song.dir),
         "recording": is_recording(song),
+        "scanning": is_scanning(song),
+        # What the scan stage has read, what is still a hole, and what the app
+        # threw away this read because its input had moved under it.
+        "scan_status": scan.status(song),
+        "scan_discarded": discarded,
         "media": _media_list(song),
         "jobs": job_state.load(song.dir),
         "verification_summary": verification.summary(song, systems),
@@ -241,7 +264,7 @@ def _import_one(name: str) -> bool:
         outputs = [f for f in sorted(os.listdir(vdir))
                    if f.lower().endswith((".mov", ".mp4")) and f.startswith(name + " ")]
 
-    if not (inp or cleaned or outputs):
+    if not (inp or cleaned or outputs or pdf):
         return False  # not a recognisable song folder
 
     # per-system if an answer set was recorded for this input score
@@ -271,7 +294,11 @@ def _import_one(name: str) -> bool:
     if outputs:
         data["record"] = {"exported": True, "outputs": outputs, "audio_delay_ms": 1300}
 
-    data["stage"] = ("upload" if outputs else "review" if cleaned else "clean" if inp else "register")
+    # A folder with an input score is past scanning whatever else it has, so the
+    # 48 legacy songs land where they always did. Only a folder that has nothing
+    # but a PDF is a song waiting to be read off the page.
+    data["stage"] = ("upload" if outputs else "review" if cleaned
+                     else "clean" if inp else "scan" if pdf else "register")
     state.Song(name, data).save()
     return True
 
@@ -317,26 +344,37 @@ async def api_create(
     xml: UploadFile = None,
     pdf: UploadFile = None,
 ) -> Dict:
+    """Register a song from a score, a PDF, or both.
+
+    The score used to be required and the PDF optional. That is now the other way
+    round in the sense that matters: **a PDF on its own is a song**, and it starts
+    at `scan`, because the app can now read a score off the page. Handing in a
+    score still starts at `clean` — importing MusicXML from elsewhere stays the
+    manual route (#86), and a song that arrives with a score is past scanning by
+    definition.
+    """
     if not name.strip():
         raise HTTPException(400, "Name is required")
-    if xml is None:
-        raise HTTPException(400, "A MuseScore/MusicXML file is required")
+    has_xml = xml is not None and bool(xml.filename)
+    has_pdf = pdf is not None and bool(pdf.filename)
+    if not (has_xml or has_pdf):
+        raise HTTPException(400, "A MuseScore/MusicXML file or a PDF is required")
 
     if voicing and voicing not in ("men", "women", "mixed"):
         raise HTTPException(400, "voicing must be men, women or mixed")
     song = state.create(name.strip(), per_system, voicing)
-    # Save the score file.
-    xml_name = os.path.basename(xml.filename)
-    with open(song.path(xml_name), "wb") as f:
-        f.write(await xml.read())
-    song.data.setdefault("sources", {})["xml"] = xml_name
-    # Save the PDF (optional but expected).
-    if pdf is not None and pdf.filename:
+    sources = song.data.setdefault("sources", {})
+    if has_xml:
+        xml_name = os.path.basename(xml.filename)
+        with open(song.path(xml_name), "wb") as f:
+            f.write(await xml.read())
+        sources["xml"] = xml_name
+    if has_pdf:
         pdf_name = os.path.basename(pdf.filename)
         with open(song.path(pdf_name), "wb") as f:
             f.write(await pdf.read())
-        song.data["sources"]["pdf"] = pdf_name
-    song.set_stage("clean")
+        sources["pdf"] = pdf_name
+    song.set_stage("clean" if has_xml else "scan")
     song.save()
     return {"slug": song.slug}
 
@@ -344,6 +382,64 @@ async def api_create(
 @app.get("/api/songs/{slug}")
 def api_song(slug: str) -> Dict:
     return _derived(_require(slug))
+
+
+# --------------------------------------------------------------------------
+# Scan stage — read the score off the PDF, one printed system at a time
+# --------------------------------------------------------------------------
+def _run_scan(slug: str, opts: Dict) -> None:
+    song = _require(slug)
+    log = lambda m: _job_emit(slug, "scan", m)
+    try:
+        # homr's own output is the progress: a system is ~20s and a song two to
+        # five minutes, so its lines go straight to the song's log the way a
+        # clean's and a render's do, unparsed.
+        result = scan.run(song, log=log, only=opts.get("systems"))
+        holes = result["holes"]
+        log(f"Read {result['read']} of {result['systems']} system(s)."
+            + (f" Still to read: {', '.join(str(i) for i in holes)}." if holes
+               else " Ready to clean."))
+        _job_finish(song, "scan")
+    except Exception as exc:
+        traceback.print_exc()
+        _job_emit(slug, "scan", str(exc), "error")
+        _job_finish(song, "scan", str(exc))
+    finally:
+        lock = _scan_lock_path(song)
+        if os.path.exists(lock):
+            os.remove(lock)
+        hub.emit(slug, {"type": "state"})
+
+
+@app.post("/api/songs/{slug}/scan")
+async def api_scan(slug: str, body: Dict = None) -> Dict:
+    """Start a scan. `systems` re-reads named systems; omitted reads the holes."""
+    song = _require(slug)
+    if not song.source_path("pdf"):
+        raise HTTPException(400, "This song has no PDF to scan")
+    if not pdf_systems.load_bounds(song.dir):
+        raise HTTPException(
+            400, "Set the printed-system boundaries in the Systems viewer first")
+    opts = dict(body or {})
+    try:
+        opts["systems"] = [int(i) for i in (opts.get("systems") or [])]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "systems must be whole numbers") from None
+    if is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "scan", ("scan", "clean", "render", "upload"),
+            pdf_systems.file_version(song.source_path("pdf"))):
+        raise HTTPException(409, "Another scan, clean, render, or upload is "
+                                 "already running for this song.")
+    # The durable start above is the atomic gate; the PID lock is what makes a
+    # page refresh unable to start a second scan over the top of this one.
+    try:
+        with open(_scan_lock_path(song), "w") as f:
+            f.write(str(os.getpid()))
+    except Exception as exc:
+        _job_finish(song, "scan", str(exc))
+        raise
+    asyncio.get_running_loop().run_in_executor(None, _run_scan, slug, opts)
+    return {"started": True}
 
 
 # --------------------------------------------------------------------------
@@ -369,6 +465,11 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
     parsed = {int(si): {int(sid): v for sid, v in staves.items()}
               for si, staves in (answers or {}).items()}
     pipeline.save_system_answers(mscx, parsed)
+    # An answer is about the staves of one scanned system, so it is derived from
+    # that system's fragment and has to say which one, or a re-scan cannot know
+    # it has invalidated it.
+    scan.stamp_answers(song, list(parsed))
+    song.save()
     return {"ok": True}
 
 
@@ -412,10 +513,10 @@ def _run_clean(slug: str) -> None:
 @app.post("/api/songs/{slug}/clean")
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
-    if is_recording(song) or not job_state.start_if_idle(
-            song.dir, "clean", ("clean", "render", "upload"),
+    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "clean", ("scan", "clean", "render", "upload"),
             state.file_fingerprint(song.source_path("xml"))):
-        raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
+        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
     return {"started": True}
 
@@ -589,6 +690,11 @@ def api_approve_review(slug: str, body: Dict = None) -> Dict:
     if not expected or expected != approved_against:
         raise HTTPException(409, "The score changed; review the current version before approving")
     song.data["review"] = {"approved_against": approved_against}
+    if "scan" in song.data:
+        # What was approved is a score read off the page, so the approval is
+        # derived from the scan too: re-reading a system means nobody has seen
+        # what would be recorded now.
+        song.data["review"]["scan_revision"] = scan.revision(song)
     song.set_stage("record")
     song.save()
     return _derived(song)
@@ -728,7 +834,12 @@ def api_save_bounds(slug: str, body: Dict = None) -> Dict:
         saved = pipeline.save_system_bounds(song.dir, bands, _bounds_score(song))
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(400, f"Bad bounds: {exc}")
-    return {"systems": saved}
+    # Moving a band is changing the input a fragment was read from. Both the
+    # bands and the grid answers are keyed by position, so an inserted band
+    # silently re-points everything after it — which is why nothing here compares
+    # indices; each fragment is checked against the geometry now at its own.
+    song = _require(slug)
+    return {"systems": saved, "discarded": scan.reconcile(song)}
 
 
 @app.get("/api/songs/{slug}/page/{page}")
@@ -1173,8 +1284,8 @@ def _run_record(slug: str, opts: Dict) -> None:
 @app.post("/api/songs/{slug}/record")
 async def api_record(slug: str, body: Dict = None) -> Dict:
     song = _require(slug)
-    if is_recording(song):
-        raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
+    if is_recording(song) or is_scanning(song):
+        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
     opts = body or {}
     source_fingerprint = state.file_fingerprint(song.cleaned_path())
     if not (opts.get("upload_only") or opts.get("merge_only")):
@@ -1211,8 +1322,8 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
         opts.pop("bpm", None)
     kind = "upload" if opts.get("upload_only") else "render"
     if not job_state.start_if_idle(
-            song.dir, kind, ("clean", "render", "upload"), source_fingerprint):
-        raise HTTPException(409, "Another clean, render, or upload is already running for this song.")
+            song.dir, kind, ("scan", "clean", "render", "upload"), source_fingerprint):
+        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
     # The durable start above is the atomic gate; the PID lock keeps the existing
     # process-aware recording indicator and stale-lock recovery behavior.
     try:
