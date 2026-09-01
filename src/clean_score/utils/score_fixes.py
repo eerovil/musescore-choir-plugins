@@ -330,7 +330,7 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             elif kind in ("undot", "slur"):
                 index = int(fix.get("index", 0))
                 chords = _chords(root, staff, measure)
-                if index >= len(chords):
+                if index < 0 or index >= len(chords):
                     raise FixError(
                         f"staff {staff} m{measure} has {len(chords)} chords, no index {index}")
                 what = (_undot(chords[index]) if kind == "undot"

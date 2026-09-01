@@ -268,6 +268,21 @@ def test_a_refused_slur_comes_back_as_a_message_not_a_500(client):
     assert _fixes(song.dir) == []
 
 
+def test_a_negative_index_leaves_the_fix_file_and_score_unchanged(client):
+    api, song = client
+    fixes = song.path("fixes.json")
+    cleaned = song.cleaned_path()
+    before = open(cleaned, encoding="utf-8").read()
+
+    r = api.post(f"/api/songs/{song.slug}/fixes/slur",
+                 json={"staff": 1, "measure": 2, "index": -1, "span": 1, "why": WHY})
+
+    assert r.status_code == 400
+    assert "no index -1" in r.json()["detail"]
+    assert not os.path.exists(fixes)
+    assert open(cleaned, encoding="utf-8").read() == before
+
+
 def test_a_bar_out_of_range_is_a_404(client):
     api, song = client
     assert api.get(f"/api/songs/{song.slug}/bar?staff=1&measure=99").status_code == 404
