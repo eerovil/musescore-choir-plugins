@@ -526,6 +526,31 @@ state model are in `DESIGN.md`.
   `build_videos(basename=...)` so the names come out right); `server._run_record`
   branches on `renderer` and records which one it used in `record.renderer`.
   `find_merged_outputs` matches `.mp4` as well as `.mov` for the same reason.
+  This pull request proposes that the scrolling render **take one of this host's
+  heavy slots while it runs** (`heavy_slot.heavy_slot`, wrapped around
+  `pipeline.run_scroll_video` in `_run_record`). A render is minutes of every core
+  the machine has, and so is an agent's test suite or a second song rendering — three
+  at once is one slow render and two slow suites rather than any of them finishing
+  sooner. AgentDeck owns that queue (a small pool of `flock`ed files under
+  `/run/user/<uid>`), and its two existing enforcement points both work by classifying
+  a command string in a shell the deck controls; the song app is a systemd service and
+  has no such shell, so it asks over HTTP instead — `POST /api/heavy-slots`, heartbeat,
+  `DELETE` — and the deck never learns what ran. Two things are deliberately backwards
+  from an ordinary queue. **A lease has to be renewed**: a `flock` dies with its holder,
+  so a killed render cannot strand a slot, but an HTTP lease can and there is only one
+  to strand — hence the heartbeat thread, and hence a lease that expires. And
+  **failing to get a slot is fail-open, losing one is not**. Unconfigured, unreachable,
+  refused, or busy for half an hour all leave the render running unqueued with a line
+  in the song's live log saying so: none of them has told us what else is running, and
+  somebody is waiting for a practice track. A heartbeat answering **404** has told us —
+  the lease is not held, so the cores may already have been promised to somebody else,
+  and carrying on is the two-jobs-on-four-cores case the queue exists to prevent. So
+  that stops the render (`SlotLost`), the song keeps the reason in `record.error`, and
+  the stage does not move to Upload. Stopping a call that lasts minutes needs somewhere
+  to stop *at*: `Slot.guard` wraps the render's own `log`/`progress` callbacks, which
+  fire about every percent of the encode. `video.render` now kills ffmpeg when the
+  frame loop is abandoned, or it would sit forever on a pipe nobody will write to
+  again. The preview and the screen recorder are left alone.
   This pull request proposes that the app's **vertical margins start at 0% top and
   5% bottom** rather than 0/0. The renderer's own default stays 0 — there the number
   means "leave the framing alone", and moving it would silently move `scroll_video.py`
@@ -1270,9 +1295,22 @@ without it, like the browser tests:
   scrolling renderer by default, passes the size choice through, still reaches the
   screen recorder on request, refuses to render without a cleaned score, names the
   files so review and upload find them, and cannot be killed by progress reporting.
+  This pull request adds that the render holds a heavy slot **across** the render
+  rather than merely asking for one, and that losing it stops the render.
+- `src/song_app/tests/test_heavy_slot.py` — added by this pull request, and mostly
+  about what happens when the deck does not co-operate: an unconfigured deck, an
+  unreachable one, one that refuses, and one that never frees a slot all leave the
+  work running; the lease is released when the work raises; it is renewed while the
+  work runs and not after; a heartbeat that could not be *sent* is retried until the
+  lease would have expired; and a heartbeat answering 404 stops the work where it next
+  reports progress. `test_record_renderers.py` carries the same loss end to end
+  through the record path: the render stops, the song says why, and the stage stays
+  on Record.
 - `src/song_app/tests/test_record_panel_ui.py` — the same choice in a real browser:
   both renderers offered, scrolling preselected, controls swap, and the run button
-  actually posts `renderer` (browser-marked, skips without Playwright).
+  actually posts `renderer` (browser-marked, skips without Playwright). This pull
+  request adds the queue as a person sees it: a busy host says so in the song's live
+  log, then says the slot came free, then renders.
 - `src/song_app/tests/test_scroll_preview.py` / `test_scroll_preview_ui.py` — the
   endpoint's caching and its invalidation (score edited, or any setting that moves
   the picture), that previewing changes nothing about the song, and a refusal

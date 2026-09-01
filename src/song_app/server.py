@@ -15,7 +15,8 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import agentdeck, health, job_state, pdf_systems, pipeline, state, verification
+from . import (agentdeck, health, heavy_slot, job_state, pdf_systems, pipeline,
+               state, verification)
 from src.clean_score.utils.score_fixes import FixError
 
 SCRIPT_DIR = state.SCRIPT_DIR
@@ -1060,14 +1061,23 @@ def _run_record(slug: str, opts: Dict) -> None:
                 "bottom_margin_percent": bottom_margin,
             }
             log(f"Rendering the scrolling video ({quality})…")
-            outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
-                                                quality=quality,
-                                                hardware_encoding=hardware_encoding,
-                                                initial_bpm=opts.get("bpm"),
-                                                system_starts=_printed_systems(song),
-                                                log=log,
-                                                progress=progress,
-                                                **margin_options)
+            # Minutes of every core the host has, so it waits its turn behind
+            # anything else heavy running here — an agent's test suite, a scan,
+            # another song's render. The slot is AgentDeck's host-wide pool; a
+            # deck that is down or busy costs a log line, never the render.
+            # Losing a slot we were granted is the other way round: the render is
+            # guarded through its own progress reports and stops, because another
+            # job may already have been told the cores are free.
+            with heavy_slot.heavy_slot(f"song app render {song.slug}", log=log) as slot:
+                outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
+                                                    quality=quality,
+                                                    hardware_encoding=hardware_encoding,
+                                                    initial_bpm=opts.get("bpm"),
+                                                    system_starts=_printed_systems(song),
+                                                    log=slot.guard(log),
+                                                    progress=slot.guard(progress),
+                                                    **margin_options)
+                slot.check()
             song = _require(slug)
             rec = song.data.setdefault("record", {})
             rec["exported"] = True
