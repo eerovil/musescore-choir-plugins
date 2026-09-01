@@ -45,7 +45,29 @@ brew install ffmpeg poppler
 | **MuseScore 3** | everything (`.mscz`/MusicXML conversion, audio, MIDI) | nothing works; MuseScore 4 is a different CLI and is not supported |
 | `ffmpeg` / `ffprobe` | both video renderers | no video |
 | poppler (`pdftoppm`, `pdfinfo`) | PDF system crops | Systems tab and the lyric editor's score crops are unavailable; their tests skip |
+| homr (below) | reading a scanned page into MusicXML | scanned scores have to be brought in as MusicXML by hand; its tests skip |
 | QuickRecorder | the screen recorder only | use the scrolling renderer, which is the default anyway |
+
+### homr, for reading scanned scores (optional)
+
+homr turns a page image into MusicXML. It is **not** a pip package of this
+project and does not go into `.venv`: it is ~660 MB of onnxruntime and opencv
+wheels plus ~150 MB of model weights it keeps inside its own site-packages, and
+the unattended deploy reinstalls this project's requirements on every merge.
+So it gets a venv of its own, outside the checkout, built by a script:
+
+```bash
+scripts/install-homr.sh          # needs uv; ~10 minutes, ~660 MB on disk
+```
+
+That creates `~/.local/share/musescore-choir-plugins/homr-venv` on python 3.12
+and downloads the model weights, so the first scan is not the slow one.
+Re-running it is safe. Set `HOMR_VENV` to put it elsewhere, and then `HOMR_BIN`
+in `.env` so the app can find it. `HOMR_SOURCE` is where homr is installed
+from — a PyPI pin now, our own fork's git URL once
+[#104](https://github.com/eerovil/musescore-choir-plugins/issues/104) lands.
+Without homr, `src/song_app/omr.py` raises a message saying so and its tests
+skip; nothing else in the app is affected.
 
 Install the QML plugins separately by copying or symlinking `plugins/` into
 `~/Documents/MuseScore3/Plugins` — MuseScore loads them from there, not from this
