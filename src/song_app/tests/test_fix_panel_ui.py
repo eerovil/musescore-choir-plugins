@@ -128,6 +128,8 @@ COLLAPSED = {
     "measure": 2,
     "staff": "whole score",
     "status": "open",
+    "collapsed": 18,
+    "collapsed_bars": 18,
     "detail": ("18 bar(s) sit at a length the engraving never prints (66 staff-bars, "
                "first at m2), listed as one line because 80% of bars carry their own "
                "length — free or mixed meter looks like this, and so does a badly "
@@ -161,4 +163,48 @@ def test_a_collapsed_meter_summary_reads_as_a_finding_not_as_silence(live, page)
     page.wait_for_selector("text=No issues")
     assert not errors, f"the panel raised: {errors}"
     song.data["health"] = {"checked_against": None, "issues": []}
+    song.save()
+
+
+def test_the_review_stage_shows_the_findings_behind_the_collapsed_line(live, page):
+    """The number two scans get compared by. Collapsing rows must not collapse it.
+
+    B6's whole-page parse would otherwise read "4 open issue(s)" beside its
+    per-system parse's 28 — the comparison the whole card is about.
+    """
+    base, song = live
+    fingerprint = state.file_fingerprint(song.cleaned_path())
+    song.data["health"] = {
+        "checked_against": fingerprint,
+        "issues": [COLLAPSED] + [
+            {"id": f"malformed-m{m}-s1-v0", "kind": "malformed-measure", "measure": m,
+             "staff": "T1", "status": "open", "detail": "voice 1 fills 7/8 of 1"}
+            for m in (4, 9, 12)
+        ],
+    }
+    song.data["stage"] = "review"
+    song.save()
+
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/#/song/{song.slug}")
+    page.wait_for_selector(".stagebar")
+    page.locator(".stagebar .step", has_text="Review").first.click()
+    page.wait_for_selector(".verify")
+
+    health_row = page.locator(".verify .check", has_text="Health").first
+    health_row.wait_for()
+    # 18 collapsed meter findings + 3 malformed = 21, from 4 rows in the Fix panel.
+    assert "21 open issue(s)" in health_row.inner_text()
+    assert "18 of them are meter findings" in health_row.inner_text()
+
+    evidence = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))), "evidence")
+    os.makedirs(evidence, exist_ok=True)
+    page.screenshot(path=os.path.join(evidence, "issue-124-review-count.png"),
+                    full_page=True)
+    assert not errors, f"the panel raised: {errors}"
+
+    song.data["health"] = {"checked_against": None, "issues": []}
+    song.data["stage"] = "fix"
     song.save()
