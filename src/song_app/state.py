@@ -14,6 +14,8 @@ import time
 import unicodedata
 from typing import Dict, List, Optional
 
+from . import health
+
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
 STATE_FILE = ".song.json"
@@ -120,8 +122,10 @@ class Song:
             "mode": self.mode,
             "stage_index": STAGES.index(self.stage) if self.stage in STAGES else 0,
             "stages": STAGES,
-            "open_issues": sum(
-                1 for i in self.data.get("health", {}).get("issues", [])
+            # Findings, not rows — the library badge is a number two songs get
+            # compared by, so a collapsed meter row has to count for what it holds.
+            "open_issues": health.finding_count(
+                i for i in self.data.get("health", {}).get("issues", [])
                 if i.get("status") == "open"
             ),
             "lyric_warnings": len(self.data.get("lyrics", {}).get("warnings", [])),

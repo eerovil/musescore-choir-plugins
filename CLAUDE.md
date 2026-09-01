@@ -529,7 +529,18 @@ state model are in `DESIGN.md`.
   ≤0.19 except Venematka's 0.76–0.80, so the line sits in an empty gap, and crossing
   it now costs presentation instead of silence. The summary's id carries the count
   (`meter-collapsed-66`), so dismissing "4 bars disagree" does not cover "6 bars
-  disagree". Missing notes that still fill the bar (a
+  disagree".
+  **Collapsing the presentation is the point; collapsing the number would be the same
+  bug one level up**, so the row carries `collapsed` as an integer and every count a
+  person reads goes through `health.finding_count`, which weighs a row by what it
+  stands for: the library badge (`state.to_summary`), the "N issue(s) to review" line
+  the clean finishes on (`server._run_clean`), and the Review stage's health result
+  (`verification.summary`, which also puts `open_count` / `row_count` /
+  `collapsed_count` on the wire and says in its detail how many findings are behind
+  the one line). Counting rows would have put B6 straight back where it started — "4
+  open issue(s)" next to a per-system parse's 28. The cost is that Venematka's Review
+  stage reads 81 rather than 16; that is the true number, and its detail says 66 of
+  them are one line in the Fix panel. Missing notes that still fill the bar (a
   half-rest standing in for lost notes, e.g. the m18 case) are **not**
   tick-detectable — they surface as lyric syllable overflow at import. Missing
   slurs are undetectable and stay manual. `merge_issues` carries over `dismissed`

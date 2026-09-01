@@ -11,6 +11,7 @@ from typing import Dict, Iterable, List
 
 from lxml import etree
 
+from . import health as health_check
 from . import state
 
 COMBINED_PART = "ALL"
@@ -158,10 +159,24 @@ def summary(song: state.Song, systems: int) -> Dict:
     elif health.get("checked_against") != current:
         health_result = _result("stale", "Health was not checked against the current cleaned score.")
     else:
-        open_count = sum(1 for issue in health.get("issues", [])
-                         if issue.get("status") == "open")
-        health_result = _result("passed" if not open_count else "warning",
-                                f"Current score checked; {open_count} open issue(s).")
+        # Count findings, not rows. A `meter-collapsed` row is one row standing for
+        # many, and the whole reason it exists is that a score in that state is the
+        # one most worth looking at -- so a summary that read it as 1 would put the
+        # cliff straight back: B6's whole page would say "4 open issue(s)" against
+        # its per-system parse's 28, which is the comparison that nearly cost a real
+        # decision (#122). The rows stay collapsed in the Fix panel; the number does
+        # not. Both are on the wire so the panel can say which is which.
+        open_issues = [i for i in health.get("issues", []) if i.get("status") == "open"]
+        open_count = health_check.finding_count(open_issues)
+        folded = [i for i in open_issues if int(i.get("collapsed") or 1) > 1]
+        collapsed_count = health_check.finding_count(folded)
+        detail = f"Current score checked; {open_count} open issue(s)."
+        if folded:
+            detail += (f" {collapsed_count} of them are meter findings shown as "
+                       f"{len(folded)} line(s) in the Fix panel.")
+        health_result = _result("passed" if not open_count else "warning", detail,
+                                open_count=open_count, row_count=len(open_issues),
+                                collapsed_count=collapsed_count)
 
     stored = song.data.get("verification", {}).get("notes")
     if not stored:

@@ -27,7 +27,7 @@ rounding false-positives.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from lxml import etree
 
@@ -231,6 +231,13 @@ def scan(cleaned_path: str) -> List[Dict]:
             "kind": "meter-collapsed",
             "measure": bars[0],
             "staff": "whole score",
+            # How many findings this one row stands for. It is a number rather than
+            # a sentence because every count the app shows has to be able to add it
+            # up: a row that reads as 1 puts the magnitude back in the detail string,
+            # where the summary cannot see it, and the score is silent all over
+            # again in the one place a person compares two scans.
+            "collapsed": len(collapsed),
+            "collapsed_bars": len(bars),
             "detail": (
                 f"{len(bars)} bar(s) sit at a length the engraving never prints "
                 f"({len(collapsed)} staff-bars, first at m{bars[0]}), listed as one "
@@ -239,6 +246,18 @@ def scan(cleaned_path: str) -> List[Dict]:
             ),
         })
     return issues
+
+
+def finding_count(issues: Iterable[Dict]) -> int:
+    """How many findings these rows stand for, not how many rows there are.
+
+    A `meter-collapsed` row is one row carrying `collapsed` findings, so every count
+    a person reads has to weigh it. Counting rows is what made B6's whole-page parse
+    look like 3 problems next to a per-system parse's 28 -- the comparison that
+    nearly cost a real decision (#122). Collapsing the *presentation* is the point;
+    collapsing the *number* would be the same bug in a new place.
+    """
+    return sum(int(i.get("collapsed") or 1) for i in issues)
 
 
 def merge_issues(found: List[Dict], previous: List[Dict]) -> List[Dict]:

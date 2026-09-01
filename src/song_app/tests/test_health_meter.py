@@ -177,3 +177,58 @@ def test_the_fixture_is_clean(tmp_path):
         pytest.skip("prototyping fixture not present")
     assert not _kinds(fixture, "unprinted-meter")
     assert not _kinds(fixture, "malformed-measure")
+
+
+def test_the_count_a_person_reads_does_not_collapse_with_the_rows(tmp_path):
+    """Crossing the line must change the presentation and not the magnitude.
+
+    This is the defect one level up from the rule itself. Collapsing 32 findings
+    into one row and then counting rows puts B6 back where it was — "4 open
+    issue(s)" against a per-system parse's 28 — which is exactly the comparison
+    that nearly cost a real decision. Every count the app shows reads
+    `finding_count`, so a collapsed row weighs what it stands for.
+    """
+    # One voice a bar, so nothing but the meter rule has anything to say.
+    bars = [[8]] + [[9]] * 4                         # 4 bars disagree, either way
+    below = _score(tmp_path / "below", [[8]] * 4 + bars[1:],
+                   lens=[None] * 4 + ["9/8"] * 4)    # 4 of 8 -> listed
+    above = _score(tmp_path / "above", bars, lens=[None] + ["9/8"] * 4)  # 4 of 5
+
+    listed, counted = health.scan(below), health.scan(above)
+    assert len(listed) == 4 and len(counted) == 1    # rows do collapse
+    assert health.finding_count(listed) == health.finding_count(counted) == 4
+
+    # And the magnitude is a number on the row, not prose inside its sentence.
+    assert counted[0]["collapsed"] == 4
+    assert counted[0]["collapsed_bars"] == 4
+
+
+def test_the_verification_summary_reports_the_underlying_count(tmp_path, monkeypatch):
+    """The summary is the surface two scans get compared on, so it has to add up."""
+    from src.song_app import state, verification
+
+    monkeypatch.setattr(state, "SONGS_DIR", str(tmp_path / "songs"))
+    song = state.create("Meter Cliff", per_system=False)
+    cleaned = song.path("meter_cliff_cleaned.mscx")
+    with open(cleaned, "w") as fh:
+        fh.write("<museScore><Score/></museScore>")
+    song.data["cleaned"] = "meter_cliff_cleaned.mscx"
+
+    found = health.scan(_score(tmp_path / "above", [[8]] + [[9]] * 4,
+                               lens=[None] + ["9/8"] * 4))
+    song.data["health"] = {
+        "checked_against": state.file_fingerprint(cleaned),
+        "issues": health.merge_issues(found, []),
+    }
+    song.save()
+
+    result = verification.summary(song, systems=0)["health"]
+    assert result["open_count"] == 4                 # not 1
+    assert result["row_count"] == 1
+    assert result["collapsed_count"] == 4
+    assert "4 open issue(s)" in result["detail"]
+    assert "shown as 1 line(s)" in result["detail"]
+    assert result["status"] == "warning"
+
+    # The library badge is the other place two songs are compared by a number.
+    assert song.to_summary()["open_issues"] == 4
