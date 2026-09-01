@@ -251,14 +251,23 @@ def _token_from_lyric(syllabic: str, text: str) -> str:
 
 
 def _merge_tokens(tokens: List[str]) -> str:
-    """Merge hyphenated syllables and join with space."""
+    """Merge hyphenated syllables and join with space.
+
+    An `_` is a note with no syllable, never part of a word: a trailing hyphen
+    says the word carries on to the next *syllable*, and the empty slot is not
+    one. Absorbing it produced `kär-_ si-net`, which reads back as a syllable
+    literally spelled "_" and loses the slot it was standing for.
+    """
     if not tokens:
         return ""
     result: List[str] = []
     cur = tokens[0]
     for i in range(1, len(tokens)):
         nxt = tokens[i]
-        if cur.endswith("-"):
+        if cur == "_" or nxt == "_":
+            result.append(cur)
+            cur = nxt
+        elif cur.endswith("-"):
             cur = cur.rstrip("-") + "-" + nxt.lstrip("-").strip()
         elif nxt.startswith("-"):
             cur = cur.rstrip() + "-" + nxt.lstrip("-").strip()
@@ -1375,7 +1384,15 @@ def editor_grid(
             )
             tokens: List[str] = []
             for mi in range(system.start - 1, system.end):
-                tokens += [t for t in by_measure.get(mi, {}).get(part.id, []) if t != "_"]
+                tokens += by_measure.get(mi, {}).get(part.id, [])
+            # Trailing slots are kept as well as inner ones: a note at the end of
+            # the line with no word under it is worth seeing, and dropping it left
+            # the cell short of its own capacity, so re-saving an untouched system
+            # reported `too_few` out of nowhere. But a cell of *nothing but* empty
+            # slots is a part that does not sing in this system, and that is an
+            # empty cell, not a row of underscores.
+            if not any(t != "_" for t in tokens):
+                continue
             text = _merge_tokens(tokens).strip()
             if text:
                 cells.setdefault(system.index, {})[part.name] = text

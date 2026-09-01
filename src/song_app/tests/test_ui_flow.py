@@ -177,8 +177,12 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     other = page.locator(".lyrow", has=page.locator('textarea[data-part="T2"]')).first
     expect(other.locator(".lyerr")).to_have_count(0)
 
-    # What was typed survives the re-render, read back out of the score.
-    expect(page.locator('textarea[data-sys="0"][data-part="T1"]')).to_have_value("yk")
+    # What was typed survives the re-render, and every remaining lyric slot is
+    # represented explicitly as a bare-note marker.
+    rendered_cell = page.locator('textarea[data-sys="0"][data-part="T1"]')
+    label = rendered_cell.locator("xpath=preceding-sibling::label").inner_text()
+    capacity = int(re.search(r"(\d+) lyric slots", label).group(1))
+    assert rendered_cell.input_value().split() == ["yk"] + ["_"] * (capacity - 1)
     if evidence := os.getenv("ISSUE_17_EVIDENCE_DIR"):
         page.locator(".stagebar .step", has_text="Review").click()
         expect(page.locator(".verify")).to_contain_text("Health: Current score checked")
