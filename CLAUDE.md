@@ -37,6 +37,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   state.py               Song state machine (.song.json), slug, stages
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
   pdf_systems.py         Crop the source PDF into one image per printed system
+  omr.py                 Run homr on a page image -> MusicXML (its own venv; see below)
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
@@ -285,6 +286,16 @@ Key test modules:
   tuplet survival, line breaks, lyric map/metaTags, carried-forward answers, answer
   persistence) and pins both assignment adapters — the CLI prompt and grid answers —
   to the same rebuild.
+- `src/song_app/tests/test_omr.py` — added by this pull request. Most of it drives a
+  stub standing in for homr, because what `omr.py` owns is the boundary: where the
+  binary is found, that the MusicXML lands where the caller asked and the teaser
+  litter does not follow it, that `--gpu no` is actually on the command line, that
+  both streams reach the log, and that each way of failing says something — a bad
+  exit, a clean exit with no file, a wedged run, a PDF handed in by mistake, homr not
+  installed. The last test is the card's own acceptance and the only one that runs the
+  real thing: a page of the scanned fixture rasterised at 300 dpi goes in and parseable
+  MusicXML with parts, measures and notes comes out (~50s). It skips without homr or
+  poppler, the same way the MuseScore-CLI and Playwright tests skip.
 - `src/song_app/tests/test_clean_flow.py` — the song-app path: grid answers →
   `save_system_answers` → headless `run_clean` → rebuilt parts + lyric routing.
 - `src/song_app/tests/test_ui_flow.py` — the **SPA itself**, in a real browser: it
@@ -660,6 +671,56 @@ state model are in `DESIGN.md`.
   one syllable too long. The cleaned system crop is shown alongside where one is
   available (`/compare` + `/cleaned-system/{index}`); it needs a MuseScore render, so
   not having it costs a picture rather than the feature.
+- `omr.py` is added by this pull request: **one call that turns a page image into a
+  MusicXML path**, `read_page(image, out_dir=..., log=...)`. It runs homr (optical
+  music recognition, adopted in #86), which is the first thing the app depends on that
+  cannot live in the app's environment — so where it lives is the decision this module
+  carries, and the reasoning is worth keeping.
+  homr **is not a pip requirement and must not become one.** It is ~660 MB of
+  onnxruntime and opencv wheels, plus ~150 MB of model weights it stores *inside its
+  own site-packages*, and `scripts/deploy-song-app.sh --unattended` reinstalls
+  `pip-requirements.txt` on every merge — so putting it there would re-download the
+  weights on a whim and let a resolution failure in an ML stack take the live app
+  down. It also is not the `omr` **distrobox** container it was benchmarked in: that
+  container is hand-built host state nothing in this repo describes, which is the cost
+  CLAUDE.md's "Working in a worktree" section exists to complain about. And it is not
+  a container image either — a build system to hold one venv is not worth the second
+  thing to keep working.
+  So: a `uv`-managed python 3.12 venv outside the checkout, built by
+  **`scripts/install-homr.sh`** (idempotent; `HOMR_VENV` moves it), called as a
+  subprocess. A fresh clone runs one script.
+  **Where homr comes from is one variable in that script, `HOMR_SOURCE`, and it is
+  expected to stop being a PyPI pin.** #97 decided to fork homr and build the
+  multi-page joining, the staff-grouping fix and PDF input *inside the fork*, because
+  the app only ever sees homr's output and by then the staves are gone; #104 stands
+  that fork up. So `homr==0.7.0` today becomes a `git+https://...` URL then, changed in
+  one line, and nothing in `omr.py` or in the rest of the script moves with it. Do not
+  be surprised to find a git URL where a version pin is written here.
+  Two things the earlier notes got wrong
+  and this pins: homr 0.7.0 declares `>=3.11,<3.16` and installs on 3.14 too, so the
+  version is a choice and not a wall — 3.12 because every benchmark number in #93 and
+  #95 came off 3.12; and there is **no `[cpu]` extra** on 0.7.0, so upstream's
+  `uvx --from 'homr[cpu]' homr` recipe silently ignores it. Plain `homr==0.7.0` pulls
+  the CPU onnxruntime, which is all this host can use anyway.
+  What the module absorbs is the CLI's shape. homr takes one image, writes
+  `<image>.musicxml` **beside it**, has no `--output`, and drops a `_teaser.png` next
+  to the input, so the run happens on a copy in a scratch dir and only the answer is
+  moved to where the caller asked. `--gpu` is passed **`no`** every time and never
+  left at `auto`: auto asks whether the CUDA provider is *registered*, not whether it
+  can run, and this host's GTX 970 is sm_52 against onnxruntime's sm_60 floor, so auto
+  would pick CUDA and die on the first segnet node without falling back (#93). Note
+  the value is `no`, not `off`. Output is streamed line by line to a `log` callback —
+  a page is ~30s and a song 2–5 minutes, so that is the progress channel #93 asked
+  for — and every failure raises `HomrError` carrying the tail of what homr said.
+  Including the quiet one: homr **deletes its own MusicXML when parsing raises**, so a
+  zero exit with no file is a failure and is reported as one. The deadline is a timer
+  that kills the process group, not `wait(timeout=...)`, because reading the pipe is
+  what blocks. Not installed is its own error (`HomrMissing`) naming the install
+  script.
+  Deliberately **not** here yet, because they belong to other cards on #92's map:
+  nothing calls `read_page` (the stage machine and UI are #98), pages are not stitched
+  into one score (#97), the deploy and `/healthz` do not know homr exists, and whether
+  the unit of work is a page or a printed system is #103.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
@@ -1500,6 +1561,14 @@ its own API calls, and `load_dotenv` does not override a variable that is alread
 so `./song.py` run from such a chat persists the loopback origin into the song's
 `.song.json`. The service has no such variable; clear them (`env -u AGENTDECK_URL`)
 before reading anything into a conclusion.
+
+**homr lives at `~/.local/share/musescore-choir-plugins/homr-venv` on this host**, put
+there by `scripts/install-homr.sh` and pointed at by nothing in `.env` because that is
+the script's own default. It is host state, like `.venv` — but unlike the `omr`
+distrobox container it replaces, a second host reproduces it by running one committed
+script. The deploy does not touch it, on purpose: it is not in `pip-requirements.txt`,
+so a merge cannot churn 150 MB of model weights, and `/healthz` does not know it
+exists.
 
 Issues are worked from a GitHub Project board by the AgentDeck poller (instance
 `musescore`, unit `agentdeck-poller@musescore.timer`). Its manifest is **not** in this
