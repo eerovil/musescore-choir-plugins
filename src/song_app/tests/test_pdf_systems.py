@@ -8,6 +8,7 @@ resolution, and is never labelled with a measure range that does not fit.
 import json
 import os
 import shutil
+import subprocess
 
 import pytest
 
@@ -133,3 +134,23 @@ def test_the_grid_overlay_is_the_page_with_a_scale_on_it(tmp_path):
     assert gridded != plain
     reds = [px for px in b.convert("RGB").getdata() if px[0] > 200 and px[1] < 100]
     assert reds, "no scale was drawn"
+
+
+def test_a_crop_follows_the_score_it_was_cut_from(bounds, tmp_path):
+    """The same band of a *different* PDF is a different crop.
+
+    The compare view cuts its bands out of a render of the cleaned score, and that
+    render changes whenever the score does. Keying the cache on the band alone
+    served bar 8 as it looked before a slur was recorded, hours after the slur was
+    in the file and in the render -- so the page said the fix had not applied.
+    """
+    one = [bounds[0]]
+    first = pdf_systems.crop_systems(PDF, one, out_dir=str(tmp_path), dpi=100)[0]
+
+    # A different score of the same shape: page 2 of the fixture, alone.
+    other = str(tmp_path / "other.pdf")
+    subprocess.run(["pdfseparate", "-f", "2", "-l", "2", PDF, other], check=True)
+    second = pdf_systems.crop_systems(other, one, out_dir=str(tmp_path), dpi=100)[0]
+
+    assert second.path != first.path
+    assert Image.open(second.path).tobytes() != Image.open(first.path).tobytes()
