@@ -4,6 +4,7 @@ Both write "<slug> <part>" files into media/video, so review and upload do not
 care which one ran. Neither renderer actually runs here — what is under test is
 the routing, the state it records, and the stage it leaves the song in.
 """
+import contextlib
 import os
 import time
 
@@ -14,7 +15,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
-from src.song_app import job_state, pipeline, server, state
+from src.song_app import heavy_slot, job_state, pipeline, server, state
 
 
 @pytest.fixture
@@ -86,6 +87,32 @@ def test_the_scrolling_renderer_is_what_runs_by_default(client, song, monkeypatc
     assert data["record"]["bpm"] == 80
     assert data["record"]["outputs"] == [f"{song.slug} S1.mp4", f"{song.slug} A1.mp4"]
     assert data["stage"] == "upload"
+
+
+def test_the_scrolling_render_holds_a_host_wide_heavy_slot(client, song, monkeypatch):
+    """The render is minutes of every core, so it waits its turn — and the slot
+    is held across the render itself, not merely asked for and dropped."""
+    seen, order = {}, []
+    _fake_scroll(monkeypatch, seen)
+    rendered = pipeline.run_scroll_video
+
+    def watched(*args, **kwargs):
+        order.append("render")
+        return rendered(*args, **kwargs)
+
+    @contextlib.contextmanager
+    def fake_slot(label, **kwargs):
+        order.append(f"take {label}")
+        yield "lease-1"
+        order.append("release")
+
+    monkeypatch.setattr(pipeline, "run_scroll_video", watched)
+    monkeypatch.setattr(heavy_slot, "heavy_slot", fake_slot)
+
+    assert client.post(f"/api/songs/{song.slug}/record", json={}).json()["started"]
+    _finished(client, song.slug)
+
+    assert order == [f"take song app render {song.slug}", "render", "release"]
 
 
 def test_the_song_api_reports_when_the_bpm_choice_is_needed(client, song):

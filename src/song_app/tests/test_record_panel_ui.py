@@ -319,3 +319,69 @@ def test_mobile_review_and_record_are_task_focused(live, page):
     expect(page.get_by_text("⚠ Score changed after approval", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Back to Review")).to_be_visible()
     expect(page.get_by_role("button", name="Render all 4 parts")).to_be_disabled()
+
+
+def test_the_render_says_when_it_is_waiting_for_a_heavy_slot(live, page, monkeypatch):
+    """The queue is only visible as words in the song's live log, so that is
+    where it is checked: the wait, the turn coming, and then the render."""
+    import httpx
+
+    from src.song_app import heavy_slot, pipeline
+
+    base, _ = live
+    song = state.create("Queued Song", per_system=False)
+    with open(song.path("queued_cleaned.mscx"), "w") as fh:
+        fh.write(SCORE)
+    song.data["cleaned"] = "queued_cleaned.mscx"
+    fingerprint = state.file_fingerprint(song.cleaned_path())
+    song.data["cleaned_fingerprint"] = fingerprint
+    song.data["health"] = {"checked_against": fingerprint, "issues": []}
+    song.data["lyrics"] = {"imported_against": fingerprint, "warnings": []}
+    song.data["review"] = {"approved_against": fingerprint}
+    song.data["stage"] = "record"
+    song.save()
+
+    busy = [True]
+
+    def deck(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if method == "POST" and url.endswith("/api/heavy-slots"):
+            if busy[0]:                       # somebody else has the host's slot
+                busy[0] = False
+                return httpx.Response(503, request=request)
+            return httpx.Response(200, request=request,
+                                  json={"lease": "lease-1", "ttl_s": 120.0})
+        return httpx.Response(200, request=request, json={})
+
+    monkeypatch.setenv("AGENTDECK_API_URL", "http://deck.test")
+    monkeypatch.setattr(heavy_slot, "_request", deck)
+    monkeypatch.setattr(heavy_slot, "RETRY_PAUSE_S", 0.5)
+
+    def fake_render(song_dir, cleaned, name, *, log=lambda m: None, **kwargs):
+        out = os.path.join(song_dir, "media", "video")
+        os.makedirs(out, exist_ok=True)
+        made = []
+        for part in ("S", "A", "T", "B"):
+            path = os.path.join(out, f"{name} {part}.mp4")
+            open(path, "wb").close()
+            made.append(path)
+        log("Rendered 4 parts.")
+        return made
+
+    monkeypatch.setattr(pipeline, "run_scroll_video", fake_render)
+
+    page.goto(f"{base}/#/song/{song.slug}")
+    page.wait_for_selector(".stagebar")
+    page.locator(".stagebar .step", has_text="Record").click()
+    page.wait_for_selector("text=Video style")
+    page.get_by_role("button", name="Render all 4 parts").click()
+
+    log = page.locator(".log")
+    expect(log).to_contain_text("Waiting for a free heavy slot on this host")
+    expect(log).to_contain_text("The heavy slot is free; starting.")
+    expect(log).to_contain_text("Rendered 4 parts.")
+    if evidence := os.getenv("ISSUE_101_EVIDENCE_DIR"):
+        os.makedirs(evidence, exist_ok=True)
+        log.scroll_into_view_if_needed()
+        expect(log).to_be_in_viewport()
+        page.screenshot(path=os.path.join(evidence, "issue-101-heavy-slot-log.png"))
