@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, health, heavy_slot, job_state, omr, pdf_systems,
-               pipeline, scan, state, verification)
+               pipeline, scan, state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 
 SCRIPT_DIR = state.SCRIPT_DIR
@@ -912,6 +912,43 @@ def api_save_bounds(slug: str, body: Dict = None) -> Dict:
     # indices; each fragment is checked against the geometry now at its own.
     song = _require(slug)
     return {"systems": saved, "discarded": scan.reconcile(song)}
+
+
+@app.post("/api/songs/{slug}/find-systems")
+async def api_find_systems(slug: str, body: Dict = None) -> Dict:
+    """Propose a band for every printed system, without saving any of them.
+
+    A proposal, not an answer: it comes back to the editor as draggable bands
+    the same as any other, and the person looking at the page saves it or does
+    not. Nothing here writes `.systems.json`, so a wrong reading costs a drag
+    rather than a scan of the wrong music.
+
+    Slow enough to watch — seconds a page — so its progress goes to the song's
+    live log while the request is still open.
+    """
+    song = _require(slug)
+    pdf = _song_pdf(song)
+    key = (body or {}).get("engine")
+    engine = None
+    if key and key != omr.DEFAULT_ENGINE:
+        try:
+            engine = omr.engine_for(key)
+        except omr.HomrMissing as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    def run() -> List[Dict]:
+        log = lambda m: hub.emit(slug, {"type": "log", "line": m})
+        return [b.to_dict() for b in
+                system_finder.find_bands(pdf, engine=engine, log=log)]
+
+    try:
+        found = await asyncio.get_running_loop().run_in_executor(None, run)
+    except omr.HomrError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(500, str(exc)) from None
+    return {"systems": found}
 
 
 @app.get("/api/songs/{slug}/page/{page}")

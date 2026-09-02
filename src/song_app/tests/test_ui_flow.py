@@ -571,3 +571,29 @@ def test_creating_a_song_needs_one_file_and_says_which_are_missing(page, live_ap
     page.get_by_role("button", name="Create").click()
     page.wait_for_url("**/#/song/**", timeout=30_000)
     expect(page.locator(".stagebar .step.active")).to_have_text("Clean")
+
+def test_finding_the_systems_fills_the_editor_and_saves_nothing(
+        page, live_app, bounds_song, monkeypatch):
+    """The button proposes; the person still saves.
+
+    Stubbed, because what homr says is pinned against real scans in
+    test_system_finder.py and this is about what the editor then does with it:
+    the bands arrive unsaved and the song still holds what it held.
+    """
+    from src.song_app import pdf_systems, system_finder
+
+    slug, _, stored = bounds_song
+    monkeypatch.setattr(system_finder, "find_bands", lambda *a, **k: [
+        pdf_systems.SystemBounds(index=i + 1, page=1, top=t, bottom=t + 0.3)
+        for i, t in enumerate((0.05, 0.35, 0.65))
+    ])
+    _open_systems_tab(page, live_app, slug)
+    assert page.locator(".sysband").count() == 15
+
+    page.on("dialog", lambda d: d.accept())          # "replace the 15 you have?"
+    page.get_by_role("button", name="Find systems").click()
+
+    expect(page.locator(".sysbar")).to_contain_text("Proposed 3", timeout=30_000)
+    assert page.locator(".sysband").count() == 3
+    expect(page.locator(".sysstatus")).to_contain_text("unsaved")
+    assert len(stored()) == 15, "a proposal must not write itself down"

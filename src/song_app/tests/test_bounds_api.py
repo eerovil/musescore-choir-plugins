@@ -127,3 +127,33 @@ def test_unlabelled_bounds_are_not_used_for_the_lyric_grid(client):
 
     grid = client.get(f"/api/songs/{SLUG}/lyric-grid").json()
     assert len(grid["systems"]) == 1        # fell back to the score
+
+
+def test_finding_the_systems_proposes_and_saves_nothing(client, monkeypatch):
+    """The finder answers into the editor, not into the file.
+
+    A proposal that wrote itself down would be the tidy-parse failure one stage
+    early: the bands nobody looked at are exactly the bands worth looking at.
+    """
+    from src.song_app import system_finder
+
+    proposal = [pdf_systems.SystemBounds(index=1, page=1, top=0.1, bottom=0.5),
+                pdf_systems.SystemBounds(index=2, page=1, top=0.5, bottom=0.9)]
+    monkeypatch.setattr(system_finder, "find_bands", lambda *a, **k: proposal)
+
+    before = client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]
+    found = client.post(f"/api/songs/{SLUG}/find-systems", json={}).json()["systems"]
+    assert [(b["page"], b["top"]) for b in found] == [(1, 0.1), (1, 0.5)]
+    assert client.get(f"/api/songs/{SLUG}/bounds").json()["systems"] == before
+
+
+def test_a_page_the_finder_could_not_read_is_said_rather_than_swallowed(client, monkeypatch):
+    from src.song_app import omr, system_finder
+
+    def boom(*a, **k):
+        raise omr.HomrError("No noteheads found on page 2")
+
+    monkeypatch.setattr(system_finder, "find_bands", boom)
+    r = client.post(f"/api/songs/{SLUG}/find-systems", json={})
+    assert r.status_code == 400
+    assert "No noteheads found on page 2" in r.text
