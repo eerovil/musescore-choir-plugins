@@ -392,7 +392,9 @@ Key test modules:
   the way a scan would leave them, **with real band stamps**, or the app discards them all
   on the next read, which is the invalidation rule working rather than a test detail.
   It also pins the engine picker: hidden when one homr is installed, and when two are, the
-  engine chosen in the browser is the binary `scan.run` is actually handed.
+  engine chosen in the browser is the binary `scan.run` is actually handed. And that a
+  system which read fine can be read again — from the panel and from its compare row,
+  each re-reading only the system named and saying what a changed reading costs.
 - `src/song_app/tests/test_benchmark.py` — added by this pull request, and the first
   thing in the suite that meets a **real scan**. Three tiers, so each dependency buys
   something and none is required. **No dependencies**: the manifest's files are on disk
@@ -1102,6 +1104,18 @@ state model are in `DESIGN.md`.
   **A hole is visible, blocking, and retried on its own**: each one is listed with what
   homr said and a button that re-reads that system alone. It was a `prompt()` asking for
   comma-separated numbers.
+  **A system that read fine can be read again**, from the panel (numbered buttons) and
+  from each row of `Scan vs page`. A scan skips a band whose geometry has not moved, so
+  until this the only way to look at a system again — with the other engine, or because
+  it came back wrong — was to drag its boundary: editing the page's own geometry to
+  provoke a side effect, which then also invalidated the band stamp for a reason that
+  was a lie. The cost is said on the row rather than in a dialog, because it is only a
+  cost when the reading actually changes: `reconcile` discards that system's answers and
+  lapses the OK when the content stamp moves, and a re-read that came out the same costs
+  nothing. The panel owns the run (it has the engine picker and the log) and publishes
+  it as `scanRerun`, so the compare rows re-read through the same call rather than a
+  second copy of it — carrying its slug, since a closure from another song would
+  otherwise still answer.
   **Which homr reads it is a picker, not a config file** — a `Read with` select over
   `GET /api/homr-engines`, shown only when this host has more than one installed and
   applying to that run and its per-system retries. Trying a homr branch against real

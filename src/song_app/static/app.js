@@ -454,6 +454,13 @@ async function compareView(view, slug) {
 // the cleaned score. Cropping first is not a nicety: a whole A4 rendered small
 // enough to look at cannot show a slur, which is how a confident and wrong
 // reading got made here once already.
+// Re-reading belongs to the Scan panel — it owns the engine picker and the log —
+// but the place a person decides a system was read wrong is here, looking at the
+// parse against the page. So the panel publishes its rerun and these rows call
+// it, the same cross-talk `showSystem` already does in the other direction. It
+// carries its slug, or a stale closure from another song would still answer.
+let scanRerun = null;
+
 function scannedView(view, song, slug) {
   const P = `/api/songs/${encodeURIComponent(slug)}`;
   const st = song.scan_status || {};
@@ -477,6 +484,7 @@ function scannedView(view, song, slug) {
           : el("img", { className: "cmpimg", loading: "lazy",
                         src: `${P}/scan-system/${i}?dpi=200`,
                         alt: `scanned system ${i}` }),
+      rereadRow(slug, i, bad),
     ));
   }
   view.replaceChildren(...(rows.length ? rows
@@ -488,6 +496,22 @@ function scannedView(view, song, slug) {
     row.classList.add("cmpon");
     row.scrollIntoView({ block: "start", behavior: "smooth" });
   };
+}
+
+// One system, read again — with whichever homr the Scan panel has picked.
+// A scan skips a band whose geometry has not moved, so before this the only way
+// to look at a system again was to nudge its boundary: an edit to the page's own
+// geometry made to trigger a side effect. What it costs is said on the row rather
+// than in a dialog, because it is only a cost when the reading actually changes.
+function rereadRow(slug, index, failed) {
+  if (!scanRerun || scanRerun.slug !== slug) return "";
+  return el("div", { className: "row cmpredo" },
+    el("button", { onclick: (e) => { e.target.disabled = true; scanRerun.run([index]); } },
+      `Read system ${index} again`),
+    el("span", { className: "muted" },
+      failed ? "It has not been read yet."
+        : "A reading that comes out different discards this system's answers and "
+          + "lapses your OK; one that comes out the same costs nothing."));
 }
 
 // ---- Systems: the printed-system boundaries, drawn over the page and draggable ----
@@ -942,6 +966,9 @@ function panelScan(panel, song, P, refresh, actions) {
     try { await postJSON(`${P}/scan`, body); refresh(); }
     catch (e) { appendLog(e.message, true); }
   };
+  // The compare rows re-read from here, so they get the picked engine and the log
+  // without a second copy of either.
+  scanRerun = { slug: song.slug, run: rerun };
   // Only offered while there is something to read: a band already read at its
   // current geometry is skipped, so a button on a finished scan would say it was
   // going to do something and then do nothing.
@@ -969,6 +996,25 @@ function panelScan(panel, song, P, refresh, actions) {
           el("button", { onclick: () => { openScanned(); showSystem(index); } },
             "Look at it"))));
     }
+  }
+
+  // A system that read fine is skipped by the next scan, because its band has not
+  // moved — so without this the only way to look at it again with the other engine
+  // was to drag its boundary, which is editing the page's geometry to provoke a
+  // side effect. Numbers rather than a list of rows: the looking is done in
+  // `Scan vs page`, which offers the same thing on each system it shows.
+  const done = [];
+  for (let i = 1; i <= (st.systems || 0); i++)
+    if (!(st.holes || []).includes(i)) done.push(i);
+  if (st.read && done.length) {
+    panel.append(el("h3", {}, "Read a system again"),
+      el("p", { className: "hint" },
+        "Forces a re-read even though the band has not moved — for trying another "
+        + "engine, or a system that came back wrong. A reading that comes out "
+        + "different discards that system's answers and lapses your OK; one that "
+        + "comes out the same costs nothing."),
+      el("div", { className: "row" }, ...done.map((i) =>
+        el("button", { disabled: running, onclick: () => rerun([i]) }, String(i)))));
   }
 
   if (running)
