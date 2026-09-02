@@ -70,20 +70,27 @@ Set `HOMR_SOURCE` to a commit to get a particular parse back.
 Without homr, `src/song_app/omr.py` raises a message saying so and its tests
 skip; nothing else in the app is affected.
 
-A branch of the fork can be installed **beside** the default one, which is how a
-homr change is tried against real repertoire:
+A branch of the fork needs **no install at all**. Clone the fork somewhere (or
+add a git worktree to an existing clone) and the app will run it from source,
+borrowing the installed venv's dependencies:
 
 ```bash
-HOMR_BRANCH=prototype/system-4 scripts/install-homr.sh
+git clone https://github.com/eerovil/homr.git ~/homr
+git -C ~/homr worktree add ~/homr-trees/system-4 prototype/system-4
 ```
 
-That builds a second venv (`homr-venv-prototype-system-4`) and leaves the first
-alone — a branch that replaced what it is being compared against could not be
-judged. The Scan panel then offers a **Read with** picker of everything
-installed, and the choice applies to that scan run only; nothing is recorded, so
-comparing two engines means reading a system with one, then the other, and
-looking at both against the page. The picker is hidden when only one homr is
-installed.
+`HOMR_CHECKOUT` says where the working copy is (default `~/homr`); its git
+worktrees are found from it. The Scan panel then offers a **Read with** picker
+listing the installed venv plus each working copy, labelled with the branch it
+has out *at that moment* — switch a branch there and the next scan runs it, with
+nothing to reinstall. The choice applies to that scan run only; nothing is
+recorded, so comparing two engines means reading a system with one, then the
+other, and looking at both against the page. The picker is hidden when the
+installed venv is all there is.
+
+The first time a working copy is picked, the venv's model weights are symlinked
+into it — homr keeps its weights beside its own source, so otherwise every
+worktree would download its own 150 MB.
 
 Install the QML plugins separately by copying or symlinking `plugins/` into
 `~/Documents/MuseScore3/Plugins` — MuseScore loads them from there, not from this

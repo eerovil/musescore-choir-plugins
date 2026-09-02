@@ -226,7 +226,8 @@ def test_the_engine_picker_appears_only_when_there_is_a_choice(live, page, monke
     base, song = live
     _read(state.load(song.slug), 3)
     monkeypatch.setattr(server.omr, "engines", lambda: [
-        server.omr.Engine(key="default", label="main", binary="/a/homr", default=True)])
+        server.omr.Engine(key="default", label="main", command=["/a/homr"],
+                          default=True)])
 
     errors = _open(page, base, song.slug)
 
@@ -239,12 +240,14 @@ def test_the_picked_engine_is_the_one_that_reads_the_system(live, page, monkeypa
     base, song = live
     _read(state.load(song.slug), 3, failed=(2,))
     monkeypatch.setattr(server.omr, "engines", lambda: [
-        server.omr.Engine(key="default", label="main", binary="/a/homr", default=True),
-        server.omr.Engine(key="prototype-system-4", label="prototype/system-4",
-                          binary="/b/homr")])
+        server.omr.Engine(key="default", label="main", command=["/a/homr"],
+                          default=True),
+        server.omr.Engine(key="system-4", label="prototype/system-4",
+                          command=["/a/python", "-m", "homr"],
+                          env={"PYTHONPATH": "/checkouts/system-4"})])
     asked = []
     monkeypatch.setattr(server.scan, "run", lambda song, **kw: (
-        asked.append(kw.get("binary")) or {"read": 2, "systems": 3, "holes": [2]}))
+        asked.append(kw.get("engine")) or {"read": 2, "systems": 3, "holes": [2]}))
 
     errors = _open(page, base, song.slug)
     picker = page.locator(".panel select")
@@ -252,13 +255,13 @@ def test_the_picked_engine_is_the_one_that_reads_the_system(live, page, monkeypa
     assert picker.locator("option").all_inner_texts() == [
         "main (default)", "prototype/system-4"]
 
-    picker.select_option("prototype-system-4")
+    picker.select_option("system-4")
     page.get_by_role("button", name="Read system 2 again").click()
     deadline = time.time() + 10
     while not asked and time.time() < deadline:
         page.wait_for_timeout(100)
 
-    assert asked == ["/b/homr"]
+    assert [e.env["PYTHONPATH"] for e in asked] == ["/checkouts/system-4"]
     assert not errors, f"the panel raised: {errors}"
 
 

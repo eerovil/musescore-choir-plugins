@@ -395,7 +395,7 @@ def _run_scan(slug: str, opts: Dict) -> None:
         # five minutes, so its lines go straight to the song's log the way a
         # clean's and a render's do, unparsed.
         result = scan.run(song, log=log, only=opts.get("systems"),
-                          binary=opts.get("binary"))
+                          engine=opts.get("engine"))
         holes = result["holes"]
         log(f"Read {result['read']} of {result['systems']} system(s)."
             + (f" Still to read: {', '.join(str(i) for i in holes)}." if holes
@@ -431,13 +431,18 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         opts["systems"] = [int(i) for i in (opts.get("systems") or [])]
     except (TypeError, ValueError):
         raise HTTPException(400, "systems must be whole numbers") from None
-    # Which homr reads it, resolved here rather than in the worker: an engine
-    # that is not installed has to be a refused request, not a scan that starts,
-    # takes a lock and then fails on the first band.
-    try:
-        opts["binary"] = omr.engine_binary(opts.get("engine"))
-    except omr.HomrMissing as exc:
-        raise HTTPException(400, str(exc)) from None
+    # A *named* engine is resolved here rather than in the worker: one that is not
+    # there has to be a refused request, not a scan that starts, takes a lock and
+    # then fails on the first band. Asking for no engine in particular is left
+    # alone — `omr` picks the installed one when the read happens, and a host with
+    # no homr at all should fail where it always did, saying so in the song's log.
+    key = opts.get("engine")
+    opts["engine"] = None
+    if key and key != omr.DEFAULT_ENGINE:
+        try:
+            opts["engine"] = omr.engine_for(key)
+        except omr.HomrMissing as exc:
+            raise HTTPException(400, str(exc)) from None
     if is_scanning(song) or not job_state.start_if_idle(
             song.dir, "scan", ("scan", "clean", "render", "upload"),
             pdf_systems.file_version(song.source_path("pdf"))):

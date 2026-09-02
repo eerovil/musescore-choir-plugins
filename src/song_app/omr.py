@@ -51,6 +51,7 @@ nest.
 
 from __future__ import annotations
 
+import glob
 import os
 import shutil
 import signal
@@ -58,8 +59,8 @@ import subprocess
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Callable, List, Optional
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional
 
 from lxml import etree
 
@@ -119,12 +120,26 @@ def homr_available(binary: Optional[str] = None) -> bool:
 
 # --- engines -------------------------------------------------------------
 #
-# There can be more than one homr installed, because a homr change is tried out
-# on a branch and the only question worth asking about it is whether it reads
-# *this* repertoire better than what we have. That cannot be answered by an
-# install that replaced what it is being compared against, so
-# ``scripts/install-homr.sh HOMR_BRANCH=...`` puts a branch in a venv of its own
-# beside the default one, and the Scan panel offers the lot.
+# A homr change is tried out on a branch, and the only question worth asking
+# about one is whether it reads *this* repertoire better than what we have. That
+# needs both to be runnable at once, and it needs the branch to be runnable
+# **without an install**: a branch is edited, re-read, edited again, and a
+# 660 MB reinstall between each pass is not a loop anybody uses.
+#
+# So a branch is not installed at all. The local fork checkout and every git
+# worktree beside it are engines in their own right: the dependencies come from
+# the installed venv, and the *code* comes from the working copy, put in front of
+# it on ``PYTHONPATH``. Switching a branch in that checkout changes what the next
+# scan runs, with nothing to rebuild and nothing to keep in step.
+#
+# The entry point is spelled out rather than run as ``-m homr``: homr's package
+# has no ``__main__``, its console script is ``homr.main:main``, and the venv's
+# own ``bin/homr`` would import the *installed* copy however PYTHONPATH is set.
+#
+# What that costs is one thing worth naming: an engine is now whatever is
+# checked out at the moment it runs, so the label is read live from git and a
+# parse is only accounted for by what the checkout says at the time. The
+# installed venv stays as it was — an immutable-ish default to compare against.
 #
 # The choice is per scan run and is not recorded anywhere: which homr read a
 # system is not something the app reasons about, and a fragment already carries
@@ -135,20 +150,30 @@ def homr_available(binary: Optional[str] = None) -> bool:
 
 @dataclass(frozen=True)
 class Engine:
-    """One installed homr: what to call it, what to show, what to run."""
+    """One homr this host can run: what to call it, what to show, what to run.
+
+    ``command`` is the argv the image path is appended to, and ``env`` is what
+    has to be added to the environment for it — ``PYTHONPATH`` for a checkout,
+    nothing at all for the installed venv.
+    """
 
     key: str
     label: str
-    binary: str
+    command: List[str]
+    env: Dict[str, str] = field(default_factory=dict)
     default: bool = False
 
 
-#: Written by the installer into each venv it builds. A directory name cannot
-#: say which branch is in it, and undoing the name-mangling would be guessing.
+#: Written by the installer into the venv it builds, saying what is in it.
 ENGINE_MARKER = "homr-engine.txt"
 
 #: The key standing for "whatever homr the app would use anyway".
 DEFAULT_ENGINE = "default"
+
+#: The local fork's working copy. Its git worktrees are found from it, so this
+#: is one path rather than a list, and the app never writes to any of them
+#: except to link the model weights it would otherwise re-download per worktree.
+CHECKOUT = os.getenv("HOMR_CHECKOUT", os.path.join(os.path.expanduser("~"), "homr"))
 
 
 def _marker(venv: str) -> dict:
@@ -165,52 +190,148 @@ def _label(venv: str, fallback: str) -> str:
     return fields.get("branch") or fields.get("source") or fallback
 
 
-def engines() -> List[Engine]:
-    """Every homr this host has, the default one first.
-
-    The default is whatever :func:`homr_binary` resolves to; the rest are the
-    ``homr-venv-*`` siblings the installer makes for a branch. A venv put
-    somewhere else with ``HOMR_VENV`` is not found — it is reached with
-    ``HOMR_BIN``, and then it *is* the default.
-    """
-    found: List[Engine] = []
+def default_engine() -> Optional[Engine]:
+    """The installed homr, or ``None`` when this host has not got one."""
     binary = homr_binary()
-    if homr_available(binary):
-        venv = os.path.dirname(os.path.dirname(binary))
-        found.append(Engine(key=DEFAULT_ENGINE,
-                            label=_label(venv, "main"), binary=binary, default=True))
+    if not homr_available(binary):
+        return None
+    venv = os.path.dirname(os.path.dirname(binary))
+    return Engine(key=DEFAULT_ENGINE, label=_label(venv, "main"),
+                  command=[binary], default=True)
 
-    parent, base = os.path.split(DEFAULT_VENV)
+
+def _venv_python() -> Optional[str]:
+    """The interpreter beside the installed homr — where the dependencies are."""
+    binary = homr_binary()
+    if not homr_available(binary) or os.path.sep not in binary:
+        return None
+    python = os.path.join(os.path.dirname(binary), "python")
+    return python if os.access(python, os.X_OK) else None
+
+
+def _worktrees(checkout: str) -> List[tuple]:
+    """``(path, label)`` for the checkout and each of its git worktrees.
+
+    The label is the branch, read now rather than remembered, because that is
+    the whole point: switching a branch in a working copy changes the engine
+    without anything being reinstalled or re-registered.
+    """
     try:
-        siblings = sorted(os.listdir(parent))
-    except OSError:
-        siblings = []
-    for name in siblings:
-        if not name.startswith(base + "-"):
-            continue
-        venv = os.path.join(parent, name)
-        candidate = os.path.join(venv, "bin", "homr")
-        if not homr_available(candidate) or candidate == binary:
-            continue
-        key = name[len(base) + 1:]
-        found.append(Engine(key=key, label=_label(venv, key), binary=candidate))
+        out = subprocess.run(
+            ["git", "-C", checkout, "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    found, path, label = [], None, None
+    for line in out.stdout.splitlines() + [""]:
+        if line.startswith("worktree "):
+            path, label = line[len("worktree "):], None
+        elif line.startswith("branch "):
+            label = line[len("branch refs/heads/"):]
+        elif line.startswith("detached"):
+            label = "detached"
+        elif not line and path:
+            found.append((path, label or "detached"))
+            path = None
     return found
 
 
-def engine_binary(key: Optional[str]) -> str:
-    """The executable for an engine key, or the default one for ``None``.
+#: What the checkout engines run. ``homr`` is a package with no ``__main__``, so
+#: its console script's entry point is called directly.
+RUN_HOMR = "from homr.main import main; main()"
+
+
+def _package_dir(root: str) -> str:
+    return os.path.join(root, "homr")
+
+
+def link_weights(checkout: str) -> int:
+    """Point a checkout at the installed venv's model weights.
+
+    homr keeps its ~150 MB of weights *beside its own source*, so a working copy
+    run from ``PYTHONPATH`` would download its own set — per worktree. The file
+    names carry a content hash, so a symlink cannot be the wrong weights: a
+    branch wanting different ones asks for a different name and downloads it.
+    Only missing files are linked and nothing real is ever replaced.
+    """
+    binary = homr_binary()
+    if os.path.sep not in binary:
+        return 0
+    venv = os.path.dirname(os.path.dirname(binary))
+    installed = None
+    for lib in sorted(glob.glob(os.path.join(venv, "lib", "python3.*", "site-packages"))):
+        if os.path.isdir(os.path.join(lib, "homr")):
+            installed = os.path.join(lib, "homr")
+    if not installed or not os.path.isdir(_package_dir(checkout)):
+        return 0
+    linked = 0
+    for source in glob.glob(os.path.join(installed, "**", "*.onnx"), recursive=True):
+        target = os.path.join(_package_dir(checkout),
+                              os.path.relpath(source, installed))
+        if os.path.exists(target):
+            continue
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            os.symlink(source, target)
+            linked += 1
+        except OSError:
+            pass
+    return linked
+
+
+def engines() -> List[Engine]:
+    """Every homr this host can run, the installed one first.
+
+    The rest are the local fork's checkout and its git worktrees (``HOMR_CHECKOUT``),
+    each labelled with the branch it has out at this moment. They need the
+    installed venv for their dependencies, so without it there are none.
+    """
+    found: List[Engine] = []
+    default = default_engine()
+    if default:
+        found.append(default)
+
+    python = _venv_python()
+    if not python:
+        return found
+    used = {DEFAULT_ENGINE}
+    for path, label in _worktrees(CHECKOUT):
+        if not os.path.isdir(_package_dir(path)):
+            continue                       # not a homr working copy after all
+        key = os.path.basename(os.path.normpath(path))
+        while key in used:
+            key += "-"
+        used.add(key)
+        found.append(Engine(key=key, label=label,
+                            command=[python, "-c", RUN_HOMR],
+                            env={"PYTHONPATH": path}))
+    return found
+
+
+def engine_for(key: Optional[str]) -> Engine:
+    """The engine a key names, or the default one for ``None``.
 
     An unknown key is refused rather than falling back: a scan run with a homr
     other than the one that was asked for is a parse nobody can account for.
     """
     if not key or key == DEFAULT_ENGINE:
-        return homr_binary()
+        engine = default_engine()
+        if not engine:
+            raise HomrMissing(
+                f"homr is not installed ({homr_binary()}). Run "
+                "scripts/install-homr.sh, or set HOMR_BIN if it lives elsewhere.")
+        return engine
     for engine in engines():
         if engine.key == key:
-            return engine.binary
+            if engine.env.get("PYTHONPATH"):
+                link_weights(engine.env["PYTHONPATH"])
+            return engine
     raise HomrMissing(
-        f"No homr engine called {key!r} is installed. Install it with "
-        f"HOMR_BRANCH=... scripts/install-homr.sh, or scan with the default one.")
+        f"No homr engine called {key!r} is available. Engines are the installed "
+        f"venv and the working copies under {CHECKOUT}; check it is checked out "
+        "there, or scan with the default one.")
 
 
 def read_page(
@@ -220,7 +341,7 @@ def read_page(
     timeout: int = DEFAULT_TIMEOUT,
     label: Optional[str] = None,
     queue: bool = True,
-    binary: Optional[str] = None,
+    engine: Optional[Engine] = None,
 ) -> str:
     """Read one page image and return the path of the MusicXML written for it.
 
@@ -235,8 +356,9 @@ def read_page(
     there rather than at the end.
 
     ``label`` is what the queue shows for this page; ``queue=False`` runs
-    without asking for a slot, for a caller already holding one. ``binary``
-    reads the page with a homr other than the default one (:func:`engines`).
+    without asking for a slot, for a caller already holding one. ``engine``
+    reads the page with a homr other than the installed one (:func:`engines`) —
+    a working copy of the fork, run from its own source.
 
     The MusicXML that comes back has had its slurs resolved (:func:`resolve_slurs`).
     """
@@ -248,10 +370,10 @@ def read_page(
             f"{image_path}"
         )
 
-    binary = binary or homr_binary()
-    if not homr_available(binary):
+    engine = engine or default_engine()
+    if not engine:
         raise HomrMissing(
-            f"homr is not installed ({binary}). Run scripts/install-homr.sh, "
+            f"homr is not installed ({homr_binary()}). Run scripts/install-homr.sh, "
             "or set HOMR_BIN if it lives somewhere else."
         )
 
@@ -271,7 +393,8 @@ def read_page(
             # that is where the lease is checked (heavy_slot.Slot.guard).
             watched = slot.guard(log)
             watched(f"Reading {os.path.basename(image_path)} with homr")
-            output = _run([binary, "--gpu", "no", scratch_image], watched, timeout)
+            output = _run(list(engine.command) + ["--gpu", "no", scratch_image],
+                          watched, timeout, engine.env)
             slot.check()
 
         if not os.path.exists(produced):
@@ -410,7 +533,8 @@ def _queued(label: str, log: Logger, queue: bool):
         yield slot
 
 
-def _run(command: List[str], log: Logger, timeout: int) -> List[str]:
+def _run(command: List[str], log: Logger, timeout: int,
+         extra_env: Optional[Dict[str, str]] = None) -> List[str]:
     """Run homr, streaming its output to ``log``, and return the lines.
 
     The deadline is a timer that kills the process, not ``wait(timeout=...)``:
@@ -426,6 +550,7 @@ def _run(command: List[str], log: Logger, timeout: int) -> List[str]:
             bufsize=1,
             # Its own process group, so a deadline can take any child with it.
             start_new_session=True,
+            env={**os.environ, **(extra_env or {})},
         )
     except OSError as exc:
         raise HomrMissing(f"Could not run {command[0]}: {exc}") from exc

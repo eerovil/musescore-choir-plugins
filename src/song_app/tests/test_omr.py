@@ -83,72 +83,101 @@ def test_not_installed_is_its_own_error(monkeypatch, tmp_path):
 
 # --- which homr ----------------------------------------------------------
 #
-# A homr branch is installed beside the default one rather than over it, so the
-# app has to be able to list what is installed and run a named one.
+# A homr change is tried out on a branch, and the branch is never installed: the
+# app runs a local working copy from source against the installed venv's
+# dependencies. So what these pin is the discovery, the labels, and that the
+# working copy is what actually runs.
 
 
 def a_venv(path, branch=None, source="homr[cpu] @ git+.../homr.git@main"):
     """A venv shaped the way scripts/install-homr.sh leaves one."""
     (path / "bin").mkdir(parents=True)
-    homr = path / "bin" / "homr"
-    homr.write_text("#!/usr/bin/env bash\n")
-    homr.chmod(homr.stat().st_mode | stat.S_IEXEC)
+    for name in ("homr", "python"):
+        exe = path / "bin" / name
+        exe.write_text("#!/usr/bin/env bash\n")
+        exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     lines = [f"source={source}"] + ([f"branch={branch}"] if branch else [])
     (path / "homr-engine.txt").write_text("\n".join(lines) + "\n")
-    return str(homr)
+    return str(path / "bin" / "homr")
 
 
-def test_one_install_is_one_engine(monkeypatch, tmp_path):
+def a_checkout(path, branch="main", worktrees=()):
+    """A homr working copy, with git worktrees beside it if asked for."""
+    import subprocess as sp
+    path.mkdir(parents=True)
+    (path / "homr").mkdir()
+    (path / "homr" / "__init__.py").write_text("")
+    run = lambda *a: sp.run(a, cwd=str(path), check=True, capture_output=True)
+    run("git", "init", "-q", "-b", branch)
+    run("git", "config", "user.email", "t@example.com")
+    run("git", "config", "user.name", "T")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "homr")
+    for name, tree_branch in worktrees:
+        run("git", "worktree", "add", "-q", "-b", tree_branch, str(path.parent / name))
+    return str(path)
+
+
+def test_one_install_and_no_checkout_is_one_engine(monkeypatch, tmp_path):
     monkeypatch.delenv("HOMR_BIN", raising=False)
     binary = a_venv(tmp_path / "homr-venv", branch="main")
     monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+    monkeypatch.setattr(omr, "CHECKOUT", str(tmp_path / "no-such-checkout"))
 
     engines = omr.engines()
-    assert [(e.key, e.label, e.binary, e.default) for e in engines] == [
-        ("default", "main", binary, True)]
+    assert [(e.key, e.label, e.command, e.default) for e in engines] == [
+        ("default", "main", [binary], True)]
 
 
-def test_a_branch_venv_is_offered_beside_the_default(monkeypatch, tmp_path):
-    """The label is the branch, not the mangled directory name."""
+def test_a_working_copy_and_its_worktrees_are_engines(monkeypatch, tmp_path):
+    """No install: the code comes from the checkout, the dependencies from the venv."""
     monkeypatch.delenv("HOMR_BIN", raising=False)
     a_venv(tmp_path / "homr-venv", branch="main")
-    branch = a_venv(tmp_path / "homr-venv-prototype-system-4", branch="prototype/system-4")
     monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+    checkout = a_checkout(tmp_path / "homr", branch="main",
+                          worktrees=[("system-4", "prototype/system-4")])
+    monkeypatch.setattr(omr, "CHECKOUT", checkout)
 
     engines = omr.engines()
-    assert [e.label for e in engines] == ["main", "prototype/system-4"]
-    assert [e.default for e in engines] == [True, False]
-    assert engines[1].key == "prototype-system-4"
-    assert omr.engine_binary("prototype-system-4") == branch
+
+    assert [e.key for e in engines] == ["default", "homr", "system-4"]
+    # The label is the branch each working copy has out *now* -- switching a
+    # branch there changes the engine with nothing to reinstall.
+    assert [e.label for e in engines] == ["main", "main", "prototype/system-4"]
+    tree = engines[2]
+    assert tree.command[1:] == ["-c", omr.RUN_HOMR]
+    assert tree.command[0].endswith("/bin/python"), "the venv's interpreter"
+    assert tree.env == {"PYTHONPATH": str(tmp_path / "system-4")}
 
 
-def test_a_venv_with_no_homr_in_it_is_not_an_engine(monkeypatch, tmp_path):
-    """A half-built venv must not be offered as something to scan with."""
+def test_a_directory_that_is_not_a_homr_checkout_is_not_an_engine(monkeypatch, tmp_path):
     monkeypatch.delenv("HOMR_BIN", raising=False)
     a_venv(tmp_path / "homr-venv", branch="main")
-    (tmp_path / "homr-venv-broken" / "bin").mkdir(parents=True)
     monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+    checkout = a_checkout(tmp_path / "homr")
+    import shutil as sh
+    sh.rmtree(os.path.join(checkout, "homr"))
+    monkeypatch.setattr(omr, "CHECKOUT", checkout)
 
     assert [e.key for e in omr.engines()] == ["default"]
 
 
-def test_an_unlabelled_engine_falls_back_to_its_source(monkeypatch, tmp_path):
-    monkeypatch.delenv("HOMR_BIN", raising=False)
-    a_venv(tmp_path / "homr-venv", branch="main")
-    a_venv(tmp_path / "homr-venv-pinned", source="homr==9.9.9")
-    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+def test_without_an_install_there_are_no_checkout_engines(monkeypatch, tmp_path):
+    """The working copies borrow the venv's dependencies; there is nothing to borrow."""
+    monkeypatch.setenv("HOMR_BIN", str(tmp_path / "no-such-homr"))
+    monkeypatch.setattr(omr, "CHECKOUT", a_checkout(tmp_path / "homr"))
 
-    assert [e.label for e in omr.engines()][1] == "homr==9.9.9"
+    assert omr.engines() == []
 
 
-def test_no_key_means_the_default_engine(monkeypatch, tmp_path):
+def test_no_key_means_the_installed_engine(monkeypatch, tmp_path):
     binary = a_venv(tmp_path / "homr-venv", branch="main")
     monkeypatch.setenv("HOMR_BIN", binary)
-    assert omr.engine_binary(None) == binary
-    assert omr.engine_binary("default") == binary
+    assert omr.engine_for(None).command == [binary]
+    assert omr.engine_for("default").command == [binary]
 
 
-def test_an_engine_that_is_not_installed_is_refused(monkeypatch, tmp_path):
+def test_an_engine_that_is_not_there_is_refused(monkeypatch, tmp_path):
     """Not silently the default: a parse nobody can account for is worse.
 
     The whole point of picking an engine is to know which homr read the page.
@@ -156,22 +185,52 @@ def test_an_engine_that_is_not_installed_is_refused(monkeypatch, tmp_path):
     monkeypatch.delenv("HOMR_BIN", raising=False)
     a_venv(tmp_path / "homr-venv", branch="main")
     monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+    monkeypatch.setattr(omr, "CHECKOUT", str(tmp_path / "nothing-here"))
 
     with pytest.raises(omr.HomrMissing) as caught:
-        omr.engine_binary("prototype-system-4")
-    assert "prototype-system-4" in str(caught.value)
+        omr.engine_for("system-4")
+    assert "system-4" in str(caught.value)
 
 
-def test_a_named_binary_is_what_reads_the_page(monkeypatch, tmp_path):
-    """The picked engine runs, and the default one is not consulted."""
+def test_the_weights_are_linked_rather_than_downloaded_again(monkeypatch, tmp_path):
+    """homr keeps its weights beside its own source, so a working copy would
+    fetch its own 150 MB -- per worktree. The names carry a content hash, so a
+    link cannot be the wrong weights."""
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    venv = tmp_path / "homr-venv"
+    a_venv(venv, branch="main")
+    package = venv / "lib" / "python3.12" / "site-packages" / "homr" / "segmentation"
+    package.mkdir(parents=True)
+    (package / "segnet_308-abc.onnx").write_bytes(b"weights")
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(venv))
+    checkout = a_checkout(tmp_path / "homr")
+    monkeypatch.setattr(omr, "CHECKOUT", checkout)
+
+    engine = omr.engine_for("homr")
+
+    linked = os.path.join(checkout, "homr", "segmentation", "segnet_308-abc.onnx")
+    assert os.path.islink(linked) and open(linked, "rb").read() == b"weights"
+    assert engine.env["PYTHONPATH"] == checkout
+    # Idempotent, and a real file is never replaced by a link to another one.
+    os.unlink(linked)
+    open(linked, "wb").write(b"its own")
+    omr.engine_for("homr")
+    assert not os.path.islink(linked)
+
+
+def test_the_chosen_engine_is_what_reads_the_page(monkeypatch, tmp_path):
+    """The picked engine runs, with its environment, and the default is not consulted."""
     other = tmp_path / "other"
     other.mkdir()
     monkeypatch.setenv("HOMR_BIN", stub_homr(tmp_path, "exit 1\n"))
-    chosen = stub_homr(other, 'echo "<picked/>" > "${!#%.*}.musicxml"\n')
+    chosen = stub_homr(other, 'echo "<picked>$MARK</picked>" > "${!#%.*}.musicxml"\n')
+    engine = omr.Engine(key="system-4", label="prototype/system-4",
+                        command=[chosen], env={"MARK": "here"})
 
     out = omr.read_page(a_page(tmp_path), out_dir=str(tmp_path / "out"),
-                        binary=chosen, queue=False)
-    assert "<picked/>" in open(out).read()
+                        engine=engine, queue=False)
+
+    assert "<picked>here</picked>" in open(out).read()
 
 
 # --- what it hands back --------------------------------------------------
