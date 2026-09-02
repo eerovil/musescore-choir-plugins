@@ -52,6 +52,7 @@ nest.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import shutil
 import signal
@@ -185,18 +186,47 @@ def _marker(venv: str) -> dict:
     return dict(line.split("=", 1) for line in lines if "=" in line)
 
 
-def _label(venv: str, fallback: str) -> str:
-    fields = _marker(venv)
-    return fields.get("branch") or fields.get("source") or fallback
+def _installed_from(venv: str) -> Optional[str]:
+    """What pip actually installed, read out of the wheel's own metadata.
+
+    ``direct_url.json`` records the revision that was asked for and the commit
+    it resolved to, which is the only account of the installed engine that
+    cannot be out of date. Saying "main" without it was a guess: the venv here
+    predates the marker file, so the label read `main` and would have read
+    `main` whatever commit had been installed.
+    """
+    for info in sorted(glob.glob(os.path.join(
+            venv, "lib", "python3.*", "site-packages", "homr-*.dist-info"))):
+        try:
+            with open(os.path.join(info, "direct_url.json"), encoding="utf-8") as f:
+                direct = json.load(f)
+        except (OSError, ValueError):
+            continue
+        vcs = direct.get("vcs_info") or {}
+        revision = vcs.get("requested_revision")
+        commit = (vcs.get("commit_id") or "")[:7]
+        if revision and commit:
+            return f"{revision} @ {commit}"
+        return revision or commit or None
+    return None
 
 
 def default_engine() -> Optional[Engine]:
-    """The installed homr, or ``None`` when this host has not got one."""
+    """The installed homr, or ``None`` when this host has not got one.
+
+    It is the one engine that does not move: pip put a copy of the source in
+    the venv, so it stays where it was installed while every checkout engine
+    follows whatever is checked out. That is what makes it the thing to compare
+    a branch against, and it is why the label says the commit.
+    """
     binary = homr_binary()
     if not homr_available(binary):
         return None
     venv = os.path.dirname(os.path.dirname(binary))
-    return Engine(key=DEFAULT_ENGINE, label=_label(venv, "main"),
+    fields = _marker(venv)
+    label = (_installed_from(venv) or fields.get("branch")
+             or fields.get("source") or "installed")
+    return Engine(key=DEFAULT_ENGINE, label=f"installed: {label}",
                   command=[binary], default=True)
 
 
@@ -304,7 +334,11 @@ def engines() -> List[Engine]:
         while key in used:
             key += "-"
         used.add(key)
-        found.append(Engine(key=key, label=label,
+        # Branch *and* directory, because neither alone identifies a working
+        # copy: a worktree keeps its directory name when its branch changes
+        # (a tree called `system-4` is currently on `main`), and two trees can
+        # be on branches that look alike.
+        found.append(Engine(key=key, label=f"{label} — {key}",
                             command=[python, "-c", RUN_HOMR],
                             env={"PYTHONPATH": path}))
     return found
