@@ -1,1 +1,0 @@
-self.SONG_PWA = Object.freeze({"cache":"song-static-227603d00dcf","assets":["/style.css","/pwa.css","/app.js","/scroll_preview.js","/rendering_state.js","/pwa.js","/offline.html","/favicon.svg","/apple-touch-icon.png","/icon-192.png","/icon-512.png","/icon-maskable-512.png","/manifest.webmanifest"]});

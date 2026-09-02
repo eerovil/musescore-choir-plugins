@@ -36,15 +36,16 @@ any of them.
 ## Updating shell assets
 
 The cache name is derived from the Git blob digest of every URL in
-`src/song_app/pwa_assets.py`. After changing a listed asset, regenerate the
-checked-in configuration from the repository root:
+`src/song_app/pwa_assets.py`, and **nothing has to be regenerated**: the app
+serves `/pwa-assets.js` from `pwa_assets.rendered_config()`, computed from the
+files on disk when the service worker asks for it. Change a listed asset and
+the generation follows it.
 
-```bash
-.venv/bin/python scripts/update-pwa-assets.py
-```
-
-`test_pwa.py` fails if the generated file, asset list, or content-derived cache
-generation is out of date.
+It was a checked-in file kept in step by a script, and that made every edit to
+`app.js` or `style.css` a two-part change — forgetting the second half failed
+`test_pwa.py` with a message about a hash, which says nothing about what was
+actually changed. Adding a *new* asset is still a two-part change, because the
+list itself is the thing being edited: put the URL in `SHELL_ASSETS`.
 
 The service worker imports that generated file with `updateViaCache: "none"`.
 A new generation activates immediately, but `pwa.js` postpones the page reload

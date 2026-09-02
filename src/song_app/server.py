@@ -12,11 +12,12 @@ from typing import Dict, List, Optional, Set
 
 import dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
+                               Response)
 from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, health, heavy_slot, job_state, omr, pdf_systems,
-               pipeline, scan, state, verification)
+               pipeline, pwa_assets, scan, state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 
 SCRIPT_DIR = state.SCRIPT_DIR
@@ -914,6 +915,43 @@ def api_save_bounds(slug: str, body: Dict = None) -> Dict:
     return {"systems": saved, "discarded": scan.reconcile(song)}
 
 
+@app.post("/api/songs/{slug}/find-systems")
+async def api_find_systems(slug: str, body: Dict = None) -> Dict:
+    """Propose a band for every printed system, without saving any of them.
+
+    A proposal, not an answer: it comes back to the editor as draggable bands
+    the same as any other, and the person looking at the page saves it or does
+    not. Nothing here writes `.systems.json`, so a wrong reading costs a drag
+    rather than a scan of the wrong music.
+
+    Slow enough to watch — seconds a page — so its progress goes to the song's
+    live log while the request is still open.
+    """
+    song = _require(slug)
+    pdf = _song_pdf(song)
+    key = (body or {}).get("engine")
+    engine = None
+    if key and key != omr.DEFAULT_ENGINE:
+        try:
+            engine = omr.engine_for(key)
+        except omr.HomrMissing as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    def run() -> List[Dict]:
+        log = lambda m: hub.emit(slug, {"type": "log", "line": m})
+        return [b.to_dict() for b in
+                system_finder.find_bands(pdf, engine=engine, log=log)]
+
+    try:
+        found = await asyncio.get_running_loop().run_in_executor(None, run)
+    except omr.HomrError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(500, str(exc)) from None
+    return {"systems": found}
+
+
 @app.get("/api/songs/{slug}/page/{page}")
 def api_page(slug: str, page: int, dpi: int = 150, grid: bool = False):
     """One rasterised page of the original PDF, for the bounds editor."""
@@ -1508,6 +1546,21 @@ async def _startup() -> None:
 @app.get("/")
 def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=dict(REVALIDATE))
+
+
+@app.get("/pwa-assets.js")
+def pwa_assets_js():
+    """The service worker's shell list and cache generation, computed now.
+
+    It used to be a checked-in file with a script to regenerate it, and that
+    made every edit to `app.js` or `style.css` a two-part change: touch the
+    asset, remember the script. Forgetting the second half broke the suite in a
+    way that says nothing about what was actually changed. The generation is
+    derived from the files on disk, so deriving it per request cannot be stale —
+    and the service worker asks for it over the network anyway.
+    """
+    return Response(pwa_assets.rendered_config(), media_type="text/javascript",
+                    headers=dict(REVALIDATE))
 
 
 app.mount("/", RevalidatingStaticFiles(directory=STATIC_DIR, html=True), name="static")

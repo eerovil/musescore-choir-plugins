@@ -556,6 +556,36 @@ async function systemsEditor(view, slug) {
     drawBands();
   };
 
+  // Finding them is a proposal and nothing more: the bands land here unsaved and
+  // dirty, exactly as if they had been dragged, so a wrong reading costs a drag
+  // rather than a scan of the wrong music.
+  const findBtn = el("button", {}, "Find systems");
+  const findNote = el("span", { className: "muted" });
+  findBtn.onclick = async () => {
+    if (bands.length && !confirm(
+      `Replace the ${bands.length} band(s) on this song with what homr finds?`)) return;
+    findBtn.disabled = true;
+    findNote.className = "muted";
+    findNote.textContent = " Looking for the systems — seconds a page…";
+    try {
+      const res = await fetch(`${P}/find-systems`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const out = await res.json();
+      bands = out.systems.map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+      dirty = true;
+      findNote.textContent = ` Proposed ${bands.length} — check each one against the`
+        + " page, then save.";
+      drawBands();
+    } catch (e) {
+      findNote.className = "warn";
+      findNote.textContent = " Could not find the systems: " + e.message;
+    } finally {
+      findBtn.disabled = false;
+    }
+  };
+
   const pagesWrap = el("div", { className: "syspages" });
   // Pages are built once and kept. Rebuilding them per redraw recreates the <img>,
   // which reloads it, collapses its measured height to zero and wrecks the drag
@@ -644,9 +674,11 @@ async function systemsEditor(view, slug) {
   view.replaceChildren(
     el("div", { className: "sysbar" },
       el("button", { className: "primary", onclick: save }, "Save boundaries"),
+      findBtn,
       status,
       el("span", { className: "muted" },
         " Drag an edge to adjust; click the page for a new system; × removes one."),
+      findNote,
     ),
     pagesWrap,
   );

@@ -40,6 +40,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   omr.py                 Run homr on a page image -> MusicXML (its own venv; see below)
   omr_systems.py         Scan one printed system at a time; flatten + assemble
   scan.py                The scan stage: crop + read every band, assemble, invalidate
+  system_finder.py       Propose the printed-system bands off a page (homr's staves)
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
@@ -397,6 +398,16 @@ Key test modules:
   engine chosen in the browser is the binary `scan.run` is actually handed. And that a
   system which read fine can be read again — from the panel and from its compare row,
   each re-reading only the system named and saying what a changed reading costs.
+- `src/song_app/tests/test_system_finder.py` — added by this pull request. Two tiers.
+  **No dependencies**: the grouping rule, written as little pages of staves and barlines
+  — staves carrying the same bars are one system, the end lines are not evidence, a
+  break needs the white to go with it, a staff with no barline of its own falls back to
+  the gap, and where the band edges land. **homr** (marked `omr`, ~70s): the acceptance,
+  against the bands a person drew — the fixture's 15 across four pages and both Herää
+  Suomi scans, each boundary within 0.02 of the hand-drawn one. The route and the button
+  are pinned where they live: `test_bounds_api.py` (a proposal saves nothing, a page
+  homr could not read is a 400 saying so) and `test_ui_flow.py` (the editor fills with
+  the proposal, unsaved, and the song still holds what it held).
 - `src/song_app/tests/test_benchmark.py` — added by this pull request, and the first
   thing in the suite that meets a **real scan**. Three tiers, so each dependency buys
   something and none is required. **No dependencies**: the manifest's files are on disk
@@ -494,7 +505,9 @@ state model are in `DESIGN.md`.
   with the score twice. Instead an AI reads them off the page
   (`page_images(grid=True)` overlays a labelled percentage scale, which turns
   estimating coordinates into reading them) and a person corrects them by dragging
-  in the **Systems** viewer tab. They live in `.systems.json` beside the song as
+  in the **Systems** viewer tab; `system_finder.py` (below) can now propose them
+  from homr's own staff detection, and it proposes into that same editor rather
+  than writing anything. They live in `.systems.json` beside the song as
   fractions of page height, so they survive any change of resolution, and the app
   and an agent read the same file. `crop_systems` rasterises **only the band**
   (`pdftoppm -x -y -W -H`): a page at 400 dpi takes ~7s, one system 0.9s, and this
@@ -1114,6 +1127,45 @@ state model are in `DESIGN.md`.
   page is a gap" — a missing binary must not be indistinguishable from an operator who has
   not drawn them yet.
 
+- `system_finder.py` is added by this pull request: **where the printed systems are**,
+  proposed rather than decided. Every band on this host was drawn by a person dragging,
+  or by an AI reading a page with a percentage ruler on it — and a song cannot be
+  scanned until every page is marked, so that drag is the front door of the whole scan
+  route. This proposes the bands and hands them to the **Systems editor unsaved and
+  dirty**, exactly as if they had been dragged (`POST /find-systems`, the `Find systems`
+  button). Nothing writes `.systems.json`, which is the same argument the scan's own OK
+  rests on: the tidy-looking answer is the one worth looking at.
+  **Why this can work when #80 could not.** That attempt read the pixels itself —
+  morphology for the staff lines, the left-margin bracket for the grouping — and died at
+  half a degree of skew, at 20% ink dropout, and on the editions that print no bracket
+  (it agreed with the score twice out of nine songs). This asks **homr**, which finds
+  staves for a living: the same segmentation network and the same `detect_staff` that
+  read the music, stopped before any of it is parsed. `scripts/homr_staves.py` is the
+  helper that runs inside homr's venv and reports the staves and barlines as fractions
+  of the page; it is reached through the same `Engine` the scan uses, so proposing bands
+  and reading music are the same homr. A page is ~8s (a segmentation pass, not a parse)
+  and takes **one heavy slot per page**, `omr.py`'s rule unchanged.
+  **The grouping is decided by the barlines, and that is the whole idea.** Which staves
+  make one system is what homr does not answer — its `MultiStaff` is a brace or a grand
+  staff, which choral engraving mostly does not print. The obvious rule fails on the
+  measurements: on page 1 of the fixture the gaps *inside* a system run 0.060–0.077 of
+  the page and the gaps *between* systems run 0.067–0.086, so no threshold separates
+  them. What separates them is what the music says — two staves of one system carry the
+  same bars, so their barlines stand at the same x, and two staves of different systems
+  do not. Measured across seven pages: 0.6–1.0 agreement within a system, 0.0–0.5 across
+  a break. The opening and closing lines are not counted, since every system has them
+  wherever its bars fall. The gaps keep one job, as a **veto**: a break must not sit
+  *closer* than an ordinary within-system gap. That catches a scan that lost a staff's
+  barlines outright (B1b's last system at 0.91 of an ordinary gap, one pair on fixture
+  page 3 at 0.97) without touching a real break (1.05 to 1.37).
+  Band edges are halfway between systems, so the lyrics under a system's last staff stay
+  with it; the first and last get the same room again, clamped to the page — a generous
+  band costs white paper and a tight one cuts the words off.
+  **Measured against the bands a person actually drew**: all 15 of the fixture's, plus
+  B1a and B1b. Every page comes back with the systems it prints, and every internal
+  boundary within 0.02 of page height of the hand-drawn one (worst 0.020 on B1b, the
+  rest ≤0.014). That is what `test_system_finder.py`'s `omr` tier pins; the rule itself
+  is pinned without homr on little pages of staves and barlines.
 - The **Scan panel** is added by this pull request (#116), replacing the holding one that
   #115 left. Its whole job is to stop a tidy-looking parse becoming a practice track, and
   every piece of it follows from that.
