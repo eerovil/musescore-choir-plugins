@@ -632,6 +632,22 @@ state model are in `DESIGN.md`.
   import the cleaned preview re-renders in place and restores `scrollTop`); falls
   back to a native `<iframe>` if pdf.js can't load (offline). **PDF measure-locating
   is page-level only** (no bounding boxes) — see DESIGN.md.
+- The **New song form** is the front door of the whole scan route, and this pull
+  request proposes opening it (#127). `POST /api/songs` has taken a name plus
+  *either* a score *or* a PDF since #98, and a PDF alone starts the song at `scan` —
+  but `newSongDialog` refused to submit without a score file, so none of the 48 songs
+  on the host had ever been through scanning: the route was live on the server and
+  unreachable from the phone. The Scan panel work (#115, #116) edited `app.js` and
+  never this dialog. So the form now asks for **name plus at least one file**,
+  matching the server, and **leads with the PDF** — a song made from a PDF is the
+  ordinary case and a score file is the manual import (#86). It also says **where
+  each door goes** before Create is pressed (`.routehint`, live as the files are
+  chosen): a PDF alone starts at Scan, a score file starts at Clean and skips
+  scanning. Discovering that from the stage rail afterwards is discovering it too
+  late — the scan is the stage that reads the page, and a song that skipped it looks
+  exactly like one that passed it. The two file inputs carry ids (`#f-pdf`, `#f-xml`)
+  because the browser tests used to reach the score as "the first file input", which
+  reordering would have silently repointed at the PDF.
 - The Lyrics panel's **Type by system** mode divides by the *printed* systems from
   `.systems.json`, not by the score's line breaks: normal-mode cleaning strips those,
   so the editor used to offer one cell per part covering the whole piece and only

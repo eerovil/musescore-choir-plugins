@@ -172,6 +172,12 @@ table.grid input.unset { border-color: var(--warn); }
 }
 .ailink:hover { border-color: var(--accent); }
 .hint { color: var(--muted); font-size: 13px; }
+/* Which stage the song will start at. It is an answer, not a field description,
+   so it does not read as a third line of small print under the two file inputs. */
+.routehint {
+  color: var(--text); margin: 12px 0 4px;
+  border-left: 3px solid var(--accent); padding: 4px 0 4px 10px;
+}
 .banner { padding: 9px 12px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); margin-bottom: 12px; color: var(--text); }
 .banner.good { color: var(--good); border-color: var(--good); }
 .banner.err { color: var(--bad); border-color: var(--bad); }
