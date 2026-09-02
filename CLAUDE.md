@@ -882,9 +882,17 @@ state model are in `DESIGN.md`.
   scan runs, with nothing to rebuild and nothing to keep in step. The label is the
   branch, **read live from git** rather than remembered, because that is the whole
   point; the price is that such an engine is whatever is checked out at the moment it
-  runs, which is why the installed venv stays as the fixed thing to compare against
-  (`homr-engine.txt` still labels it, and an explicit `HOMR_SOURCE` is then its label,
-  since a hand-written source is not a branch).
+  runs, which is why the installed venv stays as the fixed thing to compare against.
+  **Both labels name what they actually are**, which took a second pass to get right.
+  A checkout is `<branch> — <directory>`: neither half identifies it alone, since a
+  worktree keeps its directory name when its branch changes (a tree called `system-4`
+  is on `main` on this host) and two trees can be on branches that read alike. The
+  installed one is `installed: <revision> @ <commit>`, read out of pip's own
+  `direct_url.json` — it said `main` before, which was a guess this venv could not
+  support: it predates `homr-engine.txt`, so the label would have read `main` whatever
+  commit was installed, and "the frozen one" is worth nothing if it cannot say what it
+  is frozen at. The marker file and an explicit `HOMR_SOURCE` are the fallbacks behind
+  it.
   One thing this costs and pays for: homr keeps its ~150 MB of weights **beside its
   own source**, so a working copy run this way would download its own set — per
   worktree, four times over here. `link_weights` symlinks the installed venv's

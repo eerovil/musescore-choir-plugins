@@ -11,6 +11,7 @@ thing: a page of the scanned fixture goes in, MusicXML comes out. It needs
 homr installed (scripts/install-homr.sh) and poppler, and skips without them.
 """
 import contextlib
+import json
 import os
 import shutil
 import stat
@@ -126,7 +127,7 @@ def test_one_install_and_no_checkout_is_one_engine(monkeypatch, tmp_path):
 
     engines = omr.engines()
     assert [(e.key, e.label, e.command, e.default) for e in engines] == [
-        ("default", "main", [binary], True)]
+        ("default", "installed: main", [binary], True)]
 
 
 def test_a_working_copy_and_its_worktrees_are_engines(monkeypatch, tmp_path):
@@ -142,8 +143,10 @@ def test_a_working_copy_and_its_worktrees_are_engines(monkeypatch, tmp_path):
 
     assert [e.key for e in engines] == ["default", "homr", "system-4"]
     # The label is the branch each working copy has out *now* -- switching a
-    # branch there changes the engine with nothing to reinstall.
-    assert [e.label for e in engines] == ["main", "main", "prototype/system-4"]
+    # branch there changes the engine with nothing to reinstall -- and it names
+    # the directory too, since a worktree keeps its name when its branch moves.
+    assert [e.label for e in engines] == [
+        "installed: main", "main — homr", "prototype/system-4 — system-4"]
     tree = engines[2]
     assert tree.command[1:] == ["-c", omr.RUN_HOMR]
     assert tree.command[0].endswith("/bin/python"), "the venv's interpreter"
@@ -662,3 +665,24 @@ def test_a_runaway_slur_swallows_syllable_slots_and_the_rule_gives_them_back(tmp
     resolved = a_slurred_part("1( 3)", bars=3)
     assert omr.resolve_slurs(resolved) == 1
     assert slots(resolved, "resolved") == 12
+
+
+def test_the_installed_engine_says_which_commit_it_is(monkeypatch, tmp_path):
+    """"main" alone was a guess: the label read `main` whatever was installed.
+
+    pip's own record of the install is the one account of it that cannot go
+    stale, and being frozen is what makes this engine worth comparing against.
+    """
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    venv = tmp_path / "homr-venv"
+    a_venv(venv, branch="main")
+    info = venv / "lib" / "python3.12" / "site-packages" / "homr-0.7.0.post37.dist-info"
+    info.mkdir(parents=True)
+    (info / "direct_url.json").write_text(json.dumps({
+        "url": "https://github.com/eerovil/homr.git",
+        "vcs_info": {"vcs": "git", "requested_revision": "main",
+                     "commit_id": "3fe86a3e84db43af19eae452e29830c1f46c3b34"}}))
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(venv))
+    monkeypatch.setattr(omr, "CHECKOUT", str(tmp_path / "none"))
+
+    assert omr.engines()[0].label == "installed: main @ 3fe86a3"
