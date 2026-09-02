@@ -11,9 +11,13 @@
 # Idempotent: re-running upgrades homr in place and re-downloads only whatever
 # weights are missing.
 #
-#   scripts/install-homr.sh                             # the default engine
-#   HOMR_BRANCH=prototype/system-4 scripts/install-homr.sh   # beside it, a fork branch
+#   scripts/install-homr.sh                 # default location
 #   HOMR_VENV=/somewhere/else scripts/install-homr.sh
+#
+# This is the ONLY install. A branch of the fork is not installed at all: the
+# app runs a local working copy of it straight from source, borrowing this
+# venv's dependencies (see src/song_app/omr.py, "engines"). Editing a branch and
+# reading a page again is then a loop with no install in it.
 #
 # Afterwards, point the app at it if you used a non-default location:
 #   HOMR_BIN=/somewhere/else/bin/homr   in .env
@@ -38,28 +42,13 @@ set -euo pipefail
 # (issue #93: the GTX 970 is sm_52, below onnxruntime's sm_60 floor).
 HOMR_REPO="${HOMR_REPO:-https://github.com/eerovil/homr.git}"
 
-# A branch of the fork, installed BESIDE the default rather than over it. A
-# branch is where a homr change is tried out (prototype/system-4, say), and the
-# question it exists to answer is "does this read the page better than what we
-# have?" — which cannot be answered by an install that replaced the thing it is
-# being compared against. So a branch gets a venv of its own, named after it,
-# and the app offers both as engines to scan with (omr.engines). Unset means the
-# default engine, and the default engine is `main`.
-HOMR_BRANCH="${HOMR_BRANCH:-}"
-
 DEFAULT_VENV="$HOME/.local/share/musescore-choir-plugins/homr-venv"
-if [ -n "$HOMR_BRANCH" ]; then
-    # prototype/system-4 -> homr-venv-prototype-system-4. A directory name is
-    # not a branch name, so the app reads the branch back out of the marker
-    # file below rather than trying to undo this.
-    DEFAULT_VENV="$DEFAULT_VENV-${HOMR_BRANCH//[^A-Za-z0-9]/-}"
-fi
 
-# A branch is a label a person recognises; a hand-written HOMR_SOURCE is not one,
+# `main` is a label a person recognises; a hand-written HOMR_SOURCE is not one,
 # so an install made from an explicit source is labelled by that source instead.
 if [ -z "${HOMR_SOURCE:-}" ]; then
-    HOMR_SOURCE="homr[cpu] @ git+$HOMR_REPO@${HOMR_BRANCH:-main}"
-    HOMR_LABEL="${HOMR_BRANCH:-main}"
+    HOMR_SOURCE="homr[cpu] @ git+$HOMR_REPO@main"
+    HOMR_LABEL="main"
 else
     HOMR_LABEL=""
 fi
@@ -83,10 +72,9 @@ uv venv --allow-existing --python "$HOMR_PYTHON" "$HOMR_VENV"
 echo "Installing $HOMR_SOURCE"
 VIRTUAL_ENV="$HOMR_VENV" uv pip install "$HOMR_SOURCE"
 
-# What this venv is, in a file, because a directory name cannot say it. The app
-# lists the installed engines and has to label them with something a person
-# recognises — the branch, not `homr-venv-prototype-system-4`. Written after the
-# install, so a venv that failed to build is not labelled as a working engine.
+# What this venv is, in a file: the app labels the default engine with it, and a
+# host reinstalled a month later can say what it got. Written after the install,
+# so a venv that failed to build is not labelled as a working engine.
 echo "source=$HOMR_SOURCE" > "$HOMR_VENV/homr-engine.txt"
 if [ -n "$HOMR_LABEL" ]; then
     echo "branch=$HOMR_LABEL" >> "$HOMR_VENV/homr-engine.txt"
@@ -104,6 +92,6 @@ if [ "$HOMR_VENV" != "$DEFAULT_VENV" ]; then
     # put elsewhere still has to be pointed at by hand.
     echo "Non-default location — add to .env:"
     echo "  HOMR_BIN=$HOMR_VENV/bin/homr"
-elif [ -n "$HOMR_BRANCH" ]; then
-    echo "Offered in the Scan panel as: $HOMR_BRANCH"
 fi
+echo "A branch of the fork needs no install: check it out under \$HOMR_CHECKOUT"
+echo "(default ~/homr, git worktrees included) and pick it in the Scan panel."

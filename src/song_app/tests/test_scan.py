@@ -59,7 +59,7 @@ class Reader:
     def __init__(self, staves=2, bars=2):
         self.cropped = []
         self.read = []
-        self.binaries = []
+        self.engines = []
         self.fail = {}
         self.staves, self.bars = staves, bars
 
@@ -73,9 +73,9 @@ class Reader:
             images.append(pdf_systems.SystemImage(bounds=band, path=path))
         return images
 
-    def read_system(self, image, out_dir, log=None, queue=True, binary=None):
+    def read_system(self, image, out_dir, log=None, queue=True, engine=None):
         self.read.append(image.index)
-        self.binaries.append(binary)
+        self.engines.append(engine)
         boom = self.fail.get(image.index)
         if boom:
             raise boom
@@ -623,14 +623,17 @@ def test_a_scanned_system_is_rendered_from_its_own_fragment(client, songs, reade
 
 def test_the_chosen_homr_is_what_reads_every_band(songs, reader):
     song = _song(songs)
-    scan.run(song, binary="/engines/prototype/bin/homr")
-    assert reader.binaries == ["/engines/prototype/bin/homr"] * 3
+    engine = omr.Engine(key="system-4", label="prototype/system-4",
+                        command=["/venv/bin/python", "-m", "homr"],
+                        env={"PYTHONPATH": "/home/eero/homr-trees/system-4"})
+    scan.run(song, engine=engine)
+    assert reader.engines == [engine] * 3
 
 
 def test_no_choice_leaves_the_engine_to_the_module(songs, reader):
     song = _song(songs)
     scan.run(song)
-    assert reader.binaries == [None] * 3
+    assert reader.engines == [None] * 3
 
 
 def test_the_route_resolves_the_engine_before_taking_the_lock(client, songs, reader,
@@ -652,14 +655,15 @@ def test_the_route_resolves_the_engine_before_taking_the_lock(client, songs, rea
 
 def test_the_panel_is_told_what_is_installed(client, monkeypatch):
     monkeypatch.setattr(server.omr, "engines", lambda: [
-        omr.Engine(key="default", label="main", binary="/a/homr", default=True),
-        omr.Engine(key="prototype-system-4", label="prototype/system-4",
-                   binary="/b/homr"),
+        omr.Engine(key="default", label="main", command=["/a/homr"], default=True),
+        omr.Engine(key="system-4", label="prototype/system-4",
+                   command=["/a/python", "-m", "homr"],
+                   env={"PYTHONPATH": "/home/eero/homr-trees/system-4"}),
     ])
 
     body = client.get("/api/homr-engines").json()
 
     assert body["engines"] == [
         {"key": "default", "label": "main", "default": True},
-        {"key": "prototype-system-4", "label": "prototype/system-4", "default": False},
+        {"key": "system-4", "label": "prototype/system-4", "default": False},
     ]

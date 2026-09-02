@@ -133,7 +133,7 @@ def read_systems(
     log: Logger = _noop,
     dpi: int = SCAN_DPI,
     queue: bool = True,
-    binary: Optional[str] = None,
+    engine: Optional[omr.Engine] = None,
 ) -> List[SystemScan]:
     """Crop each printed system and read it, in order.
 
@@ -158,7 +158,7 @@ def read_systems(
     scans: List[SystemScan] = []
     for n, image in enumerate(images, start=1):
         log(f"System {image.index} of {len(images)}: reading")
-        scans.append(read_system(image, out_dir, log=log, queue=queue, binary=binary))
+        scans.append(read_system(image, out_dir, log=log, queue=queue, engine=engine))
         log(f"System {image.index}: {scans[-1].width} staves, {scans[-1].bars} bars")
     return scans
 
@@ -168,12 +168,12 @@ def read_system(
     out_dir: str,
     log: Logger = _noop,
     queue: bool = True,
-    binary: Optional[str] = None,
+    engine: Optional[omr.Engine] = None,
 ) -> SystemScan:
     """Read one cropped system and flatten what comes back into staves.
 
-    ``binary`` picks which installed homr reads it (:func:`omr.engines`); the
-    default one otherwise.
+    ``engine`` picks which homr reads it (:func:`omr.engines`); the installed
+    one otherwise.
     """
     produced = omr.read_page(
         image.path,
@@ -181,7 +181,7 @@ def read_system(
         log=log,
         label=f"song app homr system {image.index}",
         queue=queue,
-        binary=binary,
+        engine=engine,
     )
     staves = flatten(produced)
     if not staves:

@@ -395,7 +395,7 @@ def _run_scan(slug: str, opts: Dict) -> None:
         # five minutes, so its lines go straight to the song's log the way a
         # clean's and a render's do, unparsed.
         result = scan.run(song, log=log, only=opts.get("systems"),
-                          binary=opts.get("binary"))
+                          engine=opts.get("engine"))
         holes = result["holes"]
         log(f"Read {result['read']} of {result['systems']} system(s)."
             + (f" Still to read: {', '.join(str(i) for i in holes)}." if holes
@@ -435,7 +435,7 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
     # that is not installed has to be a refused request, not a scan that starts,
     # takes a lock and then fails on the first band.
     try:
-        opts["binary"] = omr.engine_binary(opts.get("engine"))
+        opts["engine"] = omr.engine_for(opts.get("engine"))
     except omr.HomrMissing as exc:
         raise HTTPException(400, str(exc)) from None
     if is_scanning(song) or not job_state.start_if_idle(

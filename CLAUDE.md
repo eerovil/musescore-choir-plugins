@@ -332,13 +332,15 @@ Key test modules:
   the real thing: a page of the scanned fixture rasterised at 300 dpi goes in and parseable
   MusicXML with parts, measures and notes comes out (~50s). It skips without homr or
   poppler, the same way the MuseScore-CLI and Playwright tests skip.
-  A third half pins the **engines**: one install is one engine, a branch venv is
-  offered beside it under the branch's own name rather than the mangled directory's,
-  a half-built venv with no `homr` in it is not offered at all, an unlabelled install
-  falls back to its source, and an engine that is not installed is refused rather than
-  quietly becoming the default. `test_install_homr.py` pins the other end — a branch
-  gets its own venv and does not overwrite the default, each venv says what is in it,
-  and an explicit `HOMR_SOURCE` still wins and is then the label.
+  A third half pins the **engines**: one install with no checkout beside it is one
+  engine; a working copy and each of its git worktrees are engines labelled with the
+  branch they have out now; a directory that is not a homr checkout is not one; there
+  are no checkout engines without an install to borrow dependencies from; an engine
+  that is not there is refused rather than quietly becoming the default; the weights
+  are linked rather than downloaded again and a real file is never replaced; and the
+  chosen engine's argv *and environment* are what read the page. `test_install_homr.py`
+  pins the other end — the one venv, what it says about itself, and an explicit
+  `HOMR_SOURCE` being its own label.
   A second half is added for #113: the **slurs**, written as little token streams
   (`"1( 1) 3( 5)"`) because that is the level the defect lives at. A slur inside a bar
   and one across a single barline survive; two barlines is dropped and the slurs on
@@ -865,22 +867,37 @@ state model are in `DESIGN.md`.
   never touches its venv — so the day the parse changes is a day somebody ran the
   script, and running it is when the frozen benchmark should be run again. Nothing in
   `omr.py` or in the rest of the installer moves with it.
-  **A branch of the fork can be installed beside the default one, and this pull
-  request proposes that too.** `HOMR_BRANCH=prototype/system-4
-  scripts/install-homr.sh` builds a second venv named after the branch and leaves the
-  first alone. Beside rather than over, because the only question a homr branch exists
-  to answer is whether it reads *this* repertoire better than what we already have,
-  and an install that replaced the thing it is being compared against cannot answer
-  it. A directory name cannot carry `prototype/system-4`, so each venv gets a
-  `homr-engine.txt` naming its source and its branch — that file is what the picker
-  reads its labels off, and undoing the name-mangling instead would be guessing. An
-  explicit `HOMR_SOURCE` still wins over both and is then the label, since a
-  hand-written source is not a branch.
-  `omr.engines()` lists what is installed — the default one (`homr_binary()`) first,
-  then the `homr-venv-*` siblings — and `engine_binary(key)` resolves a choice,
-  **refusing an engine that is not there** rather than falling back to the default: a
-  parse nobody can account for is worse than a refused request. `read_page(binary=...)`
-  is the whole of the rest, threaded through `omr_systems.read_system` and `scan.run`.
+  **A branch of the fork is not installed at all.** That install is the one homr
+  install there is; a branch is run from a **local working copy**, and this is the
+  shape that pull request settled on after trying a venv per branch. The only
+  question a homr branch exists to answer is whether it reads *this* repertoire
+  better than what we already have, and answering it means editing, re-reading a
+  page, editing again — a 660 MB reinstall between passes is not a loop anybody
+  uses. So the checkout at `HOMR_CHECKOUT` (default `~/homr`) **and every git
+  worktree beside it** are engines: the dependencies come from the installed venv
+  and the code comes from the working copy, put in front of it on `PYTHONPATH`
+  (`<venv>/bin/python -c "from homr.main import main; main()"` — the package has no
+  `__main__`, and the venv's own `bin/homr` would import the installed copy whatever
+  `PYTHONPATH` said). Switching a branch there changes what the next
+  scan runs, with nothing to rebuild and nothing to keep in step. The label is the
+  branch, **read live from git** rather than remembered, because that is the whole
+  point; the price is that such an engine is whatever is checked out at the moment it
+  runs, which is why the installed venv stays as the fixed thing to compare against
+  (`homr-engine.txt` still labels it, and an explicit `HOMR_SOURCE` is then its label,
+  since a hand-written source is not a branch).
+  One thing this costs and pays for: homr keeps its ~150 MB of weights **beside its
+  own source**, so a working copy run this way would download its own set — per
+  worktree, four times over here. `link_weights` symlinks the installed venv's
+  `.onnx` files into a checkout the first time it is picked. Safe because the file
+  names carry a content hash: a branch wanting different weights asks for a different
+  name and downloads it. Only missing files are linked and a real file is never
+  replaced.
+  `omr.engines()` lists what this host can run — the installed one first, then the
+  working copies — and `engine_for(key)` resolves a choice, **refusing an engine that
+  is not there** rather than falling back to the default: a parse nobody can account
+  for is worse than a refused request. `read_page(engine=...)` is the whole of the
+  rest (an `Engine` carries its argv and the environment it needs), threaded through
+  `omr_systems.read_system` and `scan.run`.
   The choice is **per scan run and is not recorded**. What a fragment has to carry is
   what came back, not what produced it, and comparing two engines is reading a system
   with one and then the other — the retry button that already exists — and looking at

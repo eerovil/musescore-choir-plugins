@@ -1,9 +1,8 @@
-"""The homr installer: where homr comes from, and where a branch of it goes.
+"""The homr installer: one venv, and what it says about itself.
 
-A branch is installed *beside* the default rather than over it, because the only
-question a homr branch exists to answer is whether it reads this repertoire
-better than what we already have — and an install that replaced the thing it is
-being compared against cannot answer it.
+A branch of the fork is deliberately NOT installed — the app runs a local working
+copy from source against this venv's dependencies (see test_omr.py). So all this
+has to get right is where homr comes from and how the one install is labelled.
 """
 
 from __future__ import annotations
@@ -51,7 +50,7 @@ def install(tmp_path: Path):
                 "HOMR_LOG": str(homr_log),
             }
         )
-        for key in ("HOMR_SOURCE", "HOMR_BRANCH", "HOMR_VENV"):
+        for key in ("HOMR_SOURCE", "HOMR_VENV"):
             env.pop(key, None)
         for key, value in overrides.items():
             if value is not None:
@@ -76,41 +75,19 @@ def test_installer_resolves_source(install, tmp_path: Path,
     assert homr_log == ["--init"]
 
 
-def test_a_branch_installs_beside_the_default_one(install) -> None:
-    """A branch gets a venv of its own, so both engines stay installed."""
-    uv_log, _ = install(HOMR_BRANCH="prototype/system-4")
-
-    base = install.home / ".local/share/musescore-choir-plugins"
-    venv = base / "homr-venv-prototype-system-4"
-    assert venv.is_dir()
-    assert not (base / "homr-venv").exists()
-    assert ("pip install homr[cpu] @ git+https://github.com/eerovil/homr.git"
-            "@prototype/system-4") in uv_log
-
-
-def test_each_venv_says_what_is_in_it(install) -> None:
-    """The directory name cannot carry the branch, so a marker file does.
-
-    That file is what the app's engine picker reads its labels off.
-    """
-    install(HOMR_BRANCH="prototype/system-4")
+def test_the_venv_says_what_is_in_it(install) -> None:
+    """The app labels the default engine off this file."""
     install()
 
     base = install.home / ".local/share/musescore-choir-plugins"
-    branch = (base / "homr-venv-prototype-system-4" / "homr-engine.txt").read_text()
-    assert "branch=prototype/system-4" in branch.splitlines()
-
     default = (base / "homr-venv" / "homr-engine.txt").read_text().splitlines()
     assert default == [f"source={DEFAULT_SOURCE}", "branch=main"]
 
 
-def test_an_explicit_source_still_wins_over_a_branch(install) -> None:
-    """A commit is how an old parse is got back, whatever else is set."""
-    uv_log, _ = install(HOMR_BRANCH="prototype/system-4", HOMR_SOURCE="homr==9.9.9")
+def test_an_explicit_source_is_its_own_label(install) -> None:
+    """A commit is how an old parse is got back, and "main" would then be a lie."""
+    uv_log, _ = install(HOMR_SOURCE="homr==9.9.9")
 
     assert "pip install homr==9.9.9" in uv_log
-    venv = install.home / ".local/share/musescore-choir-plugins/homr-venv-prototype-system-4"
-    assert venv.is_dir()
-    # Labelled by what it was installed from: "prototype/system-4" would be a lie
-    # about a venv holding whatever homr==9.9.9 is.
+    venv = install.home / ".local/share/musescore-choir-plugins/homr-venv"
     assert (venv / "homr-engine.txt").read_text().splitlines() == ["source=homr==9.9.9"]
