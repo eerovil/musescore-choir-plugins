@@ -260,3 +260,51 @@ def test_the_picked_engine_is_the_one_that_reads_the_system(live, page, monkeypa
 
     assert asked == ["/b/homr"]
     assert not errors, f"the panel raised: {errors}"
+
+
+def test_a_system_that_read_fine_can_still_be_read_again(live, page, monkeypatch):
+    """Otherwise the only way to look again is to drag the band.
+
+    A scan skips a band whose geometry has not moved, so before this, trying the
+    other engine on a system meant editing the page's own geometry to provoke a
+    side effect.
+    """
+    base, song = live
+    _read(state.load(song.slug), 3)
+    asked = []
+    monkeypatch.setattr(server.scan, "run", lambda song, **kw: (
+        asked.append(sorted(kw.get("only") or [])) or
+        {"read": 3, "systems": 3, "holes": []}))
+
+    errors = _open(page, base, song.slug)
+    page.get_by_role("heading", name="Read a system again").wait_for()
+    page.locator(".panel .row button", has_text="2").last.click()
+    deadline = time.time() + 10
+    while not asked and time.time() < deadline:
+        page.wait_for_timeout(100)
+
+    assert asked == [[2]], "only the named system is re-read"
+    assert not errors, f"the panel raised: {errors}"
+
+
+def test_the_compare_rows_re_read_the_system_being_looked_at(live, page, monkeypatch):
+    """The decision is made looking at the parse against the page, so the button
+    is there too — and it says what a changed reading costs."""
+    base, song = live
+    _read(state.load(song.slug), 3)
+    asked = []
+    monkeypatch.setattr(server.scan, "run", lambda song, **kw: (
+        asked.append(sorted(kw.get("only") or [])) or
+        {"read": 3, "systems": 3, "holes": []}))
+
+    errors = _open(page, base, song.slug)
+    page.get_by_role("button", name="Compare with the page").first.click()
+    row = page.locator(".cmprow").nth(2)
+    row.get_by_role("button", name="Read system 3 again").click()
+    deadline = time.time() + 10
+    while not asked and time.time() < deadline:
+        page.wait_for_timeout(100)
+
+    assert asked == [[3]]
+    assert "lapses your OK" in row.inner_text()
+    assert not errors, f"the panel raised: {errors}"
