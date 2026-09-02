@@ -667,3 +667,17 @@ def test_the_panel_is_told_what_is_installed(client, monkeypatch):
         {"key": "default", "label": "main", "default": True},
         {"key": "system-4", "label": "prototype/system-4", "default": False},
     ]
+
+
+def test_a_host_with_no_homr_still_starts_the_scan(client, songs, reader, monkeypatch):
+    """Asking for no engine in particular must not be refused at the door.
+
+    Resolving the default here would make a host without homr — CI, a fresh
+    clone — unable to start a scan at all, when the honest failure is the one
+    the read itself gives, in the song's log.
+    """
+    song = _song(songs)
+    monkeypatch.setattr(server.omr, "engines", lambda: [])
+    monkeypatch.setattr(server.omr, "default_engine", lambda: None)
+
+    assert client.post(f"/api/songs/{song.slug}/scan").status_code == 200

@@ -431,13 +431,18 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         opts["systems"] = [int(i) for i in (opts.get("systems") or [])]
     except (TypeError, ValueError):
         raise HTTPException(400, "systems must be whole numbers") from None
-    # Which homr reads it, resolved here rather than in the worker: an engine
-    # that is not installed has to be a refused request, not a scan that starts,
-    # takes a lock and then fails on the first band.
-    try:
-        opts["engine"] = omr.engine_for(opts.get("engine"))
-    except omr.HomrMissing as exc:
-        raise HTTPException(400, str(exc)) from None
+    # A *named* engine is resolved here rather than in the worker: one that is not
+    # there has to be a refused request, not a scan that starts, takes a lock and
+    # then fails on the first band. Asking for no engine in particular is left
+    # alone — `omr` picks the installed one when the read happens, and a host with
+    # no homr at all should fail where it always did, saying so in the song's log.
+    key = opts.get("engine")
+    opts["engine"] = None
+    if key and key != omr.DEFAULT_ENGINE:
+        try:
+            opts["engine"] = omr.engine_for(key)
+        except omr.HomrMissing as exc:
+            raise HTTPException(400, str(exc)) from None
     if is_scanning(song) or not job_state.start_if_idle(
             song.dir, "scan", ("scan", "clean", "render", "upload"),
             pdf_systems.file_version(song.source_path("pdf"))):
