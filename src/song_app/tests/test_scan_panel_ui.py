@@ -219,3 +219,44 @@ def test_it_fits_a_phone(live, page):
     assert page.evaluate("document.body.scrollWidth <= window.innerWidth + 1")
     page.set_viewport_size({"width": 1280, "height": 900})
     assert not errors, f"the panel raised: {errors}"
+
+
+def test_the_engine_picker_appears_only_when_there_is_a_choice(live, page, monkeypatch):
+    """One installed homr is not a choice, and a picker with one entry is furniture."""
+    base, song = live
+    _read(state.load(song.slug), 3)
+    monkeypatch.setattr(server.omr, "engines", lambda: [
+        server.omr.Engine(key="default", label="main", binary="/a/homr", default=True)])
+
+    errors = _open(page, base, song.slug)
+
+    assert page.locator(".panel select").count() == 0
+    assert not errors, f"the panel raised: {errors}"
+
+
+def test_the_picked_engine_is_the_one_that_reads_the_system(live, page, monkeypatch):
+    """The whole point of the picker: a branch of homr against the same page."""
+    base, song = live
+    _read(state.load(song.slug), 3, failed=(2,))
+    monkeypatch.setattr(server.omr, "engines", lambda: [
+        server.omr.Engine(key="default", label="main", binary="/a/homr", default=True),
+        server.omr.Engine(key="prototype-system-4", label="prototype/system-4",
+                          binary="/b/homr")])
+    asked = []
+    monkeypatch.setattr(server.scan, "run", lambda song, **kw: (
+        asked.append(kw.get("binary")) or {"read": 2, "systems": 3, "holes": [2]}))
+
+    errors = _open(page, base, song.slug)
+    picker = page.locator(".panel select")
+    picker.wait_for()
+    assert picker.locator("option").all_inner_texts() == [
+        "main (default)", "prototype/system-4"]
+
+    picker.select_option("prototype-system-4")
+    page.get_by_role("button", name="Read system 2 again").click()
+    deadline = time.time() + 10
+    while not asked and time.time() < deadline:
+        page.wait_for_timeout(100)
+
+    assert asked == ["/b/homr"]
+    assert not errors, f"the panel raised: {errors}"

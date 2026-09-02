@@ -59,6 +59,7 @@ class Reader:
     def __init__(self, staves=2, bars=2):
         self.cropped = []
         self.read = []
+        self.binaries = []
         self.fail = {}
         self.staves, self.bars = staves, bars
 
@@ -72,8 +73,9 @@ class Reader:
             images.append(pdf_systems.SystemImage(bounds=band, path=path))
         return images
 
-    def read_system(self, image, out_dir, log=None, queue=True):
+    def read_system(self, image, out_dir, log=None, queue=True, binary=None):
         self.read.append(image.index)
+        self.binaries.append(binary)
         boom = self.fail.get(image.index)
         if boom:
             raise boom
@@ -610,3 +612,54 @@ def test_a_scanned_system_is_rendered_from_its_own_fragment(client, songs, reade
     # The hole has no fragment, so there is nothing to render and the comparison
     # shows the reason instead of a picture of the system before it.
     assert client.get(f"/api/songs/{song.slug}/scan-system/2").status_code == 404
+
+
+# --- which homr reads it --------------------------------------------------
+#
+# A homr branch is installed beside the default one, so a scan can be run with
+# either. The choice lasts the run: nothing about it is recorded, because what a
+# fragment has to carry is what came back, not what produced it.
+
+
+def test_the_chosen_homr_is_what_reads_every_band(songs, reader):
+    song = _song(songs)
+    scan.run(song, binary="/engines/prototype/bin/homr")
+    assert reader.binaries == ["/engines/prototype/bin/homr"] * 3
+
+
+def test_no_choice_leaves_the_engine_to_the_module(songs, reader):
+    song = _song(songs)
+    scan.run(song)
+    assert reader.binaries == [None] * 3
+
+
+def test_the_route_resolves_the_engine_before_taking_the_lock(client, songs, reader,
+                                                              monkeypatch):
+    """An engine that is not installed is a refused request.
+
+    Started-then-failed would cost the song a lock and the operator a run, and
+    the answer is knowable at the door.
+    """
+    song = _song(songs)
+    monkeypatch.setattr(server.omr, "engines", lambda: [])
+
+    r = client.post(f"/api/songs/{song.slug}/scan", json={"engine": "no-such-branch"})
+
+    assert r.status_code == 400 and "no-such-branch" in r.json()["detail"]
+    assert not os.path.exists(server._scan_lock_path(song))
+    assert reader.read == []
+
+
+def test_the_panel_is_told_what_is_installed(client, monkeypatch):
+    monkeypatch.setattr(server.omr, "engines", lambda: [
+        omr.Engine(key="default", label="main", binary="/a/homr", default=True),
+        omr.Engine(key="prototype-system-4", label="prototype/system-4",
+                   binary="/b/homr"),
+    ])
+
+    body = client.get("/api/homr-engines").json()
+
+    assert body["engines"] == [
+        {"key": "default", "label": "main", "default": True},
+        {"key": "prototype-system-4", "label": "prototype/system-4", "default": False},
+    ]

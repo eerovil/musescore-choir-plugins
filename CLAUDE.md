@@ -332,6 +332,13 @@ Key test modules:
   the real thing: a page of the scanned fixture rasterised at 300 dpi goes in and parseable
   MusicXML with parts, measures and notes comes out (~50s). It skips without homr or
   poppler, the same way the MuseScore-CLI and Playwright tests skip.
+  A third half pins the **engines**: one install is one engine, a branch venv is
+  offered beside it under the branch's own name rather than the mangled directory's,
+  a half-built venv with no `homr` in it is not offered at all, an unlabelled install
+  falls back to its source, and an engine that is not installed is refused rather than
+  quietly becoming the default. `test_install_homr.py` pins the other end — a branch
+  gets its own venv and does not overwrite the default, each venv says what is in it,
+  and an explicit `HOMR_SOURCE` still wins and is then the label.
   A second half is added for #113: the **slurs**, written as little token streams
   (`"1( 1) 3( 5)"`) because that is the level the defect lives at. A slur inside a bar
   and one across a single barline survive; two barlines is dropped and the slurs on
@@ -384,6 +391,8 @@ Key test modules:
   Nothing here runs homr, poppler or MuseScore — the fragments are written into the song
   the way a scan would leave them, **with real band stamps**, or the app discards them all
   on the next read, which is the invalidation rule working rather than a test detail.
+  It also pins the engine picker: hidden when one homr is installed, and when two are, the
+  engine chosen in the browser is the binary `scan.run` is actually handed.
 - `src/song_app/tests/test_benchmark.py` — added by this pull request, and the first
   thing in the suite that meets a **real scan**. Three tiers, so each dependency buys
   something and none is required. **No dependencies**: the manifest's files are on disk
@@ -839,19 +848,53 @@ state model are in `DESIGN.md`.
   So: a `uv`-managed python 3.12 venv outside the checkout, built by
   **`scripts/install-homr.sh`** (idempotent; `HOMR_VENV` moves it), called as a
   subprocess. A fresh clone runs one script.
-  **Where homr comes from is one variable in that script, `HOMR_SOURCE`.** It defaults
-  to the immutable `eerovil/homr` commit matching upstream `v0.7.0`; an explicit
-  `HOMR_SOURCE` still wins. #97 put multi-page joining, the staff-grouping fix and PDF
-  input *inside the fork*, because the app only ever sees homr's output and by then the
-  staves are gone. The fork is pinned rather than automatically synced: moving the
-  source commit is a deliberate upgrade followed by the frozen benchmark run. Nothing
-  in `omr.py` or in the rest of the installer moves with it.
-  Two things the earlier notes got wrong
-  and this pins: homr 0.7.0 declares `>=3.11,<3.16` and installs on 3.14 too, so the
-  version is a choice and not a wall — 3.12 because every benchmark number in #93 and
-  #95 came off 3.12; and there is **no `[cpu]` extra** on 0.7.0, so upstream's
-  `uvx --from 'homr[cpu]' homr` recipe silently ignores it. The normal source install
-  pulls CPU onnxruntime, which is all this host can use anyway.
+  **Where homr comes from is one variable in that script, `HOMR_SOURCE`.** It defaulted
+  to the immutable `eerovil/homr` commit matching upstream `v0.7.0`; this pull request
+  moves it to **`@main`**, the fork's tip, which today is upstream's own tip. An
+  explicit `HOMR_SOURCE` still wins, and a commit hash is how an old parse is got back.
+  #97 put multi-page joining, the staff-grouping fix and PDF input *inside the fork*,
+  because the app only ever sees homr's output and by then the staves are gone — all
+  three have since landed upstream, so the fork carries nothing of its own at the
+  moment and `choir-0.7.0` is exactly the v0.7.0 tag.
+  What following a branch costs is worth saying rather than skipping: an install is no
+  longer reproducible from the checkout alone, so two hosts set up a month apart get
+  different OMR and so does one host reinstalled. What buys it back is that **nothing
+  installs homr automatically** — it is not in `pip-requirements.txt` and the deploy
+  never touches its venv — so the day the parse changes is a day somebody ran the
+  script, and running it is when the frozen benchmark should be run again. Nothing in
+  `omr.py` or in the rest of the installer moves with it.
+  **A branch of the fork can be installed beside the default one, and this pull
+  request proposes that too.** `HOMR_BRANCH=prototype/system-4
+  scripts/install-homr.sh` builds a second venv named after the branch and leaves the
+  first alone. Beside rather than over, because the only question a homr branch exists
+  to answer is whether it reads *this* repertoire better than what we already have,
+  and an install that replaced the thing it is being compared against cannot answer
+  it. A directory name cannot carry `prototype/system-4`, so each venv gets a
+  `homr-engine.txt` naming its source and its branch — that file is what the picker
+  reads its labels off, and undoing the name-mangling instead would be guessing. An
+  explicit `HOMR_SOURCE` still wins over both and is then the label, since a
+  hand-written source is not a branch.
+  `omr.engines()` lists what is installed — the default one (`homr_binary()`) first,
+  then the `homr-venv-*` siblings — and `engine_binary(key)` resolves a choice,
+  **refusing an engine that is not there** rather than falling back to the default: a
+  parse nobody can account for is worse than a refused request. `read_page(binary=...)`
+  is the whole of the rest, threaded through `omr_systems.read_system` and `scan.run`.
+  The choice is **per scan run and is not recorded**. What a fragment has to carry is
+  what came back, not what produced it, and comparing two engines is reading a system
+  with one and then the other — the retry button that already exists — and looking at
+  both against the page. `GET /api/homr-engines` is app-wide, because which homr a host
+  has is a property of the host; the Scan panel's **Read with** picker appears only
+  when there is more than one, and the scan route resolves the key at the door so a
+  missing engine is a 400 rather than a run that takes the lock and dies on band one.
+  Two things the earlier notes got wrong and one that has since changed under us.
+  homr declares `>=3.11,<3.16` and installs on 3.14 too, so the version is a choice and
+  not a wall — 3.12 because every benchmark number in #93 and #95 came off 3.12. There
+  was **no `[cpu]` extra** on 0.7.0, so upstream's `uvx --from 'homr[cpu]' homr` recipe
+  silently ignored it and the plain install pulled CPU onnxruntime. On `main` that is
+  reversed and the extra is **load-bearing**: onnxruntime has moved out of the base
+  dependencies into `cpu`/`cuda`/`rocm`, so a plain install of `main` has no inference
+  runtime at all and fails at the first parse rather than at install time. `HOMR_SOURCE`
+  therefore names `homr[cpu] @ git+...`. CPU is still the only one this host can use.
   What the module absorbs is the CLI's shape. homr takes one image, writes
   `<image>.musicxml` **beside it**, has no `--output`, and drops a `_teaser.png` next
   to the input, so the run happens on a copy in a scratch dir and only the answer is
@@ -1059,6 +1102,11 @@ state model are in `DESIGN.md`.
   **A hole is visible, blocking, and retried on its own**: each one is listed with what
   homr said and a button that re-reads that system alone. It was a `prompt()` asking for
   comma-separated numbers.
+  **Which homr reads it is a picker, not a config file** — a `Read with` select over
+  `GET /api/homr-engines`, shown only when this host has more than one installed and
+  applying to that run and its per-system retries. Trying a homr branch against real
+  music otherwise meant editing `.env` or reinstalling over the engine being compared
+  against; see the `omr.py` notes for why a branch is installed beside the default.
   **Comparison is system by system**, in a `Scan vs page` viewer tab: each printed crop
   (`/system/{index}`) above what was read off it, engraved through MuseScore
   (`/scan-system/{index}` → `pipeline.scan_system_render`, `-T` so a one-system fragment

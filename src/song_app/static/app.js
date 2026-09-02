@@ -918,10 +918,28 @@ function panelScan(panel, song, P, refresh, actions) {
     panel.append(el("div", { className: "banner" },
       `Discarded ${gone}: what it was made from has changed.`));
 
+  // Which homr reads the page. Only offered when this host has more than one
+  // installed (HOMR_BRANCH=... scripts/install-homr.sh) — a picker with a single
+  // entry is furniture. The choice lasts this scan run and nothing records it:
+  // two engines are compared by reading a system with one, then the other, and
+  // looking at both against the page.
+  let engine = null;
+  const engineRow = el("div", { className: "row" });
+  panel.append(engineRow);
+  getJSON("/api/homr-engines").then(({ engines }) => {
+    if (!engines || engines.length < 2) return;
+    const sel = el("select", { onchange: () => { engine = sel.value; } },
+      ...engines.map((e) => el("option", { value: e.key },
+        e.label + (e.default ? " (default)" : ""))));
+    engine = sel.value;
+    engineRow.append(el("label", { className: "hint" }, "Read with"), sel);
+  }).catch(() => {});
+
   const rerun = async (systems) => {
     appendLog(systems ? "Re-reading system(s) " + systems.join(", ") + "…"
                       : "Starting scan…");
-    try { await postJSON(`${P}/scan`, systems ? { systems } : {}); refresh(); }
+    const body = Object.assign(systems ? { systems } : {}, engine ? { engine } : {});
+    try { await postJSON(`${P}/scan`, body); refresh(); }
     catch (e) { appendLog(e.message, true); }
   };
   // Only offered while there is something to read: a band already read at its
