@@ -421,6 +421,7 @@ def run(
     only: Optional[Sequence[int]] = None,
     pad: float = PAD,
     dpi: int = omr_systems.SCAN_DPI,
+    binary: Optional[str] = None,
 ) -> Dict:
     """Read every printed system that is not already read, and assemble.
 
@@ -429,6 +430,12 @@ def run(
     system's grid answers away: :func:`reconcile` does it afterwards, and only if
     the re-read actually came back different, which is the only case in which
     anything derived from it was wrong.
+
+    ``binary`` reads with a homr other than the default one (:func:`omr.engines`)
+    — a branch being tried against this repertoire. It is not recorded: what a
+    fragment has to carry is what came back, not what produced it, and the
+    comparison people actually make is re-reading one system with the other
+    engine and looking at both.
     """
     pdf = song.source_path("pdf")
     if not pdf or not os.path.exists(pdf):
@@ -463,7 +470,7 @@ def run(
                 and not current.get("error"):
             log(f"System {band.index}: already read.")
             continue
-        _read_one(song, pdf, band, stamp, out_dir, pad, dpi, len(bands), log)
+        _read_one(song, pdf, band, stamp, out_dir, pad, dpi, len(bands), log, binary)
         song.save()
 
     # Everything downstream of a fragment that just changed goes here, through
@@ -474,7 +481,8 @@ def run(
 
 
 def _read_one(song: state.Song, pdf: str, band: SystemBounds, stamp: str,
-              out_dir: str, pad: float, dpi: int, total: int, log: Logger) -> None:
+              out_dir: str, pad: float, dpi: int, total: int, log: Logger,
+              binary: Optional[str] = None) -> None:
     """Read one band, and record either its fragment or its hole.
 
     A lost lease is a hole like any other: each band takes its own slot, so band
@@ -488,7 +496,7 @@ def _read_one(song: state.Song, pdf: str, band: SystemBounds, stamp: str,
     try:
         log(f"System {band.index} of {total}: cropping")
         image = pdf_systems.crop_systems(pdf, [padded(band, pad)], out_dir, dpi=dpi)[0]
-        produced = omr_systems.read_system(image, out_dir, log=log)
+        produced = omr_systems.read_system(image, out_dir, log=log, binary=binary)
         entry.update(
             musicxml=os.path.relpath(produced.musicxml, song.dir),
             content=content_stamp(produced.musicxml),

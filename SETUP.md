@@ -64,10 +64,26 @@ That creates `~/.local/share/musescore-choir-plugins/homr-venv` on python 3.12
 and downloads the model weights, so the first scan is not the slow one.
 Re-running it is safe. Set `HOMR_VENV` to put it elsewhere, and then `HOMR_BIN`
 in `.env` so the app can find it. `HOMR_SOURCE` is where homr is installed
-from. It defaults to an immutable commit in our fork, pinned to the upstream
-0.7.0 baseline; set `HOMR_SOURCE` explicitly to test another source.
+from. It follows `main` in our fork, which tracks upstream — so an install takes
+whatever homr is on the day it runs, and a re-run can change how scores parse.
+Set `HOMR_SOURCE` to a commit to get a particular parse back.
 Without homr, `src/song_app/omr.py` raises a message saying so and its tests
 skip; nothing else in the app is affected.
+
+A branch of the fork can be installed **beside** the default one, which is how a
+homr change is tried against real repertoire:
+
+```bash
+HOMR_BRANCH=prototype/system-4 scripts/install-homr.sh
+```
+
+That builds a second venv (`homr-venv-prototype-system-4`) and leaves the first
+alone — a branch that replaced what it is being compared against could not be
+judged. The Scan panel then offers a **Read with** picker of everything
+installed, and the choice applies to that scan run only; nothing is recorded, so
+comparing two engines means reading a system with one, then the other, and
+looking at both against the page. The picker is hidden when only one homr is
+installed.
 
 Install the QML plugins separately by copying or symlinking `plugins/` into
 `~/Documents/MuseScore3/Plugins` — MuseScore loads them from there, not from this

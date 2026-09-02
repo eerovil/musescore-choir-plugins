@@ -58,6 +58,7 @@ import subprocess
 import tempfile
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Callable, List, Optional
 
 from lxml import etree
@@ -108,12 +109,108 @@ def homr_binary() -> str:
     return "homr"
 
 
-def homr_available() -> bool:
+def homr_available(binary: Optional[str] = None) -> bool:
     """Whether :func:`read_page` can run at all on this host."""
-    binary = homr_binary()
+    binary = binary or homr_binary()
     if os.path.sep in binary:
         return os.access(binary, os.X_OK)
     return shutil.which(binary) is not None
+
+
+# --- engines -------------------------------------------------------------
+#
+# There can be more than one homr installed, because a homr change is tried out
+# on a branch and the only question worth asking about it is whether it reads
+# *this* repertoire better than what we have. That cannot be answered by an
+# install that replaced what it is being compared against, so
+# ``scripts/install-homr.sh HOMR_BRANCH=...`` puts a branch in a venv of its own
+# beside the default one, and the Scan panel offers the lot.
+#
+# The choice is per scan run and is not recorded anywhere: which homr read a
+# system is not something the app reasons about, and a fragment already carries
+# the stamp that matters (what came back). Two engines are compared by reading a
+# system with one and then the other, which is the retry button that already
+# exists.
+
+
+@dataclass(frozen=True)
+class Engine:
+    """One installed homr: what to call it, what to show, what to run."""
+
+    key: str
+    label: str
+    binary: str
+    default: bool = False
+
+
+#: Written by the installer into each venv it builds. A directory name cannot
+#: say which branch is in it, and undoing the name-mangling would be guessing.
+ENGINE_MARKER = "homr-engine.txt"
+
+#: The key standing for "whatever homr the app would use anyway".
+DEFAULT_ENGINE = "default"
+
+
+def _marker(venv: str) -> dict:
+    try:
+        with open(os.path.join(venv, ENGINE_MARKER), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return {}
+    return dict(line.split("=", 1) for line in lines if "=" in line)
+
+
+def _label(venv: str, fallback: str) -> str:
+    fields = _marker(venv)
+    return fields.get("branch") or fields.get("source") or fallback
+
+
+def engines() -> List[Engine]:
+    """Every homr this host has, the default one first.
+
+    The default is whatever :func:`homr_binary` resolves to; the rest are the
+    ``homr-venv-*`` siblings the installer makes for a branch. A venv put
+    somewhere else with ``HOMR_VENV`` is not found — it is reached with
+    ``HOMR_BIN``, and then it *is* the default.
+    """
+    found: List[Engine] = []
+    binary = homr_binary()
+    if homr_available(binary):
+        venv = os.path.dirname(os.path.dirname(binary))
+        found.append(Engine(key=DEFAULT_ENGINE,
+                            label=_label(venv, "main"), binary=binary, default=True))
+
+    parent, base = os.path.split(DEFAULT_VENV)
+    try:
+        siblings = sorted(os.listdir(parent))
+    except OSError:
+        siblings = []
+    for name in siblings:
+        if not name.startswith(base + "-"):
+            continue
+        venv = os.path.join(parent, name)
+        candidate = os.path.join(venv, "bin", "homr")
+        if not homr_available(candidate) or candidate == binary:
+            continue
+        key = name[len(base) + 1:]
+        found.append(Engine(key=key, label=_label(venv, key), binary=candidate))
+    return found
+
+
+def engine_binary(key: Optional[str]) -> str:
+    """The executable for an engine key, or the default one for ``None``.
+
+    An unknown key is refused rather than falling back: a scan run with a homr
+    other than the one that was asked for is a parse nobody can account for.
+    """
+    if not key or key == DEFAULT_ENGINE:
+        return homr_binary()
+    for engine in engines():
+        if engine.key == key:
+            return engine.binary
+    raise HomrMissing(
+        f"No homr engine called {key!r} is installed. Install it with "
+        f"HOMR_BRANCH=... scripts/install-homr.sh, or scan with the default one.")
 
 
 def read_page(
@@ -123,6 +220,7 @@ def read_page(
     timeout: int = DEFAULT_TIMEOUT,
     label: Optional[str] = None,
     queue: bool = True,
+    binary: Optional[str] = None,
 ) -> str:
     """Read one page image and return the path of the MusicXML written for it.
 
@@ -137,7 +235,8 @@ def read_page(
     there rather than at the end.
 
     ``label`` is what the queue shows for this page; ``queue=False`` runs
-    without asking for a slot, for a caller already holding one.
+    without asking for a slot, for a caller already holding one. ``binary``
+    reads the page with a homr other than the default one (:func:`engines`).
 
     The MusicXML that comes back has had its slurs resolved (:func:`resolve_slurs`).
     """
@@ -149,8 +248,8 @@ def read_page(
             f"{image_path}"
         )
 
-    binary = homr_binary()
-    if not homr_available():
+    binary = binary or homr_binary()
+    if not homr_available(binary):
         raise HomrMissing(
             f"homr is not installed ({binary}). Run scripts/install-homr.sh, "
             "or set HOMR_BIN if it lives somewhere else."

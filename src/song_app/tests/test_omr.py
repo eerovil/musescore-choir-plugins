@@ -81,6 +81,99 @@ def test_not_installed_is_its_own_error(monkeypatch, tmp_path):
     assert "install-homr.sh" in str(caught.value)
 
 
+# --- which homr ----------------------------------------------------------
+#
+# A homr branch is installed beside the default one rather than over it, so the
+# app has to be able to list what is installed and run a named one.
+
+
+def a_venv(path, branch=None, source="homr[cpu] @ git+.../homr.git@main"):
+    """A venv shaped the way scripts/install-homr.sh leaves one."""
+    (path / "bin").mkdir(parents=True)
+    homr = path / "bin" / "homr"
+    homr.write_text("#!/usr/bin/env bash\n")
+    homr.chmod(homr.stat().st_mode | stat.S_IEXEC)
+    lines = [f"source={source}"] + ([f"branch={branch}"] if branch else [])
+    (path / "homr-engine.txt").write_text("\n".join(lines) + "\n")
+    return str(homr)
+
+
+def test_one_install_is_one_engine(monkeypatch, tmp_path):
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    binary = a_venv(tmp_path / "homr-venv", branch="main")
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+
+    engines = omr.engines()
+    assert [(e.key, e.label, e.binary, e.default) for e in engines] == [
+        ("default", "main", binary, True)]
+
+
+def test_a_branch_venv_is_offered_beside_the_default(monkeypatch, tmp_path):
+    """The label is the branch, not the mangled directory name."""
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    a_venv(tmp_path / "homr-venv", branch="main")
+    branch = a_venv(tmp_path / "homr-venv-prototype-system-4", branch="prototype/system-4")
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+
+    engines = omr.engines()
+    assert [e.label for e in engines] == ["main", "prototype/system-4"]
+    assert [e.default for e in engines] == [True, False]
+    assert engines[1].key == "prototype-system-4"
+    assert omr.engine_binary("prototype-system-4") == branch
+
+
+def test_a_venv_with_no_homr_in_it_is_not_an_engine(monkeypatch, tmp_path):
+    """A half-built venv must not be offered as something to scan with."""
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    a_venv(tmp_path / "homr-venv", branch="main")
+    (tmp_path / "homr-venv-broken" / "bin").mkdir(parents=True)
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+
+    assert [e.key for e in omr.engines()] == ["default"]
+
+
+def test_an_unlabelled_engine_falls_back_to_its_source(monkeypatch, tmp_path):
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    a_venv(tmp_path / "homr-venv", branch="main")
+    a_venv(tmp_path / "homr-venv-pinned", source="homr==9.9.9")
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+
+    assert [e.label for e in omr.engines()][1] == "homr==9.9.9"
+
+
+def test_no_key_means_the_default_engine(monkeypatch, tmp_path):
+    binary = a_venv(tmp_path / "homr-venv", branch="main")
+    monkeypatch.setenv("HOMR_BIN", binary)
+    assert omr.engine_binary(None) == binary
+    assert omr.engine_binary("default") == binary
+
+
+def test_an_engine_that_is_not_installed_is_refused(monkeypatch, tmp_path):
+    """Not silently the default: a parse nobody can account for is worse.
+
+    The whole point of picking an engine is to know which homr read the page.
+    """
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    a_venv(tmp_path / "homr-venv", branch="main")
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+
+    with pytest.raises(omr.HomrMissing) as caught:
+        omr.engine_binary("prototype-system-4")
+    assert "prototype-system-4" in str(caught.value)
+
+
+def test_a_named_binary_is_what_reads_the_page(monkeypatch, tmp_path):
+    """The picked engine runs, and the default one is not consulted."""
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.setenv("HOMR_BIN", stub_homr(tmp_path, "exit 1\n"))
+    chosen = stub_homr(other, 'echo "<picked/>" > "${!#%.*}.musicxml"\n')
+
+    out = omr.read_page(a_page(tmp_path), out_dir=str(tmp_path / "out"),
+                        binary=chosen, queue=False)
+    assert "<picked/>" in open(out).read()
+
+
 # --- what it hands back --------------------------------------------------
 
 

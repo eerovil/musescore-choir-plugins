@@ -15,8 +15,8 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (agentdeck, health, heavy_slot, job_state, pdf_systems, pipeline,
-               scan, state, verification)
+from . import (agentdeck, health, heavy_slot, job_state, omr, pdf_systems,
+               pipeline, scan, state, verification)
 from src.clean_score.utils.score_fixes import FixError
 
 SCRIPT_DIR = state.SCRIPT_DIR
@@ -394,7 +394,8 @@ def _run_scan(slug: str, opts: Dict) -> None:
         # homr's own output is the progress: a system is ~20s and a song two to
         # five minutes, so its lines go straight to the song's log the way a
         # clean's and a render's do, unparsed.
-        result = scan.run(song, log=log, only=opts.get("systems"))
+        result = scan.run(song, log=log, only=opts.get("systems"),
+                          binary=opts.get("binary"))
         holes = result["holes"]
         log(f"Read {result['read']} of {result['systems']} system(s)."
             + (f" Still to read: {', '.join(str(i) for i in holes)}." if holes
@@ -430,6 +431,13 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         opts["systems"] = [int(i) for i in (opts.get("systems") or [])]
     except (TypeError, ValueError):
         raise HTTPException(400, "systems must be whole numbers") from None
+    # Which homr reads it, resolved here rather than in the worker: an engine
+    # that is not installed has to be a refused request, not a scan that starts,
+    # takes a lock and then fails on the first band.
+    try:
+        opts["binary"] = omr.engine_binary(opts.get("engine"))
+    except omr.HomrMissing as exc:
+        raise HTTPException(400, str(exc)) from None
     if is_scanning(song) or not job_state.start_if_idle(
             song.dir, "scan", ("scan", "clean", "render", "upload"),
             pdf_systems.file_version(song.source_path("pdf"))):
@@ -445,6 +453,17 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         raise
     asyncio.get_running_loop().run_in_executor(None, _run_scan, slug, opts)
     return {"started": True}
+
+
+@app.get("/api/homr-engines")
+def api_homr_engines() -> Dict:
+    """The homr installs this host has, for the Scan panel's picker.
+
+    App-wide, not per song: which engine reads a page is a property of the host,
+    and the choice itself lasts one scan run.
+    """
+    return {"engines": [{"key": e.key, "label": e.label, "default": e.default}
+                        for e in omr.engines()]}
 
 
 @app.post("/api/songs/{slug}/approve-scan")
