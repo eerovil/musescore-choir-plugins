@@ -61,9 +61,13 @@ from src.clean_score.utils.per_system import use_answer_file
 
 pytestmark = pytest.mark.browser
 
-FIXTURE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "clean_score", "tests", "test_files", "laulun_aika.mscx",
+_SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FIXTURE = os.path.join(_SRC, "clean_score", "tests", "test_files", "laulun_aika.mscx")
+# A real scanned page, so registering from a PDF alone is registering from the
+# thing an operator actually has.
+PDF_FIXTURE = os.path.join(
+    os.path.dirname(_SRC), "fixtures", "virta-venhetta-vie", "00-registered",
+    "Virta venhettä vie.pdf",
 )
 
 
@@ -124,7 +128,7 @@ def _new_song(page, base, name, per_system=True):
     page.goto(base)
     page.get_by_role("button", name="+ New song").click()
     page.get_by_placeholder("Song name").fill(name)
-    page.locator("input[type=file]").first.set_input_files(FIXTURE)
+    page.locator("#f-xml").set_input_files(FIXTURE)
     page.locator("select").select_option("men")     # laulun_aika is a male-choir score
     if per_system:
         page.locator("input[type=checkbox]").check()
@@ -510,12 +514,60 @@ def test_creating_a_song_requires_saying_who_sings_it(page, live_app):
     page.goto(live_app)
     page.get_by_role("button", name="+ New song").click()
     page.get_by_placeholder("Song name").fill("Voicing test")
-    page.locator("input[type=file]").first.set_input_files(FIXTURE)
+    page.locator("#f-xml").set_input_files(FIXTURE)
 
     page.get_by_role("button", name="Create").click()
-    expect(page.locator(".hint")).to_contain_text("Choose who sings it")
+    expect(page.locator(".newstatus")).to_contain_text("Choose who sings it")
     assert "#/song/" not in page.url, "it created the song anyway"
 
     page.locator("select").select_option("mixed")
     page.get_by_role("button", name="Create").click()
     page.wait_for_url("**/#/song/**", timeout=30_000)
+
+
+def test_a_song_registered_from_a_pdf_alone_lands_on_scan(page, live_app):
+    """The front door of the whole scan route (#127).
+
+    `POST /api/songs` has taken a PDF on its own since #98 — a PDF is a song and it
+    starts at `scan` — but the form demanded a score file, so nothing could ever
+    reach it from the app. A PDF alone must now register, land on Scan, and open on
+    the Systems editor, because marking the bands is the thing that has to happen
+    before anything else can.
+    """
+    page.goto(live_app)
+    page.get_by_role("button", name="+ New song").click()
+    page.get_by_placeholder("Song name").fill("Virta venhettä vie")
+    page.locator("#f-pdf").set_input_files(PDF_FIXTURE)
+    expect(page.locator(".routehint")).to_contain_text("Starts at Scan")
+    page.locator("select").select_option("men")
+    page.get_by_role("button", name="Create").click()
+
+    page.wait_for_url("**/#/song/**", timeout=30_000)
+    expect(page.locator(".stagebar .step.active")).to_have_text("Scan")
+    # The Systems editor, not the PDF: the bands come first.
+    expect(page.locator(".viewtabs .vtab.active").first).to_have_text("Systems")
+    expect(page.locator(".syspage").first).to_be_visible()
+
+
+def test_creating_a_song_needs_one_file_and_says_which_are_missing(page, live_app):
+    """Name plus *at least one* file, matching the server.
+
+    Neither file is the only refusal left; a score file on its own and a PDF on its
+    own are both whole songs, and the form says where each of them starts.
+    """
+    page.goto(live_app)
+    page.get_by_role("button", name="+ New song").click()
+    expect(page.locator(".routehint")).to_contain_text("A PDF alone starts at Scan")
+    page.get_by_placeholder("Song name").fill("Neither file")
+    page.locator("select").select_option("men")
+
+    page.get_by_role("button", name="Create").click()
+    expect(page.locator(".newstatus")).to_contain_text("A score PDF or a score file is required")
+    assert "#/song/" not in page.url, "it created the song with no file at all"
+
+    # A score file alone is still a song, and it skips the scan.
+    page.locator("#f-xml").set_input_files(FIXTURE)
+    expect(page.locator(".routehint")).to_contain_text("Starts at Clean")
+    page.get_by_role("button", name="Create").click()
+    page.wait_for_url("**/#/song/**", timeout=30_000)
+    expect(page.locator(".stagebar .step.active")).to_have_text("Clean")

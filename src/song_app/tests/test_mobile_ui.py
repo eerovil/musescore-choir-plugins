@@ -105,7 +105,7 @@ def _new_song(page, base, name):
     page.goto(base)
     page.get_by_role("button", name="+ New song").click()
     page.get_by_placeholder("Song name").fill(name)
-    page.locator("input[type=file]").first.set_input_files(FIXTURE)
+    page.locator("#f-xml").set_input_files(FIXTURE)
     page.locator("select").select_option("men")
     page.locator("input[type=checkbox]").check()      # per-system, like the fixture
     page.get_by_role("button", name="Create").click()
@@ -218,6 +218,25 @@ def test_phone_library_and_panels_do_not_overflow_the_screen(live_app, own_answe
     expect(page.locator(".card").first).to_be_visible()
     assert not _page_scrolls(page), "the library overflows the screen"
     assert not _scrolls_sideways(page, ".lib"), "the library is wider than the screen"
+
+
+def test_phone_new_song_form_leads_with_the_pdf_and_fits(live_app, own_answers, page):
+    """The first click of the whole scan route happens on this screen (#127).
+
+    The PDF is asked for first because a PDF alone is now the ordinary way in, and
+    the form has to say where each door leads before Create is pressed.
+    """
+    page.set_viewport_size(PHONE)
+    page.goto(live_app)
+    page.get_by_role("button", name="+ New song").click()
+
+    pdf_box = page.locator("#f-pdf").bounding_box()
+    xml_box = page.locator("#f-xml").bounding_box()
+    assert pdf_box["y"] < xml_box["y"], "the score file is asked for before the PDF"
+    expect(page.locator(".routehint")).to_contain_text("A PDF alone starts at Scan")
+
+    assert not _page_scrolls(page), "the New song form overflows the screen"
+    assert not _scrolls_sideways(page, ".lib"), "the New song form is wider than the screen"
 
 
 def test_phone_pdf_viewer_scrolls_inside_its_pane(live_app, own_answers, page):

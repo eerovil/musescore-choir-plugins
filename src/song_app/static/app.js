@@ -97,17 +97,40 @@ function newSongDialog() {
     el("option", { value: "men" }, "Men (TTBB)"),
     el("option", { value: "women" }, "Women (SSAA)"),
     el("option", { value: "mixed" }, "Mixed (SATB)"));
-  const xml = el("input", { type: "file", accept: ".mscx,.mscz,.musicxml,.xml" });
-  const pdf = el("input", { type: "file", accept: ".pdf" });
-  const status = el("p", { className: "hint" });
+  // The PDF leads and the score file is the fallback, because that is now the
+  // ordinary way in: a PDF on its own is a song and the app reads the score off
+  // the page (#127). Handing in a score instead is the manual import (#86).
+  // Ids because the two are told apart by name in the browser tests, not by order.
+  const pdf = el("input", { type: "file", accept: ".pdf", id: "f-pdf" });
+  const xml = el("input", { type: "file", accept: ".mscx,.mscz,.musicxml,.xml", id: "f-xml" });
+  const status = el("p", { className: "hint newstatus" });
+  // The two doors go to different stages, so the form says which one is open
+  // before Create is pressed rather than leaving it to be read off the stage rail.
+  const routeHint = el("p", { className: "hint routehint" });
+  const sayRoute = () => {
+    routeHint.textContent = xml.files[0]
+      ? (pdf.files[0]
+         ? "Starts at Clean — the score you handed in is used, so the page is not scanned. The PDF is kept for the lyrics."
+         : "Starts at Clean — scanning is skipped, because the score is already here.")
+      : pdf.files[0]
+      ? "Starts at Scan — mark the printed systems on the page, then read the score off them."
+      : "A PDF alone starts at Scan; a score file starts at Clean and skips scanning.";
+  };
+  pdf.onchange = sayRoute;
+  xml.onchange = sayRoute;
+  sayRoute();
   const create = el("button", { className: "primary", onclick: async () => {
-    if (!name.value.trim() || !xml.files[0]) { status.textContent = "Name and a score file are required."; return; }
+    if (!name.value.trim()) { status.textContent = "Name is required."; return; }
+    if (!pdf.files[0] && !xml.files[0]) {
+      status.textContent = "A score PDF or a score file is required — give at least one.";
+      return;
+    }
     if (!voicing.value) { status.textContent = "Choose who sings it — it decides the part names."; return; }
     const fd = new FormData();
     fd.append("name", name.value.trim());
     fd.append("per_system", per.checked);
     fd.append("voicing", voicing.value);
-    fd.append("xml", xml.files[0]);
+    if (xml.files[0]) fd.append("xml", xml.files[0]);
     if (pdf.files[0]) fd.append("pdf", pdf.files[0]);
     status.textContent = "Creating…";
     try {
@@ -119,8 +142,11 @@ function newSongDialog() {
   app.replaceChildren(el("div", { className: "lib" },
     el("h1", {}, "New song"),
     el("label", {}, "Name"), name,
+    el("label", {}, "Score PDF (.pdf)"), pdf,
+    el("p", { className: "hint" }, "The printed page. Scanned and read into a score, and used for the lyrics."),
     el("label", {}, "Score file (.mscx / .mscz / .musicxml / .xml)"), xml,
-    el("label", {}, "Score PDF (recommended — used for lyrics)"), pdf,
+    el("p", { className: "hint" }, "Optional — a score you already have. Hand one in and the page is not scanned."),
+    routeHint,
     el("label", {}, "Who sings it"), voicing,
     el("div", { className: "row" }, per, el("span", {}, "Staves change parts per system (per-system mode)")),
     el("div", { className: "row" }, create, el("button", { onclick: renderLibrary }, "Cancel")),
