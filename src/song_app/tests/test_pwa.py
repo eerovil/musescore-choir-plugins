@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
-import sys
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urljoin
@@ -18,8 +16,6 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from src.song_app import pwa_assets, server, state
-
-ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture()
@@ -127,16 +123,28 @@ def test_generated_shell_generation_matches_every_cached_asset(client, tmp_path)
     assert pwa_assets.cache_stamp(copied) != before
 
 
-def test_checked_in_regeneration_command_runs_from_repo_root():
-    completed = subprocess.run(
-        [sys.executable, "scripts/update-pwa-assets.py"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert "is current" in completed.stdout
+def test_editing_a_shell_asset_needs_nothing_regenerated(client, tmp_path):
+    """Touching app.js must not be a two-part change.
+
+    The list and its cache generation used to be a checked-in file kept in step
+    by a script, so every edit to a shell asset that forgot the script failed
+    the suite — a failure that says nothing about what was changed. They are
+    derived from the files on disk and served from there, so there is nothing
+    left to keep in step.
+    """
+    served = _config(client.get("/pwa-assets.js").text)
+    assert served["cache"] == f"song-static-{pwa_assets.cache_stamp()}", (
+        "what is served is computed from the files on disk, not stored")
+
+    copied = tmp_path / "static"
+    shutil.copytree(pwa_assets.STATIC_DIR, copied)
+    with (copied / "app.js").open("a", encoding="utf-8") as handle:
+        handle.write("\n// changed\n")
+    assert pwa_assets.rendered_config(copied) != pwa_assets.rendered_config(), (
+        "the generation must follow the asset it caches")
+
+    assert not (pwa_assets.STATIC_DIR / "pwa-assets.js").exists(), (
+        "nothing is checked in that could go stale")
 
 
 def test_index_has_mobile_install_metadata_and_safe_area_styles(client):

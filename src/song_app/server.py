@@ -12,11 +12,12 @@ from typing import Dict, List, Optional, Set
 
 import dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
+                               Response)
 from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, health, heavy_slot, job_state, omr, pdf_systems,
-               pipeline, scan, state, system_finder, verification)
+               pipeline, pwa_assets, scan, state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 
 SCRIPT_DIR = state.SCRIPT_DIR
@@ -1545,6 +1546,21 @@ async def _startup() -> None:
 @app.get("/")
 def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=dict(REVALIDATE))
+
+
+@app.get("/pwa-assets.js")
+def pwa_assets_js():
+    """The service worker's shell list and cache generation, computed now.
+
+    It used to be a checked-in file with a script to regenerate it, and that
+    made every edit to `app.js` or `style.css` a two-part change: touch the
+    asset, remember the script. Forgetting the second half broke the suite in a
+    way that says nothing about what was actually changed. The generation is
+    derived from the files on disk, so deriving it per request cannot be stale —
+    and the service worker asks for it over the network anyway.
+    """
+    return Response(pwa_assets.rendered_config(), media_type="text/javascript",
+                    headers=dict(REVALIDATE))
 
 
 app.mount("/", RevalidatingStaticFiles(directory=STATIC_DIR, html=True), name="static")
