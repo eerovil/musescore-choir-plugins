@@ -59,13 +59,17 @@
           ],
           [
             4
+          ],
+          [
+            5
           ]
         ],
         "labels": [
           "Soprano 1",
           "Soprano 2",
           "Alto 1",
-          "Alto 2"
+          "Alto 2",
+          "Solo"
         ],
         "override": {
           "printed": [
@@ -80,18 +84,21 @@
             ],
             [
               "Alto 2"
+            ],
+            [
+              "Solo"
             ]
           ],
-          "why": "the page prints one voice per staff; the guess had paired them"
+          "why": "the page prints one voice per staff and never implodes; the solo enters at bar 94 on a fifth staff, and hideEmptyStaves keeps it off the systems it rests through"
         }
       },
       "review": {
         "status": "ok",
-        "notes": "four staves of one voice each, nothing imploded; the lowest staff rests at the start, which is what the page prints"
+        "notes": "one voice per staff, nothing imploded; four staves until the solo enters at bar 94 and the page prints five"
       },
       "source_override": {
         "pdf": "Kolme käkeä.pdf",
-        "why": "the folder's other PDF starts at printed page 6, so it is different music from bar 1"
+        "why": "the folder holds the piece in two halves: this file is printed pages 2-5, bars 1-62, and 'Kolme käkeä copy.pdf' is pages 6-10, bars 63-120. Neither covers the whole score, so a fixture spans both or stops at bar 62"
       }
     },
     "heraa-suomi-final": {
