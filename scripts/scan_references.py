@@ -50,6 +50,12 @@ def stage_a_copy(slug: str, root: Path) -> None:
         # of them is 4 MB.
         os.symlink(os.path.abspath(real / pdf), target)
     shutil.copy(real / pdf_systems.BOUNDS_FILE, here / pdf_systems.BOUNDS_FILE)
+    # The state file is where the fragments already read are recorded, so
+    # rewriting it is throwing away the scan: the MusicXML stays on disk but
+    # nothing knows it is there, and every band is read again. Bands that really
+    # did move are `reconcile`'s business, not this script's.
+    if (here / ".song.json").exists():
+        return
     (here / ".song.json").write_text(json.dumps({
         "name": slug, "stage": "scan", "sources": {"pdf": pdf},
     }, indent=2, ensure_ascii=False))
@@ -71,8 +77,10 @@ def main() -> None:
         result = scan.run(song, log=lambda m: print("  " + m, flush=True))
         took = time.time() - began
         holes = result.get("holes") or []
-        print(f"  -> {len(result.get('systems') or [])} systems, "
-              f"{len(holes)} hole(s) {holes}, {took:.0f}s", flush=True)
+        print(f"  -> {result['read']} of {result['systems']} systems read, "
+              f"{len(holes)} hole(s) {holes}, "
+              f"{'assembled' if result['complete'] else 'NOT assembled'}, "
+              f"{took:.0f}s", flush=True)
 
 
 if __name__ == "__main__":
