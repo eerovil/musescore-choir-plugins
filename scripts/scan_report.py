@@ -10,7 +10,13 @@ homr read it, engraved.
 Runs on whatever has been scanned so far, so it can be built while the rest is
 still going.
 
-    .venv/bin/python scripts/scan_report.py [<slug> ...]
+    .venv/bin/python scripts/scan_report.py --engine system-4 [<slug> ...]
+    .venv/bin/python scripts/scan_report.py --engine system-4 --against default ...
+
+With `--against`, each system carries both engines' parses under the same band,
+which is the only way to see what a change to homr actually did to the music: the
+counts come out equal while one writes a staff of two singers as stacked chords
+and the other as two voices.
 
 Writes `scan-report/index.html`.
 """
@@ -29,6 +35,7 @@ from scripts.implode_report import _shrink  # noqa: E402
 from scripts.scan_vs_reference import (  # noqa: E402
     SCRATCH,
     printed_staves,
+    read_with,
     reference_systems,
     scanned_systems,
 )
@@ -69,13 +76,22 @@ def picture(name: str, source: str) -> str:
 def main() -> None:
     load_dotenv()
     listed = json.loads(MANIFEST.read_text())["songs"]
-    slugs = sys.argv[1:] or [n for n, e in listed.items()
+    argv = sys.argv[1:]
+    against = ""
+    if "--against" in argv:
+        at = argv.index("--against")
+        against = argv[at + 1]
+        argv = argv[:at] + argv[at + 2:]
+    key, argv = read_with(argv)
+    root = SCRATCH / key
+    other = SCRATCH / against if against else None
+    slugs = argv or [n for n, e in listed.items()
                              if e["review"]["status"] != "excluded"]
     OUT.mkdir(exist_ok=True)
 
     sections, done, agree_staves, agree_bars, holes = [], 0, 0, 0, 0
     for slug in slugs:
-        if not (SCRATCH / slug / ".song.json").exists():
+        if not (root / slug / ".song.json").exists():
             sections.append(f"<h2>{html.escape(slug)}</h2>"
                             f"<p class=\"sub\">not scanned yet</p>")
             continue
@@ -88,7 +104,8 @@ def main() -> None:
             for want, count in zip(reference, printed):
                 if want:
                     want["staves"] = count
-        scanned = scanned_systems(slug)
+        scanned = scanned_systems(slug, root)
+        rival = scanned_systems(slug, other) if other else {}
 
         rows = []
         for band, want in zip(bands, reference):
@@ -118,15 +135,18 @@ def main() -> None:
             same_bars = want.get("bars") == got.get("bars")
             agree_staves += same_staves
             agree_bars += same_bars
-            engraved = ""
-            entry = json.loads((SCRATCH / slug / ".song.json").read_text())
-            frag = entry["scan"]["systems"][str(band.index)]["musicxml"]
-            try:
-                png = pipeline.scan_system_render(str(SCRATCH / slug),
-                                                  str(SCRATCH / slug / frag))
-                engraved = picture(f"{slug}-{band.index:02}-scan.jpg", png)
-            except Exception:
-                engraved = ""
+            def engrave(where, tag: str) -> str:
+                try:
+                    entry = json.loads((where / slug / ".song.json").read_text())
+                    frag = entry["scan"]["systems"][str(band.index)]["musicxml"]
+                    png = pipeline.scan_system_render(str(where / slug),
+                                                      str(where / slug / frag))
+                    return picture(f"{slug}-{band.index:02}-{tag}.jpg", png)
+                except Exception:
+                    return ""
+
+            engraved = engrave(root, key)
+            rival_png = engrave(other, against) if other else ""
 
             tags = []
             tags.append(f'<span class="tag {"same" if same_staves else "off"}">'
@@ -144,9 +164,14 @@ def main() -> None:
                 f'&ndash;{band.measure_end}</span>{"".join(tags)}</div>'
                 + (f'<p class="cap">the printed band</p><img src="{crop}" alt="printed">'
                    if crop else "")
-                + (f'<p class="cap">what homr read off it</p>'
+                + (f'<p class="cap">read by <b>{html.escape(key)}</b>'
+                   f' &mdash; {got.get("voices")} voice(s), page has'
+                   f' {want.get("voices")}</p>'
                    f'<img src="{engraved}" alt="scan">' if engraved else
-                   '<p class="cap">(could not engrave the parse)</p>'))
+                   '<p class="cap">(could not engrave the parse)</p>')
+                + (f'<p class="cap">read by <b>{html.escape(against)}</b>'
+                   f' &mdash; {(rival.get(band.index) or {}).get("voices")} voice(s)</p>'
+                   f'<img src="{rival_png}" alt="other scan">' if rival_png else ""))
         sections.append(
             f"<h2>{html.escape(listed[slug].get('review', {}).get('notes') or slug)}</h2>"
             f"<p class=\"sub\">{html.escape(slug)} &mdash; {len(rows)} of "
