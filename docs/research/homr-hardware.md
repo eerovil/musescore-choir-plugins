@@ -64,7 +64,7 @@ The Neural Engine is a single shared unit, so pages queue on it.
   the Neural Engine, not the cores, and going wider will not help much.
 
 For 50 pages that is ~5.7 min on the Mac four at a time, ~8 min one at a time,
-~13 min in the cluster, ~15 min here.
+~14.5 min in the cluster, ~15 min here.
 
 ## Why nothing was built
 
