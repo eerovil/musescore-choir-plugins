@@ -35,9 +35,9 @@
       }
     },
     "Kolme käkeä": {
-      "pdf": "Kolme käkeä copy.pdf",
+      "pdf": "Kolme käkeä.pdf",
       "cleaned": "Kolme-ka-kea_cleaned.mscx",
-      "pdf_sha256": "4b2f416fbd30a00a",
+      "pdf_sha256": "e14f05b1ca989491",
       "cleaned_sha256": "3812692949ed976e",
       "video": {
         "videos": 0,
@@ -87,7 +87,11 @@
       },
       "review": {
         "status": "ok",
-        "notes": "the page prints four staves of one voice each, so nothing is imploded"
+        "notes": "four staves of one voice each, nothing imploded; the lowest staff rests at the start, which is what the page prints"
+      },
+      "source_override": {
+        "pdf": "Kolme käkeä.pdf",
+        "why": "the folder's other PDF starts at printed page 6, so it is different music from bar 1"
       }
     },
     "heraa-suomi-final": {
@@ -227,12 +231,15 @@
               "B"
             ]
           ],
-          "why": "the tenor staff carries three voices, T3 above T1 and T2"
+          "why": "the tenor staff carries three voices, T3 above T1 and T2; T3 is written only where it sings",
+          "drop_rests": [
+            "T3"
+          ]
         }
       },
       "review": {
         "status": "ok",
-        "notes": "T3 shares the tenor staff as its top voice, which no recorded map said"
+        "notes": "T3 shares the tenor staff as its top voice and is absent where it rests"
       }
     },
     "pois-meni-mereen-paiva": {

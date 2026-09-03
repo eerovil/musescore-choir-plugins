@@ -28,12 +28,25 @@ from src.clean_score.implode import implode  # noqa: E402
 MANIFEST = Path("fixtures/omr-songs.json")
 
 
+def _reviewed(name: str) -> dict:
+    if not MANIFEST.exists():
+        return {}
+    return json.loads(MANIFEST.read_text())["songs"].get(name, {})
+
+
 def override_for(name: str) -> list[list[str]] | None:
     """The grouping a person read off the page, if one is written down."""
-    if not MANIFEST.exists():
-        return None
-    saved = json.loads(MANIFEST.read_text())["songs"].get(name, {})
-    return (saved.get("grouping", {}).get("override") or {}).get("printed")
+    return (_reviewed(name).get("grouping", {}).get("override") or {}).get("printed")
+
+
+def drop_rests_for(name: str) -> list[str]:
+    """Parts whose silence the page does not print."""
+    return (_reviewed(name).get("grouping", {}).get("override") or {}).get("drop_rests") or []
+
+
+def chosen_pdf(name: str) -> str | None:
+    """The page a person said is the one this score was made from."""
+    return (_reviewed(name).get("source_override") or {}).get("pdf")
 
 OUT = Path("implode-report")
 #: Wide enough to read a notehead, small enough to open on a phone.
@@ -60,7 +73,7 @@ def made_a_video(folder: str) -> dict | None:
     return {"videos": len(videos), "uploads": uploads, "stage": stage}
 
 
-def printed_pdf(folder: str) -> Path | None:
+def printed_pdf(folder: str, chosen: str | None = None) -> Path | None:
     """The scan the song was made from, not one of the app's own renders.
 
     The app caches MuseScore renders of the cleaned score beside the source as
@@ -68,6 +81,9 @@ def printed_pdf(folder: str) -> Path | None:
     accident -- which makes the "printed page" a picture of the reference, and
     the whole comparison a score against itself.
     """
+    if chosen:
+        picked = Path(folder) / chosen
+        return picked if picked.exists() else None
     pages = [
         Path(path)
         for path in sorted(glob.glob(folder + "*.pdf"))
@@ -81,7 +97,7 @@ def songs() -> list[tuple[str, Path, Path, dict]]:
     found = []
     for folder in sorted(glob.glob("songs/*/")):
         cleaned = glob.glob(folder + "*_cleaned.mscx")
-        pdf = printed_pdf(folder)
+        pdf = printed_pdf(folder, chosen_pdf(Path(folder).name))
         made = made_a_video(folder)
         if cleaned and pdf and made:
             found.append((Path(folder).name, pdf, Path(sorted(cleaned)[0]), made))
@@ -148,7 +164,7 @@ def main() -> None:
         if wanted and name not in wanted:
             continue
         root = etree.parse(str(cleaned)).getroot()
-        found = implode(root, override_for(name))
+        found = implode(root, override_for(name), drop_rests_for(name))
         with tempfile.TemporaryDirectory() as tmp:
             score = Path(tmp) / "imploded.mscx"
             etree.ElementTree(root).write(str(score), encoding="UTF-8", xml_declaration=True)

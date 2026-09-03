@@ -173,3 +173,28 @@ def test_three_voices_go_onto_one_staff_in_the_order_reviewed() -> None:
     staves = root.find("Score").findall("Staff")
     assert len(staves) == 1
     assert [len(bar.findall("voice")) for bar in staves[0].findall("Measure")] == [3, 3]
+
+
+def test_a_voice_the_page_does_not_print_is_absent_where_it_rests() -> None:
+    root = score([(1, "T3"), (2, "T1")], bars=2)
+    resting = root.find("Score").findall("Staff")[0].findall("Measure")[0]
+    resting.find("voice/Chord").tag = "Rest"
+
+    implode(root, [["T3", "T1"]], ["T3"])
+
+    bars = root.find("Score").find("Staff").findall("Measure")
+    # T3 is the topmost voice and still drops out of the bar it rests through.
+    assert [len(bar.findall("voice")) for bar in bars] == [1, 2]
+
+
+def test_the_first_voice_left_in_a_bar_keeps_the_clef() -> None:
+    root = score([(1, "T3"), (2, "T1")], bars=1)
+    first = root.find("Score").findall("Staff")[0].findall("Measure")[0]
+    first.find("voice/Chord").tag = "Rest"
+    for staff in root.find("Score").findall("Staff"):
+        staff.find("Measure/voice").insert(0, etree.Element("Clef"))
+
+    implode(root, [["T3", "T1"]], ["T3"])
+
+    bar = root.find("Score/Staff/Measure")
+    assert len(bar.findall("voice/Clef")) == 1

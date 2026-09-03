@@ -234,11 +234,20 @@ def grouping(root: etree._Element, override: list[list[str]] | None = None) -> G
     return Grouping(_inferred(names, singing), "part names")
 
 
-def implode(root: etree._Element, override: list[list[str]] | None = None) -> Grouping:
+def implode(
+    root: etree._Element,
+    override: list[list[str]] | None = None,
+    drop_rests: list[str] | None = None,
+) -> Grouping:
     """Merge the staves back onto the printed ones, in place.
 
-    Returns the grouping used, so a caller can say whether it was recorded or
-    guessed.
+    `drop_rests` names parts whose silence is not printed.  A voice added above
+    a staff -- a third tenor line over T1 and T2 -- is written only where it
+    sings; printing a bar of rests for it every time it is absent is something
+    the page does not do and an OMR reading of the page will never produce.
+
+    Returns the grouping used, so a caller can say whether it was recorded,
+    guessed, or read off the page by a person.
     """
     score = root.find("Score")
     found = grouping(root, override)
@@ -251,7 +260,12 @@ def implode(root: etree._Element, override: list[list[str]] | None = None) -> Gr
     merged_parts, merged_staves = [], []
     for number, printed in enumerate(found.printed, start=1):
         first = printed.staves[0]
-        staff = _merge_staves([staves[s] for s in printed.staves])
+        silent = [
+            index
+            for index, name in enumerate(printed.names)
+            if name in set(drop_rests or [])
+        ]
+        staff = _merge_staves([staves[s] for s in printed.staves], silent)
         staff.set("id", str(number))
         merged_staves.append(staff)
 
@@ -314,29 +328,44 @@ def _rename(part: etree._Element, label: str) -> None:
             element.text = label
 
 
-def _merge_staves(members: list[etree._Element]) -> etree._Element:
-    """One staff carrying every member's voices, bar by bar."""
+def _merge_staves(
+    members: list[etree._Element], drop_when_resting: list[int] | None = None
+) -> etree._Element:
+    """One staff carrying every member's voices, bar by bar.
+
+    Every voice is treated alike, including the topmost one: a part written
+    above the others -- a third tenor line over T1 and T2 -- is first in the
+    order and may still be absent from a bar it does not sing in.
+    """
+    unprinted = set(drop_when_resting or [])
     staff = etree.Element("Staff")
     for element in members[0]:
         if element.tag != "Measure":
             staff.append(etree.fromstring(etree.tostring(element)))
     bars = [member.findall("Measure") for member in members]
-    for index in range(max(len(m) for m in bars)):
-        measure = None
-        for position, member_bars in enumerate(bars):
-            if index >= len(member_bars):
-                continue
-            source = etree.fromstring(etree.tostring(member_bars[index]))
-            if measure is None:
-                measure = source
-                continue
-            for voice in source.findall("voice"):
-                # Only the first voice of a staff carries its clef, key and
-                # meter; a second copy would print them twice.
-                for element in voice.findall("*"):
-                    if element.tag in STAFF_LEVEL:
-                        voice.remove(element)
+    for index in range(max(len(member_bars) for member_bars in bars)):
+        present = [
+            (position, member_bars[index])
+            for position, member_bars in enumerate(bars)
+            if index < len(member_bars)
+        ]
+        if not present:
+            continue
+        measure = etree.fromstring(etree.tostring(present[0][1]))
+        for voice in measure.findall("voice"):
+            measure.remove(voice)
+        kept = 0
+        for position, source in present:
+            for voice in etree.fromstring(etree.tostring(source)).findall("voice"):
+                if position in unprinted and voice.find("Chord") is None:
+                    continue
+                if kept:
+                    # Only the staff's first voice carries its clef, key and
+                    # meter; a second copy would print them twice.
+                    for element in voice.findall("*"):
+                        if element.tag in STAFF_LEVEL:
+                            voice.remove(element)
                 measure.append(voice)
-        if measure is not None:
-            staff.append(measure)
+                kept += 1
+        staff.append(measure)
     return staff

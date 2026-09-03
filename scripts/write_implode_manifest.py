@@ -38,7 +38,11 @@ def main() -> None:
     # Both of these are somebody's reading of the page, and nothing here can
     # derive either: keep whatever is already written down.
     kept = {
-        name: (entry.get("review"), (entry.get("grouping") or {}).get("override"))
+        name: (
+            entry.get("review"),
+            (entry.get("grouping") or {}).get("override"),
+            entry.get("source_override"),
+        )
         for name, entry in existing.get("songs", {}).items()
     }
 
@@ -59,11 +63,13 @@ def main() -> None:
             },
             # Written by hand after somebody has looked at the reference beside
             # the page.  Nothing here is derived, and nothing regenerates it.
-            "review": kept.get(name, (None, None))[0] or {"status": "unreviewed", "notes": ""},
+            "review": kept.get(name, (None, None, None))[0] or {"status": "unreviewed", "notes": ""},
         }
-        override = kept.get(name, (None, None))[1]
+        review, override, source = kept.get(name, (None, None, None))
         if override:
             out[name]["grouping"]["override"] = override
+        if source:
+            out[name]["source_override"] = source
 
     MANIFEST.parent.mkdir(exist_ok=True)
     MANIFEST.write_text(json.dumps({"version": 1, "songs": out}, indent=2, ensure_ascii=False) + "\n")
