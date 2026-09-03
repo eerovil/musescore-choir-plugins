@@ -586,9 +586,15 @@ def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str
         [cli, "-T", "10", "-r", str(dpi), musicxml_path, "-o", out],
         capture_output=True, text=True, timeout=MUSESCORE_TIMEOUT)
     # MuseScore numbers the pages it writes, so a one-page export lands as
-    # <name>-1.png rather than under the name it was asked for.
+    # <name>-1.png rather than under the name it was asked for. It is moved into
+    # place *whenever it exists*, stale target or not: guarding on the target
+    # being absent meant a system read a second time re-engraved correctly and
+    # then kept serving the old picture, since the old file was still sitting
+    # there. Nothing about that is visible — the picture is plausible, it is
+    # just the previous parse — so it read as the new engine having changed
+    # nothing.
     numbered = f"{os.path.splitext(out)[0]}-1.png"
-    if not os.path.exists(out) and os.path.exists(numbered):
+    if os.path.exists(numbered):
         os.replace(numbered, out)
     if result.returncode != 0 or not os.path.exists(out):
         raise RuntimeError(

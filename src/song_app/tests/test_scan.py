@@ -13,6 +13,7 @@ assembled score untested, which is where a hole would go unnoticed.
 
 import json
 import os
+import time
 
 import pytest
 
@@ -21,7 +22,8 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from src.clean_score.utils import per_system
-from src.song_app import heavy_slot, omr, omr_systems, pdf_systems, scan, server, state
+from src.song_app import (heavy_slot, omr, omr_systems, pdf_systems, pipeline, scan,
+                          server, state)
 
 
 # --- a stub score, small enough to read -----------------------------------
@@ -681,3 +683,42 @@ def test_a_host_with_no_homr_still_starts_the_scan(client, songs, reader, monkey
     monkeypatch.setattr(server.omr, "default_engine", lambda: None)
 
     assert client.post(f"/api/songs/{song.slug}/scan").status_code == 200
+
+
+def _fake_musescore(tmp_path):
+    """A CLI that writes MuseScore's numbered page, copying its input's bytes."""
+    cli = tmp_path / "fake-musescore"
+    cli.write_text(
+        "#!/usr/bin/env bash\n"
+        'out="${@: -1}"\n'
+        'src="${@: -3:1}"\n'
+        'cp "$src" "${out%.png}-1.png"\n',
+        encoding="utf-8")
+    cli.chmod(0o755)
+    return str(cli)
+
+
+def test_a_system_read_again_is_engraved_again(tmp_path, monkeypatch):
+    """The picture has to follow the parse, or a re-read looks like it did nothing.
+
+    MuseScore writes `<name>-1.png` and the mover used to skip while the old
+    file was still there, so a second reading re-engraved correctly and then
+    served the previous picture — plausible, wrong, and silent. It is how a new
+    engine reads as having changed nothing.
+    """
+    monkeypatch.setenv("MUSESCORE_CLI_PATH", _fake_musescore(tmp_path))
+    song_dir = tmp_path / "song"
+    (song_dir / "scan").mkdir(parents=True)
+    fragment = song_dir / "scan" / "system-01@200-abc.musicxml"
+    fragment.write_bytes(b"first reading")
+
+    first = pipeline.scan_system_render(str(song_dir), str(fragment))
+    assert open(first, "rb").read() == b"first reading"
+
+    fragment.write_bytes(b"second reading")
+    os.utime(fragment, (time.time() + 2, time.time() + 2))
+    again = pipeline.scan_system_render(str(song_dir), str(fragment))
+
+    assert open(again, "rb").read() == b"second reading"
+    # And nothing is left behind for the next render to trip over.
+    assert not os.path.exists(os.path.splitext(again)[0] + "-1.png")
