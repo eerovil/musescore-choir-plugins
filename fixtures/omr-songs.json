@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "songs": {
+    "Kaksi-laulua-krapulasta-pdf": {
+      "pdf": "Kaksi-laulua-krapulasta-pdf.pdf",
+      "cleaned": "Kaksi-laulua-krapulasta-pdf_cleaned.mscx",
+      "pdf_sha256": "e2bf0794e3ecdf37",
+      "cleaned_sha256": "7d267a8e1d2d587a",
+      "video": {
+        "videos": 0,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    },
+    "Kolme käkeä": {
+      "pdf": "Kolme käkeä copy.pdf",
+      "cleaned": "Kolme-ka-kea_cleaned.mscx",
+      "pdf_sha256": "4b2f416fbd30a00a",
+      "cleaned_sha256": "3812692949ed976e",
+      "video": {
+        "videos": 0,
+        "uploads": 0,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "part names",
+        "inferred": true,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            5
+          ]
+        ],
+        "labels": [
+          "Soprano 1/Soprano 2",
+          "Alto 1/Alto 2",
+          "Solo"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    },
+    "heraa-suomi-final": {
+      "pdf": "Herää Suomi!.pdf",
+      "cleaned": "Herää Suomi final_cleaned.mscx",
+      "pdf_sha256": "41cd3fcfaff56985",
+      "cleaned_sha256": "7c698aaacc1fcedb",
+      "video": {
+        "videos": 5,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "staff map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    },
+    "kaksi-laulua-krapulasta-2": {
+      "pdf": "Kaksi-laulua-krapulasta-pdf.pdf",
+      "cleaned": "Kaksi-laulua-krapulasta-pdf_cleaned.mscx",
+      "pdf_sha256": "e2bf0794e3ecdf37",
+      "cleaned_sha256": "2e07068ae150141c",
+      "video": {
+        "videos": 5,
+        "uploads": 0,
+        "stage": "record"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    },
+    "kayttaytymisohjeita": {
+      "pdf": "Käyttäytymisohjeita.pdf",
+      "cleaned": "Ka-ytta-ytymisohjeita_cleaned.mscx",
+      "pdf_sha256": "f5a9eddc058cb46d",
+      "cleaned_sha256": "2537542c1e402462",
+      "video": {
+        "videos": 0,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    },
+    "laulun-aika-3": {
+      "pdf": "Laulun aika (2).pdf",
+      "cleaned": "Laulun-aika-2_cleaned.mscx",
+      "pdf_sha256": "40bbe603fb0d546f",
+      "cleaned_sha256": "bdc38763ff097584",
+      "video": {
+        "videos": 5,
+        "uploads": 0,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "T3",
+          "B"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    },
+    "pois-meni-mereen-paiva": {
+      "pdf": "Pois meni merehen päivä.pdf",
+      "cleaned": "Pois-meni-merehen-pa-iva_cleaned.mscx",
+      "pdf_sha256": "b6654fab39bbaf8a",
+      "cleaned_sha256": "0ff6626181b4883a",
+      "video": {
+        "videos": 5,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    },
+    "virta-scratch": {
+      "pdf": "Virta venhettä vie.pdf",
+      "cleaned": "Virta-venhetta-vie_cleaned.mscx",
+      "pdf_sha256": "58de0c051d19deb7",
+      "cleaned_sha256": "8c0f1cd5c21a76af",
+      "video": {
+        "videos": 0,
+        "uploads": 0,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "staff map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "unreviewed",
+        "notes": ""
+      }
+    }
+  }
+}

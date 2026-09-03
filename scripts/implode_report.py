@@ -11,6 +11,7 @@ Writes `implode-report/index.html`.  Needs poppler and the MuseScore CLI.
 
 import glob
 import html
+import json
 import os
 import subprocess
 import sys
@@ -29,14 +30,51 @@ OUT = Path("implode-report")
 WIDTH = 1500
 
 
-def songs() -> list[tuple[str, Path, Path]]:
-    """Every song with both a printed page and a cleaned score."""
+def made_a_video(folder: str) -> dict | None:
+    """What says this song was carried all the way to a practice video.
+
+    Only a song somebody has actually sung from is worth judging homr against:
+    it has been through the fixing, the lyrics and a listen.  A video may not
+    still be on disk -- an uploaded one is often deleted -- so an upload or
+    having reached the record stage counts too.
+    """
+    videos = glob.glob(folder + "media/video/*.mov") + glob.glob(folder + "media/video/*.mp4")
+    state = Path(folder) / ".song.json"
+    stage, uploads = "", 0
+    if state.exists():
+        saved = json.loads(state.read_text())
+        stage = saved.get("stage", "")
+        uploads = len((saved.get("record") or {}).get("uploads") or [])
+    if not (videos or uploads or stage in ("record", "upload")):
+        return None
+    return {"videos": len(videos), "uploads": uploads, "stage": stage}
+
+
+def printed_pdf(folder: str) -> Path | None:
+    """The scan the song was made from, not one of the app's own renders.
+
+    The app caches MuseScore renders of the cleaned score beside the source as
+    `*.render.pdf`, and one of those sorts first often enough to be picked by
+    accident -- which makes the "printed page" a picture of the reference, and
+    the whole comparison a score against itself.
+    """
+    pages = [
+        Path(path)
+        for path in sorted(glob.glob(folder + "*.pdf"))
+        if not path.endswith(".render.pdf") and "_cleaned" not in Path(path).name
+    ]
+    return pages[0] if pages else None
+
+
+def songs() -> list[tuple[str, Path, Path, dict]]:
+    """Every song with a printed page, a cleaned score and a practice video."""
     found = []
     for folder in sorted(glob.glob("songs/*/")):
         cleaned = glob.glob(folder + "*_cleaned.mscx")
-        pdf = glob.glob(folder + "*.pdf")
-        if cleaned and pdf:
-            found.append((Path(folder).name, Path(sorted(pdf)[0]), Path(sorted(cleaned)[0])))
+        pdf = printed_pdf(folder)
+        made = made_a_video(folder)
+        if cleaned and pdf and made:
+            found.append((Path(folder).name, pdf, Path(sorted(cleaned)[0]), made))
     return found
 
 
@@ -86,6 +124,7 @@ img { display: block; width: 100%; border: 1px solid #eee; background: #fff; }
 .guess { background: #fdefd8; color: #8a5a10; border-radius: 4px;
          padding: 1px 6px; font-size: 12px; font-weight: 600; }
 .recorded { color: #1c5c2c; font-size: 12px; }
+.video { color: #26379a; font-size: 12px; }
 """
 
 
@@ -95,7 +134,7 @@ def main() -> None:
     OUT.mkdir(exist_ok=True)
     wanted = set(sys.argv[1:])
     sections = []
-    for name, pdf, cleaned in songs():
+    for name, pdf, cleaned, made in songs():
         if wanted and name not in wanted:
             continue
         root = etree.parse(str(cleaned)).getroot()
@@ -111,9 +150,15 @@ def main() -> None:
             else f'<span class="recorded">grouping from the score\'s own {found.source}</span>'
         )
         staves = " &middot; ".join(html.escape(printed.label) for printed in found.printed)
+        evidence = (
+            f"{made['videos']} video(s) on disk"
+            if made["videos"]
+            else (f"{made['uploads']} uploaded" if made["uploads"] else f"stage {made['stage']}")
+        )
         sections.append(
             f"""<h2>{html.escape(name)}</h2>
-<p class="sub">{badge} &mdash; {len(found.printed)} printed staves: {staves}</p>
+<p class="sub">{badge} &mdash; {len(found.printed)} printed staves: {staves}
+ &mdash; <span class="video">{html.escape(evidence)}</span></p>
 <div class="pair">
   <div><p class="label">the printed page</p>
     {f'<img src="{name}-page.jpg" alt="printed page">' if shown else "<p>no page</p>"}</div>
@@ -129,12 +174,21 @@ def main() -> None:
 <h1>Imploded references</h1>
 <p class="lead">Each song's printed page beside the reference imploded out of its
 cleaned score &mdash; the voices the app split apart put back on the staves they
-were printed on. This is what homr would be judged against, so it has to be right
+were printed on. Only songs carried all the way to a practice video are here:
+those are the ones somebody has fixed, lyricked and sung from. This is what homr would be judged against, so it has to be right
 first. Where the score did not record which voices shared a staff, the grouping is
 <span class="guess">guessed</span> and should be checked hardest.</p>
 {''.join(sections)}
 </body></html>"""
     (OUT / "index.html").write_text(page)
+    if not wanted:
+        # A song that has dropped out of the set must drop out of the folder
+        # too, or the page beside it is one nobody is judging any more.
+        keep = {f"{name}-page.jpg" for name, *_ in songs()}
+        keep |= {f"{name}-imploded.jpg" for name, *_ in songs()}
+        for stale in OUT.glob("*.jpg"):
+            if stale.name not in keep:
+                stale.unlink()
     print(OUT / "index.html")
 
 
