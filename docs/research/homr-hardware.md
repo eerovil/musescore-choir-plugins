@@ -78,7 +78,6 @@ natively, both going, is ~4.1 min. But the cluster and the native Mac are *the
 same laptop*, so that pairing is a choice between them and the pod is the slow
 half. And a scan running flat out here is what the heavy-slot queue exists to
 prevent: it would starve any render or test suite beside it.
->>>>>>> e1b17ec (Measure four concurrent pages on this host too)
 
 ## Why nothing was built
 
