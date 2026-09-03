@@ -59,12 +59,26 @@ The Neural Engine is a single shared unit, so pages queue on it.
 - **In the pod:** four pages at once took 69.5 s, i.e. 17.4 s each — *slightly
   worse* than one at a time. One page already spreads over 4.3 of the 8 cores,
   so there is nothing to parallelise into.
+- **On this host:** four at once took 74.9 s, i.e. 18.7 s each against 17.7 s
+  alone. Also slightly worse, and for the same reason — one page already uses
+  about 3 of the 4 cores.
 - **Natively with CoreML:** four at once took 27.3 s, i.e. 6.8 s each against
   9.4 s alone. A 1.4x gain, at 400% CPU of 8 cores available — so the limit is
   the Neural Engine, not the cores, and going wider will not help much.
 
-For 50 pages that is ~5.7 min on the Mac four at a time, ~8 min one at a time,
-~14.5 min in the cluster, ~15 min here.
+So concurrency is only worth anything on the Mac natively, where CoreML leaves
+cores idle. Everywhere else a single page already saturates the machine and
+running four is a rearrangement of the same total time.
+
+For 50 pages: ~5.7 min on the Mac four at a time, ~8 min one at a time,
+~14.5 min in the cluster, ~15.6 min here.
+
+Two machines do add up, since they are independent — this host and the Mac
+natively, both going, is ~4.1 min. But the cluster and the native Mac are *the
+same laptop*, so that pairing is a choice between them and the pod is the slow
+half. And a scan running flat out here is what the heavy-slot queue exists to
+prevent: it would starve any render or test suite beside it.
+>>>>>>> e1b17ec (Measure four concurrent pages on this host too)
 
 ## Why nothing was built
 
