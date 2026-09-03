@@ -32,6 +32,14 @@ MANIFEST = Path("fixtures/omr-songs.json")
 SCRATCH = Path("scan-eval")
 
 
+def read_with(argv: list[str]) -> tuple[str, list[str]]:
+    """Pull `--engine <key>` out of the arguments; results live under it."""
+    if "--engine" not in argv:
+        return "default", argv
+    at = argv.index("--engine")
+    return argv[at + 1], argv[:at] + argv[at + 2:]
+
+
 def printed_staves(slug: str, bands) -> list[int] | None:
     """How many staves each printed system has, off the score's own line breaks.
 
@@ -72,46 +80,66 @@ def reference_systems(slug: str, bands) -> list[dict]:
         if not start:
             out.append({})
             continue
-        printed, notes = 0, 0
+        printed, notes, voices = 0, 0, 0
         for staff in staves:
             bars = staff.findall("Measure")[start - 1:end]
+            # The lines a singer could follow on this staff: an imploded staff
+            # carrying two parts has two <voice> elements in a bar, and one
+            # carrying a chord written for two singers has one. Counting the
+            # most any bar of the system has is what the page shows a reader.
+            voices += max((len(bar.findall("voice")) for bar in bars), default=0)
             # Noteheads, not chords: MusicXML writes one <note> per notehead, so
             # counting `Chord` here would call a two-part chord one note and make
             # every divisi bar look like the scan had invented notes.
             here = sum(len(bar.findall(".//Chord/Note")) for bar in bars)
             notes += here
             printed += 1 if here else 0
-        out.append({"staves": printed, "bars": end - start + 1, "notes": notes})
+        out.append({"staves": printed, "bars": end - start + 1, "notes": notes,
+                    "voices": voices})
     return out
 
 
-def scanned_systems(slug: str) -> dict[int, dict]:
-    state = json.loads((SCRATCH / slug / ".song.json").read_text())
+def scanned_systems(slug: str, root: Path = SCRATCH) -> dict[int, dict]:
+    state = json.loads((root / slug / ".song.json").read_text())
     found = {}
     for entry in (state.get("scan") or {}).get("systems", {}).values():
         index = int(entry["index"])
         if entry.get("error"):
             found[index] = {"error": entry["error"]}
             continue
-        path = SCRATCH / slug / entry["musicxml"]
+        path = root / slug / entry["musicxml"]
         notes = 0
         if path.exists():
             # A <note> holding a <rest> is silence, and the reference counts
             # noteheads: leaving rests in would score a resting bar as full.
             notes = sum(1 for n in etree.parse(str(path)).getroot().iter("note")
                         if n.find("rest") is None)
+        # The part has to be in the key: homr writes a system it could not group
+        # as several one-staff parts, each numbering its own staff 1 voice 1, so
+        # a four-staff system counted as one line without it.
+        seen = set()
+        if path.exists():
+            for part in etree.parse(str(path)).getroot().iter("part"):
+                for note in part.iter("note"):
+                    seen.add((part.get("id"), note.findtext("staff") or "1",
+                              note.findtext("voice") or "1"))
         found[index] = {"staves": entry.get("staves"), "bars": entry.get("bars"),
-                        "notes": notes}
+                        "notes": notes, "voices": len(seen)}
     return found
 
 
 def main() -> None:
     listed = json.loads(MANIFEST.read_text())["songs"]
-    slugs = sys.argv[1:] or [n for n, e in listed.items()
+    key, argv = read_with(sys.argv[1:])
+    root = SCRATCH / key
+    slugs = argv or [n for n, e in listed.items()
                              if e["review"]["status"] != "excluded"]
-    totals = {"systems": 0, "staves_agree": 0, "bars_agree": 0, "holes": 0}
+    totals = {"systems": 0, "staves_agree": 0, "bars_agree": 0, "holes": 0,
+              "notes_exact": 0, "notes_want": 0, "notes_got": 0,
+              "voices_agree": 0}
+    print(f"read with: {key}")
     for slug in slugs:
-        if not (SCRATCH / slug / ".song.json").exists():
+        if not (root / slug / ".song.json").exists():
             print(f"{slug}: not scanned yet"); continue
         bands = pdf_systems.load_bounds(f"songs/{slug}")
         reference = reference_systems(slug, bands)
@@ -120,10 +148,10 @@ def main() -> None:
             for want, count in zip(reference, printed):
                 if want:
                     want["staves"] = count
-        scanned = scanned_systems(slug)
+        scanned = scanned_systems(slug, root)
         print(f"\n== {slug}   (staves the page prints: "
               f"{'the score\'s own line breaks' if printed else 'the imploded reference'})")
-        print("  sys  page | printed staves  bars  notes | read staves  bars  notes")
+        print("  sys  page | page: staves voices  bars notes | read: staves voices  bars notes")
         for band, want in zip(bands, reference):
             got = scanned.get(band.index, {})
             if got.get("error"):
@@ -138,17 +166,26 @@ def main() -> None:
                 flag += " staves"
             if want.get("bars") != got.get("bars"):
                 flag += " bars"
+            if want.get("voices") != got.get("voices"):
+                flag += " voices"
             print(f"  {band.index:3}  p{band.page}    | "
-                  f"{want.get('staves','?'):3} {want.get('bars','?'):11} "
-                  f"{want.get('notes','?'):6} | "
-                  f"{got.get('staves','?'):8} {got.get('bars','?'):6} "
-                  f"{got.get('notes','?'):6}  {flag}")
+                  f"{want.get('staves','?'):11} {want.get('voices','?'):6} "
+                  f"{want.get('bars','?'):5} {want.get('notes','?'):5} | "
+                  f"{got.get('staves','?'):11} {got.get('voices','?'):6} "
+                  f"{got.get('bars','?'):5} {got.get('notes','?'):5}  {flag}")
             totals["systems"] += 1
             totals["staves_agree"] += want.get("staves") == got.get("staves")
             totals["bars_agree"] += want.get("bars") == got.get("bars")
+            totals["notes_exact"] += want.get("notes") == got.get("notes")
+            totals["voices_agree"] += want.get("voices") == got.get("voices")
+            totals["notes_want"] += want.get("notes") or 0
+            totals["notes_got"] += got.get("notes") or 0
     print(f"\n{totals['systems']} systems: "
           f"{totals['staves_agree']} with the staves the page prints, "
-          f"{totals['bars_agree']} with its bars, {totals['holes']} unread")
+          f"{totals['bars_agree']} with its bars, {totals['holes']} unread, "
+          f"{totals['voices_agree']} with its voices, "
+          f"{totals['notes_exact']} with its exact notehead count "
+          f"({totals['notes_got']} read against {totals['notes_want']} printed)")
 
 
 if __name__ == "__main__":

@@ -8,10 +8,15 @@ under `scan-eval/` holding a link to its PDF and a copy of its reviewed
 `.systems.json`, and that is what is scanned.  What comes out is the same
 `scanned.musicxml` the app would produce, next to a reference nobody scanned.
 
-    .venv/bin/python scripts/scan_references.py            # every song in the set
-    .venv/bin/python scripts/scan_references.py <slug> ...
+**Which homr reads it is the point**, so it is named rather than defaulted, and
+the results are kept under the engine that produced them: the installed venv is
+whatever was frozen there, and a working copy is the fork's branch being tried.
+Two engines over the same songs is the comparison this exists to make.
 
-Writes `scan-eval/<slug>/`, and prints a line per system.
+    .venv/bin/python scripts/scan_references.py --engine system-4
+    .venv/bin/python scripts/scan_references.py --engine default <slug> ...
+
+Writes `scan-eval/<engine>/<slug>/`, and prints a line per system.
 """
 
 import json
@@ -25,7 +30,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.song_app import pdf_systems, scan, state  # noqa: E402
+from src.song_app import omr, pdf_systems, scan, state  # noqa: E402
 
 MANIFEST = Path("fixtures/omr-songs.json")
 SCRATCH = Path("scan-eval")
@@ -63,8 +68,17 @@ def stage_a_copy(slug: str, root: Path) -> None:
 
 def main() -> None:
     load_dotenv()
-    slugs = sys.argv[1:] or in_the_set()
-    root = SCRATCH.resolve()
+    argv = sys.argv[1:]
+    key = omr.DEFAULT_ENGINE
+    if "--engine" in argv:
+        at = argv.index("--engine")
+        key = argv[at + 1]
+        argv = argv[:at] + argv[at + 2:]
+    engine = None if key == omr.DEFAULT_ENGINE else omr.engine_for(key)
+    print(f"reading with: {key} -- "
+          f"{engine.label if engine else omr.engines()[0].label}", flush=True)
+    slugs = argv or in_the_set()
+    root = (SCRATCH / key).resolve()
     for slug in slugs:
         stage_a_copy(slug, root)
 
@@ -74,7 +88,8 @@ def main() -> None:
         print(f"\n===== {slug}", flush=True)
         began = time.time()
         song = state.load(slug)
-        result = scan.run(song, log=lambda m: print("  " + m, flush=True))
+        result = scan.run(song, log=lambda m: print("  " + m, flush=True),
+                          engine=engine)
         took = time.time() - began
         holes = result.get("holes") or []
         print(f"  -> {result['read']} of {result['systems']} systems read, "
