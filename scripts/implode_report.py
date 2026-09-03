@@ -48,6 +48,11 @@ def chosen_pdf(name: str) -> str | None:
     """The page a person said is the one this score was made from."""
     return (_reviewed(name).get("source_override") or {}).get("pdf")
 
+
+def is_excluded(name: str) -> bool:
+    """Whether a review has thrown this song out of the set."""
+    return _reviewed(name).get("review", {}).get("status") == "excluded"
+
 OUT = Path("implode-report")
 #: Wide enough to read a notehead, small enough to open on a phone.
 WIDTH = 1500
@@ -92,15 +97,22 @@ def printed_pdf(folder: str, chosen: str | None = None) -> Path | None:
     return pages[0] if pages else None
 
 
-def songs() -> list[tuple[str, Path, Path, dict]]:
-    """Every song with a printed page, a cleaned score and a practice video."""
+def songs(with_excluded: bool = False) -> list[tuple[str, Path, Path, dict]]:
+    """Every song with a printed page, a cleaned score and a practice video.
+
+    A song a review has thrown out is left out, except for the manifest, which
+    keeps it so the reason it went travels with the rest.
+    """
     found = []
     for folder in sorted(glob.glob("songs/*/")):
+        name = Path(folder).name
+        if is_excluded(name) and not with_excluded:
+            continue
         cleaned = glob.glob(folder + "*_cleaned.mscx")
-        pdf = printed_pdf(folder, chosen_pdf(Path(folder).name))
+        pdf = printed_pdf(folder, chosen_pdf(name))
         made = made_a_video(folder)
         if cleaned and pdf and made:
-            found.append((Path(folder).name, pdf, Path(sorted(cleaned)[0]), made))
+            found.append((name, pdf, Path(sorted(cleaned)[0]), made))
     return found
 
 

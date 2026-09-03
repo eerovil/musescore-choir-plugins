@@ -93,8 +93,8 @@
         }
       },
       "review": {
-        "status": "ok",
-        "notes": "one voice per staff, nothing imploded; four staves until the solo enters at bar 94 and the page prints five"
+        "status": "excluded",
+        "notes": "the page is split across two PDFs -- printed pages 2-5 (bars 1-62) and 6-10 (bars 63-120) -- so no single file is the page for this score"
       },
       "source_override": {
         "pdf": "Kolme käkeä.pdf",

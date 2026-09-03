@@ -47,7 +47,7 @@ def main() -> None:
     }
 
     out = {}
-    for name, pdf, cleaned, made in songs():
+    for name, pdf, cleaned, made in songs(with_excluded=True):
         found = grouping(etree.parse(str(cleaned)).getroot(), override_for(name))
         out[name] = {
             "pdf": pdf.name,
@@ -73,8 +73,8 @@ def main() -> None:
 
     MANIFEST.parent.mkdir(exist_ok=True)
     MANIFEST.write_text(json.dumps({"version": 1, "songs": out}, indent=2, ensure_ascii=False) + "\n")
-    kept = sum(1 for entry in out.values() if entry["review"]["status"] != "unreviewed")
-    print(f"{MANIFEST}: {len(out)} songs, {kept} already reviewed")
+    out_count = sum(1 for entry in out.values() if entry["review"]["status"] == "excluded")
+    print(f"{MANIFEST}: {len(out)} songs, {out_count} excluded, {len(out) - out_count} in the set")
 
 
 if __name__ == "__main__":
