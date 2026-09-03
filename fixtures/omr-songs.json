@@ -30,8 +30,8 @@
         ]
       },
       "review": {
-        "status": "ok",
-        "notes": "checked against the page: staves, voices and words match"
+        "status": "excluded",
+        "notes": "the same printed page as kaksi-laulua-krapulasta-2, byte for byte; that song is the one kept, having the newer cleaned score and its videos still on disk"
       }
     },
     "Kolme käkeä": {
