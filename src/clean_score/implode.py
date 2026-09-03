@@ -240,11 +240,33 @@ def implode(root: etree._Element) -> Grouping:
     for offset, element in enumerate(merged_parts + merged_staves):
         score.insert(anchor + offset, element)
 
+    _hide_empty_staves(score)
+
     # The lyric routing describes staves that no longer exist.
     for tag in list(score.findall("metaTag")):
         if tag.get("name") in ("lyricsStaffMap", "lyricsSystemMap"):
             score.remove(tag)
     return found
+
+
+def _hide_empty_staves(score: etree._Element) -> None:
+    """Print a staff only in the systems where it sings, as the page does.
+
+    A score has a fixed number of staves; a printed page does not -- a part that
+    rests through a system is simply not printed, which is why a system of this
+    music can be two staves and the next one three.  Without this the reference
+    carries an empty staff the page never shows, and a staff-by-staff comparison
+    against a reading of that page lines up against the wrong staff.
+    """
+    style = score.find("Style")
+    if style is None:
+        style = etree.Element("Style")
+        score.insert(0, style)
+    # The page hides a resting staff in its first system too, so this does.
+    for name, value in (("hideEmptyStaves", "1"), ("dontHideStavesInFirstSystem", "0")):
+        for existing in style.findall(name):
+            style.remove(existing)
+        style.append(_text_element(name, value))
 
 
 def _text_element(tag: str, text: str) -> etree._Element:

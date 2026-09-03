@@ -32,3 +32,6 @@ playlists.txt
 /*.mscx
 /*.mscz
 .venv
+
+# Built by scripts/implode_report.py
+implode-report/
