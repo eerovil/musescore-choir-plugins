@@ -23,7 +23,7 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.implode_report import songs  # noqa: E402
+from scripts.implode_report import override_for, songs  # noqa: E402
 from src.clean_score.implode import grouping  # noqa: E402
 
 MANIFEST = Path("fixtures/omr-songs.json")
@@ -35,15 +35,16 @@ def digest(path: Path) -> str:
 
 def main() -> None:
     existing = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
-    reviews = {
-        name: entry["review"]
+    # Both of these are somebody's reading of the page, and nothing here can
+    # derive either: keep whatever is already written down.
+    kept = {
+        name: (entry.get("review"), (entry.get("grouping") or {}).get("override"))
         for name, entry in existing.get("songs", {}).items()
-        if entry.get("review")
     }
 
     out = {}
     for name, pdf, cleaned, made in songs():
-        found = grouping(etree.parse(str(cleaned)).getroot())
+        found = grouping(etree.parse(str(cleaned)).getroot(), override_for(name))
         out[name] = {
             "pdf": pdf.name,
             "cleaned": cleaned.name,
@@ -58,8 +59,11 @@ def main() -> None:
             },
             # Written by hand after somebody has looked at the reference beside
             # the page.  Nothing here is derived, and nothing regenerates it.
-            "review": reviews.get(name, {"status": "unreviewed", "notes": ""}),
+            "review": kept.get(name, (None, None))[0] or {"status": "unreviewed", "notes": ""},
         }
+        override = kept.get(name, (None, None))[1]
+        if override:
+            out[name]["grouping"]["override"] = override
 
     MANIFEST.parent.mkdir(exist_ok=True)
     MANIFEST.write_text(json.dumps({"version": 1, "songs": out}, indent=2, ensure_ascii=False) + "\n")

@@ -61,6 +61,10 @@ class Grouping:
     def inferred(self) -> bool:
         return self.source == "part names"
 
+    @property
+    def reviewed(self) -> bool:
+        return self.source == "reviewed"
+
 
 def _meta(root: etree._Element, name: str) -> str:
     for tag in root.iter("metaTag"):
@@ -175,9 +179,38 @@ def silent_staves(root: etree._Element) -> list[int]:
     return silent
 
 
-def grouping(root: etree._Element) -> Grouping:
-    """How this score's staves map back onto the printed page."""
+def _from_review(
+    override: list[list[str]], names: dict[int, str]
+) -> list[PrintedStaff] | None:
+    """A grouping somebody read off the page and wrote down.
+
+    Named by part rather than by staff id, because a name is what a person can
+    check against the page and an id is not, and because re-cleaning a score can
+    renumber the staves under a recorded id.
+    """
+    by_name: dict[str, int] = {name: staff for staff, name in names.items()}
+    printed = []
+    for group in override:
+        staves = [by_name[name] for name in group if name in by_name]
+        if len(staves) != len(group):
+            missing = [name for name in group if name not in by_name]
+            raise KeyError(f"the score has no part called {missing}")
+        printed.append(PrintedStaff(staves, [names[staff] for staff in staves]))
+    return printed or None
+
+
+def grouping(root: etree._Element, override: list[list[str]] | None = None) -> Grouping:
+    """How this score's staves map back onto the printed page.
+
+    An `override` is a person's reading of the page and beats everything else:
+    the recorded maps describe how the app split the staves, which is not always
+    how they were printed.
+    """
     names = staff_names(root)
+    if override:
+        printed = _from_review(override, names)
+        if printed is not None:
+            return Grouping(printed, "reviewed")
     score = root.find("Score")
     ids = [int(staff.get("id", "0")) for staff in score.findall("Staff")]
     singing = [staff for staff in ids if staff not in silent_staves(root)]
@@ -201,14 +234,14 @@ def grouping(root: etree._Element) -> Grouping:
     return Grouping(_inferred(names, singing), "part names")
 
 
-def implode(root: etree._Element) -> Grouping:
+def implode(root: etree._Element, override: list[list[str]] | None = None) -> Grouping:
     """Merge the staves back onto the printed ones, in place.
 
     Returns the grouping used, so a caller can say whether it was recorded or
     guessed.
     """
     score = root.find("Score")
-    found = grouping(root)
+    found = grouping(root, override)
     staves = {int(s.get("id", "0")): s for s in score.findall("Staff")}
     parts = {}
     for part in score.findall("Part"):

@@ -30,8 +30,8 @@
         ]
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
       }
     },
     "Kolme käkeä": {
@@ -45,30 +45,49 @@
         "stage": "upload"
       },
       "grouping": {
-        "source": "part names",
-        "inferred": true,
+        "source": "reviewed",
+        "inferred": false,
         "printed": [
           [
-            1,
+            1
+          ],
+          [
             2
           ],
           [
-            3,
-            4
+            3
           ],
           [
-            5
+            4
           ]
         ],
         "labels": [
-          "Soprano 1/Soprano 2",
-          "Alto 1/Alto 2",
-          "Solo"
-        ]
+          "Soprano 1",
+          "Soprano 2",
+          "Alto 1",
+          "Alto 2"
+        ],
+        "override": {
+          "printed": [
+            [
+              "Soprano 1"
+            ],
+            [
+              "Soprano 2"
+            ],
+            [
+              "Alto 1"
+            ],
+            [
+              "Alto 2"
+            ]
+          ],
+          "why": "the page prints one voice per staff; the guess had paired them"
+        }
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "the page prints four staves of one voice each, so nothing is imploded"
       }
     },
     "heraa-suomi-final": {
@@ -100,8 +119,8 @@
         ]
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
       }
     },
     "kaksi-laulua-krapulasta-2": {
@@ -133,8 +152,8 @@
         ]
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
       }
     },
     "kayttaytymisohjeita": {
@@ -166,8 +185,8 @@
         ]
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
       }
     },
     "laulun-aika-3": {
@@ -181,29 +200,39 @@
         "stage": "upload"
       },
       "grouping": {
-        "source": "per-system map",
+        "source": "reviewed",
         "inferred": false,
         "printed": [
           [
+            3,
             1,
             2
-          ],
-          [
-            3
           ],
           [
             4
           ]
         ],
         "labels": [
-          "T1/T2",
-          "T3",
+          "T3/T1/T2",
           "B"
-        ]
+        ],
+        "override": {
+          "printed": [
+            [
+              "T3",
+              "T1",
+              "T2"
+            ],
+            [
+              "B"
+            ]
+          ],
+          "why": "the tenor staff carries three voices, T3 above T1 and T2"
+        }
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "T3 shares the tenor staff as its top voice, which no recorded map said"
       }
     },
     "pois-meni-mereen-paiva": {
@@ -235,8 +264,8 @@
         ]
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
       }
     },
     "virta-scratch": {
@@ -268,8 +297,8 @@
         ]
       },
       "review": {
-        "status": "unreviewed",
-        "notes": ""
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
       }
     }
   }

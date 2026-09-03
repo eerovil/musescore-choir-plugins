@@ -25,6 +25,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.clean_score.implode import implode  # noqa: E402
 
+MANIFEST = Path("fixtures/omr-songs.json")
+
+
+def override_for(name: str) -> list[list[str]] | None:
+    """The grouping a person read off the page, if one is written down."""
+    if not MANIFEST.exists():
+        return None
+    saved = json.loads(MANIFEST.read_text())["songs"].get(name, {})
+    return (saved.get("grouping", {}).get("override") or {}).get("printed")
+
 OUT = Path("implode-report")
 #: Wide enough to read a notehead, small enough to open on a phone.
 WIDTH = 1500
@@ -138,7 +148,7 @@ def main() -> None:
         if wanted and name not in wanted:
             continue
         root = etree.parse(str(cleaned)).getroot()
-        found = implode(root)
+        found = implode(root, override_for(name))
         with tempfile.TemporaryDirectory() as tmp:
             score = Path(tmp) / "imploded.mscx"
             etree.ElementTree(root).write(str(score), encoding="UTF-8", xml_declaration=True)

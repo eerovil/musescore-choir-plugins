@@ -131,3 +131,45 @@ def test_a_name_is_only_a_voice_when_the_whole_name_is_one() -> None:
     assert voice_of("Sopraano 2") == ("S", (2,))
     assert voice_of("Solo") is None
     assert voice_of("Click") is None
+
+
+def test_a_reviewed_grouping_beats_the_recorded_one() -> None:
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "T3"), (4, "B")]), "lyricsStaffMap", "1:1,2;2:3;3:4"
+    )
+
+    found = grouping(root, [["T3", "T1", "T2"], ["B"]])
+
+    # The recorded map says how the app split the staves, which is not always
+    # how they were printed: here the page puts T3 on top of the tenor staff.
+    assert found.reviewed
+    assert [printed.staves for printed in found.printed] == [[3, 1, 2], [4]]
+
+
+def test_a_reviewed_grouping_can_ask_for_no_implosion() -> None:
+    root = score([(1, "S1"), (2, "S2")])
+
+    found = grouping(root, [["S1"], ["S2"]])
+
+    assert [printed.staves for printed in found.printed] == [[1], [2]]
+
+
+def test_a_review_naming_a_part_the_score_lacks_is_refused() -> None:
+    root = score([(1, "T1"), (2, "T2")])
+
+    try:
+        grouping(root, [["T1", "T9"]])
+    except KeyError as error:
+        assert "T9" in str(error)
+    else:
+        raise AssertionError("a review naming a part that is not there must not pass")
+
+
+def test_three_voices_go_onto_one_staff_in_the_order_reviewed() -> None:
+    root = score([(1, "T1"), (2, "T2"), (3, "T3")])
+
+    implode(root, [["T3", "T1", "T2"]])
+
+    staves = root.find("Score").findall("Staff")
+    assert len(staves) == 1
+    assert [len(bar.findall("voice")) for bar in staves[0].findall("Measure")] == [3, 3]
