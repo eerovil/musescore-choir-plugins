@@ -24,11 +24,11 @@ from lxml import etree
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.implode_report import drop_rests_for, override_for  # noqa: E402
+from scripts.reference_manifest import manifest, reference_files  # noqa: E402
 from src.clean_score.implode import implode  # noqa: E402
 from src.clean_score.utils import per_system  # noqa: E402
 from src.song_app import pdf_systems  # noqa: E402
 
-MANIFEST = Path("fixtures/omr-songs.json")
 SCRATCH = Path("scan-eval")
 
 
@@ -70,8 +70,7 @@ def reference_systems(slug: str, bands) -> list[dict]:
     rests through a system is not engraved, which is the whole reason a page can
     be 2-3-2-3-3 staves.
     """
-    cleaned = sorted(glob.glob(f"songs/{slug}/*_cleaned.mscx"))[0]
-    root = etree.parse(cleaned).getroot()
+    root = etree.parse(str(reference_files(slug).cleaned)).getroot()
     implode(root, override_for(slug), drop_rests_for(slug))
     staves = root.find("Score").findall("Staff")
     out = []
@@ -83,17 +82,17 @@ def reference_systems(slug: str, bands) -> list[dict]:
         printed, notes, voices = 0, 0, 0
         for staff in staves:
             bars = staff.findall("Measure")[start - 1:end]
-            # The lines a singer could follow on this staff: an imploded staff
-            # carrying two parts has two <voice> elements in a bar, and one
-            # carrying a chord written for two singers has one. Counting the
-            # most any bar of the system has is what the page shows a reader.
-            voices += max((len(bar.findall("voice")) for bar in bars), default=0)
             # Noteheads, not chords: MusicXML writes one <note> per notehead, so
             # counting `Chord` here would call a two-part chord one note and make
             # every divisi bar look like the scan had invented notes.
             here = sum(len(bar.findall(".//Chord/Note")) for bar in bars)
             notes += here
-            printed += 1 if here else 0
+            if here:
+                # The lines a singer could follow on this printed staff: an
+                # imploded staff carrying two parts has two <voice> elements
+                # in a bar, and one carrying a chord for two singers has one.
+                voices += max((len(bar.findall("voice")) for bar in bars), default=0)
+                printed += 1
         out.append({"staves": printed, "bars": end - start + 1, "notes": notes,
                     "voices": voices})
     return out
@@ -129,7 +128,7 @@ def scanned_systems(slug: str, root: Path = SCRATCH) -> dict[int, dict]:
 
 
 def main() -> None:
-    listed = json.loads(MANIFEST.read_text())["songs"]
+    listed = manifest()
     key, argv = read_with(sys.argv[1:])
     root = SCRATCH / key
     slugs = argv or [n for n, e in listed.items()

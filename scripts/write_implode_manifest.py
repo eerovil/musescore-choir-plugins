@@ -23,7 +23,7 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.implode_report import override_for, songs  # noqa: E402
+from scripts.implode_report import candidate_songs, override_for  # noqa: E402
 from src.clean_score.implode import grouping  # noqa: E402
 
 MANIFEST = Path("fixtures/omr-songs.json")
@@ -47,7 +47,7 @@ def main() -> None:
     }
 
     out = {}
-    for name, pdf, cleaned, made in songs(with_excluded=True):
+    for name, pdf, cleaned, made in candidate_songs(with_excluded=True):
         found = grouping(etree.parse(str(cleaned)).getroot(), override_for(name))
         out[name] = {
             "pdf": pdf.name,

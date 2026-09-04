@@ -31,13 +31,13 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.song_app import omr, pdf_systems, scan, state  # noqa: E402
+from scripts.reference_manifest import manifest, reference_files  # noqa: E402
 
-MANIFEST = Path("fixtures/omr-songs.json")
 SCRATCH = Path("scan-eval")
 
 
 def in_the_set() -> list[str]:
-    listed = json.loads(MANIFEST.read_text())["songs"]
+    listed = manifest()
     return [name for name, entry in listed.items()
             if entry["review"]["status"] != "excluded"]
 
@@ -45,15 +45,15 @@ def in_the_set() -> list[str]:
 def stage_a_copy(slug: str, root: Path) -> None:
     """A song holding nothing but the page and the bands drawn on it."""
     real = Path("songs") / slug
-    listed = json.loads(MANIFEST.read_text())["songs"][slug]
-    pdf = listed["pdf"]
+    sources = reference_files(slug)
+    pdf = sources.pdf.name
     here = root / slug
     here.mkdir(parents=True, exist_ok=True)
     target = here / pdf
     if not target.exists():
         # A link, not a copy: these are scans of in-copyright editions and one
         # of them is 4 MB.
-        os.symlink(os.path.abspath(real / pdf), target)
+        os.symlink(os.path.abspath(sources.pdf), target)
     shutil.copy(real / pdf_systems.BOUNDS_FILE, here / pdf_systems.BOUNDS_FILE)
     # The state file is where the fragments already read are recorded, so
     # rewriting it is throwing away the scan: the MusicXML stays on disk but

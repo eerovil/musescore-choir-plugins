@@ -26,10 +26,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.implode_report import (  # noqa: E402
     _shrink,
-    chosen_pdf,
     drop_rests_for,
     override_for,
 )
+from scripts.reference_manifest import reference_files  # noqa: E402
 from src.clean_score.implode import implode  # noqa: E402
 
 OUT = Path("song-pages")
@@ -81,6 +81,7 @@ def main() -> None:
     cli = os.environ.get("MUSESCORE_CLI_PATH", "")
     name = sys.argv[1]
     folder = f"songs/{name}/"
+    sources = reference_files(name)
     OUT.mkdir(exist_ok=True)
     for old in OUT.glob(f"{name}-*.jpg"):
         old.unlink()
@@ -89,7 +90,7 @@ def main() -> None:
     for pdf in sorted(Path(path) for path in glob.glob(folder + "*.pdf")):
         if pdf.name.endswith(".render.pdf") or "_cleaned" in pdf.name:
             continue
-        picked = pdf.name == (chosen_pdf(name) or "")
+        picked = pdf == sources.pdf
         badge = '<span class="chosen">the page this reference is checked against</span>' if picked else ""
         pages = pdf_pages(pdf, f"{name}-{pdf.stem}")
         sections.append(
@@ -97,8 +98,7 @@ def main() -> None:
             + "".join(f'<img src="{html.escape(page)}" alt="page">' for page in pages)
         )
 
-    cleaned = sorted(glob.glob(folder + "*_cleaned.mscx"))[0]
-    root = etree.parse(cleaned).getroot()
+    root = etree.parse(str(sources.cleaned)).getroot()
     found = implode(root, override_for(name), drop_rests_for(name))
     with tempfile.TemporaryDirectory() as tmp:
         score = Path(tmp) / "imploded.mscx"

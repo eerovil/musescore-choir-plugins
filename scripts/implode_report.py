@@ -24,6 +24,7 @@ from lxml import etree
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.clean_score.implode import implode  # noqa: E402
+from scripts.reference_manifest import manifest, reference_files  # noqa: E402
 
 MANIFEST = Path("fixtures/omr-songs.json")
 
@@ -97,7 +98,7 @@ def printed_pdf(folder: str, chosen: str | None = None) -> Path | None:
     return pages[0] if pages else None
 
 
-def songs(with_excluded: bool = False) -> list[tuple[str, Path, Path, dict]]:
+def candidate_songs(with_excluded: bool = False) -> list[tuple[str, Path, Path, dict]]:
     """Every song with a printed page, a cleaned score and a practice video.
 
     A song a review has thrown out is left out, except for the manifest, which
@@ -113,6 +114,17 @@ def songs(with_excluded: bool = False) -> list[tuple[str, Path, Path, dict]]:
         made = made_a_video(folder)
         if cleaned and pdf and made:
             found.append((name, pdf, Path(sorted(cleaned)[0]), made))
+    return found
+
+
+def songs(with_excluded: bool = False) -> list[tuple[str, Path, Path, dict]]:
+    """The reviewed set, using only the exact files recorded in the manifest."""
+    found = []
+    for name, entry in manifest().items():
+        if entry["review"]["status"] == "excluded" and not with_excluded:
+            continue
+        sources = reference_files(name)
+        found.append((name, sources.pdf, sources.cleaned, entry["video"]))
     return found
 
 

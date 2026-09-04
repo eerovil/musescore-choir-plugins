@@ -10,7 +10,6 @@ open each song's Systems tab and correct what the finder got wrong.
     .venv/bin/python scripts/propose_bounds.py <slug> [<slug> ...]
 """
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -20,8 +19,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.song_app import pdf_systems, pipeline, state, system_finder  # noqa: E402
-
-MANIFEST = Path("fixtures/omr-songs.json")
+from scripts.reference_manifest import reference_files  # noqa: E402
 
 
 def bounds_score(song) -> str:
@@ -39,10 +37,9 @@ def main() -> None:
     # The page a fixture is checked against is the manifest's, not whichever
     # PDF the song folder happens to name first: which one was the printed page
     # has twice been the thing that was wrong.
-    listed = json.loads(MANIFEST.read_text())["songs"]
     for slug in sys.argv[1:]:
         song = state.load(slug)
-        pdf = os.path.join(song.dir, listed[slug]["pdf"])
+        pdf = str(reference_files(slug).pdf)
         print(f"== {slug}: {os.path.basename(pdf)}", flush=True)
         bands = system_finder.find_bands(pdf, log=lambda m: print("  " + m, flush=True))
         saved = pipeline.save_system_bounds(

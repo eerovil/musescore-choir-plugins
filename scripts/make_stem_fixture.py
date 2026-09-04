@@ -19,7 +19,6 @@ worktree's `fixtures/`), and prints the entry to add to
 """
 
 import argparse
-import glob
 import json
 import os
 import subprocess
@@ -33,10 +32,10 @@ from lxml import etree
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.implode_report import drop_rests_for, override_for  # noqa: E402
+from scripts.reference_manifest import reference_files  # noqa: E402
 from src.clean_score.implode import implode  # noqa: E402
 from src.song_app import pdf_systems  # noqa: E402
 
-MANIFEST = Path("fixtures/omr-songs.json")
 FIXTURES = Path(os.environ.get("HOMR_FIXTURES",
                                "/var/home/eero/homr-trees/system-4/fixtures"))
 #: What the fixture pictures are cropped at. The existing ones are a few hundred
@@ -83,9 +82,9 @@ def main() -> None:
     args = parser.parse_args()
 
     name = args.name or f"{args.slug}-s{args.system}"
-    listed = json.loads(MANIFEST.read_text())["songs"][args.slug]
     song_dir = f"songs/{args.slug}"
-    pdf = str(Path(song_dir) / listed["pdf"])
+    sources = reference_files(args.slug)
+    pdf = str(sources.pdf)
 
     bands = {b.index: b for b in pdf_systems.load_bounds(song_dir)}
     band = bands[args.system]
@@ -99,8 +98,7 @@ def main() -> None:
         picture = FIXTURES / f"{name}.png"
         picture.write_bytes(Path(image.path).read_bytes())
 
-        cleaned = sorted(glob.glob(f"{song_dir}/*_cleaned.mscx"))[0]
-        root = etree.parse(cleaned).getroot()
+        root = etree.parse(str(sources.cleaned)).getroot()
         implode(root, override_for(args.slug), drop_rests_for(args.slug))
         trim(root, band.measure_start, band.measure_end)
         score = Path(tmp) / f"{name}.mscx"

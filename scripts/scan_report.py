@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.implode_report import _shrink  # noqa: E402
+from scripts.reference_manifest import manifest, reference_files  # noqa: E402
 from scripts.scan_vs_reference import (  # noqa: E402
     SCRATCH,
     printed_staves,
@@ -41,7 +42,6 @@ from scripts.scan_vs_reference import (  # noqa: E402
 )
 from src.song_app import pdf_systems, pipeline  # noqa: E402
 
-MANIFEST = Path("fixtures/omr-songs.json")
 OUT = Path("scan-report")
 
 STYLE = """
@@ -75,7 +75,7 @@ def picture(name: str, source: str) -> str:
 
 def main() -> None:
     load_dotenv()
-    listed = json.loads(MANIFEST.read_text())["songs"]
+    listed = manifest()
     argv = sys.argv[1:]
     against = ""
     if "--against" in argv:
@@ -96,7 +96,7 @@ def main() -> None:
                             f"<p class=\"sub\">not scanned yet</p>")
             continue
         song_dir = f"songs/{slug}"
-        pdf = str(Path(song_dir) / listed[slug]["pdf"])
+        pdf = str(reference_files(slug).pdf)
         bands = pdf_systems.load_bounds(song_dir)
         reference = reference_systems(slug, bands)
         printed = printed_staves(slug, bands)
