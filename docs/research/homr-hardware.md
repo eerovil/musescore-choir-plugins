@@ -113,6 +113,62 @@ same laptop*, so that pairing is a choice between them and the pod is the slow
 half. And a scan running flat out here is what the heavy-slot queue exists to
 prevent: it would starve any render or test suite beside it.
 
+## The cheapest speed-up is not hardware at all
+
+Asked what it would take to read 20 systems in 10 s — about 25x — the budget says
+hardware is the last lever, not the first.
+
+**Half the time is startup.** homr on a *blank* image, with no music to read,
+takes 5.4 s on this host; 1.6 s of that is importing the library. The scan pays
+that once per band, so the fixture's 15 systems spend roughly 80 s of their 201 s
+starting up. A resident process with the models already loaded removes it,
+without touching a model or a GPU.
+
+**The rest is per-run, not per-note.** A whole page costs 17.7 s here and one
+system about 13 s, so reading a page as four bands costs four times the fixed
+overhead for the same music. Which raises the question the per-system rule was
+built to answer.
+
+### Whole-page reading works again — except on ragged pages
+
+The per-system rule exists because a whole-page parse used to collapse B5's four
+staves into one monophonic line of 70 bars. The staff-grouping fix that caused
+that has since landed upstream, so the question was re-asked on the benchmark
+with homr `0.7.0.post83`. Times include waiting for a heavy slot, so read them as
+directional; the per-system route asks for a slot per band and the whole-page
+route once.
+
+| page | staves it prints | per-system | whole page |
+| --- | --- | --- | --- |
+| B1a | 2 | 52.8 s — 2-2-2, 7 bars | 41.7 s — 2 staves, 7 bars ✓ |
+| B1b (poor scan) | 2 | 89.1 s — 2-2-2, 7 bars | 34.3 s — 2 staves, 7 bars ✓ |
+| B2 | 2 | 74.0 s — 2-2-2-2, 16 bars | 39.7 s — 2 staves, 16 bars ✓ |
+| B5 | 4 | 4-4-4 (per CLAUDE.md) | 39.5 s — **4 staves**, 23 bars each ✓ |
+| B4 | 2-3-2-3-3 | 2-3-2-3-3, 18 bars (per CLAUDE.md) | 36.6 s — 5 staves, **8 bars** ✗ |
+
+**B5 no longer collapses.** The page that justified the whole design reads back
+as the four staves it prints. But **B4 still fails**, and fails in exactly the
+documented way: a page whose systems carry different numbers of staves is not a
+rectangle, so the parts come back stacked — 5 staves where no system prints more
+than 3, and 8 bars where the page has 18. Half the music, silently.
+
+So whole-page reading is roughly **2x** and is correct on every page whose systems
+all carry the same staves — which is most of this repertoire — and quietly wrong on
+the ones that do not. A rule could tell them apart before reading: `system_finder`
+already reports how many staves each band holds, so a page whose bands agree can be
+read whole and a page whose bands disagree read band by band. That is a proposal,
+not a measurement; nobody has built or tested it.
+
+### What 10 s would actually take
+
+Startup removed and uniform pages read whole gets 20 systems to roughly 40–60 s,
+and no further. The last 5x needs the inference itself to be faster, and the Apple
+GPU will not do it (5% over CPU, measured above). It needs a CUDA card — this
+host's GTX 970 is below onnxruntime's floor — **and** batching, which homr does not
+do: it reads one staff at a time, where 20 systems is 40–80 staff images a GPU
+would take in one pass. Resident service, modern card, batched staves. That is
+fork-level ML work plus hardware, not configuration.
+
 ## Why nothing was built
 
 2.6x on a stage that runs once per song, in exchange for a second machine in the
