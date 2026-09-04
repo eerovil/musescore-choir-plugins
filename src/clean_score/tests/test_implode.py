@@ -308,3 +308,52 @@ def test_the_first_voice_left_in_a_bar_keeps_the_clef() -> None:
 
     bar = root.find("Score/Staff/Measure")
     assert len(bar.findall("voice/Clef")) == 1
+
+
+def test_a_band_is_grouped_by_its_own_system_and_not_the_score() -> None:
+    """A band of a score is not the score.
+
+    `implode` groups over the whole piece: a slot per page position, holding
+    every part that ever occupies it.  One band then gets both too many staves
+    (a slot the widest system needs and this one does not print) and the wrong
+    parts inside one (position 1 unioned across systems that use it
+    differently).
+    """
+    from scripts.make_stem_fixture import system_override
+
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B")], bars=4),
+        "lyricsSystemMap",
+        '[{"start":1,"end":2,"map":{"1":[1,2],"2":[3]}},'
+        ' {"start":3,"end":4,"map":{"1":[1],"2":[2],"3":[3]}}]',
+    )
+
+    assert system_override(root, 1) == [["T1", "T2"], ["B"]]
+    assert system_override(root, 3) == [["T1"], ["T2"], ["B"]]
+
+
+def test_the_band_grouping_is_what_implode_builds() -> None:
+    from scripts.make_stem_fixture import system_override
+
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B")], bars=4),
+        "lyricsSystemMap",
+        '[{"start":1,"end":2,"map":{"1":[1,2],"2":[3]}},'
+        ' {"start":3,"end":4,"map":{"1":[1],"2":[2],"3":[3]}}]',
+    )
+    implode(root, system_override(root, 1))
+
+    # The first system prints two staves; without this it got the three the
+    # second system needs, the third of them holding nothing.
+    assert len(root.find("Score").findall("Staff")) == 2
+
+
+def test_a_score_with_no_per_system_map_is_grouped_as_a_whole() -> None:
+    """Fixed staff roles: there is no system that prints something else."""
+    from scripts.make_stem_fixture import system_override
+
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B1"), (4, "B2")]), "lyricsStaffMap", "1:1,2;2:3,4"
+    )
+
+    assert system_override(root, 1) is None
