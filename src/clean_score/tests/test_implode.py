@@ -310,15 +310,16 @@ def test_the_first_voice_left_in_a_bar_keeps_the_clef() -> None:
     assert len(bar.findall("voice/Clef")) == 1
 
 
-def test_a_band_keeps_only_the_staves_its_own_system_prints() -> None:
-    """One band of a score is not the whole score's set of printed staves.
+def test_a_band_is_grouped_by_its_own_system_and_not_the_score() -> None:
+    """A band of a score is not the score.
 
-    `implode` sizes the slots by the widest system in the piece, so a band cut
-    out of a three-slot score kept a staff of rests the page never printed --
-    and the reference then claimed three printed staves against a page that
-    prints two.
+    `implode` groups over the whole piece: a slot per page position, holding
+    every part that ever occupies it.  One band then gets both too many staves
+    (a slot the widest system needs and this one does not print) and the wrong
+    parts inside one (position 1 unioned across systems that use it
+    differently).
     """
-    from scripts.make_stem_fixture import keep_printed
+    from scripts.make_stem_fixture import system_override
 
     root = with_meta(
         score([(1, "T1"), (2, "T2"), (3, "B")], bars=4),
@@ -326,42 +327,33 @@ def test_a_band_keeps_only_the_staves_its_own_system_prints() -> None:
         '[{"start":1,"end":2,"map":{"1":[1,2],"2":[3]}},'
         ' {"start":3,"end":4,"map":{"1":[1],"2":[2],"3":[3]}}]',
     )
-    found = implode(root)
-    assert len(root.find("Score").findall("Staff")) == 3
 
-    keep_printed(root, found, 1)
-
-    # The first system prints two staves; the third slot exists only because
-    # the second system splits the tenors.
-    staves = root.find("Score").findall("Staff")
-    assert [staff.get("id") for staff in staves] == ["1", "2"]
-    assert [part.find("Staff").get("id") for part in root.find("Score").findall("Part")] == ["1", "2"]
+    assert system_override(root, 1) == [["T1", "T2"], ["B"]]
+    assert system_override(root, 3) == [["T1"], ["T2"], ["B"]]
 
 
-def test_a_band_in_the_widest_system_keeps_every_staff() -> None:
+def test_the_band_grouping_is_what_implode_builds() -> None:
+    from scripts.make_stem_fixture import system_override
+
     root = with_meta(
         score([(1, "T1"), (2, "T2"), (3, "B")], bars=4),
         "lyricsSystemMap",
         '[{"start":1,"end":2,"map":{"1":[1,2],"2":[3]}},'
         ' {"start":3,"end":4,"map":{"1":[1],"2":[2],"3":[3]}}]',
     )
-    found = implode(root)
+    implode(root, system_override(root, 1))
 
-    from scripts.make_stem_fixture import keep_printed
-    keep_printed(root, found, 3)
+    # The first system prints two staves; without this it got the three the
+    # second system needs, the third of them holding nothing.
+    assert len(root.find("Score").findall("Staff")) == 2
 
-    assert [staff.get("id") for staff in root.find("Score").findall("Staff")] == ["1", "2", "3"]
 
-
-def test_a_score_with_no_per_system_map_keeps_every_staff() -> None:
-    """Fixed staff roles: there is no system that prints fewer."""
-    from scripts.make_stem_fixture import keep_printed
+def test_a_score_with_no_per_system_map_is_grouped_as_a_whole() -> None:
+    """Fixed staff roles: there is no system that prints something else."""
+    from scripts.make_stem_fixture import system_override
 
     root = with_meta(
         score([(1, "T1"), (2, "T2"), (3, "B1"), (4, "B2")]), "lyricsStaffMap", "1:1,2;2:3,4"
     )
-    found = implode(root)
 
-    keep_printed(root, found, 1)
-
-    assert len(root.find("Score").findall("Staff")) == 2
+    assert system_override(root, 1) is None

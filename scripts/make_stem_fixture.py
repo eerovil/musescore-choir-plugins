@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.implode_report import drop_rests_for, override_for  # noqa: E402
 from scripts.reference_manifest import reference_files  # noqa: E402
-from src.clean_score.implode import implode  # noqa: E402
+from src.clean_score.implode import grouping, implode  # noqa: E402
 from src.song_app import pdf_systems  # noqa: E402
 
 FIXTURES = Path(os.environ.get("HOMR_FIXTURES",
@@ -72,43 +72,42 @@ def trim(root: etree._Element, start: int, end: int) -> None:
                 voice.insert(offset, carried[tag])
 
 
-def keep_printed(root: etree._Element, found, start: int) -> None:
-    """Drop the staves this system does not print.
+def system_override(root: etree._Element, start: int) -> list[list[str]] | None:
+    """The staves the page prints in the system this band cuts out.
 
-    `implode` gives the whole score one set of printed staves -- a slot per
-    top-to-bottom page position, sized by the widest system in the piece.  That
-    is right for a score, and wrong for one band of it: a part that rests through
-    a system is simply not printed, so a band cut out of a four-slot score can
-    hold three staves, or two.
+    `implode` groups for a whole score: one slot per top-to-bottom page
+    position, and each slot holds every part that ever occupies it.  That is
+    right for a score and wrong for one band of it, in two ways at once.
 
-    The reference kept the slot anyway, as a staff of rests, and then said the
-    page printed three staves where it printed two.  Every note is matched on its
-    staff, so that one extra row made a system homr had read correctly report
-    twenty-six lost noteheads -- and, worse, pointed the blame at homr.
+    A band gets **too many staves**, because the slots are sized by the widest
+    system in the piece and a part that rests through a system is simply not
+    printed.  `kayttaytymisohjeita-s1` came out with a third staff of rests the
+    page has no row for.
 
-    Which staves this system prints is not inferred here: the per-system map
-    already records it, position by position, and `Grouping.systems` carries it
-    through.  A song whose grouping has no per-system map keeps every slot, which
-    is what a score with fixed staff roles should do.
+    And a band gets **the wrong staves in a slot**, because slot membership is
+    unioned too.  On `laulun-aika-3` position 1 carries T1 and T2 in some systems
+    and T3 in others, so every band was given one tenor staff labelled `T3/T1/T2`
+    holding all three -- against a page that prints them on three separate
+    staves.
+
+    Both go away by asking the band's own system instead of the score.  The
+    per-system map records it position by position, `Grouping.systems` carries it
+    through, and `implode` already accepts a grouping by part name -- the same
+    door a person's reading of the page comes through, which is why a recorded
+    override still wins over this.
+
+    Nothing is inferred here.  A score with no per-system map, or one whose map
+    does not cover this bar, is imploded as the whole score, which is what fixed
+    staff roles should do.
     """
+    found = grouping(root)
     system = next((s for s in found.systems if s.start <= start <= s.end), None)
     if system is None or not system.printed:
-        return
-    order = {old: new for new, old in enumerate(sorted(system.printed), start=1)}
-    score = root.find("Score")
-    for staff in score.findall("Staff"):
-        old = int(staff.get("id", "0"))
-        if old in order:
-            staff.set("id", str(order[old]))
-        else:
-            score.remove(staff)
-    for part in score.findall("Part"):
-        holder = part.find("Staff")
-        old = int(holder.get("id", "0")) if holder is not None else 0
-        if old in order:
-            holder.set("id", str(order[old]))
-        else:
-            score.remove(part)
+        return None
+    printed = [list(system.printed[position].names) for position in sorted(system.printed)]
+    if any(not name for group in printed for name in group):
+        return None
+    return printed
 
 
 def main() -> None:
@@ -138,8 +137,8 @@ def main() -> None:
         picture.write_bytes(Path(image.path).read_bytes())
 
         root = etree.parse(str(sources.cleaned)).getroot()
-        found = implode(root, override_for(args.slug), drop_rests_for(args.slug))
-        keep_printed(root, found, band.measure_start)
+        override = override_for(args.slug) or system_override(root, band.measure_start)
+        implode(root, override, drop_rests_for(args.slug))
         trim(root, band.measure_start, band.measure_end)
         score = Path(tmp) / f"{name}.mscx"
         etree.ElementTree(root).write(str(score), encoding="UTF-8",
