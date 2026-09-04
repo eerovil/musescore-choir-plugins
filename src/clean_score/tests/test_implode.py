@@ -113,6 +113,43 @@ def test_a_fixed_position_carries_the_new_source_clef_at_a_system_boundary() -> 
     assert output[1].findtext("voice/TimeSig/sigD") == "4"
 
 
+def test_a_boundary_uses_the_first_source_voice_that_is_actually_printed() -> None:
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "T3"), (4, "B")]),
+        "lyricsSystemMap",
+        '[{"start":1,"end":1,"map":{"1":[1],"2":[4]}},'
+        ' {"start":2,"end":2,"map":{"1":[1],"2":[2,3]}}]',
+    )
+    staves = root.find("Score").findall("Staff")
+    for staff, clef in zip(staves[1:], ("G", "C", "F")):
+        element = etree.SubElement(staff.find("Measure/voice"), "Clef")
+        etree.SubElement(element, "concertClefType").text = clef
+    staves[1].findall("Measure")[1].find("voice/Chord").tag = "Rest"
+
+    implode(root, drop_rests=["T2"])
+
+    boundary = root.find("Score").findall("Staff")[1].findall("Measure")[1]
+    assert boundary.findtext("voice/Clef/concertClefType") == "C"
+
+
+def test_a_boundary_does_not_repeat_unchanged_staff_state() -> None:
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B")]),
+        "lyricsSystemMap",
+        '[{"start":1,"end":1,"map":{"1":[1],"2":[3]}},'
+        ' {"start":2,"end":2,"map":{"1":[1],"2":[2]}}]',
+    )
+    staves = root.find("Score").findall("Staff")
+    for staff in staves[1:]:
+        element = etree.SubElement(staff.find("Measure/voice"), "Clef")
+        etree.SubElement(element, "concertClefType").text = "G"
+
+    implode(root)
+
+    boundary = root.find("Score").findall("Staff")[1].findall("Measure")[1]
+    assert boundary.find("voice/Clef") is None
+
+
 def test_a_reviewed_grouping_beats_a_changing_per_system_map() -> None:
     root = with_meta(
         score([(1, "T1"), (2, "T2")]),
