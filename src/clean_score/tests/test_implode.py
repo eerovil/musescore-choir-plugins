@@ -308,3 +308,60 @@ def test_the_first_voice_left_in_a_bar_keeps_the_clef() -> None:
 
     bar = root.find("Score/Staff/Measure")
     assert len(bar.findall("voice/Clef")) == 1
+
+
+def test_a_band_keeps_only_the_staves_its_own_system_prints() -> None:
+    """One band of a score is not the whole score's set of printed staves.
+
+    `implode` sizes the slots by the widest system in the piece, so a band cut
+    out of a three-slot score kept a staff of rests the page never printed --
+    and the reference then claimed three printed staves against a page that
+    prints two.
+    """
+    from scripts.make_stem_fixture import keep_printed
+
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B")], bars=4),
+        "lyricsSystemMap",
+        '[{"start":1,"end":2,"map":{"1":[1,2],"2":[3]}},'
+        ' {"start":3,"end":4,"map":{"1":[1],"2":[2],"3":[3]}}]',
+    )
+    found = implode(root)
+    assert len(root.find("Score").findall("Staff")) == 3
+
+    keep_printed(root, found, 1)
+
+    # The first system prints two staves; the third slot exists only because
+    # the second system splits the tenors.
+    staves = root.find("Score").findall("Staff")
+    assert [staff.get("id") for staff in staves] == ["1", "2"]
+    assert [part.find("Staff").get("id") for part in root.find("Score").findall("Part")] == ["1", "2"]
+
+
+def test_a_band_in_the_widest_system_keeps_every_staff() -> None:
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B")], bars=4),
+        "lyricsSystemMap",
+        '[{"start":1,"end":2,"map":{"1":[1,2],"2":[3]}},'
+        ' {"start":3,"end":4,"map":{"1":[1],"2":[2],"3":[3]}}]',
+    )
+    found = implode(root)
+
+    from scripts.make_stem_fixture import keep_printed
+    keep_printed(root, found, 3)
+
+    assert [staff.get("id") for staff in root.find("Score").findall("Staff")] == ["1", "2", "3"]
+
+
+def test_a_score_with_no_per_system_map_keeps_every_staff() -> None:
+    """Fixed staff roles: there is no system that prints fewer."""
+    from scripts.make_stem_fixture import keep_printed
+
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B1"), (4, "B2")]), "lyricsStaffMap", "1:1,2;2:3,4"
+    )
+    found = implode(root)
+
+    keep_printed(root, found, 1)
+
+    assert len(root.find("Score").findall("Staff")) == 2

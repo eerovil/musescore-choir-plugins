@@ -72,6 +72,45 @@ def trim(root: etree._Element, start: int, end: int) -> None:
                 voice.insert(offset, carried[tag])
 
 
+def keep_printed(root: etree._Element, found, start: int) -> None:
+    """Drop the staves this system does not print.
+
+    `implode` gives the whole score one set of printed staves -- a slot per
+    top-to-bottom page position, sized by the widest system in the piece.  That
+    is right for a score, and wrong for one band of it: a part that rests through
+    a system is simply not printed, so a band cut out of a four-slot score can
+    hold three staves, or two.
+
+    The reference kept the slot anyway, as a staff of rests, and then said the
+    page printed three staves where it printed two.  Every note is matched on its
+    staff, so that one extra row made a system homr had read correctly report
+    twenty-six lost noteheads -- and, worse, pointed the blame at homr.
+
+    Which staves this system prints is not inferred here: the per-system map
+    already records it, position by position, and `Grouping.systems` carries it
+    through.  A song whose grouping has no per-system map keeps every slot, which
+    is what a score with fixed staff roles should do.
+    """
+    system = next((s for s in found.systems if s.start <= start <= s.end), None)
+    if system is None or not system.printed:
+        return
+    order = {old: new for new, old in enumerate(sorted(system.printed), start=1)}
+    score = root.find("Score")
+    for staff in score.findall("Staff"):
+        old = int(staff.get("id", "0"))
+        if old in order:
+            staff.set("id", str(order[old]))
+        else:
+            score.remove(staff)
+    for part in score.findall("Part"):
+        holder = part.find("Staff")
+        old = int(holder.get("id", "0")) if holder is not None else 0
+        if old in order:
+            holder.set("id", str(order[old]))
+        else:
+            score.remove(part)
+
+
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -99,7 +138,8 @@ def main() -> None:
         picture.write_bytes(Path(image.path).read_bytes())
 
         root = etree.parse(str(sources.cleaned)).getroot()
-        implode(root, override_for(args.slug), drop_rests_for(args.slug))
+        found = implode(root, override_for(args.slug), drop_rests_for(args.slug))
+        keep_printed(root, found, band.measure_start)
         trim(root, band.measure_start, band.measure_end)
         score = Path(tmp) / f"{name}.mscx"
         etree.ElementTree(root).write(str(score), encoding="UTF-8",
