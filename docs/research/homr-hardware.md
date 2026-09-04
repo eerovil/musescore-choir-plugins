@@ -39,6 +39,40 @@ the same page on the same machine. What it does buy is CPU — 16.4 s against
 The 2x against this host is the Mac simply being a faster machine, not the
 Neural Engine.
 
+### The Neural Engine is the slow unit; the GPU is the fast one
+
+A later round on the same page and the same machine, forcing each compute unit
+in turn (`HOMR_COREML_COMPUTE_UNITS`). Single runs, on a quieter machine than
+the table above — compare them with each other, not with the 9.4 s:
+
+| setting | per page |
+| --- | --- |
+| `CPUAndGPU` — GPU only | **7.9 s** |
+| default `ALL` — CoreML chooses | 8.4 s, 8.6 s |
+| `CPUAndNeuralEngine` — ANE only | 10.7 s |
+| `ALL` plus `--coreml-encoder`, cache warm | 10.6 s (26.5 s cold) |
+
+So the accelerator that helps is the **GPU**, and steering work to the Neural
+Engine makes the page *slower* — 35% slower than the GPU, and worse than letting
+CoreML decide. Every "use the AI cores" instinct in this investigation was
+pointed at the wrong silicon.
+
+`--coreml-encoder` is a loss even once its 26.5 s compile is paid and cached:
+10.6 s against 8.5 s. It is off by default for a better reason than its own
+comment gives.
+
+Two caveats. These are single runs, and repeated identical runs differ by about
+0.2 s, so 7.9 against 8.5 is roughly twice the noise — real, but thin. And
+nothing here was cold: 8.38 s then 8.61 s back to back.
+
+Where the time goes, off homr's own log for this page: segnet 4.4 s (on CoreML),
+the three staves 2.9 s (encoder and decoder on the CPU), and ~2 s of dewarping,
+text recognition and file handling that is not inference at all. The decoder
+cannot move: its attention cache grows with every token, and CoreML's MLProgram
+format rejects that changing shape (see `homr/onnx_providers.py`). Re-exporting
+it with a fixed-size cache is the only route to the rest, and that is fork work,
+not a flag.
+
 ## Kubernetes on the Mac takes the gain away
 
 The cluster reachable at `eeros-macbook-air.taile8d16e.ts.net:6443` is a kind
