@@ -80,6 +80,39 @@ def test_a_per_system_map_merges_then_splits_the_same_voices() -> None:
     assert staves[1].find("Measure/LayoutBreak") is None
 
 
+def test_a_fixed_position_carries_the_new_source_clef_at_a_system_boundary() -> None:
+    root = with_meta(
+        score([(1, "T1"), (2, "T2"), (3, "B")]),
+        "lyricsSystemMap",
+        '[{"start":1,"end":1,"map":{"1":[1],"2":[3]}},'
+        ' {"start":2,"end":2,"map":{"1":[1],"2":[2]}}]',
+    )
+    staves = root.find("Score").findall("Staff")
+    tenor_clef = etree.SubElement(staves[1].find("Measure/voice"), "Clef")
+    etree.SubElement(tenor_clef, "concertClefType").text = "G"
+    tenor_key = etree.SubElement(staves[1].find("Measure/voice"), "KeySig")
+    etree.SubElement(tenor_key, "accidental").text = "2"
+    tenor_time = etree.SubElement(staves[1].find("Measure/voice"), "TimeSig")
+    etree.SubElement(tenor_time, "sigN").text = "3"
+    etree.SubElement(tenor_time, "sigD").text = "4"
+    bass_clef = etree.SubElement(staves[2].find("Measure/voice"), "Clef")
+    etree.SubElement(bass_clef, "concertClefType").text = "F"
+    bass_key = etree.SubElement(staves[2].find("Measure/voice"), "KeySig")
+    etree.SubElement(bass_key, "accidental").text = "-3"
+    bass_time = etree.SubElement(staves[2].find("Measure/voice"), "TimeSig")
+    etree.SubElement(bass_time, "sigN").text = "6"
+    etree.SubElement(bass_time, "sigD").text = "8"
+
+    implode(root)
+
+    output = root.find("Score").findall("Staff")[1].findall("Measure")
+    assert output[0].findtext("voice/Clef/concertClefType") == "F"
+    assert output[1].findtext("voice/Clef/concertClefType") == "G"
+    assert output[1].findtext("voice/KeySig/accidental") == "2"
+    assert output[1].findtext("voice/TimeSig/sigN") == "3"
+    assert output[1].findtext("voice/TimeSig/sigD") == "4"
+
+
 def test_a_reviewed_grouping_beats_a_changing_per_system_map() -> None:
     root = with_meta(
         score([(1, "T1"), (2, "T2")]),

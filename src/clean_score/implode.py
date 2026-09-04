@@ -435,6 +435,35 @@ def _rest_measure(source: etree._Element) -> etree._Element:
     return measure
 
 
+def _source_states(
+    bars: list[etree._Element],
+) -> list[dict[str, etree._Element]]:
+    """The clef, key and meter in force at each source measure."""
+    current: dict[str, etree._Element] = {}
+    states = []
+    for measure in bars:
+        for element in measure.iter():
+            if element.tag in STAFF_LEVEL:
+                current[element.tag] = etree.fromstring(etree.tostring(element))
+        states.append(dict(current))
+    return states
+
+
+def _carry_source_state(
+    measure: etree._Element, state: dict[str, etree._Element]
+) -> None:
+    """Write inherited source state when a fixed output position changes source."""
+    voice = measure.find("voice")
+    if voice is None:
+        voice = etree.SubElement(measure, "voice")
+    present = {element.tag for element in measure.iter() if element.tag in STAFF_LEVEL}
+    insert_at = 0
+    for tag in STAFF_LEVEL:
+        if tag not in present and tag in state:
+            voice.insert(insert_at, etree.fromstring(etree.tostring(state[tag])))
+            insert_at += 1
+
+
 def _merge_system_staves(
     staves: dict[int, etree._Element],
     found: Grouping,
@@ -443,6 +472,7 @@ def _merge_system_staves(
 ) -> list[etree._Element]:
     """Build fixed position staves whose contents follow each system's map."""
     source_bars = {staff: element.findall("Measure") for staff, element in staves.items()}
+    source_states = {staff: _source_states(bars) for staff, bars in source_bars.items()}
     base = next(iter(staves.values()))
     base_bars = base.findall("Measure")
     by_measure: dict[int, SystemGrouping] = {}
@@ -466,6 +496,7 @@ def _merge_system_staves(
         for element in template:
             if element.tag != "Measure" and not (position > 1 and element.tag == "VBox"):
                 staff.append(etree.fromstring(etree.tostring(element)))
+        previous_group: tuple[int, ...] | None = None
         for index, base_measure in enumerate(base_bars):
             group = by_measure[index].printed.get(position)
             if group:
@@ -476,11 +507,18 @@ def _merge_system_staves(
                     if names.get(source, "") in set(drop_rests)
                 }
                 measure = _merge_measure(sources, silent)
+                current_group = tuple(group.staves)
+                if current_group != previous_group:
+                    _carry_source_state(
+                        measure, source_states[group.staves[0]][index]
+                    )
             else:
                 measure = _rest_measure(base_measure)
+                current_group = None
             for layout_break in measure.findall("LayoutBreak"):
                 measure.remove(layout_break)
             staff.append(measure)
+            previous_group = current_group
         merged.append(staff)
 
     top = merged[0].findall("Measure") if merged else []
