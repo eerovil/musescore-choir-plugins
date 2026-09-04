@@ -56,6 +56,7 @@ class Grouping:
 
     printed: list[PrintedStaff]
     source: str
+    systems: list["SystemGrouping"] = field(default_factory=list)
 
     @property
     def inferred(self) -> bool:
@@ -64,6 +65,15 @@ class Grouping:
     @property
     def reviewed(self) -> bool:
         return self.source == "reviewed"
+
+
+@dataclass
+class SystemGrouping:
+    """The printed staff positions used by one measure range."""
+
+    start: int
+    end: int
+    printed: dict[int, PrintedStaff]
 
 
 def _meta(root: etree._Element, name: str) -> str:
@@ -111,34 +121,54 @@ def _from_staff_map(recorded: str, names: dict[int, str]) -> list[PrintedStaff] 
     return printed or None
 
 
-def _from_system_map(recorded: str, names: dict[int, str]) -> list[PrintedStaff] | None:
-    """A per-system map says which staves shared a printed one, system by system.
-
-    A score has a fixed number of staves while a page prints only the ones that
-    sound, so the grouping is taken over the whole score: two voices that share a
-    printed staff anywhere shared one, and a system where only one of them sings
-    prints that staff with one voice on it.
-    """
+def _from_system_map(recorded: str, names: dict[int, str]) -> list[SystemGrouping] | None:
+    """Read each system's printed positions without collapsing their differences."""
     try:
-        systems = json.loads(recorded)
-    except ValueError:
+        raw = json.loads(recorded)
+        systems = []
+        for entry in raw:
+            mapped = {
+                int(position): PrintedStaff(
+                    [int(staff) for staff in staves],
+                    [names.get(int(staff), "") for staff in staves],
+                )
+                for position, staves in entry["map"].items()
+            }
+            if mapped and set(mapped) != set(range(1, max(mapped) + 1)):
+                return None
+            if any(not group.staves for group in mapped.values()):
+                return None
+            listed = [staff for group in mapped.values() for staff in group.staves]
+            if len(listed) != len(set(listed)):
+                return None
+            systems.append(SystemGrouping(int(entry["start"]), int(entry["end"]), mapped))
+    except (KeyError, TypeError, ValueError):
         return None
-    together: dict[int, set[int]] = {}
+    systems.sort(key=lambda system: system.start)
+    return systems or None
+
+
+def _system_slots(systems: list[SystemGrouping], names: dict[int, str]) -> list[PrintedStaff]:
+    """Fixed score staves representing changing top-to-bottom page positions."""
+    count = max((max(system.printed, default=0) for system in systems), default=0)
+    slots = []
+    for position in range(1, count + 1):
+        staves = []
+        for system in systems:
+            group = system.printed.get(position)
+            for staff in group.staves if group else []:
+                if staff not in staves:
+                    staves.append(staff)
+        slots.append(PrintedStaff(staves, [names.get(staff, "") for staff in staves]))
+    return slots
+
+
+def _system_staff_ids(systems: list[SystemGrouping]) -> set[int]:
+    listed = set()
     for system in systems:
-        for staves in system.get("map", {}).values():
-            for staff in staves:
-                together.setdefault(staff, set()).update(staves)
-    groups: list[list[int]] = []
-    seen: set[int] = set()
-    for staff in sorted(together):
-        if staff in seen:
-            continue
-        group = sorted(together[staff])
-        seen.update(group)
-        groups.append(group)
-    if not groups:
-        return None
-    return [PrintedStaff(g, [names.get(staff, "") for staff in g]) for g in groups]
+        for group in system.printed.values():
+            listed.update(group.staves)
+    return listed
 
 
 def _inferred(names: dict[int, str], singing: list[int]) -> list[PrintedStaff]:
@@ -215,21 +245,21 @@ def grouping(root: etree._Element, override: list[list[str]] | None = None) -> G
     ids = [int(staff.get("id", "0")) for staff in score.findall("Staff")]
     singing = [staff for staff in ids if staff not in silent_staves(root)]
 
-    for recorded, reader, source in (
-        (_meta(root, "lyricsSystemMap"), _from_system_map, "per-system map"),
-        (_meta(root, "lyricsStaffMap"), _from_staff_map, "staff map"),
-    ):
-        if not recorded:
-            continue
-        printed = reader(recorded, names)
-        if printed is None:
-            continue
+    recorded = _meta(root, "lyricsSystemMap")
+    systems = _from_system_map(recorded, names) if recorded else None
+    system_ids = _system_staff_ids(systems) if systems else set()
+    if systems and system_ids >= set(singing) and system_ids <= set(ids):
+        return Grouping(_system_slots(systems, names), "per-system map", systems)
+
+    recorded = _meta(root, "lyricsStaffMap")
+    printed = _from_staff_map(recorded, names) if recorded else None
+    if printed is not None:
         listed = {staff for group in printed for staff in group.staves}
         # A recorded map that names every singing staff is the score's own word
         # for what the page looked like.  One that does not is not usable: the
         # staves it leaves out would silently vanish from the reference.
         if listed >= set(singing):
-            return Grouping([g for g in printed if set(g.staves) <= set(singing)], source)
+            return Grouping([g for g in printed if set(g.staves) <= set(singing)], "staff map")
 
     return Grouping(_inferred(names, singing), "part names")
 
@@ -250,6 +280,7 @@ def implode(
     guessed, or read off the page by a person.
     """
     score = root.find("Score")
+    names = staff_names(root)
     found = grouping(root, override)
     staves = {int(s.get("id", "0")): s for s in score.findall("Staff")}
     parts = {}
@@ -257,6 +288,11 @@ def implode(
         for staff in part.findall("Staff"):
             parts[int(staff.get("id", "0"))] = part
 
+    system_staves = (
+        _merge_system_staves(staves, found, names, drop_rests or [])
+        if found.systems
+        else []
+    )
     merged_parts, merged_staves = [], []
     for number, printed in enumerate(found.printed, start=1):
         first = printed.staves[0]
@@ -265,7 +301,11 @@ def implode(
             for index, name in enumerate(printed.names)
             if name in set(drop_rests or [])
         ]
-        staff = _merge_staves([staves[s] for s in printed.staves], silent)
+        staff = (
+            system_staves[number - 1]
+            if system_staves
+            else _merge_staves([staves[s] for s in printed.staves], silent)
+        )
         staff.set("id", str(number))
         merged_staves.append(staff)
 
@@ -351,21 +391,101 @@ def _merge_staves(
         ]
         if not present:
             continue
-        measure = etree.fromstring(etree.tostring(present[0][1]))
-        for voice in measure.findall("voice"):
-            measure.remove(voice)
-        kept = 0
-        for position, source in present:
-            for voice in etree.fromstring(etree.tostring(source)).findall("voice"):
-                if position in unprinted and voice.find("Chord") is None:
-                    continue
-                if kept:
-                    # Only the staff's first voice carries its clef, key and
-                    # meter; a second copy would print them twice.
-                    for element in voice.findall("*"):
-                        if element.tag in STAFF_LEVEL:
-                            voice.remove(element)
-                measure.append(voice)
-                kept += 1
-        staff.append(measure)
+        staff.append(_merge_measure([source for _, source in present], unprinted))
     return staff
+
+
+def _merge_measure(
+    sources: list[etree._Element], drop_when_resting: set[int] | None = None
+) -> etree._Element:
+    """Merge source measures into one printed measure."""
+    unprinted = drop_when_resting or set()
+    measure = etree.fromstring(etree.tostring(sources[0]))
+    for voice in measure.findall("voice"):
+        measure.remove(voice)
+    kept = 0
+    for position, source in enumerate(sources):
+        for voice in etree.fromstring(etree.tostring(source)).findall("voice"):
+            if position in unprinted and voice.find("Chord") is None:
+                continue
+            if kept:
+                # Only the staff's first voice carries its clef, key and meter;
+                # a second copy would print them twice.
+                for element in voice.findall("*"):
+                    if element.tag in STAFF_LEVEL:
+                        voice.remove(element)
+            measure.append(voice)
+            kept += 1
+    return measure
+
+
+def _rest_measure(source: etree._Element) -> etree._Element:
+    """A full-bar rest carrying the source measure's staff-level state."""
+    measure = etree.fromstring(etree.tostring(source))
+    original = measure.find("voice")
+    for voice in measure.findall("voice"):
+        measure.remove(voice)
+    voice = etree.SubElement(measure, "voice")
+    if original is not None:
+        for element in original.findall("*"):
+            if element.tag in STAFF_LEVEL:
+                voice.append(etree.fromstring(etree.tostring(element)))
+    rest = etree.SubElement(voice, "Rest")
+    etree.SubElement(rest, "durationType").text = "measure"
+    return measure
+
+
+def _merge_system_staves(
+    staves: dict[int, etree._Element],
+    found: Grouping,
+    names: dict[int, str],
+    drop_rests: list[str],
+) -> list[etree._Element]:
+    """Build fixed position staves whose contents follow each system's map."""
+    source_bars = {staff: element.findall("Measure") for staff, element in staves.items()}
+    base = next(iter(staves.values()))
+    base_bars = base.findall("Measure")
+    by_measure: dict[int, SystemGrouping] = {}
+    for system in found.systems:
+        if system.start < 1 or system.end < system.start or system.end > len(base_bars):
+            raise ValueError(
+                f"lyricsSystemMap range {system.start}-{system.end} is outside the score"
+            )
+        for measure in range(system.start - 1, system.end):
+            if measure in by_measure:
+                raise ValueError(f"lyricsSystemMap overlaps at measure {measure + 1}")
+            by_measure[measure] = system
+    missing = [measure + 1 for measure in range(len(base_bars)) if measure not in by_measure]
+    if missing:
+        raise ValueError(f"lyricsSystemMap does not cover measures {missing}")
+
+    merged = []
+    for position, slot in enumerate(found.printed, start=1):
+        staff = etree.Element("Staff")
+        template = staves[slot.staves[0]]
+        for element in template:
+            if element.tag != "Measure" and not (position > 1 and element.tag == "VBox"):
+                staff.append(etree.fromstring(etree.tostring(element)))
+        for index, base_measure in enumerate(base_bars):
+            group = by_measure[index].printed.get(position)
+            if group:
+                sources = [source_bars[source][index] for source in group.staves]
+                silent = {
+                    member
+                    for member, source in enumerate(group.staves)
+                    if names.get(source, "") in set(drop_rests)
+                }
+                measure = _merge_measure(sources, silent)
+            else:
+                measure = _rest_measure(base_measure)
+            for layout_break in measure.findall("LayoutBreak"):
+                measure.remove(layout_break)
+            staff.append(measure)
+        merged.append(staff)
+
+    top = merged[0].findall("Measure") if merged else []
+    for system in found.systems[:-1]:
+        if system.end <= len(top):
+            layout_break = etree.SubElement(top[system.end - 1], "LayoutBreak")
+            etree.SubElement(layout_break, "subtype").text = "line"
+    return merged

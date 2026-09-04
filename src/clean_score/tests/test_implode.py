@@ -58,6 +58,46 @@ def test_a_per_system_map_is_read_over_the_whole_score() -> None:
     assert [printed.staves for printed in found.printed] == [[1, 2], [3, 4]]
 
 
+def test_a_per_system_map_merges_then_splits_the_same_voices() -> None:
+    root = with_meta(
+        score([(1, "T1"), (2, "T2")]),
+        "lyricsSystemMap",
+        '[{"start":1,"end":1,"map":{"1":[1,2]}},'
+        ' {"start":2,"end":2,"map":{"1":[1],"2":[2]}}]',
+    )
+
+    found = implode(root)
+
+    staves = root.find("Score").findall("Staff")
+    assert found.source == "per-system map"
+    assert len(staves) == 2
+    assert [len(staff.findall("Measure")[0].findall("voice")) for staff in staves] == [2, 1]
+    assert staves[1].find("Measure/voice/Rest/durationType").text == "measure"
+    assert [len(staff.findall("Measure")[1].findall("voice")) for staff in staves] == [1, 1]
+    assert root.findtext("Score/Style/hideEmptyStaves") == "1"
+    assert root.findtext("Score/Style/dontHideStavesInFirstSystem") == "0"
+    assert root.findtext("Score/Staff/Measure/LayoutBreak/subtype") == "line"
+    assert staves[1].find("Measure/LayoutBreak") is None
+
+
+def test_a_reviewed_grouping_beats_a_changing_per_system_map() -> None:
+    root = with_meta(
+        score([(1, "T1"), (2, "T2")]),
+        "lyricsSystemMap",
+        '[{"start":1,"end":1,"map":{"1":[1,2]}},'
+        ' {"start":2,"end":2,"map":{"1":[1],"2":[2]}}]',
+    )
+
+    found = implode(root, [["T1", "T2"]])
+
+    assert found.reviewed
+    assert len(root.find("Score").findall("Staff")) == 1
+    assert [
+        len(measure.findall("voice"))
+        for measure in root.find("Score/Staff").findall("Measure")
+    ] == [2, 2]
+
+
 def test_without_a_map_the_grouping_is_guessed_and_says_so() -> None:
     root = score([(1, "S1"), (2, "S2"), (3, "A1"), (4, "A2")])
 
