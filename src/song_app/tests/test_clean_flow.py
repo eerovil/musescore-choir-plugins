@@ -14,6 +14,7 @@ import pytest
 from lxml import etree
 
 from src.clean_score.tests.test_per_system import ANSWERS  # the fixture's reading
+from src.clean_score.implode import implode
 from src.clean_score.utils.per_system import use_answer_file
 from src.song_app import pipeline
 
@@ -74,6 +75,36 @@ def test_grid_answers_clean_headless_into_parts_and_lyric_routing(song_dir):
     assert smap[(1, 6)] == {"1": [1, 2], "2": [4]}      # T1+T2 divisi, then B
     assert smap[(26, 29)] == {"1": [1], "2": [2], "3": [4]}  # T3 absent -> printed 3 is B
     assert meta["lyricsStaffMap"] == "1:1;2:2;3:3;4:4"
+
+
+def test_cleaned_system_map_implodes_divisi_and_later_split_staves(song_dir):
+    src = _source(song_dir)
+    pipeline.save_system_answers(src, ANSWERS)
+    cleaned, _ = pipeline.run_clean(src, song_dir, per_system=True)
+    root = etree.parse(cleaned).getroot()
+
+    implode(root)
+
+    staves = root.findall(".//Score/Staff")
+
+    def singing_voices(staff, measure):
+        return sum(
+            voice.find("Chord") is not None
+            for voice in staff.findall("Measure")[measure].findall("voice")
+        )
+
+    # m1 prints T1+T2 together above B; the two unused fixed positions hide.
+    assert [singing_voices(staff, 0) for staff in staves] == [2, 1, 0, 0]
+    # m26 prints T1, T2 and B on three separate staves.
+    assert [singing_voices(staff, 25) for staff in staves] == [1, 1, 1, 0]
+    # Printed position 2 was the bass staff in the earlier system. When T2
+    # takes that position at m26, its inherited tenor clef must take over too.
+    assert (
+        staves[1]
+        .findall("Measure")[25]
+        .findtext("voice/Clef/concertClefType")
+        == "G8vb"
+    )
 
 
 def test_clean_without_answers_reports_no_output(song_dir):

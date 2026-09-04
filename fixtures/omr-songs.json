@@ -1,0 +1,319 @@
+{
+  "version": 1,
+  "songs": {
+    "Kaksi-laulua-krapulasta-pdf": {
+      "pdf": "Kaksi-laulua-krapulasta-pdf.pdf",
+      "cleaned": "Kaksi-laulua-krapulasta-pdf_cleaned.mscx",
+      "pdf_sha256": "e2bf0794e3ecdf37",
+      "cleaned_sha256": "7d267a8e1d2d587a",
+      "video": {
+        "videos": 0,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "excluded",
+        "notes": "the same printed page as kaksi-laulua-krapulasta-2, byte for byte; that song is the one kept, having the newer cleaned score and its videos still on disk"
+      }
+    },
+    "Kolme käkeä": {
+      "pdf": "Kolme käkeä.pdf",
+      "cleaned": "Kolme-ka-kea_cleaned.mscx",
+      "pdf_sha256": "e14f05b1ca989491",
+      "cleaned_sha256": "3812692949ed976e",
+      "video": {
+        "videos": 0,
+        "uploads": 0,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "reviewed",
+        "inferred": false,
+        "printed": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ],
+          [
+            5
+          ]
+        ],
+        "labels": [
+          "Soprano 1",
+          "Soprano 2",
+          "Alto 1",
+          "Alto 2",
+          "Solo"
+        ],
+        "override": {
+          "printed": [
+            [
+              "Soprano 1"
+            ],
+            [
+              "Soprano 2"
+            ],
+            [
+              "Alto 1"
+            ],
+            [
+              "Alto 2"
+            ],
+            [
+              "Solo"
+            ]
+          ],
+          "why": "the page prints one voice per staff and never implodes; the solo enters at bar 94 on a fifth staff, and hideEmptyStaves keeps it off the systems it rests through"
+        }
+      },
+      "review": {
+        "status": "excluded",
+        "notes": "the page is split across two PDFs -- printed pages 2-5 (bars 1-62) and 6-10 (bars 63-120) -- so no single file is the page for this score"
+      },
+      "source_override": {
+        "pdf": "Kolme käkeä.pdf",
+        "why": "the folder holds the piece in two halves: this file is printed pages 2-5, bars 1-62, and 'Kolme käkeä copy.pdf' is pages 6-10, bars 63-120. Neither covers the whole score, so a fixture spans both or stops at bar 62"
+      }
+    },
+    "heraa-suomi-final": {
+      "pdf": "Herää Suomi!.pdf",
+      "cleaned": "Herää Suomi final_cleaned.mscx",
+      "pdf_sha256": "41cd3fcfaff56985",
+      "cleaned_sha256": "7c698aaacc1fcedb",
+      "video": {
+        "videos": 5,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "staff map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
+      }
+    },
+    "kaksi-laulua-krapulasta-2": {
+      "pdf": "Kaksi-laulua-krapulasta-pdf.pdf",
+      "cleaned": "Kaksi-laulua-krapulasta-pdf_cleaned.mscx",
+      "pdf_sha256": "e2bf0794e3ecdf37",
+      "cleaned_sha256": "2e07068ae150141c",
+      "video": {
+        "videos": 5,
+        "uploads": 0,
+        "stage": "record"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
+      }
+    },
+    "kayttaytymisohjeita": {
+      "pdf": "Käyttäytymisohjeita.pdf",
+      "cleaned": "Ka-ytta-ytymisohjeita_cleaned.mscx",
+      "pdf_sha256": "f5a9eddc058cb46d",
+      "cleaned_sha256": "2537542c1e402462",
+      "video": {
+        "videos": 0,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
+      }
+    },
+    "laulun-aika-3": {
+      "pdf": "Laulun aika (2).pdf",
+      "cleaned": "Laulun-aika-2_cleaned.mscx",
+      "pdf_sha256": "40bbe603fb0d546f",
+      "cleaned_sha256": "bdc38763ff097584",
+      "video": {
+        "videos": 5,
+        "uploads": 0,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "reviewed",
+        "inferred": false,
+        "printed": [
+          [
+            3,
+            1,
+            2
+          ],
+          [
+            4
+          ]
+        ],
+        "labels": [
+          "T3/T1/T2",
+          "B"
+        ],
+        "override": {
+          "printed": [
+            [
+              "T3",
+              "T1",
+              "T2"
+            ],
+            [
+              "B"
+            ]
+          ],
+          "why": "the tenor staff carries three voices, T3 above T1 and T2; T3 is written only where it sings",
+          "drop_rests": [
+            "T3"
+          ]
+        }
+      },
+      "review": {
+        "status": "ok",
+        "notes": "T3 shares the tenor staff as its top voice and is absent where it rests"
+      }
+    },
+    "pois-meni-mereen-paiva": {
+      "pdf": "Pois meni merehen päivä.pdf",
+      "cleaned": "Pois-meni-merehen-pa-iva_cleaned.mscx",
+      "pdf_sha256": "b6654fab39bbaf8a",
+      "cleaned_sha256": "0ff6626181b4883a",
+      "video": {
+        "videos": 5,
+        "uploads": 5,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "per-system map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
+      }
+    },
+    "virta-scratch": {
+      "pdf": "Virta venhettä vie.pdf",
+      "cleaned": "Virta-venhetta-vie_cleaned.mscx",
+      "pdf_sha256": "58de0c051d19deb7",
+      "cleaned_sha256": "8c0f1cd5c21a76af",
+      "video": {
+        "videos": 0,
+        "uploads": 0,
+        "stage": "upload"
+      },
+      "grouping": {
+        "source": "staff map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "ok",
+        "notes": "checked against the page: staves, voices and words match"
+      }
+    }
+  }
+}

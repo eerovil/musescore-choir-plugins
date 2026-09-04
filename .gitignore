@@ -32,3 +32,11 @@ playlists.txt
 /*.mscx
 /*.mscz
 .venv
+
+# Built by scripts/implode_report.py
+implode-report/
+
+# Built by scripts/song_pages.py
+song-pages/
+scan-eval/
+scan-report/
