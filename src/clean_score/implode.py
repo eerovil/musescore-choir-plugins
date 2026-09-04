@@ -419,6 +419,17 @@ def _merge_measure(
     return measure
 
 
+def _first_kept_source(
+    sources: list[etree._Element], drop_when_resting: set[int]
+) -> int | None:
+    """Return the source member whose voice carries this printed staff's state."""
+    for position, source in enumerate(sources):
+        for voice in source.findall("voice"):
+            if position not in drop_when_resting or voice.find("Chord") is not None:
+                return position
+    return None
+
+
 def _rest_measure(source: etree._Element) -> etree._Element:
     """A full-bar rest carrying the source measure's staff-level state."""
     measure = etree.fromstring(etree.tostring(source))
@@ -449,19 +460,37 @@ def _source_states(
     return states
 
 
+def _measure_state(measure: etree._Element) -> dict[str, etree._Element]:
+    """Return explicit staff-level state written in one output measure."""
+    return {
+        element.tag: element
+        for element in measure.iter()
+        if element.tag in STAFF_LEVEL
+    }
+
+
 def _carry_source_state(
-    measure: etree._Element, state: dict[str, etree._Element]
+    measure: etree._Element,
+    source_state: dict[str, etree._Element],
+    output_state: dict[str, etree._Element],
 ) -> None:
-    """Write inherited source state when a fixed output position changes source."""
+    """Write changed inherited state when a fixed output position changes source."""
     voice = measure.find("voice")
     if voice is None:
-        voice = etree.SubElement(measure, "voice")
-    present = {element.tag for element in measure.iter() if element.tag in STAFF_LEVEL}
-    insert_at = 0
+        return
+    present = _measure_state(measure)
+    inherited = []
     for tag in STAFF_LEVEL:
-        if tag not in present and tag in state:
-            voice.insert(insert_at, etree.fromstring(etree.tostring(state[tag])))
-            insert_at += 1
+        incoming = source_state.get(tag)
+        previous = output_state.get(tag)
+        if (
+            tag not in present
+            and incoming is not None
+            and (previous is None or etree.tostring(incoming) != etree.tostring(previous))
+        ):
+            inherited.append(incoming)
+    for element in reversed(inherited):
+        voice.insert(0, etree.fromstring(etree.tostring(element)))
 
 
 def _merge_system_staves(
@@ -496,7 +525,8 @@ def _merge_system_staves(
         for element in template:
             if element.tag != "Measure" and not (position > 1 and element.tag == "VBox"):
                 staff.append(etree.fromstring(etree.tostring(element)))
-        previous_group: tuple[int, ...] | None = None
+        previous_owner: int | None = None
+        output_state: dict[str, etree._Element] = {}
         for index, base_measure in enumerate(base_bars):
             group = by_measure[index].printed.get(position)
             if group:
@@ -507,18 +537,22 @@ def _merge_system_staves(
                     if names.get(source, "") in set(drop_rests)
                 }
                 measure = _merge_measure(sources, silent)
-                current_group = tuple(group.staves)
-                if current_group != previous_group:
+                owner = _first_kept_source(sources, silent)
+                current_owner = group.staves[owner] if owner is not None else None
+                if current_owner is not None and current_owner != previous_owner:
                     _carry_source_state(
-                        measure, source_states[group.staves[0]][index]
+                        measure,
+                        source_states[current_owner][index],
+                        output_state,
                     )
             else:
                 measure = _rest_measure(base_measure)
-                current_group = None
+                current_owner = None
             for layout_break in measure.findall("LayoutBreak"):
                 measure.remove(layout_break)
             staff.append(measure)
-            previous_group = current_group
+            output_state.update(_measure_state(measure))
+            previous_owner = current_owner
         merged.append(staff)
 
     top = merged[0].findall("Measure") if merged else []

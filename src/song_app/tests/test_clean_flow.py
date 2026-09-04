@@ -97,11 +97,11 @@ def test_cleaned_system_map_implodes_divisi_and_later_split_staves(song_dir):
     assert [singing_voices(staff, 0) for staff in staves] == [2, 1, 0, 0]
     # m26 prints T1, T2 and B on three separate staves.
     assert [singing_voices(staff, 25) for staff in staves] == [1, 1, 1, 0]
-    # Printed position 2 was the bass staff in the earlier system. When T2
-    # takes that position at m26, its inherited tenor clef must take over too.
+    # Printed position 2 was the bass staff in the earlier systems. When T3
+    # takes that position at m20, its inherited tenor clef must take over too.
     assert (
         staves[1]
-        .findall("Measure")[25]
+        .findall("Measure")[19]
         .findtext("voice/Clef/concertClefType")
         == "G8vb"
     )
