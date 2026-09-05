@@ -448,6 +448,66 @@ Key test modules:
   third is the browser: the bar shown as its own notes, the cost said before the
   write, the warning when lyrics are already imported, and that it fits a phone.
 
+## Where an OMR fix belongs: the fork or this repo
+
+Scanning is split across two repositories — `eerovil/homr` (the fork) and this one —
+and until this pull request there was no written rule saying which gets a given fix.
+One was being followed consistently enough to be real and inconsistently enough that
+"why is this here?" had a different answer per case. This section is that rule,
+proposed by this pull request and settled on #141. The fork's `README.md` carries a
+short statement of it; the reasoning is here.
+
+**The fork is a permanent home we own.** Not a staging area, not a waiting room on the
+way upstream. `scripts/install-homr.sh` installs it and a second host reproduces it by
+running that one script, which is the whole story — there is no plan for the fork to
+be retired or emptied.
+
+**The rule.** homr's job is to produce MusicXML that, **when rendered, looks like the
+original PDF** — including stem direction, which is to say the voices. Anything after
+that point is the choir app's.
+
+So: if homr got the page wrong, the fix is the fork's, whether or not the evidence is
+still in the pixels. If the parse matches the page and we want something else from it —
+a stage, an operator's judgement, a practice track — that is ours. The rule is a claim
+about the *output*, which makes it testable: render the MusicXML and hold it against
+the page.
+
+That is deliberately wider than "can the fix be made without the pixels?", which is
+what had been operating. Under the old reading a defect visible in the MusicXML could
+be repaired in either place and the call went both ways for reasons that lived only in
+commit messages. Under this one it cannot: a runaway slur is not on the page, so it is
+homr's to not emit.
+
+**Which means this repo's OMR boundary layer was drift.** `omr.resolve_slurs`,
+`omr_systems`' per-system reading and `system_finder` are all "make the parse match the
+page", and all three are on the fork's side of the rule. They are staying where they
+are for now — **the rule binds new fixes**, and #141 files a separate issue, blocked by
+it, to move them. Until that lands, the code here contradicts the rule in three visible
+places and this paragraph is the reason why.
+
+**`clean_score`'s OCR repairs are the known tension.** `fix_missing_tuplets`,
+`fix_spurious_timesigs`, `fix_overfull_measures`, `add_missing_ties` and the recorded
+edits in `fixes.json` all exist to make a score match its printed page, so in principle
+they are the fork's too. In practice they are not moving: they predate homr, they run on
+scores that never went through it — imported MusicXML, the songs already in `songs/` —
+and homr has no equivalent of a human-authorised `fixes.json` entry. Recorded here as a
+tension rather than as a plan, so nobody acts on the principle without the context.
+
+**Upstreaming is opportunistic: no obligation, no backlog.** The fork is 66 commits
+ahead of `liebharc/homr` and 1 behind; roughly 22 of those are general OMR fixes with
+nothing choir-specific in them, ~5 are choir fixtures, and ~21 are the measurement
+harness. If one is clean and somebody feels like sending it, good — nothing is tracked,
+nothing is owed, and no decision here ever waits on upstream review. Taking fixes *from*
+upstream is the direction that matters.
+
+**The harness stays in the fork.** `fixturecheck/`, `choir-bench.py`,
+`choir-worktree.sh` and `choir-k8s.sh` have to run inside homr's venv against a homr
+worktree, which this repo deliberately never has. They reach back here through
+`CHOIR_REPO` for the fixtures and cleaned scores they judge against, which is the right
+direction of dependency: the thing being measured reaches for the truth. The cost is
+worth saying — that is 21 of the 66 diverging commits, so the fork can never again
+"carry nothing of its own", and running the harness needs both repositories present.
+
 ## The song web app (`src/song_app/`)
 
 A local **FastAPI** web app (launched by `./song.py`, served at `localhost:8000`)
@@ -870,9 +930,13 @@ state model are in `DESIGN.md`.
   moves it to **`@main`**, the fork's tip, which today is upstream's own tip. An
   explicit `HOMR_SOURCE` still wins, and a commit hash is how an old parse is got back.
   #97 put multi-page joining, the staff-grouping fix and PDF input *inside the fork*,
-  because the app only ever sees homr's output and by then the staves are gone — all
-  three have since landed upstream, so the fork carries nothing of its own at the
-  moment and `choir-0.7.0` is exactly the v0.7.0 tag.
+  because the app only ever sees homr's output and by then the staves are gone; all
+  three later landed upstream too, and `choir-0.7.0` is exactly the v0.7.0 tag. The
+  fork **carrying nothing of its own** was true for about a month and is not true now:
+  it is 66 commits ahead of `liebharc/homr` and 1 behind — ~22 general OMR fixes, ~5
+  choir fixtures, ~21 of the measurement harness — and it is not going back, since the
+  harness alone is a fifth of that and belongs there. See "Where an OMR fix belongs"
+  above for which side of the line a new fix falls on.
   What following a branch costs is worth saying rather than skipping: an install is no
   longer reproducible from the checkout alone, so two hosts set up a month apart get
   different OMR and so does one host reinstalled. What buys it back is that **nothing
