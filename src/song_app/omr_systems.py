@@ -279,10 +279,15 @@ def _extract_staff(part: etree._Element, number: int) -> Staff:
     at the head of the bar, so a voice homr placed later in the bar slid to beat
     one -- measured over 61 systems in issue #166, it cost 18.8 points of
     note accuracy, and this is the largest single loss that map found.
+
+    **The voices are renumbered once for the staff, not once per bar**, and that
+    is issue #187. See :func:`_voice_numbering`.
     """
     measures: List[etree._Element] = []
     divisions = 0
     clef = key = time = None
+    per_bar: List[List[_Placed]] = []
+    tails: List[List[etree._Element]] = []
 
     for source in part.findall("measure"):
         measure = etree.Element("measure", number=source.get("number") or "")
@@ -327,23 +332,64 @@ def _extract_staff(part: etree._Element, number: int) -> Staff:
             else:
                 measure.append(copy.deepcopy(child))
 
-        for element in _voiced(notes):
+        per_bar.append(notes)
+        tails.append(trailing)
+        measures.append(measure)
+
+    numbering = _voice_numbering(per_bar)
+    for measure, notes, trailing in zip(measures, per_bar, tails):
+        for element in _voiced(notes, numbering):
             measure.append(element)
         for element in trailing:
             measure.append(element)
-        measures.append(measure)
 
     return Staff(measures=measures, divisions=divisions or 1,
                  clef=clef, key=key, time=time)
 
 
-def _voiced(notes: List["_Placed"]) -> List[etree._Element]:
+def _voice_numbering(per_bar: Sequence[Sequence["_Placed"]]) -> Dict[str, int]:
+    """What each of homr's voice labels is called on the way out, staff-wide.
+
+    Renumbering from 1 is necessary -- a voice number means nothing outside its
+    part and this staff is becoming one, so a note saying ``<voice>5</voice>``
+    would arrive claiming to be the fifth voice of a part that has one. But it
+    has to be **one decision for the staff**, and issue #187 is what it cost to
+    make it once per bar.
+
+    Two ways a per-bar decision moved a singer. The order the notes are written
+    in is homr's interleaving rather than a fact about the music, so a bar homr
+    happened to write lower-voice-first swapped the two; and a bar where only
+    one of the two voices sings compacted whichever singer that was down to
+    voice 1. Both put every note at the right pitch on the right beat in the
+    wrong part, which no health check sees -- both voices are well-formed and
+    the bar adds up -- and which a singer meets as somebody else's line in their
+    practice track.
+
+    **The order is homr's own numbering** (:func:`_voice_key`), and not which
+    voice sounds highest. That is a deliberate refusal to make a claim: this
+    function's whole job is to stop the assembler *scrambling* what homr said,
+    and re-sorting by pitch would be a second, different claim -- that voice 1
+    is the upper line -- which is false wherever two voices cross. Measured on
+    the same corpus, sorting by pitch reorders staves homr had numbered
+    consistently and costs Herää Suomi p3 20 voice faults where the two basses
+    change places; it buys p1, which is the *other* defect, and not one the
+    assembler can honestly fix (see :func:`assemble`).
+
+    Homr's numbering is also the better claim on the merits where the two
+    disagree: over the 63 band parses issue #173 cached, it puts the
+    higher-sounding voice first in 295 of the 312 bars carrying two, against
+    270 for the order the notes happen to be written in.
+    """
+    labels = {(placed.note.findtext("voice") or "1").strip()
+              for notes in per_bar for placed in notes}
+    return {label: n for n, label in enumerate(sorted(labels, key=_voice_key), start=1)}
+
+
+def _voiced(notes: List["_Placed"], numbering: Dict[str, int]) -> List[etree._Element]:
     """Notes regrouped voice by voice, each put back where homr had it.
 
-    Voices are renumbered from 1, because a voice number is only meaningful
-    inside its part and this staff is about to become a part of its own -- a
-    staff whose notes said ``<voice>5</voice>`` would otherwise arrive claiming
-    to be the fifth voice of a part that has one.
+    ``numbering`` says what each of homr's voice labels is called on the way
+    out; it is decided once for the whole staff, by :func:`_voice_numbering`.
 
     The steps between them are **arithmetic on the onsets read out of homr's own
     cursor**, not an assumption about where a voice begins: a ``backup`` where
@@ -359,7 +405,8 @@ def _voiced(notes: List["_Placed"]) -> List[etree._Element]:
 
     out: List[etree._Element] = []
     at = 0
-    for n, (_voice, group) in enumerate(groups.items(), start=1):
+    for voice, group in sorted(groups.items(), key=lambda item: _voice_key(item[0])):
+        n = numbering.get(voice, 1)
         for placed in group:
             step = placed.onset - at
             # A chord note follows its leader immediately and shares its onset,
@@ -383,6 +430,23 @@ def _voiced(notes: List["_Placed"]) -> List[etree._Element]:
             at += _duration(note)
             out.append(note)
     return out
+
+
+def _voice_key(voice: str):
+    """Order two of homr's voice labels the way MusicXML numbering means them.
+
+    A number sorts as a number, so ``10`` follows ``2`` rather than ``1``;
+    anything that is not a number sorts after the numbers by its text, so a
+    label nobody anticipated still lands in the same place in every bar. Being
+    the *same* order in every bar is the whole property -- which voice is
+    called 1 matters far less than that it is called 1 throughout.
+
+    Measured over the 63 band parses issue #173 cached: homr's own numbering
+    puts the higher-sounding voice first in 295 of the 312 bars that carry two,
+    against 270 for the order the notes are written in, and the written order
+    disagrees with the bar before it 25 times.
+    """
+    return (0, int(voice), "") if voice.isdigit() else (1, 0, voice)
 
 
 def _staff_attributes(attributes: etree._Element, number: int) -> etree._Element:
@@ -430,6 +494,22 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     and infers it from how long its decoded bars came out, one crop at a time;
     this is where both the bars either side of a seam and every staff at once are
     visible, so it is the only place the inference can be corrected.
+
+    **A column's voices are not renumbered again here, and that is issue #187's
+    other half.** A staff's voices are settled once, when it is flattened
+    (:func:`_voice_numbering`), so the flip this card was opened for -- the same
+    singer changing voice from bar to bar and, across a join, from system to
+    system -- is gone before assembly sees it. What assembly could still be
+    asked to do is reconcile *homr's* numbering between two crops, and it is
+    deliberately not asked to. Each crop is read on its own, so nothing ties one
+    crop's "voice 1" to the next crop's, and on Herää Suomi p1 homr really does
+    number the two upper voices one way round in systems 1 and 3 and the other
+    way round in 2 and 4. Sounding height is the only evidence available at that
+    point, and it is not sufficient: on p3 of the same song the two basses cross
+    and change places on the page, so a rule ranking by height would swap a
+    column homr had right. Under the issue #141 rule a crop read with the voices
+    the other way up is homr's to fix, since it is the parse disagreeing with
+    the page rather than us disagreeing with the parse.
     """
     if not scans:
         raise ScanError("Nothing to assemble: no systems were read.")
