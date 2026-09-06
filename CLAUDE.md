@@ -492,8 +492,12 @@ Scanning is split across two repositories — `eerovil/homr` (the fork) and this
 and until this pull request there was no written rule saying which gets a given fix.
 One was being followed consistently enough to be real and inconsistently enough that
 "why is this here?" had a different answer per case. This section is that rule,
-proposed by this pull request and settled on #141. The fork's `README.md` carries a
-short statement of it; the reasoning is here.
+proposed by this pull request and settled on #141. **This file is the only place it is
+written down.** A short statement of it for the fork's `README.md` exists but is not
+merged — it is sitting on `eerovil/homr#22`, opened for #141 and now well behind that
+fork's `main` — so anybody reading `eerovil/homr` today finds nothing about which
+repository a fix belongs in. It stays that way until a person merges that pull request:
+`/merge` releases work in this repository and cannot release a fork's.
 
 **The fork is a permanent home we own.** Not a staging area, not a waiting room on the
 way upstream. `scripts/install-homr.sh` installs it and a second host reproduces it by
@@ -531,20 +535,33 @@ scores that never went through it — imported MusicXML, the songs already in `s
 and homr has no equivalent of a human-authorised `fixes.json` entry. Recorded here as a
 tension rather than as a plan, so nobody acts on the principle without the context.
 
-**Upstreaming is opportunistic: no obligation, no backlog.** The fork is 66 commits
-ahead of `liebharc/homr` and 1 behind; roughly 22 of those are general OMR fixes with
-nothing choir-specific in them, ~5 are choir fixtures, and ~21 are the measurement
-harness. If one is clean and somebody feels like sending it, good — nothing is tracked,
-nothing is owed, and no decision here ever waits on upstream review. Taking fixes *from*
-upstream is the direction that matters.
+**Upstreaming is opportunistic: no obligation, no backlog.** The fork is a hundred-odd
+commits ahead of `liebharc/homr` and one or two behind — roughly a third of them the
+measurement harness, the rest general OMR fixes and choir fixtures. (Approximate on
+purpose: the fork moves most weeks, and an exact tally in this file is a number that
+goes stale the day after it is written.) If one is clean and somebody feels like
+sending it, good — nothing is tracked, nothing is owed, and no decision here ever waits
+on upstream review.
+
+**And taking fixes *from* upstream is not the direction that matters either**, which is
+what this file used to say. #158 settled it: the fork is a permanent home we own, and
+**upstream is a source of ideas rather than truth**. #130 is the evidence — upstream
+`main` measured on this repertoire is *worse* than the pinned v0.7.0: 34 health findings
+against 24, meters invented on a piece the pin read as 4/4 with none declared, and
+`scripts/install-homr.sh` broken because onnxruntime had moved into a `[cpu]` extra. That
+is not bad luck: **we have measured our own repertoire and upstream has not.** Choral
+engraving — divisi written as chords, staff counts varying between systems, voices
+sharing a staff — is not what a general OMR project optimises for. So a fix comes in when
+it is good on *our* pages, judged by the harness, and not because it is upstream.
 
 **The harness stays in the fork.** `fixturecheck/`, `choir-bench.py`,
 `choir-worktree.sh` and `choir-k8s.sh` have to run inside homr's venv against a homr
 worktree, which this repo deliberately never has. They reach back here through
 `CHOIR_REPO` for the fixtures and cleaned scores they judge against, which is the right
 direction of dependency: the thing being measured reaches for the truth. The cost is
-worth saying — that is 21 of the 66 diverging commits, so the fork can never again
-"carry nothing of its own", and running the harness needs both repositories present.
+worth saying — that is about a third of the diverging commits, so the fork can never
+again "carry nothing of its own", and running the harness needs both repositories
+present.
 
 ## The song web app (`src/song_app/`)
 
@@ -1031,9 +1048,10 @@ state model are in `DESIGN.md`.
   because the app only ever sees homr's output and by then the staves are gone; all
   three later landed upstream too, and `choir-0.7.0` is exactly the v0.7.0 tag. The
   fork **carrying nothing of its own** was true for about a month and is not true now:
-  it is 66 commits ahead of `liebharc/homr` and 1 behind — ~22 general OMR fixes, ~5
-  choir fixtures, ~21 of the measurement harness — and it is not going back, since the
-  harness alone is a fifth of that and belongs there. See "Where an OMR fix belongs"
+  it is a hundred-odd commits ahead of `liebharc/homr` and one or two behind — general
+  OMR fixes, choir fixtures, and the measurement harness — and it is not going back,
+  since the harness alone is about a third of that and belongs there. (Approximate on
+  purpose; see the section for why.) See "Where an OMR fix belongs"
   above for which side of the line a new fix falls on.
   What following a branch costs is worth saying rather than skipping: an install is no
   longer reproducible from the checkout alone, so two hosts set up a month apart get
