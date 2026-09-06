@@ -160,18 +160,39 @@
         "labels": [
           "T1/T2",
           "B1/B2"
-        ]
+        ],
+        "override": {
+          "systems": [
+            {
+              "start": 58,
+              "end": 60,
+              "printed": [
+                [
+                  "T1",
+                  "T2"
+                ],
+                [
+                  "B1"
+                ],
+                [
+                  "B2"
+                ]
+              ],
+              "why": "s16: treble, then two bass staves. B2 rests through the whole system and the page prints its staff anyway, so the score's per-system map -- which records only the staves that sing -- is a staff short here."
+            }
+          ]
+        }
       },
       "review": {
         "status": "ok",
-        "notes": "checked against the page: staves, voices and words match"
+        "notes": "checked against the page: staves, voices and words match, except s16, where the page prints a third staff for a bass that rests through it; `grouping.override.systems` records that"
       }
     },
     "kayttaytymisohjeita": {
       "pdf": "Käyttäytymisohjeita.pdf",
       "cleaned": "Ka-ytta-ytymisohjeita_cleaned.mscx",
       "pdf_sha256": "f5a9eddc058cb46d",
-      "cleaned_sha256": "2537542c1e402462",
+      "cleaned_sha256": "9d3460c8766040f4",
       "video": {
         "videos": 0,
         "uploads": 5,
@@ -197,7 +218,7 @@
       },
       "review": {
         "status": "ok",
-        "notes": "checked against the page: staves, voices and words match"
+        "notes": "checked against the page: staves, voices and words match. Bars 26-32 carried an extra eighth rest in bar 26 that put every barline down to 32 an eighth early; repaired by hand on issue #161 against the printed page and recorded in the song's fixes.json"
       }
     },
     "laulun-aika-3": {
@@ -215,8 +236,12 @@
         "inferred": false,
         "printed": [
           [
-            3,
-            1,
+            3
+          ],
+          [
+            1
+          ],
+          [
             2
           ],
           [
@@ -224,29 +249,70 @@
           ]
         ],
         "labels": [
-          "T3/T1/T2",
+          "T3",
+          "T1",
+          "T2",
           "B"
         ],
         "override": {
           "printed": [
             [
-              "T3",
-              "T1",
+              "T3"
+            ],
+            [
+              "T1"
+            ],
+            [
               "T2"
             ],
             [
               "B"
             ]
           ],
-          "why": "the tenor staff carries three voices, T3 above T1 and T2; T3 is written only where it sings",
-          "drop_rests": [
-            "T3"
+          "why": "the page prints up to four staves, T3 over T1 over T2 over B, and prints T3 only where it sings. The earlier reading here said T3 shares the tenor staff as its top voice, which is not what the page does: T3 has a staff of its own in both systems it appears in. That reading was one grouping for a song whose systems print two, three and four staves, so it was applied to five bands it does not describe -- see `systems` below, and issue #161.",
+          "systems": [
+            {
+              "start": 20,
+              "end": 25,
+              "printed": [
+                [
+                  "T3"
+                ],
+                [
+                  "T1",
+                  "T2"
+                ],
+                [
+                  "B"
+                ]
+              ],
+              "why": "s5: T3 alone at the top, then T1 and T2 sharing a staff, then B. The score's own map has the same three staves and puts T3 second, because it numbers positions by musical rank and T3 ranks below T1 and T2."
+            },
+            {
+              "start": 30,
+              "end": 35,
+              "printed": [
+                [
+                  "T3"
+                ],
+                [
+                  "T1"
+                ],
+                [
+                  "T2"
+                ],
+                [
+                  "B"
+                ]
+              ],
+              "why": "s7: four staves, T3 T1 T2 B down the page, each labelled and each with its own lyric line. Same correction as s5 -- the map has the four staves and ranks T3 third."
+            }
           ]
         }
       },
       "review": {
         "status": "ok",
-        "notes": "T3 shares the tenor staff as its top voice and is absent where it rests"
+        "notes": "checked against the page system by system: s1-s4 print two staves (T1/T2, B) and s6 prints three (T1, T2, B), all as the score's per-system map says; s5 and s7 print T3 on a staff of its own above the rest, which the map has in the wrong place and `grouping.override.systems` corrects"
       }
     },
     "pois-meni-mereen-paiva": {

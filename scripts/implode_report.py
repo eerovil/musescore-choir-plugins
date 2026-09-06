@@ -40,6 +40,24 @@ def override_for(name: str) -> list[list[str]] | None:
     return (_reviewed(name).get("grouping", {}).get("override") or {}).get("printed")
 
 
+def system_override_for(name: str, start: int) -> list[list[str]] | None:
+    """The staves a person read off one printed system, if that one was read.
+
+    A whole-song reading cannot describe a page whose systems differ, and this
+    repertoire's do: `laulun-aika-3` prints two staves for four systems, three
+    for two of them and four for the last.  One reading for the song therefore
+    has to be wrong about most of it, which is what it was.
+
+    Recorded per measure range rather than per band index, because a band index
+    moves the moment somebody inserts a boundary in the Systems editor and a bar
+    number does not.
+    """
+    for system in (_reviewed(name).get("grouping", {}).get("override") or {}).get("systems") or []:
+        if system["start"] <= start <= system["end"]:
+            return [list(group) for group in system["printed"]]
+    return None
+
+
 def drop_rests_for(name: str) -> list[str]:
     """Parts whose silence the page does not print."""
     return (_reviewed(name).get("grouping", {}).get("override") or {}).get("drop_rests") or []
