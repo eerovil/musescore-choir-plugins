@@ -238,6 +238,11 @@ def scan(cleaned_path: str) -> List[Dict]:
             # again in the one place a person compares two scans.
             "collapsed": len(collapsed),
             "collapsed_bars": len(bars),
+            # The bars themselves, not just how many. `verdict` asks how much of the
+            # score is affected, and that is a union over rows -- a count cannot be
+            # unioned with anything, so a collapsed row would have had to be guessed
+            # at exactly where the score is worst.
+            "collapsed_measures": bars,
             "detail": (
                 f"{len(bars)} bar(s) sit at a length the engraving never prints "
                 f"({len(collapsed)} staff-bars, first at m{bars[0]}), listed as one "
@@ -258,6 +263,106 @@ def finding_count(issues: Iterable[Dict]) -> int:
     collapsing the *number* would be the same bug in a new place.
     """
     return sum(int(i.get("collapsed") or 1) for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# Is this parse worth repairing at all?
+#
+# A count is not a verdict. Sixty findings was shown to an operator as sixty rows
+# each with a Dismiss button, and what he said back was "sixty is very probably a
+# garbage scan, but I would have to see it with my eyes" -- which is a different
+# claim from "sixty issues", and it is the claim the app was never making. A parse
+# that rough is not a repair list; it is a reading to go and check against the page,
+# and possibly to throw away. So the app says that, in those words, and then gets
+# out of the way: this is a warning that aims attention, never a refusal. The call
+# he described is one he keeps.
+#
+# WHICH SIGNAL. Raw count is the obvious candidate and is the wrong one -- a long
+# song earns more findings than a short one for being long, and a wide score earns
+# more than a narrow one for having more staves. Three candidates were measured over
+# the 46 scores in `songs/` that carry a health record (see the pull request for the
+# table): findings per bar, findings per staff-bar, and the share of bars carrying at
+# least one finding. The last is the one used here. It is bounded, it does not move
+# with the number of staves or the length of the piece, and it says something a person
+# can act on out loud -- "more than a fifth of the bars of this score have something
+# wrong with them" -- where a density does not.
+#
+# WHERE THE LINE IS. Measured, not picked. On those 46 scores the share runs
+# 0.000 (30 scores), then 0.015 up to 0.121 (13 scores), then nothing at all until
+# 0.260, 0.299 and 0.538. The three above the gap are the two worst parses on this
+# host and the walk's own song, the one the operator called garbage. 0.2 sits in the
+# empty middle with nothing near it, which is the same shape of argument
+# `_FREE_METER_SHARE` rests on.
+_UNUSABLE_BAR_SHARE = 0.2
+
+# ...and a share alone would condemn a short score for one bad bar: three bars out of
+# fourteen is 0.21. A verdict about a whole parse should not be reachable by two
+# findings, so it takes a handful of affected bars as well as a large share of them.
+_UNUSABLE_MIN_BARS = 3
+
+
+def bars_touched(issues: Iterable[Dict]) -> int:
+    """How many distinct bars these findings land in.
+
+    A collapsed meter row stands for many bars, so it contributes all of them --
+    otherwise the score most worth judging is the one that looks smallest, which is
+    exactly the hole #124 closed one level up.
+    """
+    bars = set()
+    for issue in issues:
+        listed = issue.get("collapsed_measures")
+        if listed:
+            bars.update(int(b) for b in listed)
+        elif issue.get("collapsed"):
+            # Written before the bar numbers were recorded: all we have is how many.
+            # Offsetting them past the real bars would double-count nothing, but it
+            # would also be a lie about *which* bars, so they are simply added on.
+            bars.update(range(-int(issue["collapsed_bars"] or 0), 0))
+        elif issue.get("measure") is not None:
+            bars.add(int(issue["measure"]))
+    return len(bars)
+
+
+def score_bars(cleaned_path: str) -> int:
+    """How many bars the cleaned score is long (the longest staff)."""
+    with open(cleaned_path, "r", encoding="utf-8") as f:
+        root = etree.fromstring(f.read().encode("utf-8"))
+    score = root if root.tag == "Score" else root.find(".//Score")
+    if score is None:
+        return 0
+    return max((len(st.findall("Measure")) for st in score.findall("Staff")), default=0)
+
+
+def verdict(issues: Iterable[Dict], bars: int) -> Dict:
+    """Judge the parse as a whole: `clean`, `repairable`, or `unusable`.
+
+    `issues` are the open findings; `bars` is the length of the score they were
+    found in. Returns the numbers as well as the sentence, so a caller can say it
+    its own way without recomputing the rule.
+    """
+    issues = list(issues)
+    findings = finding_count(issues)
+    touched = min(bars_touched(issues), bars) if bars else bars_touched(issues)
+    share = (touched / bars) if bars else 0.0
+    if not findings:
+        return {"level": "clean", "findings": 0, "bars": bars, "bars_touched": 0,
+                "share": 0.0, "message": "Nothing to repair."}
+    if bars and share > _UNUSABLE_BAR_SHARE and touched >= _UNUSABLE_MIN_BARS:
+        return {
+            "level": "unusable", "findings": findings, "bars": bars,
+            "bars_touched": touched, "share": share,
+            "message": (
+                f"This parse looks unusable: {touched} of {bars} bars ({share:.0%}) "
+                f"carry a finding. That is not a repair list — read it against the "
+                f"page before going on. Nothing here stops you; the judgement is yours."
+            ),
+        }
+    return {
+        "level": "repairable", "findings": findings, "bars": bars,
+        "bars_touched": touched, "share": share,
+        "message": (f"{findings} finding(s) in {touched} of {bars} bars"
+                    if bars else f"{findings} finding(s)"),
+    }
 
 
 def merge_issues(found: List[Dict], previous: List[Dict]) -> List[Dict]:

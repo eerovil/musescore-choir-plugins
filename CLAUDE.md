@@ -420,6 +420,22 @@ Key test modules:
   engine chosen in the browser is the binary `scan.run` is actually handed. And that a
   system which read fine can be read again — from the panel and from its compare row,
   each re-reading only the system named and saying what a changed reading costs.
+- `src/song_app/tests/test_health_verdict.py` and `test_verdict_ui.py` — added by this
+  pull request for #170, and most of both is about what the verdict must **not** do.
+  The first pins the rule: a long song is not condemned for being long (the same 28
+  findings over 200 bars stay a repair list), a wide score is not condemned for having
+  staves (eight staves sharing one bad bar is one bad bar), a short score is not
+  condemned by two findings, a collapsed meter row is judged by every bar it stands for
+  and by `collapsed_bars` when it predates `collapsed_measures`, `bars_touched` is a
+  union rather than a tally, and the share cannot read as 140% of a score. Then where it
+  is said: beside the count in `verification.summary` and not inside it, absent for a
+  handful of findings, and never turning the Review result into a failure. The second is
+  the browser: the sentence visible at Review and above the Fix panel's rows, the row
+  beside it not repeating it, the approve button still working and still approving, a
+  calm score left alone, and the Scan panel naming the systems the findings fell in.
+  `test_scan.py` carries the attribution itself — the bar-to-system mapping, a collapsed
+  row shared over the bars it names rather than landing on the first, and the three ways
+  of refusing to attribute at all.
 - `src/song_app/tests/test_system_finder.py` — added by this pull request. Two tiers.
   **No dependencies**: the grouping rule, written as little pages of staves and barlines
   — staves carrying the same bars are one system, the end lines are not evidence, a
@@ -654,6 +670,66 @@ state model are in `DESIGN.md`.
   slurs are undetectable and stay manual. `merge_issues` carries over `dismissed`
   status and marks vanished open issues `fixed` across re-scans (ids are stable:
   `malformed-m18-s2-v1`).
+  **A count is not a verdict, and this pull request proposes making the verdict**
+  (#170). The walk (#160) showed the Fix panel offering 60 single-bar rows each with
+  its own Dismiss button, the Review stage saying "60 open issue(s)" and offering
+  approval on the next line, and nothing stopping a bad practice track until the
+  renderer's alignment guard five stages later — the #92 failure shape, every stage
+  working and the thing still unusable. What the operator said when shown the number
+  was *"sixty is very probably a garbage scan, but I would have to see it with my
+  eyes"*, which is a different claim from "sixty issues": a parse that rough is a
+  reading to check against the page, not a repair list. `health.verdict(issues, bars)`
+  makes that claim — `clean`, `repairable` or `unusable` — and returns the numbers
+  with it so a caller can say it its own way.
+  **The signal is the share of bars carrying at least one finding**, not the count.
+  Three candidates were measured over the 46 scores in `songs/` that carry a health
+  record. Raw count is out for the obvious reason (a long song earns findings for
+  being long) and findings-per-*staff*-bar is out for the matching one (a wide score
+  earns them for having staves — it also ranks Venematka, a free-metered score that is
+  merely being described, above two badly parsed ones). The bar share is bounded, does
+  not move with length or width, and says something out loud: *more than a fifth of the
+  bars of this score have something wrong with them*.
+  **The line is 0.2, and it sits in an empty gap**, the same shape of argument
+  `_FREE_METER_SHARE` rests on. Across those 46 scores the share is 0.000 for 30 of
+  them, then 0.015–0.121 for 13, then nothing at all until 0.260
+  (puutuin-tuohon-pulluksehen-2, 55 findings), 0.299 (Kuka Nukkuu Tuutussasi, 41) and
+  0.538 (the walk's own song, 60). A second condition keeps a short score from being
+  condemned by two findings: at least `_UNUSABLE_MIN_BARS` (3) bars affected, since 3
+  of 14 bars is already over the line on arithmetic alone.
+  A collapsed meter row contributes **all** the bars it stands for
+  (`collapsed_measures`, added for this), or the score most worth judging would be the
+  one that looks smallest — #124's hole occurring one level up. Rows written before
+  that field existed fall back to `collapsed_bars`.
+  **It is said where the decision is made, and it is not a gate.** The Review stage
+  (`verification.summary` puts `verdict` on the wire beside the count; the panel draws
+  `parseVerdict` above the check list and the readiness line reads "Read this against
+  the page"), the Fix panel above the rows, and the clean's own final log line. The
+  approve button is untouched and still works: the operator's condition was that he
+  would have to see it with his own eyes, so refusing would take a call he reserved for
+  himself, and this project has a named habit of gates people learn to click through.
+  The sentence is carried as its own field rather than folded into the health row's
+  `detail`, so one screen says it once.
+  **At the Scan stage the verdict is not knowable, and that was measured rather than
+  assumed.** Health needs a cleaned score, which is two stages along. The obvious
+  substitute — counting, in each fragment's own MusicXML, the bars whose voices do not
+  agree on a length — was tried against the only two scanned songs on this host and
+  ranked the known-bad one *below* the other (0.27 against 0.50), so a verdict said
+  there would have been a guess wearing a reading's clothes. What the scan stage gets
+  instead is **attribution**: once a song has been cleaned, `scan.findings_by_system`
+  maps each finding's bar to the printed system it fell in, and the panel names the
+  worst systems directly above the buttons that re-read one. It answers `None` — not
+  zeros — whenever the numbering cannot be trusted, because a wrong system number sends
+  somebody to re-read music that was read correctly: no clean yet, a hole, fragments
+  whose bar lengths no longer add up to the cleaned score, or a health record checked
+  against an older one. That last is the same `checked_against` test `verification`
+  calls stale, and it is not covered by the bar count — editing a score in MuseScore
+  changes what is in the bars and not how many there are — so without it the panel
+  would send somebody back to a system they had just repaired.
+  Two caveats worth carrying: #169 is separately checking whether the walk's 60-vs-1
+  against Soundslice is like-for-like, and #166 found that a large share of that damage
+  may be `omr_systems.flatten` dropping `<backup>` rather than the scan being bad. The
+  verdict is a claim about *this cleaned score*, which is true either way — but it is
+  not yet evidence about homr.
 - `server.py`: REST routes under `/api/songs/...`, a per-slug WebSocket (`/ws/{slug}`)
   for streamed progress logs + `state` pings — `hub.emit` **never raises**, because a
   render runs for minutes in a worker thread while the browser may come and go, and a

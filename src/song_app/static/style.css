@@ -181,6 +181,12 @@ table.grid input.unset { border-color: var(--warn); }
 .banner { padding: 9px 12px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); margin-bottom: 12px; color: var(--text); }
 .banner.good { color: var(--good); border-color: var(--good); }
 .banner.err { color: var(--bad); border-color: var(--bad); }
+.banner.warn { color: var(--warn); border-color: var(--warn); }
+/* The verdict on a whole parse. Loud, because the thing it is arguing against is a
+   long tidy list of small rows that reads as ordinary work. */
+.verdict strong { display: block; margin-bottom: 4px; }
+.verdict .hint { margin-top: 4px; }
+.scanfound { color: var(--warn); }
 .verify { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; background: var(--panel); }
 .verify h3 { margin: 0 0 4px; }
 .verify ul { margin: 8px 0 0; padding-left: 20px; }

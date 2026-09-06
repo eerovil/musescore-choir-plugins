@@ -541,6 +541,11 @@ function scannedView(view, song, slug) {
                         alt: `scanned system ${i}` }),
       // Which homr read this one, where the reading is being judged. It says so
       // and does nothing about it.
+      // What the last clean made of this system, beside the picture of it. It is a
+      // count and not a verdict: one system is too little to judge a parse on.
+      bad || !st.findings || !st.findings[String(i)] ? ""
+        : el("div", { className: "hint scanfound" },
+          `${st.findings[String(i)]} health finding(s) landed in this system`),
       bad ? "" : el("div", { className: "hint scanby" },
         "read by " + homrName((st.homr || {})[String(i)])
         + (homrIsCurrent((st.homr || {})[String(i)], st.homr_now) === false
@@ -936,6 +941,7 @@ function verificationView(summary) {
       `${icon[result.status] || "—"} ${part}: ${result.detail}`));
   return el("div", { className: "verify" },
     el("h3", {}, "Verification"),
+    parseVerdict(summary.health),
     el("p", { className: "hint" },
       `Expected parts: ${(summary.expected_parts || []).join(", ") || "not available"}; `
       + `printed systems: ${summary.systems || "not available"}.`),
@@ -946,6 +952,22 @@ function verificationView(summary) {
       row("Rendered files", media),
       ...files),
     summary.render_error ? el("div", { className: "banner err" }, "Render error: " + summary.render_error) : "");
+}
+
+// A parse rough enough is not a repair list, and a count never said so: the walk's
+// song read "60 open issue(s)" here with an approve button on the next line. This is
+// the sentence instead of the number — and it is deliberately not a gate. The
+// operator's own condition was that he would have to see it with his own eyes, so
+// refusing to go on would take a call he has reserved for himself.
+function parseVerdict(health) {
+  const v = health?.verdict;
+  if (!v || v.level !== "unusable") return "";
+  return el("div", { className: "banner warn verdict" },
+    el("strong", {}, "This reading is probably not worth repairing."),
+    el("div", {}, v.message),
+    el("div", { className: "hint" },
+      "Read it against the page in the Scan stage — a system read again there costs "
+      + "one button. Nothing is blocked: you can carry on if you disagree."));
 }
 
 const CHECK_ICON = { passed: "✓", warning: "⚠", stale: "⚠", not_checked: "—" };
@@ -962,6 +984,9 @@ function reviewReadiness(summary) {
   if (!summary) return { tone: "attention", title: "Needs attention" };
   const core = [summary.notes, summary.lyrics, summary.health];
   const media = summary.media;
+  if (summary.health?.verdict?.level === "unusable") {
+    return { tone: "attention", title: "Read this against the page" };
+  }
   if (core.some((result) => ["stale", "not_checked"].includes(result?.status))) {
     return { tone: "attention", title: "Needs attention" };
   }
@@ -976,6 +1001,7 @@ function compactReview(summary) {
   const readiness = reviewReadiness(summary);
   return el("section", { className: `compact-review ${readiness.tone}` },
     el("div", { className: "review-state" }, readiness.title),
+    parseVerdict(summary?.health),
     el("ul", {},
       compactCheck("Notes", summary?.notes),
       compactCheck("Lyrics", summary?.lyrics),
@@ -1102,6 +1128,9 @@ function panelScan(panel, song, P, refresh, actions) {
     if (!(st.holes || []).includes(i)) done.push(i);
   if (st.read && done.length) {
     panel.append(el("h3", {}, "Read a system again"),
+      // Directly above the buttons it is about: the point of carrying the findings
+      // back to this stage is that acting on them here costs one press.
+      scanFindingsHint(st),
       el("p", { className: "hint" },
         "Forces a re-read even though the band has not moved — for trying another "
         + "engine, or a system that came back wrong. A reading that comes out "
@@ -1150,6 +1179,23 @@ function scanProvenance(st) {
         + "Nothing has been discarded for it. Read a system again above if you want "
         + "this homr's reading of it.")
       : "");
+}
+
+// Where the last clean's findings fell, said on the screen that can re-read a
+// system. The verdict itself cannot be made here — it comes off the cleaned score —
+// but once a clean has happened the damage has system numbers, and this is the one
+// place where acting on them costs a single button.
+function scanFindingsHint(st) {
+  const byIndex = st.findings;
+  if (!byIndex) return "";
+  const worst = Object.entries(byIndex).filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (!worst.length) return "";
+  const total = worst.reduce((sum, [, n]) => sum + n, 0);
+  const named = worst.slice(0, 3).map(([i, n]) => `${i} (${n})`).join(", ");
+  return el("p", { className: "hint scanfindings" },
+    `The last clean of this reading found ${total} health finding(s). Most of them are `
+    + `in system(s) ${named} — read those against the page first.`);
 }
 
 function scanApproval(st, song, P, refresh, actions, openScanned) {
@@ -1388,7 +1434,10 @@ function sysBlock(sys) {
 
 function panelFix(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Fix"),
-    el("p", { className: "sub" }, "OCR damage the auto-fixers couldn't repair. Fix in MuseScore, save, and it re-checks automatically."));
+    el("p", { className: "sub" }, "OCR damage the auto-fixers couldn't repair. Fix in MuseScore, save, and it re-checks automatically."),
+    // Said here too, because this is the panel that offers the rows one at a time.
+    // Sixty Dismiss buttons is what a verdict looks like when nobody makes it.
+    parseVerdict(song.verification_summary?.health));
   const pending = song.pending_fixes || [];
   if (pending.length) {
     panel.append(el("div", { className: "issue" },

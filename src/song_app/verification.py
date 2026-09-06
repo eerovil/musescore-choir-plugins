@@ -174,9 +174,15 @@ def summary(song: state.Song, systems: int) -> Dict:
         if folded:
             detail += (f" {collapsed_count} of them are meter findings shown as "
                        f"{len(folded)} line(s) in the Fix panel.")
+        # A count did not communicate anything: the walk's song said "60 open
+        # issue(s)" here and offered approval on the next line. The verdict is what a
+        # number that size means, and it rides beside the count as its own field
+        # rather than inside the sentence -- the panel says it once, loudly, above
+        # the row, and a row that repeated it would only be teaching a reader to skim.
+        judgement = health_check.verdict(open_issues, health_check.score_bars(cleaned))
         health_result = _result("passed" if not open_count else "warning", detail,
                                 open_count=open_count, row_count=len(open_issues),
-                                collapsed_count=collapsed_count)
+                                collapsed_count=collapsed_count, verdict=judgement)
 
     stored = song.data.get("verification", {}).get("notes")
     if not stored:

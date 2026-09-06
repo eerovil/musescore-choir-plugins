@@ -78,7 +78,7 @@ from lxml import etree
 
 from src.clean_score.utils import per_system
 
-from . import heavy_slot, omr, omr_systems, pdf_systems, state
+from . import health, heavy_slot, omr, omr_systems, pdf_systems, state
 from .pdf_systems import SystemBounds
 
 Logger = Callable[[str], None]
@@ -262,7 +262,86 @@ def status(song: state.Song) -> Dict:
                          if not fragments[i].get("error")
                          and seen.get(str(i)) != fragments[i].get("content")]
         if ok else [],
+        "findings": findings_by_system(song),
     }
+
+
+def findings_by_system(song: state.Song) -> Optional[Dict[str, int]]:
+    """How many health findings landed in each printed system, or ``None``.
+
+    The verdict on a parse is not knowable here -- it comes off the cleaned score,
+    two stages along, and this was measured rather than assumed (see the pull
+    request: on the only two scanned songs on this host, a scan-time count of bars
+    whose voices disagree ranked the known-bad song *below* the other one, so a
+    verdict said here would have been a guess dressed as a reading).
+
+    What is knowable here, once a song has been cleaned at least once, is *where*
+    the findings fell -- and this is the one screen with a button that re-reads a
+    system. So the findings are carried back and attributed by bar.
+
+    ``None`` rather than zeros whenever the attribution cannot be trusted: no
+    cleaning yet, a hole, a health record that is not about the cleaned score as it
+    stands now, or a cleaned score that is not the length the fragments add up to. A
+    wrong system number sends somebody to re-read music that was read correctly,
+    which is worse than saying nothing.
+    """
+    fragments = _fragments(song)
+    bands = pdf_systems.load_bounds(song.dir)
+    if not bands or not fragments:
+        return None
+    health_record = song.data.get("health") or {}
+    issues = [i for i in (health_record.get("issues") or [])
+              if i.get("status") == "open"]
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        return None
+    # The findings have to be about the score that is there now, and the bar count
+    # below does not establish that: somebody editing the score in MuseScore
+    # ordinarily changes what is *in* the bars, not how many there are, so a stale
+    # record sails straight through a length check. This is the same test
+    # `verification.summary` calls stale, and it matters more here than there --
+    # Review would merely be showing an old count, while this stage names systems
+    # and tells a person to read them again, which is sending them to re-read music
+    # that may have been repaired since.
+    if health_record.get("checked_against") != state.file_fingerprint(cleaned):
+        return None
+    # Cleaning does not renumber bars, so the fragments' own lengths lay the score
+    # out -- but only if they still add up to it. They do not after a per-system
+    # rebuild that dropped a bar, and then every number below would be off by one
+    # from that point on.
+    lengths = []
+    for band in bands:
+        entry = fragments.get(band.index) or {}
+        if entry.get("error") or not entry.get("bars"):
+            return None
+        lengths.append(int(entry["bars"]))
+    try:
+        if sum(lengths) != health.score_bars(cleaned):
+            return None
+    except (OSError, etree.XMLSyntaxError):
+        return None
+    counts = {str(b.index): 0 for b in bands}
+    start = 1
+    ranges = []
+    for band, length in zip(bands, lengths):
+        ranges.append((band.index, start, start + length - 1))
+        start += length
+    for issue in issues:
+        weight = int(issue.get("collapsed") or 1)
+        measures = ([int(m) for m in issue["collapsed_measures"]]
+                    if issue.get("collapsed_measures")
+                    else ([int(issue["measure"])] if issue.get("measure") is not None else []))
+        if not measures:
+            continue
+        # A collapsed row stands for more findings than it names bars, so its weight
+        # is shared out over the bars it does name rather than landing on the first.
+        share = weight / len(measures)
+        for measure in measures:
+            for index, first, last in ranges:
+                if first <= measure <= last:
+                    counts[str(index)] += share
+                    break
+    return {k: int(round(v)) for k, v in counts.items()}
 
 
 def current_homr() -> Optional[Dict]:

@@ -22,8 +22,8 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from src.clean_score.utils import per_system
-from src.song_app import (heavy_slot, omr, omr_systems, pdf_systems, pipeline, scan,
-                          server, state)
+from src.song_app import (health, heavy_slot, omr, omr_systems, pdf_systems, pipeline,
+                          scan, server, state, verification)
 
 
 # --- a stub score, small enough to read -----------------------------------
@@ -956,3 +956,128 @@ def test_a_broken_fixes_file_costs_the_record_and_not_the_reading(songs, reader,
 
     assert result["complete"] and result["holes"] == []
     assert any("fixes.json" in line for line in lines), lines
+
+
+# --- where the findings fell ------------------------------------------------
+#
+# The verdict on a parse is made two stages along, off the cleaned score. What this
+# stage can add is the system numbers, because this is the screen with a re-read
+# button on it. All of it is attribution, so all of it is about refusing to
+# attribute when the numbering cannot be trusted.
+
+
+def _cleaned(song, bars):
+    """A cleaned score of `bars` bars, with a health record naming some of them."""
+    path = song.path("test_song_cleaned.mscx")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("<museScore><Score><Staff id=\"1\">"
+                + "<Measure></Measure>" * bars + "</Staff></Score></museScore>")
+    song.data["cleaned"] = os.path.basename(path)
+    song.save()
+    return path
+
+
+def _issues(song, measures):
+    """Findings recorded against the cleaned score as it stands right now."""
+    song.data["health"] = {
+        "checked_against": state.file_fingerprint(song.cleaned_path()),
+        "issues": [
+            {"id": f"malformed-m{m}-s1-v0", "kind": "malformed-measure", "measure": m,
+             "staff": "T1", "detail": "short", "status": "open"} for m in measures],
+    }
+    song.save()
+
+
+def test_findings_are_attributed_to_the_system_their_bar_is_in(songs, reader):
+    reader.bars = 4
+    song = _song(songs, bands=3)
+    scan.run(song)
+    song = _reload(song)
+    _cleaned(song, 12)
+    _issues(song, [1, 2, 6, 11, 12])          # 2 in system 1, 1 in system 2, 2 in 3
+
+    assert scan.findings_by_system(song) == {"1": 2, "2": 1, "3": 2}
+    assert scan.status(song)["findings"] == {"1": 2, "2": 1, "3": 2}
+
+
+def test_a_collapsed_row_is_shared_over_the_bars_it_names(songs, reader):
+    reader.bars = 4
+    song = _song(songs, bands=3)
+    scan.run(song)
+    song = _reload(song)
+    _cleaned(song, 12)
+    # One row standing for 8 findings across 4 bars, two systems apart: it must not
+    # land 8 on the system its first bar happens to be in.
+    song.data["health"] = {
+        "checked_against": state.file_fingerprint(song.cleaned_path()),
+        "issues": [
+            {"id": "meter-collapsed-8", "kind": "meter-collapsed", "measure": 2,
+             "staff": "whole score", "collapsed": 8, "collapsed_bars": 4,
+             "collapsed_measures": [2, 3, 9, 10], "status": "open"}],
+    }
+    song.save()
+
+    assert scan.findings_by_system(song) == {"1": 4, "2": 0, "3": 4}
+
+
+def test_nothing_is_attributed_before_a_clean(songs, reader):
+    song = _song(songs, bands=3)
+    scan.run(song)
+
+    # Zeros would read as "this reading came out clean", which nobody has checked.
+    assert scan.status(_reload(song))["findings"] is None
+
+
+def test_nothing_is_attributed_when_the_bars_no_longer_add_up(songs, reader):
+    reader.bars = 4
+    song = _song(songs, bands=3)
+    scan.run(song)
+    song = _reload(song)
+    _cleaned(song, 11)                        # a bar short of the fragments' 12
+    _issues(song, [1, 6, 11])
+
+    # Off by one from wherever the bar went: every number after it would send
+    # somebody to re-read music that was read correctly.
+    assert scan.findings_by_system(song) is None
+
+
+def test_nothing_is_attributed_while_a_system_is_a_hole(songs, reader):
+    reader.bars = 4
+    song = _song(songs, bands=3)
+    reader.fail[2] = omr.HomrError("homr fell over")
+    scan.run(song)
+    song = _reload(song)
+    _cleaned(song, 8)
+    _issues(song, [1, 6])
+
+    assert scan.findings_by_system(song) is None
+
+
+def test_nothing_is_attributed_from_a_health_record_about_an_older_score(songs, reader):
+    """The bar count is not identity, and a hand edit usually keeps it.
+
+    Somebody repairing a bar in MuseScore changes what is *in* it, not how many
+    bars there are, so a stale health record passes the length check unchanged.
+    Review already calls that state stale and shows nothing from it; here it would
+    be worse than a wrong count, because this stage names systems and tells a person
+    to read them again -- sending them back to music they may have just fixed.
+    """
+    reader.bars = 4
+    song = _song(songs, bands=3)
+    scan.run(song)
+    song = _reload(song)
+    cleaned = _cleaned(song, 12)
+    _issues(song, [1, 2, 6, 11, 12])
+    assert scan.findings_by_system(song) == {"1": 2, "2": 1, "3": 2}
+
+    # Edited in MuseScore: different score, same twelve bars.
+    with open(cleaned, "w", encoding="utf-8") as f:
+        f.write("<museScore><Score><Staff id=\"1\">"
+                + "<Measure><voice/></Measure>" * 12 + "</Staff></Score></museScore>")
+    song = _reload(song)
+
+    assert health.score_bars(cleaned) == 12          # the length check still passes
+    assert scan.findings_by_system(song) is None
+    assert scan.status(song)["findings"] is None
+    # ...and the two stages agree about why.
+    assert verification.summary(song, systems=3)["health"]["status"] == "stale"
