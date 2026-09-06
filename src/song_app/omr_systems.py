@@ -43,9 +43,9 @@ one bar more than the page prints; up to that bar assembly costs nothing. A
 better guess here would also not help: of the 9 narrow systems on those pages
 only 2 are a voice resting, and 7 are divisi printed apart in one system and
 together in the rest, where the narrow system's first staff carries two of the
-page's rows and no single row is the right answer. The percentages carry issue
-#196's caveat like every other corpus figure; the *difference* between them does
-not, since both sides are scored by the same comparator.
+page's rows and no single row is the right answer. Those percentages were scored
+by the comparator issue #196 has since replaced and were not re-scored; the
+*difference* between them is unaffected, since both sides come off one rule.
 
 **Bounds are a precondition.** This module is given the printed systems; it does
 not look for them. Detecting them from the image was measured and abandoned in
@@ -390,12 +390,17 @@ def _voice_numbering(per_bar: Sequence[Sequence["_Placed"]]) -> Dict[str, int]:
     faults against 68.2% and 67, and the only page it changes at all is Herää
     Suomi p3, where the two basses cross on the page and it swaps a column homr
     had numbered right -- 95.8% and 3 voice faults down to 85.6% and 20.
-    **Those figures are under revision by issue #196**: they come out of a
-    comparator that ranks a staff's voices by which is seen first, which one
-    invented moment can reverse (see :func:`assemble`). What does not move with
-    them is the reason for the refusal -- where two voices cross, "voice 1 is
-    the upper line" is false of the page itself, so it is not a rule this
-    function may adopt whatever the corpus digits settle at.
+    **Those figures were scored by the comparator issue #196 has since replaced**
+    -- it ranked a staff's voices by which was seen first, which one invented and
+    never-scored moment can reverse (see :func:`assemble`) -- and they were not
+    re-derived, so read the p3 swap as large rather than as exactly 10.2 points.
+    What does not move with them is the reason for the refusal -- where two
+    voices cross, "voice 1 is the upper line" is false of the page itself, so it
+    is not a rule this function may adopt whatever the corpus digits settle at.
+    Issue #196 reached that same conclusion from the harness's side, on its own
+    settled figures: it refused mean height as a *comparator* rank because on
+    `heraa-suomi-final-s10` the crossing basses leave the reference's own two
+    voices 0.1 of a step apart, and shipped a bar count instead.
 
     Homr's numbering is also the better claim on the merits where the two
     disagree: over those 63 parses it puts the higher-sounding voice first in
@@ -511,9 +516,9 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     anything about rows. Guessing the row instead would not close it: 7 of those
     pages' 9 narrow systems are divisi printed apart in one system and together in
     the rest, so the narrow system's first staff carries two of the page's rows
-    and there is no single row to put it on. Both percentages are under issue
-    #196's revision; the gap between them is not, being one comparator's reading
-    of two files.
+    and there is no single row to put it on. Both percentages were scored by the
+    comparator issue #196 has since replaced and were not re-scored; the gap
+    between them is unaffected, being one comparator's reading of two files.
 
     Three seams are closed here, all of them consequences of each crop being its
     own document. ``divisions`` is unified across the score and every duration
@@ -554,14 +559,17 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     seen first: the first moment of staff 1 there is one note homr wrote a
     quarter early into voice 2, in a moment the reference does not have and the
     comparison never scores, and that one moment reverses the ranking for the
-    whole page. Fixing it is issue #196, and until it lands no voice-fault
-    figure for that page or in the corpus totals is trustworthy. What is real
-    there is bar 1's early entry, which is a rhythm misread and the fork's.
+    whole page. Issue #196 fixed it (`eerovil/homr#37`, merged 2026-09-06): the
+    harness now ranks a staff's voices by which is the higher line in more of its
+    bars, and on that rule p1 stands at 70.9% with 1 voice fault and the corpus
+    totals are re-scored. What is real there is bar 1's early entry, which is a
+    rhythm misread and the fork's.
 
     None of that weakens issue #187's refusal to sort this assembler by height;
-    it sharpens it. The *harness* needs a height rule, because it has to line one
-    file's voices up against another's and first-seen is not a property of the
-    music. The assembler must not use one, for the p3 reason above.
+    it sharpens it. The *harness* needs a whole-staff rule, because it has to line
+    one file's voices up against another's and first-seen is not a property of the
+    music -- and it refused mean height too, for the same crossing-voices reason.
+    The assembler must not rank by height at all, for the p3 reason above.
     """
     if not scans:
         raise ScanError("Nothing to assemble: no systems were read.")
