@@ -1312,13 +1312,25 @@ state model are in `DESIGN.md`.
   4/4 came back 3/4 — while a meter change the page really prints (B4's last system goes
   3/4, 5/4, 4/4) stays exactly where it is, and a resting column's measure rest is
   written to the reconciled length rather than to the crop's label.
-  **What it refuses to do is as much the point.** A span needs `_MIN_SAMPLES` (2) bar
-  lengths and a strict majority among them before it may overrule a declared number, so
-  one voice short of a note cannot rewrite the meter around its own mistake — the bar
-  stays one that contradicts its signature, which is what the health check reports. A
-  whole-measure rest is not a sample (homr writes one a whole note long whatever the
-  meter, so counting it would drag every span with a resting staff towards 4/4), and a
-  length no whole numerator fits is left with the signature it was given.
+  **What it refuses to do is as much the point.** A span needs `_MIN_BARS` (2) **bars**
+  and a strict majority among them before it may overrule a declared number, so one voice
+  short of a note cannot rewrite the meter around its own mistake — the bar stays one that
+  contradicts its signature, which is what the health check reports. Bars and not staff
+  copies of a bar: two staves of one bar are one reading, so counting them separately
+  would reach the threshold inside a single bar and a duration misread the same way on
+  both staves would carry it. For the same reason a bar whose staves disagree about its
+  length is no observation at all. A whole-measure rest is not one either (homr writes one
+  a whole note long whatever the meter, so counting it would drag every span with a
+  resting staff towards 4/4), and a length no whole numerator fits is left with the
+  signature it was given.
+  **One bar is enough against a signature that only restates the meter already in force**,
+  and that exception is what keeps the correction working at all. homr writes a signature
+  at the head of every crop and again wherever its own decoding wobbled, and "the same as
+  before" is not a reading of the page — Virta's m13 prints 4/4 and the crop restated the
+  2/4 in force, over a bar both staves read as four quarters. A *change*, and the score's
+  opening declaration, both still need two bars, so a one-bar meter change the page really
+  prints survives being measured against the single bar it governs. Under the flat
+  two-bar rule the fixture keeps its m13 fault and health reads 33 rather than 31.
   Measured on the fixture with the fork's `main` (`6c3bbf4`), all 15 systems re-read at
   200 dpi: the bars carrying a meter the page does not print go **4 → 1**. The one left
   is m10, where the page prints 2/4 and homr read two and a half quarters — a note error,

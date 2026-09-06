@@ -584,6 +584,42 @@ def test_a_single_bar_is_not_enough_to_overrule_a_signature(tmp_path):
     assert declared_meters(score.findall("part")[0]) == [("1", "4/4")]
 
 
+def test_two_staves_of_one_bar_are_still_one_bar(tmp_path):
+    """The threshold counts bars, not staff copies of a bar. Both staves reading
+    three quarters where the signature says four is one reading of one bar -- and
+    a duration misread the same way on both staves looks exactly like this."""
+    score = assembled(tmp_path, a_scan(1, [a_staff([3], time=(4, 4)),
+                                           a_staff([3], time=(4, 4))]))
+    assert declared_meters(score.findall("part")[0]) == [("1", "4/4")]
+
+
+def test_a_signature_that_only_restates_the_meter_is_not_a_reading(tmp_path):
+    """homr writes one at the head of every crop and again wherever its decoding
+    wobbled, so "the same as before" says nothing the page said. One bar of music
+    both staves agree on may overrule that -- this is Virta's m13, where the page
+    prints 4/4 and the crop restated the 2/4 already in force."""
+    staves = [a_staff([2, 2, 4], time=(2, 4), changes={2: (2, 4)})] * 2
+    score = assembled(tmp_path, a_scan(1, staves))
+    assert declared_meters(score.findall("part")[0]) == [("1", "2/4"), ("3", "4/4")]
+
+
+def test_a_one_bar_change_the_page_prints_is_kept(tmp_path):
+    """The same bar, but the crop declares a *change* there. That is a reading of
+    the page, and one bar of music is not enough to argue with it."""
+    staves = [a_staff([2, 2, 4], time=(2, 4), changes={2: (5, 4)})] * 2
+    score = assembled(tmp_path, a_scan(1, staves))
+    assert declared_meters(score.findall("part")[0]) == [("1", "2/4"), ("3", "5/4")]
+
+
+def test_a_bar_whose_staves_disagree_is_not_an_observation(tmp_path):
+    """Two staves, two answers, and nothing to choose between them: that bar says
+    nothing about the meter, so a span made of such bars keeps what it was given.
+    """
+    score = assembled(tmp_path, a_scan(1, [a_staff([3, 3], time=(4, 4)),
+                                           a_staff([2, 2], time=(4, 4))]))
+    assert declared_meters(score.findall("part")[0]) == [("1", "4/4")]
+
+
 def test_a_whole_measure_rest_is_not_evidence_of_the_bar_length(tmp_path):
     """homr writes one a whole note long whatever the meter, so counting it
     would drag every span with a resting staff in it towards 4/4."""

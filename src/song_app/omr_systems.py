@@ -83,11 +83,15 @@ _FALLBACK_TIME = (4, 4)
 #: the declared signature is the better answer there.
 _MAX_BEATS = 32
 
-#: How many bar-length samples a span needs before its own length is allowed to
-#: overrule a declared numerator. One staff of one bar agreeing with itself is
-#: not evidence -- a voice short of a note would rewrite the meter around its own
-#: mistake, which is the failure this whole correction exists to avoid.
-_MIN_SAMPLES = 2
+#: How many **bars** a span needs before its own length is allowed to overrule a
+#: declared numerator. One bar agreeing with itself is not evidence -- a voice
+#: short of a note would rewrite the meter around its own mistake, which is the
+#: failure this whole correction exists to avoid. Counting staves instead would
+#: not do: two staves of one bar are one reading of one bar, so a shared misread
+#: duration would reach the threshold on its own, and every one-bar meter change
+#: the page prints (B4's last system goes 3/4, 5/4, 4/4) would be up for
+#: rewriting by the bar it governs.
+_MIN_BARS = 2
 
 
 def _noop(_msg: str) -> None:
@@ -641,10 +645,13 @@ def _meter_plan(
     Two things it deliberately will not do, because the point of the correction
     is a score that still says where it is wrong:
 
-    * It needs :data:`_MIN_SAMPLES` bar lengths and a strict majority among them
-      before it overrules a declared numerator. A single voice short of a note
-      cannot rewrite the meter around its own mistake -- it stays a bar that
-      contradicts the signature, which is what the health check reports.
+    * It needs :data:`_MIN_BARS` **bars** -- not staff copies of one bar -- and a
+      strict majority among them before it overrules a declared numerator. A
+      single voice short of a note cannot rewrite the meter around its own
+      mistake: it stays a bar that contradicts the signature, which is what the
+      health check reports. And a bar whose staves do not agree on how long it is
+      is no observation at all, so a span made of such bars keeps what it was
+      given.
     * A whole-measure rest is not a sample. homr writes one a whole note long
       whatever the meter, so counting it would drag every span towards 4/4.
     """
@@ -663,10 +670,10 @@ def _meter_plan(
         following = points[n + 1] if n + 1 < len(points) else None
         stop = (following[1] if following and following[0] == system
                 else scans[system].bars)
-        samples: List[int] = []
-        for over in range(bar, stop):
-            samples.extend(_bar_samples(scans[system], over, divisions))
-        meter = _reconcile(declared, running, samples, divisions)
+        lengths = [_bar_length_agreed(scans[system], over, divisions)
+                   for over in range(bar, stop)]
+        meter = _reconcile(declared, running,
+                           [length for length in lengths if length], divisions)
         ticks = meter.ticks(divisions)
         plan[system][bar] = _BarMeter(meter, running is None or meter != running, ticks)
         for over in range(bar + 1, stop):
@@ -683,12 +690,23 @@ def _meter_plan(
 def _reconcile(
     declared: Optional[_Meter],
     running: Optional[_Meter],
-    samples: Sequence[int],
+    lengths: Sequence[int],
     divisions: int,
 ) -> _Meter:
-    """The meter a span is really in: its own length, in homr's denominator."""
+    """The meter a span is really in: its own length, in homr's denominator.
+
+    ``lengths`` is one entry per **bar** of the span, not one per staff.
+    """
     beat_type = (declared or running or _Meter(*_FALLBACK_TIME)).beat_type
-    measured = _agreed(samples)
+    # A signature that restates the meter already in force carries no numerator
+    # of its own -- homr writes one at the head of every crop and again wherever
+    # its own decoding wobbled, and "the same as before" is not a reading of the
+    # page. One bar may overrule that. Anything else -- a change, or the score's
+    # opening declaration, where there is nothing already in force -- needs
+    # _MIN_BARS, so a one-bar meter change the page really prints survives being
+    # measured against the single bar it governs.
+    least = 1 if declared is not None and declared == running else _MIN_BARS
+    measured = _agreed(lengths, least)
     if measured is not None:
         beats = measured * beat_type / (divisions * 4)
         if beats == int(beats) and 1 <= int(beats) <= _MAX_BEATS:
@@ -696,15 +714,15 @@ def _reconcile(
     return declared or running or _Meter(*_FALLBACK_TIME)
 
 
-def _agreed(samples: Sequence[int]) -> Optional[int]:
-    """The length a majority of the span's bars agree on, if there is one."""
-    if len(samples) < _MIN_SAMPLES:
+def _agreed(values: Sequence[int], least: int = 1) -> Optional[int]:
+    """The value a strict majority agrees on, if there are enough of them."""
+    if len(values) < least:
         return None
     counts: Dict[int, int] = {}
-    for value in samples:
+    for value in values:
         counts[value] = counts.get(value, 0) + 1
-    length, count = max(counts.items(), key=lambda item: (item[1], item[0]))
-    return length if count * 2 > len(samples) else None
+    value, count = max(counts.items(), key=lambda item: (item[1], item[0]))
+    return value if count * 2 > len(values) else None
 
 
 def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:
@@ -723,16 +741,24 @@ def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:
     return None
 
 
-def _bar_samples(scan: SystemScan, bar: int, divisions: int) -> List[int]:
-    """How long each staff's copy of this bar is, in the score's divisions."""
-    out: List[int] = []
+def _bar_length_agreed(scan: SystemScan, bar: int, divisions: int) -> Optional[int]:
+    """How long **this bar** is, in the score's divisions: one answer, or none.
+
+    The staves of one bar are copies of one reading, so they are reduced to a
+    single observation here rather than counted separately -- otherwise a
+    two-staff system would reach the confidence threshold within one bar, and a
+    duration misread the same way on both staves would carry it.
+    """
+    lengths: List[int] = []
     for staff in scan.staves:
         if bar >= staff.bars:
             continue
         length = _bar_length(staff.measures[bar])
         if length:
-            out.append(max(1, round(length * divisions / max(1, staff.divisions))))
-    return out
+            lengths.append(max(1, round(length * divisions / max(1, staff.divisions))))
+    # No majority means the staves disagree about how long the bar is, and a bar
+    # nobody agrees on says nothing about the meter it is in.
+    return _agreed(lengths)
 
 
 def _bar_length(measure: etree._Element) -> Optional[int]:
