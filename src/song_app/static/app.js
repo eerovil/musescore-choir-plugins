@@ -455,9 +455,28 @@ async function compareView(view, slug) {
 // re-reads a system is a person pressing one of the buttons that were already
 // here. The label is what a person recognises and the commit is what actually
 // decides, because `main` in a working copy means a different commit next week.
+// The commit is shown and not only kept, because a working copy's label is
+// stable across commits — `main — system-4` is the same words a week and forty
+// commits later. Showing the label alone would put two readings of the same
+// worktree under one heading with nothing to tell them apart, which is the
+// ambiguity this exists to remove.
+function homrShort(rec) {
+  return rec && rec.commit ? rec.commit.slice(0, 7) : "";
+}
+
 function homrName(rec) {
   if (!rec || (!rec.label && !rec.commit)) return "unknown";
-  return (rec.label || rec.commit.slice(0, 7)) + (rec.dirty ? " + uncommitted edits" : "");
+  const short = homrShort(rec);
+  const label = rec.label || short;
+  return (label.includes(short) ? label : `${label} @ ${short}`)
+    + (rec.dirty ? " + uncommitted edits" : "");
+}
+
+// What actually identifies a reading, which is what the systems are grouped by.
+// Two commits of one worktree are two engines however alike they read.
+function homrKey(rec) {
+  if (!rec || (!rec.label && !rec.commit)) return "unknown";
+  return `${rec.engine || ""}|${rec.commit || ""}|${rec.dirty ? "dirty" : ""}`;
 }
 
 // null, not false, when either side cannot say — "nobody knows" is its own
@@ -470,11 +489,11 @@ function homrIsCurrent(rec, now) {
 function homrGroups(st) {
   const by = new Map();
   for (const [i, rec] of Object.entries(st.homr || {})) {
-    const name = homrName(rec);
-    if (!by.has(name)) by.set(name, []);
-    by.get(name).push(Number(i));
+    const key = homrKey(rec);
+    if (!by.has(key)) by.set(key, { name: homrName(rec), ids: [] });
+    by.get(key).ids.push(Number(i));
   }
-  return [...by.entries()].map(([name, ids]) => [name, ids.sort((a, b) => a - b)]);
+  return [...by.values()].map(({ name, ids }) => [name, ids.sort((a, b) => a - b)]);
 }
 
 function homrDrift(st) {

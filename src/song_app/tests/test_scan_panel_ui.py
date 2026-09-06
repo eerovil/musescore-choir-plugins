@@ -377,3 +377,26 @@ def test_an_ok_given_under_an_older_homr_is_not_taken_away(live, page, monkeypat
         "button", name="This reading is right — continue to Clean").count() == 0
     assert state.load(song.slug).stage == "clean", "nobody was sent back to Scan"
     assert not errors, f"the panel raised: {errors}"
+
+
+def test_two_commits_of_one_worktree_are_two_readings(live, page, monkeypatch):
+    """A working copy's label does not move when its commit does.
+
+    `main — system-4` is the same words a week and forty commits later, so
+    grouping by the label would put two readings under one heading with nothing
+    to tell them apart -- which is the ambiguity #154 exists to remove. The
+    commit is the record, so the commit is shown.
+    """
+    base, song = live
+    fresh = _read(state.load(song.slug), 2, homr=None)
+    tree = {"engine": "system-4", "label": "main — system-4", "dirty": False}
+    fresh.data["scan"]["systems"]["1"]["homr"] = dict(tree, commit="1" * 40)
+    fresh.data["scan"]["systems"]["2"]["homr"] = dict(tree, commit="2" * 40)
+    fresh.save()
+    monkeypatch.setattr(server.omr, "default_engine", lambda: NEW_HOMR)
+    errors = _open(page, base, song.slug)
+
+    assert page.get_by_text("main — system-4 @ 1111111 — system(s) 1").is_visible()
+    assert page.get_by_text("main — system-4 @ 2222222 — system(s) 2").is_visible()
+    assert page.locator(".scanby p.hint").count() == 3, "two readings and the one installed"
+    assert not errors, f"the panel raised: {errors}"
