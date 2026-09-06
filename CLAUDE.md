@@ -370,9 +370,17 @@ Key test modules:
   on the benchmark — four one-staff "Voice" parts, two two-staff "Piano" parts, and a
   mixture — so a fused grand staff still counts as two staves, the pair in the middle
   stays in the middle, the name is never read, and a staff comes out with its own clef,
-  its own notes and its voices renumbered from 1. Two of them are about the backups:
-  they are dropped and rebuilt, so two voices sharing a staff still start together, and
-  a third voice winds back one voice rather than the running total. **Assembling** is
+  its own notes and its voices renumbered from 1. A group of them is about **where the
+  notes land**, rewritten by this pull request for #172: two voices homr started together
+  still start together, a voice homr wrote later in the bar stays later, a voice entering
+  mid-bar enters mid-bar, a chord stays stacked on the note it shares a beat with, and the
+  two staves of a fused part each start at the head of the bar. The last of those five is
+  what the old rebuild was for; the other four are what it cost. Beside them is the
+  acceptance on a **committed copy of a real parse**,
+  `tests/test_files/voices_across_the_bar.musicxml` — one printed system of Herää Suomi as
+  homr read it, kept beside the test rather than read out of `songs/` — asserting every
+  note of it comes out on the beat homr put it on, and naming the bar the old rebuild
+  moved a whole phrase in. **Assembling** is
   tested on the seams: continuous bar numbers, a break at each join and none at the
   start, one `divisions` with the durations rescaled to it, a repeated key dropped and a
   changed one kept, a meter change inside a crop left alone, a resting column given the
@@ -1256,6 +1264,26 @@ state model are in `DESIGN.md`.
   and means neither, and since the notes of a fused part are fully separable,
   grand-staff fusion is a labelling detail with no information loss. `assemble` writes
   the systems out as one score, one part per staff column.
+  **What flattening must not do is move the notes, and until this pull request it did**
+  (#172). Splitting a part on its `<staff>` means the `<backup>` and `<forward>` homr
+  wrote cannot be kept as they stand — they step between staves as well as between
+  voices, and the other staves are about to go — so they were dropped and every voice was
+  re-laid from the head of the bar. But that is exactly *how homr says when a note
+  sounds*: a voice it wrote later in the bar slid to beat one, and the phrase under it
+  came with it. Issue #166 measured it while answering a different question and it is the
+  largest single loss that map found: **73.5% of the notes right where homr's own reading
+  of the same crop scored 92.3%**, 43 of 61 systems losing notes, one going 100% to 0.0%.
+  For scale, the per-system seam that card spent a corpus run measuring costs 1.2 points.
+  So the bar is now **read by following homr's cursor** — a note moves it on, a `backup`
+  winds it back, a `forward` moves it on — which gives every note the beat homr put it on,
+  and the staff is written back out voice by voice with the steps that put each note back
+  there. The two things the rebuild existed for survive: voices are still renumbered from
+  1 (a voice number means nothing outside its part, and this staff is becoming one), and
+  the two staves of a fused part still each start at the head of the bar — but now because
+  the backup between them says so, rather than because everything was reset. A chord note
+  is the one case that takes no step, since it sounds *with* the note before it rather
+  than after it. `scripts/flatten_vs_reference.py` is the measurement, committed by this
+  pull request because #166's own harness did not survive that session.
   **Which voice is absent from a short system is not decided here**, because it is not
   recoverable from pixels — you need the words, the range, or the piece. Columns are
   filled from the top and the empty rows are measure rests; naming them is
