@@ -246,7 +246,9 @@ def test_the_musicxml_lands_where_the_caller_asked(monkeypatch, tmp_path):
     produced = omr.read_page(a_page(tmp_path), out_dir=str(out))
 
     assert produced == str(out / "page-1.musicxml")
-    assert open(produced).read().strip() == "<score/>"
+    # Apart from the one line saying which homr read it, which every parse
+    # carries and which comes straight back off (#154).
+    assert omr.strip_provenance(open(produced, "rb").read()).strip() == b"<score/>"
 
 
 def test_without_an_out_dir_it_lands_beside_the_image(monkeypatch, tmp_path):
@@ -277,7 +279,7 @@ def test_reading_a_page_again_replaces_its_answer(monkeypatch, tmp_path):
     monkeypatch.setenv("HOMR_BIN", stub_homr(tmp_path, 'echo "<second/>" > "${!#%.*}.musicxml"\n'))
     second = omr.read_page(image)
     assert first == second
-    assert open(second).read().strip() == "<second/>"
+    assert omr.strip_provenance(open(second, "rb").read()).strip() == b"<second/>"
 
 
 # --- how it is called ----------------------------------------------------
@@ -635,7 +637,9 @@ def test_a_page_homr_got_right_is_not_rewritten(monkeypatch, tmp_path):
     monkeypatch.setenv("HOMR_BIN", stub_homr(
         tmp_path, 'echo "<score-partwise/>" > "${!#%.*}.musicxml"\n'))
     produced = omr.read_page(a_page(tmp_path), out_dir=str(tmp_path / "out"))
-    assert open(produced).read() == "<score-partwise/>\n"
+    # The provenance line is the only thing between what homr wrote and what is
+    # on disk, and taking it off gives homr's bytes back exactly.
+    assert omr.strip_provenance(open(produced, "rb").read()) == b"<score-partwise/>\n"
 
 
 @pytest.mark.skipif(not _musescore() or not os.path.exists(_musescore() or ""),
@@ -686,3 +690,119 @@ def test_the_installed_engine_says_which_commit_it_is(monkeypatch, tmp_path):
     monkeypatch.setattr(omr, "CHECKOUT", str(tmp_path / "none"))
 
     assert omr.engines()[0].label == "installed: main @ 3fe86a3"
+
+
+# --- provenance: which homr read this, written into the parse itself ---------
+#
+# The record has to reach a reader who never opens the app -- an agent opening
+# a fragment straight off disk is exactly what #129 was -- so it is in the file,
+# and it has to be removable byte for byte, or `scan.content_stamp` could not
+# step over it and an upgrade would start discarding work (#154).
+
+
+def test_the_installed_engine_carries_its_commit(monkeypatch, tmp_path):
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    venv = tmp_path / "homr-venv"
+    a_venv(venv, branch="main")
+    info = venv / "lib" / "python3.12" / "site-packages" / "homr-0.7.0.post37.dist-info"
+    info.mkdir(parents=True)
+    (info / "direct_url.json").write_text(json.dumps({
+        "url": "https://github.com/eerovil/homr.git",
+        "vcs_info": {"vcs": "git", "requested_revision": "main",
+                     "commit_id": "3fe86a3e84db43af19eae452e29830c1f46c3b34"}}))
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(venv))
+    monkeypatch.setattr(omr, "CHECKOUT", str(tmp_path / "none"))
+
+    engine = omr.engines()[0]
+    assert engine.commit == "3fe86a3e84db43af19eae452e29830c1f46c3b34"
+    assert engine.dirty is False
+
+
+def test_a_checkout_engine_carries_the_commit_it_has_out(monkeypatch, tmp_path):
+    """The label moves when a branch is switched; the commit is what lasts."""
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    a_venv(tmp_path / "homr-venv", branch="main")
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+    checkout = a_checkout(tmp_path / "homr", branch="main")
+    monkeypatch.setattr(omr, "CHECKOUT", checkout)
+
+    head = subprocess.run(["git", "-C", checkout, "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    tree = omr.engines()[1]
+    assert tree.commit == head
+    assert tree.dirty is False
+
+
+def test_an_edited_checkout_says_so(monkeypatch, tmp_path):
+    """A commit is a claim about what ran, and an edited working copy breaks it."""
+    monkeypatch.delenv("HOMR_BIN", raising=False)
+    a_venv(tmp_path / "homr-venv", branch="main")
+    monkeypatch.setattr(omr, "DEFAULT_VENV", str(tmp_path / "homr-venv"))
+    checkout = a_checkout(tmp_path / "homr", branch="main")
+    monkeypatch.setattr(omr, "CHECKOUT", checkout)
+    with open(os.path.join(checkout, "homr", "__init__.py"), "w") as f:
+        f.write("# an uncommitted edit\n")
+
+    assert omr.engines()[1].dirty is True
+
+
+def _xml(tmp_path, name="page.musicxml"):
+    path = tmp_path / name
+    path.write_bytes(b'<?xml version="1.0" encoding="UTF-8"?>\n'
+                     b"<score-partwise><part-list/></score-partwise>\n")
+    return str(path)
+
+
+def test_a_parse_says_which_homr_read_it(tmp_path):
+    engine = omr.Engine(key="system-4", label="prototype/system-4 — system-4",
+                        command=["/x"], commit="abc1234def", dirty=True)
+    path = _xml(tmp_path)
+    omr.stamp_provenance(path, engine)
+
+    said = open(path, encoding="utf-8").read()
+    assert "homr-engine" in said and "prototype/system-4" in said
+    assert said.index("homr-engine") > said.index("<?xml"), "after the declaration"
+    assert omr.read_provenance(path) == {
+        "engine": "system-4", "label": "prototype/system-4 — system-4",
+        "commit": "abc1234def", "dirty": True}
+
+
+def test_a_fragment_nobody_stamped_reads_as_unknown(tmp_path):
+    """Every fragment on the host today, and there is no way to recover better."""
+    assert omr.read_provenance(_xml(tmp_path)) is None
+    assert omr.read_provenance(str(tmp_path / "no-such-file")) is None
+
+
+def test_the_line_comes_back_off_byte_for_byte(tmp_path):
+    """What makes this provenance and not a stamp: the parse itself is unchanged."""
+    path = _xml(tmp_path)
+    original = open(path, "rb").read()
+    omr.stamp_provenance(path, omr.Engine(key="default", label="installed: main @ 3fe86a3",
+                                          command=["/x"], commit="3fe86a3"))
+    stamped = open(path, "rb").read()
+
+    assert stamped != original
+    assert omr.strip_provenance(stamped) == original
+    assert omr.strip_provenance(original) == original, "nothing to strip is untouched"
+
+
+def test_stamping_twice_leaves_one_line(tmp_path):
+    """Re-reading replaces the record rather than piling records up."""
+    path = _xml(tmp_path)
+    first = omr.Engine(key="default", label="installed: main", command=["/x"], commit="aaa")
+    second = omr.Engine(key="wt", label="branch — wt", command=["/x"], commit="bbb")
+    omr.stamp_provenance(path, first)
+    omr.stamp_provenance(path, second)
+
+    assert open(path, encoding="utf-8").read().count("homr-engine") == 1
+    assert omr.read_provenance(path)["commit"] == "bbb"
+
+
+def test_a_label_cannot_break_the_comment(tmp_path):
+    """Branch names are people's, and `--` ends an XML comment."""
+    path = _xml(tmp_path)
+    omr.stamp_provenance(path, omr.Engine(
+        key="wt", label='we--ird "name"', command=["/x"], commit="c0ffee"))
+
+    etree.parse(path)              # still parseable, which is the whole worry
+    assert omr.read_provenance(path)["commit"] == "c0ffee"

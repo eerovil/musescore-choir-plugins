@@ -29,6 +29,17 @@ band 7 costs band 7 and nothing else -- band 8 asks for a fresh slot of its own,
 which is a request that queues behind whoever the cores went to rather than
 competing with them.
 
+**A fragment says which homr read it, and that record invalidates nothing.**
+This pull request proposes it (#154, #157). The identity goes into the MusicXML
+itself as well as into the song's state, because a fragment is routinely read
+straight off disk by something that never opens the app — that is exactly how
+#129 came to spend a session diagnosing a defect that had already been fixed.
+It is provenance and not a stamp: :func:`content_stamp` steps over it, so
+upgrading homr discards no fragment, drops no grid answer and takes away no
+reviewer's approval. Re-reading stays what it already is, a person pressing a
+button. Fragments read before this read as **unknown**, which is the true value
+rather than a gap.
+
 **Everything here is derived, and derived things go stale.** The fragments are
 derived from the bands, the grid answers from the fragments, the input score from
 the fragments, and the reviewer's approval from all of it. When an input changes,
@@ -117,15 +128,22 @@ def content_stamp(path: str) -> str:
     up. Re-reading a band therefore invalidates them exactly when the reading
     came out different, which is the only time anything derived from it was
     wrong.
+
+    **Which homr read it is deliberately not part of this.** The fragment
+    carries that identity as a comment line (:func:`omr.stamp_provenance`) and
+    it is stepped over here, because it is provenance and not a stamp: the same
+    crop read again by a newer homr with the same result is the same reading,
+    and charging a person their grid answers and their approval for an upgrade
+    is the hours of re-reading #154 decided against. Stripping it textually also
+    keeps every stamp already recorded on this host unchanged — a file with no
+    such line hashes exactly as it always did.
     """
-    digest = hashlib.sha1()
     try:
         with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                digest.update(chunk)
+            data = omr.strip_provenance(f.read())
     except OSError:
         return ""
-    return digest.hexdigest()[:12]
+    return hashlib.sha1(data).hexdigest()[:12]
 
 
 def revision(song: state.Song) -> str:
@@ -197,6 +215,11 @@ def status(song: state.Song) -> Dict:
     band, and an assembled score that matches what was read. ``approved`` is the
     gate on *leaving* the stage, and it is a separate thing: complete says the app
     has a score, approved says a person has looked at it.
+
+    ``homr`` says which homr read each system and ``homr_now`` which one this host
+    would use today, so the panel can show both. Neither gates anything: a system
+    read by an older homr is still read, and an approval made under one is still
+    an approval (#154).
     """
     bands = pdf_systems.load_bounds(song.dir)
     fragments = _fragments(song)
@@ -223,11 +246,26 @@ def status(song: state.Song) -> Dict:
         "pages_without_bands": pages_without_bands(song, bands),
         "approved": bool(ok.get("revision")) and ok["revision"] == current,
         "ever_approved": bool(ok),
+        "homr": {str(i): fragments[i].get("homr") for i in sorted(fragments)
+                 if not fragments[i].get("error")},
+        "homr_now": current_homr(),
         "new_since_ok": [i for i in sorted(fragments)
                          if not fragments[i].get("error")
                          and seen.get(str(i)) != fragments[i].get("content")]
         if ok else [],
     }
+
+
+def current_homr() -> Optional[Dict]:
+    """The homr this host would read a page with today, or ``None`` without one.
+
+    It is what a fragment's own record is held against, and nothing more than
+    that: an upgrade is a thing the panel says, never a thing it acts on.
+    """
+    try:
+        return omr.provenance(omr.default_engine()) or None
+    except OSError:
+        return None
 
 
 def fragment_path(song: state.Song, index: int) -> Optional[str]:
@@ -432,10 +470,10 @@ def run(
     anything derived from it was wrong.
 
     ``engine`` reads with a homr other than the installed one (:func:`omr.engines`)
-    — a working copy of the fork being tried against this repertoire. It is not recorded: what a
-    fragment has to carry is what came back, not what produced it, and the
-    comparison people actually make is re-reading one system with the other
-    engine and looking at both.
+    — a working copy of the fork being tried against this repertoire. Whichever
+    one runs, **what it was is recorded on the fragment it produced** — in the
+    MusicXML itself and in the song's state — and recorded is all it is: it
+    invalidates nothing, here or in :func:`reconcile`.
     """
     pdf = song.source_path("pdf")
     if not pdf or not os.path.exists(pdf):
@@ -500,6 +538,11 @@ def _read_one(song: state.Song, pdf: str, band: SystemBounds, stamp: str,
         entry.update(
             musicxml=os.path.relpath(produced.musicxml, song.dir),
             content=content_stamp(produced.musicxml),
+            # Which homr read it, taken back out of the file rather than from
+            # the engine argument, so the two accounts of it cannot disagree —
+            # and `None` when whatever ran left no line, which is a fragment
+            # reading as unknown rather than a gap.
+            homr=omr.read_provenance(produced.musicxml),
             staves=produced.width,
             bars=produced.bars,
             error=None,

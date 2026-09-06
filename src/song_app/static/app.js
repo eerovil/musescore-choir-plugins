@@ -449,6 +449,42 @@ async function compareView(view, slug) {
   };
 }
 
+// ---- which homr read a system -----------------------------------------------
+// Recorded and shown, and that is the whole of it (#154). An upgrade discards no
+// fragment, drops no grid answer and takes no approval away; the only thing that
+// re-reads a system is a person pressing one of the buttons that were already
+// here. The label is what a person recognises and the commit is what actually
+// decides, because `main` in a working copy means a different commit next week.
+function homrName(rec) {
+  if (!rec || (!rec.label && !rec.commit)) return "unknown";
+  return (rec.label || rec.commit.slice(0, 7)) + (rec.dirty ? " + uncommitted edits" : "");
+}
+
+// null, not false, when either side cannot say — "nobody knows" is its own
+// answer here and must not be shown as "a different homr".
+function homrIsCurrent(rec, now) {
+  if (!rec || !now || !rec.commit || !now.commit) return null;
+  return rec.commit === now.commit && !rec.dirty && !now.dirty;
+}
+
+function homrGroups(st) {
+  const by = new Map();
+  for (const [i, rec] of Object.entries(st.homr || {})) {
+    const name = homrName(rec);
+    if (!by.has(name)) by.set(name, []);
+    by.get(name).push(Number(i));
+  }
+  return [...by.entries()].map(([name, ids]) => [name, ids.sort((a, b) => a - b)]);
+}
+
+function homrDrift(st) {
+  const all = Object.values(st.homr || {});
+  return {
+    stale: all.some((r) => homrIsCurrent(r, st.homr_now) === false),
+    unknown: all.some((r) => homrIsCurrent(r, st.homr_now) === null),
+  };
+}
+
 // ---- Scan vs page: each printed system above what the scan read off it -------
 // The same idiom as Compare, one stage earlier and against the parse rather than
 // the cleaned score. Cropping first is not a nicety: a whole A4 rendered small
@@ -484,6 +520,12 @@ function scannedView(view, song, slug) {
           : el("img", { className: "cmpimg", loading: "lazy",
                         src: `${P}/scan-system/${i}?dpi=200`,
                         alt: `scanned system ${i}` }),
+      // Which homr read this one, where the reading is being judged. It says so
+      // and does nothing about it.
+      bad ? "" : el("div", { className: "hint scanby" },
+        "read by " + homrName((st.homr || {})[String(i)])
+        + (homrIsCurrent((st.homr || {})[String(i)], st.homr_now) === false
+           ? " — not the homr installed now" : "")),
       rereadRow(slug, i, bad),
     ));
   }
@@ -976,9 +1018,10 @@ function panelScan(panel, song, P, refresh, actions) {
 
   // Which homr reads the page. Only offered when this host has more than one
   // installed (HOMR_BRANCH=... scripts/install-homr.sh) — a picker with a single
-  // entry is furniture. The choice lasts this scan run and nothing records it:
-  // two engines are compared by reading a system with one, then the other, and
-  // looking at both against the page.
+  // entry is furniture. The choice lasts this scan run; what it resolved to is
+  // recorded on each fragment it reads and shown under "Read by". Two engines are
+  // compared by reading a system with one, then the other, and looking at both
+  // against the page.
   let engine = null;
   const engineRow = el("div", { className: "row" });
   panel.append(engineRow);
@@ -1049,6 +1092,8 @@ function panelScan(panel, song, P, refresh, actions) {
         el("button", { disabled: running, onclick: () => rerun([i]) }, String(i)))));
   }
 
+  if (st.read) panel.append(scanProvenance(st));
+
   if (running)
     panel.append(el("div", { className: "banner" },
       "● Scanning… recent messages are saved below."));
@@ -1064,10 +1109,42 @@ function panelScan(panel, song, P, refresh, actions) {
   panel.append(makeLog(job));
 }
 
+// Which homr read the systems of this scan. Said, never acted on: a song whose
+// systems were read by an older homr is not re-read for it, because the crop is
+// the same crop and the parse is still the parse (#154). What it buys is the
+// session #129 spent diagnosing a defect that had already been fixed, in a
+// fragment nothing said was old.
+function scanProvenance(st) {
+  const groups = homrGroups(st);
+  if (!groups.length) return "";
+  const { stale, unknown } = homrDrift(st);
+  return el("section", { className: "scanby" },
+    el("h3", {}, "Read by"),
+    ...groups.map(([name, ids]) =>
+      el("p", { className: "hint" }, `${name} — system(s) ${ids.join(", ")}`)),
+    st.homr_now ? el("p", { className: "hint" },
+      "Installed now: " + homrName(st.homr_now) + ".") : "",
+    stale || unknown
+      ? el("p", { className: "warn" },
+        (stale ? "Some systems were read by a different homr than the one installed now. " : "")
+        + (unknown ? "Some were read before the app recorded which homr read them. " : "")
+        + "Nothing has been discarded for it. Read a system again above if you want "
+        + "this homr's reading of it.")
+      : "");
+}
+
 function scanApproval(st, song, P, refresh, actions, openScanned) {
-  if (st.approved)
+  if (st.approved) {
+    const { stale, unknown } = homrDrift(st);
     return el("div", { className: "banner good" },
-      "You have said this reading of the page is right. The song is on Clean.");
+      "You have said this reading of the page is right. The song is on Clean.",
+      // An OK is about the printed page, and the page has not changed — so an
+      // upgrade says this and does not take the OK away.
+      stale || unknown ? el("div", { className: "hint" },
+        "Some of what you approved was read by "
+        + (stale ? "an older homr" : "a homr nobody recorded")
+        + ". Your OK stands; re-read a system if you want to look again.") : "");
+  }
   const fresh = st.new_since_ok || [];
   const okBtn = el("button", { className: "primary", onclick: async () => {
     okBtn.disabled = true;

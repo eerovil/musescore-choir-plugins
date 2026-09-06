@@ -96,7 +96,7 @@ def _bands(song, count):
     ])
 
 
-def _read(song, systems, failed=()):
+def _read(song, systems, failed=(), homr=None):
     """Leave the song looking as a scan of `systems` bands would leave it."""
     _bands(song, systems)
     os.makedirs(song.path(scan.FRAGMENT_DIR), exist_ok=True)
@@ -118,6 +118,7 @@ def _read(song, systems, failed=()):
             fh.write("<score-partwise/>")
         fragments[str(index)] = {"index": index, "band": stamps[index],
                                  "musicxml": name, "content": f"read{index}",
+                                 "homr": homr,
                                  "staves": 2, "bars": 4, "error": None}
     song.data["scan"] = {"systems": fragments}
     song.data.pop("review", None)
@@ -310,4 +311,69 @@ def test_the_compare_rows_re_read_the_system_being_looked_at(live, page, monkeyp
 
     assert asked == [[3]]
     assert "lapses your OK" in row.inner_text()
+    assert not errors, f"the panel raised: {errors}"
+
+
+# --- which homr read it, as the operator sees it --------------------------
+#
+# Shown, and only shown. #129 read a fragment produced before a fix and spent a
+# session diagnosing a defect that no longer existed; nothing on the page said
+# it was old. What is under test here is that the panel says it and takes
+# nothing away for it (#154).
+
+OLD_HOMR = {"engine": "default", "label": "installed: main @ aaaaaaa",
+            "commit": "a" * 40, "dirty": False}
+NEW_HOMR = server.omr.Engine(key="default", label="installed: main @ bbbbbbb",
+                             command=["/a/homr"], default=True, commit="b" * 40)
+
+
+def test_the_panel_says_which_homr_read_each_system(live, page, monkeypatch):
+    base, song = live
+    _read(state.load(song.slug), 3, homr=OLD_HOMR)
+    monkeypatch.setattr(server.omr, "default_engine", lambda: NEW_HOMR)
+    errors = _open(page, base, song.slug)
+
+    assert page.get_by_text("installed: main @ aaaaaaa — system(s) 1, 2, 3").is_visible()
+    assert page.get_by_text("Installed now: installed: main @ bbbbbbb").is_visible()
+    # It says the difference and then says it costs nothing, which is the
+    # decision: an upgrade is not a reason to re-read 48 songs.
+    assert page.get_by_text("Nothing has been discarded for it").is_visible()
+    assert state.load(song.slug).stage == "scan"
+    assert not errors, f"the panel raised: {errors}"
+
+
+def test_a_fragment_nobody_recorded_reads_as_unknown(live, page, monkeypatch):
+    """Every fragment already on the host, said out loud rather than left blank."""
+    base, song = live
+    _read(state.load(song.slug), 2, homr=None)
+    monkeypatch.setattr(server.omr, "default_engine", lambda: NEW_HOMR)
+    errors = _open(page, base, song.slug)
+
+    assert page.get_by_text("unknown — system(s) 1, 2").is_visible()
+    assert page.get_by_text("before the app recorded which homr read them").is_visible()
+    assert not errors, f"the panel raised: {errors}"
+
+
+def test_an_ok_given_under_an_older_homr_is_not_taken_away(live, page, monkeypatch):
+    """The reviewer approved the printed page, and the page has not changed."""
+    base, song = live
+    fresh = _read(state.load(song.slug), 3, homr=OLD_HOMR)
+    fresh.data["scan"]["ok"] = {"revision": scan.revision(fresh),
+                                "systems": {"1": "read1", "2": "read2", "3": "read3"}}
+    fresh.set_stage("clean")
+    fresh.save()
+    monkeypatch.setattr(server.omr, "default_engine", lambda: NEW_HOMR)
+    # An approved song is on Clean, so the Scan panel is reached from the rail.
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/#/song/{song.slug}")
+    page.wait_for_selector(".panel h2")
+    page.locator(".stagebar .step", has_text="Scan").first.click()
+    page.wait_for_selector(".panel h2:text('Scan')")
+
+    assert page.get_by_text("was read by an older homr").is_visible()
+    assert page.get_by_text("Your OK stands").is_visible()
+    assert page.get_by_role(
+        "button", name="This reading is right — continue to Clean").count() == 0
+    assert state.load(song.slug).stage == "clean", "nobody was sent back to Scan"
     assert not errors, f"the panel raised: {errors}"

@@ -64,6 +64,10 @@ class Reader:
         self.engines = []
         self.fail = {}
         self.staves, self.bars = staves, bars
+        # What `read_page` would stamp the parse with when the caller named no
+        # engine. None stands for a homr that left no record -- every fragment
+        # already on the host.
+        self.installed = None
 
     def crop(self, pdf_path, bounds, out_dir, dpi=400):
         os.makedirs(out_dir, exist_ok=True)
@@ -84,6 +88,10 @@ class Reader:
         out = os.path.join(out_dir, f"system-{image.index:02d}.musicxml")
         with open(out, "w", encoding="utf-8") as f:
             f.write(_fragment_xml(self.staves, self.bars))
+        # `omr.read_page` writes the identity of whatever read the page into the
+        # parse itself, so the stub does too -- the stage reads it back out of
+        # the file rather than being told.
+        omr.stamp_provenance(out, engine or self.installed)
         return omr_systems.SystemScan(index=image.index, musicxml=out,
                                       staves=omr_systems.flatten(out))
 
@@ -666,8 +674,10 @@ def test_the_panel_is_told_what_is_installed(client, monkeypatch):
     body = client.get("/api/homr-engines").json()
 
     assert body["engines"] == [
-        {"key": "default", "label": "main", "default": True},
-        {"key": "system-4", "label": "prototype/system-4", "default": False},
+        {"key": "default", "label": "main", "default": True,
+         "commit": "", "dirty": False},
+        {"key": "system-4", "label": "prototype/system-4", "default": False,
+         "commit": "", "dirty": False},
     ]
 
 
@@ -722,3 +732,127 @@ def test_a_system_read_again_is_engraved_again(tmp_path, monkeypatch):
     assert open(again, "rb").read() == b"second reading"
     # And nothing is left behind for the next render to trip over.
     assert not os.path.exists(os.path.splitext(again)[0] + "-1.png")
+
+
+# --- which homr read it ---------------------------------------------------
+#
+# Recorded on the fragment, in the file and in the state, and **invalidating
+# nothing** (#154). The reader that has to be reached is the one that never opens
+# the app: #129 spent a session diagnosing a defect that had already been fixed,
+# out of a fragment nothing said was old.
+
+
+HOMR_A = omr.Engine(key="default", label="installed: main @ aaaaaaa",
+                    command=["/a/homr"], default=True, commit="a" * 40)
+HOMR_B = omr.Engine(key="system-4", label="prototype/system-4 — system-4",
+                    command=["/b/python"], commit="b" * 40)
+
+
+def test_a_fragment_records_which_homr_read_it(songs, reader):
+    song = _song(songs, bands=2)
+    reader.installed = HOMR_A
+
+    scan.run(song)
+
+    fresh = _reload(song)
+    entry = fresh.data["scan"]["systems"]["1"]
+    assert entry["homr"] == {"engine": "default", "label": "installed: main @ aaaaaaa",
+                            "commit": "a" * 40, "dirty": False}
+    # And in the file, which is what a reader opening it off disk sees.
+    assert omr.read_provenance(fresh.path(entry["musicxml"]))["commit"] == "a" * 40
+    assert scan.status(fresh)["homr"]["2"]["label"] == "installed: main @ aaaaaaa"
+
+
+def test_a_fragment_read_before_this_reads_as_unknown(songs, reader):
+    """The correct value for every fragment already on the host, not a gap."""
+    song = _song(songs, bands=1)
+    reader.installed = None                       # nothing stamped the parse
+
+    scan.run(song)
+
+    assert _reload(song).data["scan"]["systems"]["1"]["homr"] is None
+    assert scan.status(_reload(song))["homr"] == {"1": None}
+
+
+def test_the_homr_installed_now_is_reported_beside_it(songs, reader, monkeypatch):
+    song = _song(songs, bands=1)
+    reader.installed = HOMR_A
+    scan.run(song)
+    monkeypatch.setattr(omr, "default_engine", lambda: HOMR_B)
+
+    st = scan.status(_reload(song))
+
+    assert st["homr"]["1"]["commit"] == "a" * 40
+    assert st["homr_now"]["commit"] == "b" * 40, "so the panel can say they differ"
+
+
+def test_upgrading_homr_discards_nothing(songs, reader, monkeypatch, tmp_path):
+    """The crop is the same crop and the parse is still the parse (#154).
+
+    An upgrade is a person running one script; 48 songs re-reading themselves
+    for it is the cost that decided this is provenance and not a stamp.
+    """
+    with per_system.use_answer_file(str(tmp_path / "answers.json")):
+        song = _song(songs, bands=2)
+        reader.installed = HOMR_A
+        scan.run(song)
+        song = _reload(song)
+        _answer(song, 1, 2)
+        scan.approve(song)
+        song = _reload(song)
+
+        monkeypatch.setattr(omr, "default_engine", lambda: HOMR_B)
+        assert scan.reconcile(song) == []
+
+        st = scan.status(_reload(song))
+        assert st["approved"] is True and st["complete"] is True
+        assert _reload(song).stage == "clean", "nobody is sent back to Scan for it"
+        assert per_system.saved_answers(
+            song.path(song.data["scan"]["assembled"])) == {1: {1: "T1", 2: "T2"},
+                                                           2: {1: "T1", 2: "T2"}}
+
+
+def test_another_homr_reading_the_same_music_costs_nothing(songs, reader, monkeypatch, tmp_path):
+    """The content stamp is the music, not the reader.
+
+    This is what stops the record behaving like a stamp by the back door: the
+    provenance line lives *in* the fragment, so hashing the file raw would move
+    the content stamp on every re-read with another engine and take the answers
+    and the OK with it.
+    """
+    with per_system.use_answer_file(str(tmp_path / "answers.json")):
+        song = _song(songs, bands=2)
+        reader.installed = HOMR_A
+        scan.run(song)
+        song = _reload(song)
+        _answer(song, 1, 2)
+        scan.approve(song)
+        before = _reload(song).data["scan"]["systems"]["2"]["content"]
+
+        scan.run(_reload(song), only=[2], engine=HOMR_B)
+
+        fresh = _reload(song)
+        entry = fresh.data["scan"]["systems"]["2"]
+        assert entry["content"] == before, "the same music read again is the same reading"
+        assert entry["homr"]["commit"] == "b" * 40, "but it says who read it this time"
+        st = scan.status(fresh)
+        assert st["approved"] is True and st["new_since_ok"] == []
+        assert fresh.stage == "clean"
+
+
+def test_a_different_reading_still_costs_what_it_always_did(songs, reader, tmp_path):
+    """The other half: this is not a licence to keep answers that went stale."""
+    with per_system.use_answer_file(str(tmp_path / "answers.json")):
+        song = _song(songs, bands=2)
+        reader.installed = HOMR_A
+        scan.run(song)
+        song = _reload(song)
+        _answer(song, 1, 2)
+        scan.approve(song)
+
+        reader.staves = 3                        # the new homr reads it differently
+        scan.run(_reload(song), only=[2], engine=HOMR_B)
+
+        st = scan.status(_reload(song))
+        assert st["approved"] is False and st["new_since_ok"] == [2]
+        assert _reload(song).stage == "scan"

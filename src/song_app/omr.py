@@ -54,6 +54,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -142,11 +143,13 @@ def homr_available(binary: Optional[str] = None) -> bool:
 # parse is only accounted for by what the checkout says at the time. The
 # installed venv stays as it was — an immutable-ish default to compare against.
 #
-# The choice is per scan run and is not recorded anywhere: which homr read a
-# system is not something the app reasons about, and a fragment already carries
-# the stamp that matters (what came back). Two engines are compared by reading a
-# system with one and then the other, which is the retry button that already
-# exists.
+# The choice is per scan run, and this pull request proposes that **what it
+# resolved to is recorded on every parse it produces** (#154, #157). The label is
+# what a person recognises and is useless as a record — `main` in a working copy
+# means a different commit next week — so the record is the **commit**, with the
+# label kept as the hint, and a **dirty** working copy says so or the commit is a
+# claim about code that is not what ran. It is provenance and not a stamp:
+# :func:`scan.content_stamp` steps over it, so an upgrade discards nothing.
 
 
 @dataclass(frozen=True)
@@ -156,6 +159,12 @@ class Engine:
     ``command`` is the argv the image path is appended to, and ``env`` is what
     has to be added to the environment for it — ``PYTHONPATH`` for a checkout,
     nothing at all for the installed venv.
+
+    ``commit`` and ``dirty`` are what a parse is recorded against. They come
+    from the same place the label does — pip's own metadata for the installed
+    venv, git for a working copy — and ``dirty`` is not a detail: a working copy
+    with uncommitted edits ran code that is not at ``commit``, and a record that
+    did not say so would be worse than no record at all.
     """
 
     key: str
@@ -163,6 +172,8 @@ class Engine:
     command: List[str]
     env: Dict[str, str] = field(default_factory=dict)
     default: bool = False
+    commit: Optional[str] = None
+    dirty: bool = False
 
 
 #: Written by the installer into the venv it builds, saying what is in it.
@@ -186,7 +197,7 @@ def _marker(venv: str) -> dict:
     return dict(line.split("=", 1) for line in lines if "=" in line)
 
 
-def _installed_from(venv: str) -> Optional[str]:
+def _installed_vcs(venv: str) -> Dict[str, str]:
     """What pip actually installed, read out of the wheel's own metadata.
 
     ``direct_url.json`` records the revision that was asked for and the commit
@@ -194,6 +205,8 @@ def _installed_from(venv: str) -> Optional[str]:
     cannot be out of date. Saying "main" without it was a guess: the venv here
     predates the marker file, so the label read `main` and would have read
     `main` whatever commit had been installed.
+
+    Returns ``{"revision": ..., "commit": ...}``, either of which may be absent.
     """
     for info in sorted(glob.glob(os.path.join(
             venv, "lib", "python3.*", "site-packages", "homr-*.dist-info"))):
@@ -203,12 +216,18 @@ def _installed_from(venv: str) -> Optional[str]:
         except (OSError, ValueError):
             continue
         vcs = direct.get("vcs_info") or {}
-        revision = vcs.get("requested_revision")
-        commit = (vcs.get("commit_id") or "")[:7]
-        if revision and commit:
-            return f"{revision} @ {commit}"
-        return revision or commit or None
-    return None
+        return {k: v for k, v in (("revision", vcs.get("requested_revision")),
+                                  ("commit", vcs.get("commit_id"))) if v}
+    return {}
+
+
+def _installed_from(venv: str) -> Optional[str]:
+    """The installed engine's label: the revision asked for, at the commit."""
+    vcs = _installed_vcs(venv)
+    revision, commit = vcs.get("revision"), vcs.get("commit", "")[:7]
+    if revision and commit:
+        return f"{revision} @ {commit}"
+    return revision or commit or None
 
 
 def default_engine() -> Optional[Engine]:
@@ -227,7 +246,8 @@ def default_engine() -> Optional[Engine]:
     label = (_installed_from(venv) or fields.get("branch")
              or fields.get("source") or "installed")
     return Engine(key=DEFAULT_ENGINE, label=f"installed: {label}",
-                  command=[binary], default=True)
+                  command=[binary], default=True,
+                  commit=_installed_vcs(venv).get("commit") or fields.get("commit"))
 
 
 def _venv_python() -> Optional[str]:
@@ -240,11 +260,14 @@ def _venv_python() -> Optional[str]:
 
 
 def _worktrees(checkout: str) -> List[tuple]:
-    """``(path, label)`` for the checkout and each of its git worktrees.
+    """``(path, label, commit)`` for the checkout and each of its git worktrees.
 
     The label is the branch, read now rather than remembered, because that is
     the whole point: switching a branch in a working copy changes the engine
-    without anything being reinstalled or re-registered.
+    without anything being reinstalled or re-registered. The commit comes off
+    the same listing, and it is what a parse is recorded against: a fragment
+    stamped ``main`` would say nothing a month later, which is exactly what left
+    #129 diagnosing a defect that had already been fixed.
     """
     try:
         out = subprocess.run(
@@ -254,18 +277,36 @@ def _worktrees(checkout: str) -> List[tuple]:
         return []
     if out.returncode != 0:
         return []
-    found, path, label = [], None, None
+    found, path, label, commit = [], None, None, None
     for line in out.stdout.splitlines() + [""]:
         if line.startswith("worktree "):
-            path, label = line[len("worktree "):], None
+            path, label, commit = line[len("worktree "):], None, None
+        elif line.startswith("HEAD "):
+            commit = line[len("HEAD "):].strip() or None
         elif line.startswith("branch "):
             label = line[len("branch refs/heads/"):]
         elif line.startswith("detached"):
             label = "detached"
         elif not line and path:
-            found.append((path, label or "detached"))
+            found.append((path, label or "detached", commit))
             path = None
     return found
+
+
+def _is_dirty(path: str) -> bool:
+    """Whether a working copy has edits that are not in its commit.
+
+    A commit is a claim about what ran, and an edited checkout breaks it — so
+    this is asked at the moment the engine is listed, next to the branch, and
+    for the same reason. A git that cannot answer reads as clean rather than
+    dirty: this is a caveat on a record, not a gate on running anything.
+    """
+    try:
+        out = subprocess.run(["git", "-C", path, "status", "--porcelain"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and bool(out.stdout.strip())
 
 
 #: What the checkout engines run. ``homr`` is a package with no ``__main__``, so
@@ -327,7 +368,7 @@ def engines() -> List[Engine]:
     if not python:
         return found
     used = {DEFAULT_ENGINE}
-    for path, label in _worktrees(CHECKOUT):
+    for path, label, commit in _worktrees(CHECKOUT):
         if not os.path.isdir(_package_dir(path)):
             continue                       # not a homr working copy after all
         key = os.path.basename(os.path.normpath(path))
@@ -340,7 +381,8 @@ def engines() -> List[Engine]:
         # be on branches that look alike.
         found.append(Engine(key=key, label=f"{label} — {key}",
                             command=[python, "-c", RUN_HOMR],
-                            env={"PYTHONPATH": path}))
+                            env={"PYTHONPATH": path},
+                            commit=commit, dirty=_is_dirty(path)))
     return found
 
 
@@ -366,6 +408,111 @@ def engine_for(key: Optional[str]) -> Engine:
         f"No homr engine called {key!r} is available. Engines are the installed "
         f"venv and the working copies under {CHECKOUT}; check it is checked out "
         "there, or scan with the default one.")
+
+
+# --- provenance ----------------------------------------------------------
+#
+# **Which homr read this, written into the parse itself** (#154, #157).
+#
+# The reader that has to be reached is not the app. #129 spent a session
+# diagnosing a defect that had already been fixed, from
+# `songs/test/scan/system-04@200-bedc89f000.musicxml` opened straight off disk by
+# something that never opened the Scan panel — so a record kept only in
+# `.song.json` would not have reached it. The file is what gets read in
+# isolation, so the file is what has to carry it.
+#
+# It is one comment line rather than a `<miscellaneous>` element on purpose: it
+# is inserted and removed textually, so a parse homr wrote comes back byte for
+# byte once the line is taken off again. That is what lets
+# :func:`scan.content_stamp` step over it, which is what makes this provenance
+# rather than a stamp — a fragment read again by a newer homr with the same
+# result costs nobody their grid answers or their approval.
+
+#: What the line is called, in the file and in the regex that finds it again.
+PROVENANCE_TAG = "homr-engine"
+
+_PROVENANCE_RE = re.compile(
+    rb"[ \t]*<!--\s*" + PROVENANCE_TAG.encode() + rb"\b[^\n]*?-->[ \t]*\n?")
+
+#: Where a comment can go: before the root element, after the declaration and
+#: any doctype. ``<?`` and ``<!`` are exactly those two.
+_ROOT_RE = re.compile(rb"<(?![?!])")
+
+_FIELD_RE = re.compile(r'(\w+)="([^"]*)"')
+
+
+def provenance(engine: Optional["Engine"]) -> Dict[str, object]:
+    """What to record about the homr that read a page.
+
+    The commit is the part that still means something later; the label is what
+    a person recognises and is worth nothing on its own, since ``main`` in a
+    working copy is a different commit next week. ``dirty`` says the working
+    copy had edits that are not in that commit.
+    """
+    if engine is None:
+        return {}
+    return {"engine": engine.key, "label": engine.label,
+            "commit": engine.commit or "", "dirty": bool(engine.dirty)}
+
+
+def _quotable(value: str) -> str:
+    """A value safe inside an XML comment attribute."""
+    return str(value).replace('"', "'").replace("--", "- -").replace("\n", " ")
+
+
+def provenance_comment(record: Dict[str, object]) -> bytes:
+    """The one line a fragment carries, as it is written into the file."""
+    fields = " ".join(
+        f'{k}="{_quotable(v)}"' for k, v in (
+            ("engine", record.get("engine", "")),
+            ("label", record.get("label", "")),
+            ("commit", record.get("commit", "")),
+            ("dirty", "yes" if record.get("dirty") else "no"),
+        ))
+    return f"<!-- {PROVENANCE_TAG} {fields} -->\n".encode("utf-8")
+
+
+def strip_provenance(data: bytes) -> bytes:
+    """The file as homr wrote it, with any provenance line taken back off.
+
+    Byte for byte, which is the point: it is what lets the content of a parse be
+    compared without the identity of its reader counting as content.
+    """
+    return _PROVENANCE_RE.sub(b"", data)
+
+
+def stamp_provenance(path: str, engine: Optional["Engine"]) -> None:
+    """Write which homr read this into the MusicXML, replacing any earlier line."""
+    record = provenance(engine)
+    if not record:
+        return
+    with open(path, "rb") as f:
+        data = strip_provenance(f.read())
+    match = _ROOT_RE.search(data)
+    at = match.start() if match else len(data)
+    with open(path, "wb") as f:
+        f.write(data[:at] + provenance_comment(record) + data[at:])
+
+
+def read_provenance(path: str) -> Optional[Dict[str, object]]:
+    """Which homr read a MusicXML file, or ``None`` when nobody knows.
+
+    ``None`` is the honest answer for every fragment that predates this and
+    there is no way to recover a better one — "nobody knows which homr wrote
+    this" is the state #129 was in, said out loud.
+    """
+    try:
+        with open(path, "rb") as f:
+            found = _PROVENANCE_RE.search(f.read())
+    except OSError:
+        return None
+    if not found:
+        return None
+    fields = dict(_FIELD_RE.findall(found.group().decode("utf-8", "replace")))
+    if not fields:
+        return None
+    return {"engine": fields.get("engine", ""), "label": fields.get("label", ""),
+            "commit": fields.get("commit", ""), "dirty": fields.get("dirty") == "yes"}
 
 
 def read_page(
@@ -394,7 +541,10 @@ def read_page(
     reads the page with a homr other than the installed one (:func:`engines`) —
     a working copy of the fork, run from its own source.
 
-    The MusicXML that comes back has had its slurs resolved (:func:`resolve_slurs`).
+    The MusicXML that comes back has had its slurs resolved (:func:`resolve_slurs`)
+    and carries one comment line saying which homr read it
+    (:func:`stamp_provenance`), so a parse read off disk on its own still says
+    where it came from.
     """
     if not os.path.exists(image_path):
         raise HomrError(f"No such image: {image_path}")
@@ -440,6 +590,10 @@ def read_page(
             )
 
         resolve_slurs_in(produced, log=watched)
+        # Last, so the parse carries the identity of whatever produced it
+        # however it got here — and so the line is the only thing between what
+        # homr wrote and what is on disk.
+        stamp_provenance(produced, engine)
         os.makedirs(os.path.dirname(destination), exist_ok=True)
         shutil.move(produced, destination)
 
