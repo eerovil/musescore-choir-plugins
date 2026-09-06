@@ -468,7 +468,10 @@ def api_homr_engines() -> Dict:
     App-wide, not per song: which engine reads a page is a property of the host,
     and the choice itself lasts one scan run.
     """
-    return {"engines": [{"key": e.key, "label": e.label, "default": e.default}
+    # The commit and the dirty flag ride along because they are what a parse is
+    # recorded against (#154) — the label is the hint, not the record.
+    return {"engines": [{"key": e.key, "label": e.label, "default": e.default,
+                         "commit": e.commit or "", "dirty": bool(e.dirty)}
                         for e in omr.engines()]}
 
 

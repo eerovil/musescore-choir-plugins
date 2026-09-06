@@ -983,10 +983,20 @@ state model are in `DESIGN.md`.
   for is worse than a refused request. `read_page(engine=...)` is the whole of the
   rest (an `Engine` carries its argv and the environment it needs), threaded through
   `omr_systems.read_system` and `scan.run`.
-  The choice is **per scan run and is not recorded**. What a fragment has to carry is
-  what came back, not what produced it, and comparing two engines is reading a system
-  with one and then the other — the retry button that already exists — and looking at
-  both against the page. `GET /api/homr-engines` is app-wide, because which homr a host
+  The choice is **per scan run**, and comparing two engines is reading a system with one
+  and then the other — the retry button that already exists — and looking at both against
+  the page. It used not to be recorded anywhere; this pull request proposes that **every
+  parse says which homr produced it** (#154, #157), and the reasoning is under `scan.py`
+  below. `read_page` writes it: one comment line before the root element, carrying the
+  engine key, the label, the **commit** and whether the working copy was **dirty**.
+  `Engine` carries the last two — pip's `direct_url.json` for the installed venv, `git
+  rev-parse` and `git status --porcelain` for a working copy, both read at the moment the
+  engine is listed, the same way the branch already is. The commit is the record and the
+  label is the hint: `main` in a working copy means a different commit next week. The line
+  is inserted and removed **textually** (`strip_provenance`), so taking it off gives back
+  the bytes homr wrote — which is what lets `scan.content_stamp` step over it, and is
+  therefore what keeps this provenance rather than a fourth stamp.
+  `GET /api/homr-engines` is app-wide, because which homr a host
   has is a property of the host; the Scan panel's **Read with** picker appears only
   when there is more than one, and the scan route resolves the key at the door so a
   missing engine is a 400 rather than a run that takes the lock and dies on band one.
@@ -1170,6 +1180,26 @@ state model are in `DESIGN.md`.
   writes only when something really was discarded), so it is said everywhere rather than
   at one route. A song with no scan returns at once, which is every song that predates
   the stage.
+  **A fragment also says which homr read it, and that is a third kind of thing: it is
+  provenance, and it invalidates nothing.** This pull request proposes it (#154, #157).
+  A parse carries the reading engine's commit, label and dirty flag in the MusicXML
+  itself as well as in `.song.json` — the file, because a fragment is routinely opened
+  straight off disk by something that never opens the app, which is exactly how #129 came
+  to spend a session diagnosing a defect that had been fixed months earlier. It is
+  deliberately **not** a `reconcile` row: the band and the content are what a fragment was
+  *made from*, and the reader is not — the crop is the same crop and the parse is still
+  the parse. Making it a stamp would discard 48 songs' fragments and re-read them for
+  hours because one person ran one script, to fix what is an information problem. So
+  `content_stamp` strips the provenance line before hashing, which means a system re-read
+  by a newer homr that came back the same costs its grid answers and the reviewer's
+  approval nothing; a reading that came back *different* costs exactly what it always did.
+  Upgrading homr discards nothing, re-reads nothing, and lapses no approval. Re-reading
+  stays what it already was — a person pressing the per-system or whole-song button.
+  Fragments made before this read as **unknown**, which is the true value: "nobody knows
+  which homr wrote this" is the state #129 was in, said out loud. `scan.status` puts the
+  per-system record and `homr_now` (the engine installed today) on the wire, and the Scan
+  panel's **Read by** section and the `Scan vs page` rows show them; the approval banner
+  may say it was given under an older homr and never takes it away.
   Measured end to end on the fixture, real crops and real homr: **15 systems, 201s, no
   holes, 52 bars** — the same bar count as the fixture's own cleaned score — every system
   finding the 2 staves the page prints.
@@ -1262,6 +1292,11 @@ state model are in `DESIGN.md`.
   applying to that run and its per-system retries. Trying a homr branch against real
   music otherwise meant editing `.env` or reinstalling over the engine being compared
   against; see the `omr.py` notes for why a branch is installed beside the default.
+  **And which homr actually read each system is shown** — a `Read by` section grouping the
+  systems by the engine that produced them, the engine installed today beside it, and one
+  line saying that a difference has discarded nothing and that re-reading is the button
+  above. The `Scan vs page` rows say the same per system, where the reading is being
+  judged. Proposed by this pull request (#157); the rule it follows is under `scan.py`.
   **Comparison is system by system**, in a `Scan vs page` viewer tab: each printed crop
   (`/system/{index}`) above what was read off it, engraved through MuseScore
   (`/scan-system/{index}` → `pipeline.scan_system_render`, `-T` so a one-system fragment
