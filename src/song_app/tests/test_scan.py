@@ -856,3 +856,103 @@ def test_a_different_reading_still_costs_what_it_always_did(songs, reader, tmp_p
         st = scan.status(_reload(song))
         assert st["approved"] is False and st["new_since_ok"] == [2]
         assert _reload(song).stage == "scan"
+
+
+# --- the record of a moved whole-measure rest (#164) ----------------------
+#
+# The repair is `omr.split_measure_rests`, at the boundary, and it is pinned in
+# test_omr.py. What this stage owns is the other half: telling somebody. A bar
+# the app quietly straightened is a bar cleaning will pad and health will then
+# say nothing about, which is a loudly wrong bar becoming a quietly wrong one.
+
+
+def _moved(reader, **by_system):
+    """Make the stub report moved rests for the named systems."""
+    original = reader.read_system
+
+    def read_system(image, out_dir, log=None, queue=True, engine=None):
+        produced = original(image, out_dir, log=log, queue=queue, engine=engine)
+        produced.moved_rests = [
+            omr.MovedRest(measure=str(bar), staff="2", was="5", now="7")
+            for bar in by_system.get(f"s{image.index}", ())
+        ]
+        return produced
+
+    reader.read_system = read_system
+    return read_system
+
+
+def _sentences(song):
+    return pipeline.free_text_fixes(song.dir)
+
+
+def test_a_moved_rest_is_written_down_as_an_outstanding_fix(songs, reader, monkeypatch):
+    monkeypatch.setattr(omr_systems, "read_system", _moved(reader, s2=[3]))
+    song = _song(songs, bands=3)
+    scan.run(song)
+
+    said = _sentences(_reload(song))
+    assert len(said) == 1
+    # Enough to find the bar on the page again, and what it now may be short of.
+    assert "system 2" in said[0] and "bar 3" in said[0]
+    assert "voice 5 -> 7" in said[0]
+    entries = json.load(open(os.path.join(song.dir, "fixes.json")))
+    assert entries[0]["kind"] == "text", "a sentence, not something replayed"
+    assert entries[0]["system"] == 2
+
+
+def test_reading_the_same_system_again_does_not_say_it_twice(songs, reader, monkeypatch):
+    monkeypatch.setattr(omr_systems, "read_system", _moved(reader, s2=[3]))
+    song = _song(songs, bands=3)
+    scan.run(song)
+    scan.run(_reload(song), only=[2])
+
+    assert len(_sentences(_reload(song))) == 1
+
+
+def test_a_re_read_that_moved_nothing_takes_the_sentence_away(songs, reader, monkeypatch):
+    monkeypatch.setattr(omr_systems, "read_system", _moved(reader, s2=[3]))
+    song = _song(songs, bands=3)
+    scan.run(song)
+    assert _sentences(_reload(song))
+
+    monkeypatch.setattr(omr_systems, "read_system", _moved(reader))
+    scan.run(_reload(song), only=[2])
+
+    assert _sentences(_reload(song)) == []
+
+
+def test_a_sentence_somebody_typed_is_never_touched(songs, reader, monkeypatch):
+    monkeypatch.setattr(omr_systems, "read_system", _moved(reader, s2=[3]))
+    song = _song(songs, bands=3)
+    with open(os.path.join(song.dir, "fixes.json"), "w", encoding="utf-8") as f:
+        json.dump([{"kind": "text", "what": "m4 tenor: take the second notehead off"}], f)
+    scan.run(song)
+
+    said = _sentences(_reload(song))
+    assert said[0].startswith("m4 tenor")
+    assert len(said) == 2
+
+
+def test_a_system_that_could_not_be_read_records_nothing(songs, reader, monkeypatch):
+    monkeypatch.setattr(omr_systems, "read_system", _moved(reader, s2=[3]))
+    song = _song(songs, bands=3)
+    reader.fail[2] = omr.HomrError("homr fell over")
+    scan.run(song)
+
+    assert _sentences(_reload(song)) == []
+
+
+def test_a_broken_fixes_file_costs_the_record_and_not_the_reading(songs, reader,
+                                                                  monkeypatch):
+    """Twenty bands of homr is the expensive thing here; cleaning refuses properly."""
+    monkeypatch.setattr(omr_systems, "read_system", _moved(reader, s2=[3]))
+    song = _song(songs, bands=3)
+    with open(os.path.join(song.dir, "fixes.json"), "w", encoding="utf-8") as f:
+        f.write("{ not json")
+
+    lines = []
+    result = scan.run(song, log=lines.append)
+
+    assert result["complete"] and result["holes"] == []
+    assert any("fixes.json" in line for line in lines), lines

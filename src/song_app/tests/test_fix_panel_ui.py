@@ -208,3 +208,36 @@ def test_the_review_stage_shows_the_findings_behind_the_collapsed_line(live, pag
     song.data["health"] = {"checked_against": None, "issues": []}
     song.data["stage"] = "fix"
     song.save()
+
+
+def test_a_rest_the_scan_moved_is_listed_as_outstanding(live, page):
+    """#164's other half, where it is actually felt.
+
+    The repair straightens the bar at the boundary and cleaning then pads what
+    is left, so health goes quiet — a loudly wrong bar becoming a quietly wrong
+    one. This panel is the only place anybody is told it happened, so the
+    sentence is written by `record_scan_repairs` here rather than typed, and
+    what is on screen is what a real scan would leave.
+    """
+    from src.song_app import pipeline
+
+    base, song = live
+    path = os.path.join(song.dir, "fixes.json")
+    if os.path.exists(path):
+        os.remove(path)
+    song.data["health"] = {"checked_against": None, "issues": []}
+    song.save()
+    pipeline.record_scan_repairs(
+        song.dir, 3, [{"measure": "2", "staff": "2", "was": "5", "now": "7"}])
+    errors = _open_fix(page, base, song.slug)
+
+    assert page.get_by_text("printed system 3, bar 2").is_visible()
+    assert page.get_by_text("not applied automatically").is_visible()
+
+    evidence = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))), "evidence")
+    os.makedirs(evidence, exist_ok=True)
+    page.screenshot(path=os.path.join(evidence, "issue-164-moved-rest-recorded.png"),
+                    full_page=True)
+    assert not errors, f"the panel raised: {errors}"
+    os.remove(path)

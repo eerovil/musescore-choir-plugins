@@ -806,3 +806,190 @@ def test_a_label_cannot_break_the_comment(tmp_path):
 
     etree.parse(path)              # still parseable, which is the whole worry
     assert omr.read_provenance(path)["commit"] == "c0ffee"
+
+
+# --- whole-measure rests (#164) ------------------------------------------
+#
+# homr has no way to say "second voice on this staff", so a printed whole-bar
+# rest and the notes engraved beside it come out sharing one <voice> and the
+# bar overfills by a whole note. The rule moves the rest out. The bar it was
+# diagnosed against is committed beside these tests rather than read out of
+# `songs/`, which is live and changed under #130 once already.
+
+FRAGMENT = os.path.join(os.path.dirname(__file__), "test_files",
+                        "shared_whole_rest.musicxml")
+
+
+def a_measure(body, number="1"):
+    return etree.fromstring(
+        f'<part id="P1"><measure number="{number}">'
+        "<attributes><divisions>4</divisions></attributes>"
+        f"{body}</measure></part>")
+
+
+def note(duration, voice, kind="quarter", rest=False, staff="1", chord=False):
+    return ("<note>" + ("<chord/>" if chord else "")
+            + ("<rest/>" if rest else
+               "<pitch><step>C</step><octave>4</octave></pitch>")
+            + f"<duration>{duration}</duration><type>{kind}</type>"
+            + f"<voice>{voice}</voice><staff>{staff}</staff></note>")
+
+
+def voice_lengths(part, number="1"):
+    """How long each voice of a measure is, by the cursor rules the file uses.
+
+    Written out here rather than imported, so the test measures the XML the way
+    a reader would rather than the way the code under test does.
+    """
+    measure = [m for m in part.findall("measure") if m.get("number") == number][0]
+    cursor = previous = 0
+    ends = {}
+    for el in measure:
+        if el.tag == "backup":
+            cursor -= int(el.findtext("duration"))
+        elif el.tag == "forward":
+            cursor += int(el.findtext("duration"))
+        elif el.tag == "note":
+            length = int(el.findtext("duration") or 0)
+            voice = el.findtext("voice") or "1"
+            if el.find("chord") is not None:
+                ends[voice] = max(ends.get(voice, 0), previous + length)
+            else:
+                assert cursor >= 0, "the cursor went behind the start of the bar"
+                ends[voice] = max(ends.get(voice, 0), cursor + length)
+                previous, cursor = cursor, cursor + length
+    return ends
+
+
+def test_a_whole_rest_sharing_a_voice_is_moved_out():
+    """The rule, on the shape it was written for."""
+    part = a_measure(note(16, 5, "whole", rest=True) + note(16, 5, "whole"))
+    moved = omr.split_measure_rests(part)
+
+    assert [(m.was, m.now) for m in moved] == [("5", "6")]
+    assert voice_lengths(part) == {"5": 16, "6": 16}
+
+
+def test_the_notes_behind_it_move_back_into_the_room_it_was_taking():
+    """The bar has to get shorter, which relabelling the voice alone would not do.
+
+    This is the diagnosed bar's shape: a whole rest in front of a half, a dotted
+    eighth and a 16th, 28 divisions of a 16-division bar.
+    """
+    part = a_measure(note(16, 5, "whole", rest=True) + note(8, 5, "half")
+                     + note(3, 5, "eighth") + note(1, 5, "16th"))
+    omr.split_measure_rests(part)
+
+    # 12, not 16: the quarter rest homr lost is *not* invented back. A short bar
+    # is a better failure than a bar seven quarters long, and it is the reason
+    # `scan` writes the move down for somebody to read against the page.
+    assert voice_lengths(part) == {"5": 12, "6": 16}
+
+
+def test_a_whole_rest_alone_in_its_voice_is_left_alone():
+    """39 of the benchmark's 41 whole rests are this, and they are not the defect.
+
+    A voice resting through the bar makes no musical claim, and
+    `fix_overfull_measures` already re-lengths it to the real bar.
+    """
+    part = a_measure(note(16, 5, "whole", rest=True)
+                     + "<backup><duration>16</duration></backup>"
+                     + note(16, 1, "whole", rest=True))
+    assert omr.split_measure_rests(part) == []
+    assert voice_lengths(part) == {"5": 16, "1": 16}
+
+
+def test_a_rest_that_is_not_a_whole_rest_is_left_alone():
+    """The rule is "a whole-measure rest cannot share a voice", not "a rest"."""
+    part = a_measure(note(4, 5, "quarter", rest=True) + note(12, 5, "half"))
+    assert omr.split_measure_rests(part) == []
+
+
+def test_a_second_shared_rest_gets_a_voice_of_its_own_too():
+    part = a_measure(note(16, 5, "whole", rest=True) + note(16, 5, "whole")
+                     + "<backup><duration>32</duration></backup>"
+                     + note(16, 6, "whole", rest=True) + note(16, 6, "whole"))
+    moved = omr.split_measure_rests(part)
+
+    assert [(m.was, m.now) for m in moved] == [("5", "7"), ("6", "8")]
+    assert voice_lengths(part) == {"5": 16, "6": 16, "7": 16, "8": 16}
+
+
+def test_the_spare_voice_is_reused_from_one_bar_to_the_next():
+    """MuseScore holds four voices to a staff, so a voice per bar is unusable."""
+    body = note(16, 1, "whole", rest=True) + note(16, 1, "whole")
+    part = etree.fromstring(
+        '<part id="P1">'
+        f'<measure number="1">{body}</measure>'
+        f'<measure number="2">{body}</measure></part>')
+    moved = omr.split_measure_rests(part)
+
+    assert [m.now for m in moved] == ["2", "2"]
+
+
+def test_a_chord_moves_with_the_note_it_is_stacked_on():
+    part = a_measure(note(16, 5, "whole", rest=True) + note(8, 5, "half")
+                     + note(8, 5, "half", chord=True))
+    omr.split_measure_rests(part)
+
+    assert voice_lengths(part) == {"5": 8, "6": 16}
+
+
+def test_a_measure_with_something_unreadable_among_its_notes_is_left_alone():
+    """A direction's place in the stream carries meaning we would be guessing at."""
+    part = a_measure(note(16, 5, "whole", rest=True)
+                     + "<direction><direction-type><words>rit.</words>"
+                     "</direction-type></direction>" + note(16, 5, "whole"))
+    assert omr.split_measure_rests(part) == []
+
+
+def test_the_committed_bar_stops_overfilling():
+    """The acceptance, on the real parse — #130's bar, committed beside the test."""
+    part = etree.parse(FRAGMENT).getroot().find("part")
+    moved = omr.split_measure_rests(part)
+
+    assert [(m.measure, m.staff, m.was, m.now) for m in moved] == [("2", "2", "5", "7")]
+    # 4/4 at divisions=4 is 16. Before the move voice 5 held 28.
+    assert voice_lengths(part, "2") == {"5": 12, "1": 16, "7": 16}
+    # And the bars either side of it are untouched.
+    assert voice_lengths(part, "1") == {"1": 16, "5": 16, "6": 12}
+    assert voice_lengths(part, "3") == {"1": 16, "2": 16, "5": 16, "6": 16}
+
+
+def test_a_parse_with_nothing_to_move_comes_back_byte_for_byte(tmp_path):
+    path = tmp_path / "page.musicxml"
+    original = ('<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0">'
+                '<part id="P1"><measure number="1"><note><rest/><duration>16</duration>'
+                "<type>whole</type><voice>1</voice></note></measure></part>"
+                "</score-partwise>")
+    path.write_text(original)
+
+    assert omr.split_measure_rests_in(str(path)) == []
+    assert path.read_text() == original
+
+
+def test_moving_one_twice_finds_nothing_the_second_time(tmp_path):
+    path = tmp_path / "page.musicxml"
+    shutil.copy(FRAGMENT, path)
+
+    assert len(omr.split_measure_rests_in(str(path))) == 1
+    assert omr.split_measure_rests_in(str(path)) == []
+
+
+def test_a_page_comes_back_with_its_shared_rests_moved(monkeypatch, tmp_path):
+    """The seam: what ``read_page`` hands back has been through the rule.
+
+    And it hands the moves to a caller that asks, because the log is not a
+    record — `scan` has to write them into the song's fixes.json.
+    """
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path, f'cp "{FRAGMENT}" "${{!#%.*}}.musicxml"\n'))
+
+    lines, repairs = [], []
+    produced = omr.read_page(a_page(tmp_path), out_dir=str(tmp_path / "out"),
+                             log=lines.append, repairs=repairs)
+
+    assert [(r.measure, r.was, r.now) for r in repairs] == [("2", "5", "7")]
+    assert voice_lengths(etree.parse(produced).getroot().find("part"), "2") == {
+        "5": 12, "1": 16, "7": 16}
+    assert any("whole-measure rest" in line for line in lines), lines

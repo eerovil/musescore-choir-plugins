@@ -40,6 +40,14 @@ reviewer's approval. Re-reading stays what it already is, a person pressing a
 button. Fragments read before this read as **unknown**, which is the true value
 rather than a gap.
 
+**A bar the boundary straightened is written down for a person to read.**
+:func:`omr.split_measure_rests` moves a whole-measure rest homr put in a sung
+voice, and :func:`_record_repairs` puts one ``text`` entry per move into the
+song's ``fixes.json``, which the Fix panel lists as outstanding. Both halves or
+neither: cleaning pads what the repair leaves behind, health then goes quiet,
+and a loudly wrong bar becomes a quietly wrong one — this project's named
+failure mode, occurring inside a repair.
+
 **Everything here is derived, and derived things go stale.** The fragments are
 derived from the bands, the grid answers from the fragments, the input score from
 the fragments, and the reviewer's approval from all of it. When an input changes,
@@ -59,6 +67,7 @@ looked.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import os
 import subprocess
@@ -548,6 +557,7 @@ def _read_one(song: state.Song, pdf: str, band: SystemBounds, stamp: str,
             error=None,
         )
         log(f"System {band.index}: {entry['staves']} staves, {entry['bars']} bars")
+        moved = [dataclasses.asdict(one) for one in produced.moved_rests]
     # Only the ways *reading a band* fails become holes. Everything else — a
     # missing module, a full disk, a bug here — is allowed to stop the scan and
     # be seen. Catching broadly turned one unrelated import error into fifteen
@@ -556,8 +566,40 @@ def _read_one(song: state.Song, pdf: str, band: SystemBounds, stamp: str,
             subprocess.CalledProcessError, etree.XMLSyntaxError) as exc:
         entry.update(musicxml=None, staves=0, bars=0, error=str(exc))
         log(f"System {band.index} could not be read: {exc}")
+        moved = []
     fragments[band.index] = entry
     _write_fragments(song, fragments)
+    # After the fragment is on disk, so a `fixes.json` somebody has broken by hand
+    # costs the record rather than the reading. Written for a clean read too, with
+    # nothing to say: that is what takes an old sentence away once a re-read stops
+    # moving anything.
+    _record_repairs(song, band.index, moved, log)
+
+
+def _record_repairs(song: state.Song, index: int, moved: List[Dict],
+                    log: Logger) -> None:
+    """Write what the whole-rest repair moved in this system into `fixes.json`.
+
+    The repair itself is `omr.split_measure_rests`, at the boundary, and this is
+    its other half: a bar the app quietly straightened is a bar somebody has to
+    read against the page, and the Fix panel is where they are told. See
+    `pipeline.record_scan_repairs` for why it is a sentence and not a replayable
+    entry.
+
+    A `fixes.json` that cannot be read at all is said out loud and skipped rather
+    than allowed to stop a scan twenty bands long -- the reading is the expensive
+    thing here, and cleaning is where a broken file is refused properly.
+    """
+    from . import pipeline  # local: pipeline pulls in clean_score, scan does not
+
+    try:
+        written = pipeline.record_scan_repairs(song.dir, index, moved)
+    except (RuntimeError, OSError) as exc:
+        log(f"System {index}: could not record the moved rest(s) in fixes.json: {exc}")
+        return
+    if written:
+        log(f"System {index}: recorded {written} moved whole-measure rest(s) in "
+            "fixes.json — the Fix stage lists them as outstanding.")
 
 
 def _assemble(song: state.Song, log: Logger) -> Dict:
