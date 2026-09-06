@@ -1292,9 +1292,41 @@ state model are in `DESIGN.md`.
   `divisions` for the score with every duration rescaled to it, continuous bar numbers
   instead of bar 1 five times over, a key or time signature written only where it says
   something that was not already true, and a `<print new-system="yes"/>` at each join so
-  the grid cuts the score where the page is cut. **Only the seam is rewritten** — a
-  meter change *inside* a crop is a change the page prints (B4's last system goes 3/4,
-  5/4, 4/4) and correcting it away would be losing music to tidy a join.
+  the grid cuts the score where the page is cut.
+  **The meter is decided here, and this pull request proposes that** (#177). homr has no
+  token for a numerator — its vocabulary holds only `timeSignature/<denominator>` — so the
+  number of beats does not exist in what the model can emit and is inferred afterwards
+  from how long its own decoded bars came out, one crop at a time. #174 measured what
+  that costs and what it does not: forcing the correct meter into a re-read of the Virta
+  venhettä vie m11–m14 crop moved `<beats>` and left every other byte of the MusicXML
+  identical, so **the notes are already right and the label is the only thing wrong**.
+  That is also why the correction lands here rather than in the fork under the #141 rule:
+  what is missing is not a misreading but information the crop does not contain, created
+  by a seam that is ours (#103). A crop holding 2/4, 2/4, 4/4, 4/4 has no median that is
+  right about any of it, and `assemble` is the one place that sees the bars either side
+  of a join and every staff at once.
+  So `_meter_plan` takes the **numerator from the length of the bars each signature
+  governs**, keeps the denominator homr actually read, and carries the meter across a
+  seam rather than restating the crop's own fresh guess. It corrects a signature printed
+  *inside* a crop too, because the number is inferred wherever it stands — m13's printed
+  4/4 came back 3/4 — while a meter change the page really prints (B4's last system goes
+  3/4, 5/4, 4/4) stays exactly where it is, and a resting column's measure rest is
+  written to the reconciled length rather than to the crop's label.
+  **What it refuses to do is as much the point.** A span needs `_MIN_SAMPLES` (2) bar
+  lengths and a strict majority among them before it may overrule a declared number, so
+  one voice short of a note cannot rewrite the meter around its own mistake — the bar
+  stays one that contradicts its signature, which is what the health check reports. A
+  whole-measure rest is not a sample (homr writes one a whole note long whatever the
+  meter, so counting it would drag every span with a resting staff towards 4/4), and a
+  length no whole numerator fits is left with the signature it was given.
+  Measured on the fixture with the fork's `main` (`6c3bbf4`), all 15 systems re-read at
+  200 dpi: the bars carrying a meter the page does not print go **4 → 1**. The one left
+  is m10, where the page prints 2/4 and homr read two and a half quarters — a note error,
+  which this card is explicitly not allowed to hide. Health stays at **31 findings**, and
+  that is the honest result rather than a disappointing one: the four mislabelling
+  findings at m12 are gone, and four at m10 have appeared because the wrong label there
+  had been *exempting* the bad bar from the check (`unprinted-meter` skips a bar that
+  declares a signature of its own).
   Two things this cost. **Bounds become a precondition**: `.systems.json` exists for 5
   of 48 songs and is made by a person dragging in the Systems viewer, or by an AI
   reading `page_images(grid=True)`. Nothing here detects them — #80 measured that and

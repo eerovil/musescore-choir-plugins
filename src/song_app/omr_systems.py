@@ -78,6 +78,17 @@ SCAN_DPI = int(os.getenv("OMR_SCAN_DPI", "200"))
 #: The measure length assumed when a system declares no time signature at all.
 _FALLBACK_TIME = (4, 4)
 
+#: The largest numerator a bar's own length is allowed to talk us into. A bar
+#: measured at 40 quarters is a parse that has gone wrong, not a 40/4 bar, and
+#: the declared signature is the better answer there.
+_MAX_BEATS = 32
+
+#: How many bar-length samples a span needs before its own length is allowed to
+#: overrule a declared numerator. One staff of one bar agreeing with itself is
+#: not evidence -- a voice short of a note would rewrite the meter around its own
+#: mistake, which is the failure this whole correction exists to avoid.
+_MIN_SAMPLES = 2
+
 
 def _noop(_msg: str) -> None:
     pass
@@ -409,12 +420,19 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     something that was not already true. A ``<print new-system="yes"/>`` marks
     each seam, so ``clean_score``'s per-system mode cuts the score where the page
     is cut.
+
+    The **meter is written here rather than taken from the crop** -- see
+    :func:`_meter_plan`. homr cannot read a numerator (it has no token for one)
+    and infers it from how long its decoded bars came out, one crop at a time;
+    this is where both the bars either side of a seam and every staff at once are
+    visible, so it is the only place the inference can be corrected.
     """
     if not scans:
         raise ScanError("Nothing to assemble: no systems were read.")
 
     width = max(scan.width for scan in scans)
     divisions = _common_divisions(scans)
+    meters = _meter_plan(scans, divisions)
 
     score = etree.Element("score-partwise", version="4.0")
     part_list = etree.SubElement(score, "part-list")
@@ -426,7 +444,7 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
 
     for column in range(width):
         part = etree.SubElement(score, "part", id=f"P{column + 1}")
-        _fill_column(part, scans, column, divisions)
+        _fill_column(part, scans, column, divisions, meters)
 
     tree = etree.ElementTree(score)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -439,22 +457,22 @@ def _fill_column(
     scans: Sequence[SystemScan],
     column: int,
     divisions: int,
+    meters: Sequence[Sequence["_BarMeter"]],
 ) -> None:
     number = 0
     prevailing_key: Optional[str] = None
-    prevailing_time: Optional[str] = None
     prevailing_clef: Optional[str] = None
     first = True
 
     for system, scan in enumerate(scans):
         staff = scan.staves[column] if column < scan.width else None
-        beats = _measure_ticks(scan, divisions)
 
         for bar in range(scan.bars):
             number += 1
+            meter = meters[system][bar]
             source = staff.measures[bar] if staff and bar < staff.bars else None
             if source is None:
-                measure = _rest_measure(number, beats)
+                measure = _rest_measure(number, meter.ticks)
             else:
                 measure = _scaled(source, staff.divisions, divisions)
                 measure.set("number", str(number))
@@ -463,23 +481,23 @@ def _fill_column(
                 measure.insert(0, etree.Element("print", {"new-system": "yes"}))
 
             if bar == 0:
-                # Only the seam is rewritten. A bar in the middle of a crop is
-                # left with whatever it declares, because that is a change the
-                # page really prints -- B4's fifth system goes 3/4, 5/4, 4/4
-                # inside one system, and correcting those away would be losing
-                # music to tidy up a join.
                 wanted = _signature(scan, staff)
                 _merge_attributes(measure, _needed_attributes(
-                    first, divisions, wanted,
-                    (prevailing_key, prevailing_time, prevailing_clef),
+                    first, divisions, wanted, meter,
+                    (prevailing_key, prevailing_clef),
                 ))
-                prevailing_key, prevailing_time, prevailing_clef = wanted
+                prevailing_key, prevailing_clef = wanted
             else:
                 _drop_global(measure)
+                # The crop's own numerator is never kept, wherever it stands: it
+                # was inferred from bars this document could see and the plan has
+                # read the same bars with the seam in view.
+                _drop_time(measure)
+                if meter.declare:
+                    _declare_time(measure, meter.force)
                 declared = measure.find("attributes")
                 if declared is not None:
                     prevailing_key = _canonical(declared.find("key")) or prevailing_key
-                    prevailing_time = _canonical(declared.find("time")) or prevailing_time
                     prevailing_clef = _canonical(declared.find("clef")) or prevailing_clef
             first = False
             part.append(measure)
@@ -490,44 +508,42 @@ def _signature(scan: SystemScan, staff: Optional[Staff]):
 
     A resting column has no signature of its own, and inheriting the system's
     is the only honest answer -- an empty staff is silent, not in another key.
+    The meter is not asked for here: it belongs to the score rather than to a
+    column, and :func:`_meter_plan` has already decided it for every bar.
     """
     donor = staff
     if donor is None or (donor.key is None and donor.time is None and donor.clef is None):
         donor = scan.staves[0] if scan.staves else None
     key = _canonical(donor.key) if donor is not None else None
-    time = _canonical(donor.time) if donor is not None else None
     clef = _canonical(staff.clef) if staff is not None and staff.clef is not None else None
-    return key, time, clef
+    return key, clef
 
 
-def _needed_attributes(first: bool, divisions: int, wanted, prevailing):
+def _needed_attributes(first: bool, divisions: int, wanted, meter: "_BarMeter", prevailing):
     """An ``<attributes>`` holding only what has changed, or ``None``.
 
     The first bar of a part always gets one -- ``divisions`` has to be declared
     somewhere and a part with no clef is unreadable. After that a re-declaration
     that repeats what is already in force is dropped, which is most of them:
-    every crop re-declares its key and time because every crop is a document
-    that has just begun.
+    every crop re-declares its key because every crop is a document that has
+    just begun. The meter comes from the plan, which has already answered the
+    same question for the whole score at once.
     """
-    key, time, clef = wanted
-    was_key, was_time, was_clef = prevailing
+    key, clef = wanted
+    was_key, was_clef = prevailing
     attrs = etree.Element("attributes")
     if first:
         etree.SubElement(attrs, "divisions").text = str(divisions)
     if key is not None and (first or key != was_key):
         attrs.append(etree.fromstring(key))
-    if time is not None and (first or time != was_time):
-        attrs.append(etree.fromstring(time))
+    if first or meter.declare:
+        attrs.append(etree.fromstring(meter.force.xml()))
     if clef is not None and (first or clef != was_clef):
         attrs.append(etree.fromstring(clef))
     if first and attrs.find("clef") is None:
         attrs.append(etree.fromstring("<clef><sign>G</sign><line>2</line></clef>"))
     if first and attrs.find("key") is None:
-        attrs.append(etree.fromstring("<key><fifths>0</fifths></key>"))
-    if first and attrs.find("time") is None:
-        attrs.append(etree.fromstring(
-            f"<time><beats>{_FALLBACK_TIME[0]}</beats>"
-            f"<beat-type>{_FALLBACK_TIME[1]}</beat-type></time>"))
+        attrs.insert(1, etree.fromstring("<key><fifths>0</fifths></key>"))
     return attrs if len(attrs) else None
 
 
@@ -578,18 +594,203 @@ def _rest_measure(number: int, ticks: int) -> etree._Element:
     return measure
 
 
-def _measure_ticks(scan: SystemScan, divisions: int) -> int:
-    """How long a bar of this system is, for the columns that are resting."""
+# --- the meter ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Meter:
+    beats: int
+    beat_type: int
+
+    def ticks(self, divisions: int) -> int:
+        return max(1, round(divisions * 4 * self.beats / self.beat_type))
+
+    def xml(self) -> str:
+        return (f"<time><beats>{self.beats}</beats>"
+                f"<beat-type>{self.beat_type}</beat-type></time>")
+
+
+@dataclass
+class _BarMeter:
+    """What one bar of the assembled score is in, and whether it says so."""
+
+    force: _Meter
+    declare: bool
+    ticks: int
+
+
+def _meter_plan(
+    scans: Sequence[SystemScan], divisions: int
+) -> List[List[_BarMeter]]:
+    """The meter in force at every bar, and where it is written down.
+
+    **homr cannot read a numerator.** Its vocabulary holds only
+    ``timeSignature/<denominator>``; the number of beats does not exist in what
+    the model can emit and is inferred afterwards from how long the decoded bars
+    came out (issue #174). So the denominator is a reading and the numerator is a
+    guess -- and it is a guess made one crop at a time, with no sight of the bars
+    before the crop began. A crop holding 2/4, 2/4, 4/4, 4/4 has no median that is
+    right about any of it.
+
+    Here both are visible: the bars either side of a seam, and every staff of a
+    system at once. So the numerator is taken from **the length of the bars the
+    signature governs**, keeping the denominator homr actually read, and a seam
+    that measures the same as the meter already in force carries it rather than
+    restating a fresh guess.
+
+    Two things it deliberately will not do, because the point of the correction
+    is a score that still says where it is wrong:
+
+    * It needs :data:`_MIN_SAMPLES` bar lengths and a strict majority among them
+      before it overrules a declared numerator. A single voice short of a note
+      cannot rewrite the meter around its own mistake -- it stays a bar that
+      contradicts the signature, which is what the health check reports.
+    * A whole-measure rest is not a sample. homr writes one a whole note long
+      whatever the meter, so counting it would drag every span towards 4/4.
+    """
+    plan: List[List[Optional[_BarMeter]]] = [
+        [None] * scan.bars for scan in scans
+    ]
+    points = [
+        (system, bar, _declared_time(scan, bar))
+        for system, scan in enumerate(scans)
+        for bar in range(scan.bars)
+        if bar == 0 or _declared_time(scan, bar) is not None
+    ]
+
+    running: Optional[_Meter] = None
+    for n, (system, bar, declared) in enumerate(points):
+        following = points[n + 1] if n + 1 < len(points) else None
+        stop = (following[1] if following and following[0] == system
+                else scans[system].bars)
+        samples: List[int] = []
+        for over in range(bar, stop):
+            samples.extend(_bar_samples(scans[system], over, divisions))
+        meter = _reconcile(declared, running, samples, divisions)
+        ticks = meter.ticks(divisions)
+        plan[system][bar] = _BarMeter(meter, running is None or meter != running, ticks)
+        for over in range(bar + 1, stop):
+            plan[system][over] = _BarMeter(meter, False, ticks)
+        running = meter
+
+    fallback = _Meter(*_FALLBACK_TIME)
+    return [
+        [bar or _BarMeter(fallback, False, fallback.ticks(divisions)) for bar in system]
+        for system in plan
+    ]
+
+
+def _reconcile(
+    declared: Optional[_Meter],
+    running: Optional[_Meter],
+    samples: Sequence[int],
+    divisions: int,
+) -> _Meter:
+    """The meter a span is really in: its own length, in homr's denominator."""
+    beat_type = (declared or running or _Meter(*_FALLBACK_TIME)).beat_type
+    measured = _agreed(samples)
+    if measured is not None:
+        beats = measured * beat_type / (divisions * 4)
+        if beats == int(beats) and 1 <= int(beats) <= _MAX_BEATS:
+            return _Meter(int(beats), beat_type)
+    return declared or running or _Meter(*_FALLBACK_TIME)
+
+
+def _agreed(samples: Sequence[int]) -> Optional[int]:
+    """The length a majority of the span's bars agree on, if there is one."""
+    if len(samples) < _MIN_SAMPLES:
+        return None
+    counts: Dict[int, int] = {}
+    for value in samples:
+        counts[value] = counts.get(value, 0) + 1
+    length, count = max(counts.items(), key=lambda item: (item[1], item[0]))
+    return length if count * 2 > len(samples) else None
+
+
+def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:
+    """The signature this system's bar declares, if any staff declares one."""
     for staff in scan.staves:
-        canonical = _canonical(staff.time)
-        if canonical is None:
+        if bar >= staff.bars:
             continue
-        parsed = etree.fromstring(canonical)
-        beats = _int(parsed.findtext("beats"))
-        beat_type = _int(parsed.findtext("beat-type"))
-        if beats and beat_type:
-            return max(1, round(divisions * 4 * beats / beat_type))
-    return divisions * 4
+        for attributes in staff.measures[bar].findall("attributes"):
+            time = attributes.find("time")
+            if time is None:
+                continue
+            beats = _int(time.findtext("beats"))
+            beat_type = _int(time.findtext("beat-type"))
+            if beats and beat_type:
+                return _Meter(beats, beat_type)
+    return None
+
+
+def _bar_samples(scan: SystemScan, bar: int, divisions: int) -> List[int]:
+    """How long each staff's copy of this bar is, in the score's divisions."""
+    out: List[int] = []
+    for staff in scan.staves:
+        if bar >= staff.bars:
+            continue
+        length = _bar_length(staff.measures[bar])
+        if length:
+            out.append(max(1, round(length * divisions / max(1, staff.divisions))))
+    return out
+
+
+def _bar_length(measure: etree._Element) -> Optional[int]:
+    """How far the music in one bar reaches, following the cursor.
+
+    ``None`` when the bar says nothing about its own length: an empty bar, or one
+    holding only a whole-measure rest, which homr writes a whole note long
+    whatever the meter is.
+    """
+    at = 0
+    reached = 0
+    for child in measure:
+        if child.tag == "note":
+            if child.find("chord") is None:
+                at += _duration(child)
+            rest = child.find("rest")
+            if rest is None or rest.get("measure") != "yes":
+                reached = max(reached, at)
+        elif child.tag == "backup":
+            at = max(0, at - _int(child.findtext("duration")))
+        elif child.tag == "forward":
+            at += _int(child.findtext("duration"))
+    return reached or None
+
+
+def _drop_time(measure: etree._Element) -> None:
+    for attributes in measure.findall("attributes"):
+        for time in attributes.findall("time"):
+            attributes.remove(time)
+        if not len(attributes):
+            measure.remove(attributes)
+
+
+def _declare_time(measure: etree._Element, meter: _Meter) -> None:
+    attributes = measure.find("attributes")
+    if attributes is None:
+        attributes = etree.Element("attributes")
+        measure.insert(1 if len(measure) and measure[0].tag == "print" else 0,
+                       attributes)
+    attributes.append(etree.fromstring(meter.xml()))
+    _ordered(attributes)
+
+
+#: MusicXML fixes the order inside ``<attributes>``; a ``<time>`` appended after
+#: a ``<clef>`` is a document MuseScore refuses to open.
+_ATTRIBUTE_ORDER = ("divisions", "key", "time", "staves", "part-symbol",
+                    "instruments", "clef")
+
+
+def _ordered(attributes: etree._Element) -> None:
+    ranked = sorted(
+        enumerate(attributes),
+        key=lambda pair: (_ATTRIBUTE_ORDER.index(pair[1].tag)
+                          if pair[1].tag in _ATTRIBUTE_ORDER
+                          else len(_ATTRIBUTE_ORDER), pair[0]),
+    )
+    for child in [child for _, child in ranked]:
+        attributes.append(child)
 
 
 def _common_divisions(scans: Sequence[SystemScan]) -> int:

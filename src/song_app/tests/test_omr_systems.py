@@ -40,7 +40,14 @@ def a_note(step="C", octave="4", duration=4, voice="1", staff=None):
 
 
 def a_part(part_id, name, staves, bars=2, divisions=4, fifths=0, time=(4, 4)):
-    """One ``<part>`` as homr writes it: ``staves`` staff rows inside it."""
+    """One ``<part>`` as homr writes it: ``staves`` staff rows inside it.
+
+    Its bars are as long as the signature says, because assembly now reads the
+    numerator off them: a helper that declared 3/4 over four quarters would be
+    asking a real question of the meter plan and calling the honest answer wrong.
+    """
+    beat = divisions * 4 // time[1]
+    bar_length = beat * time[0]
     clefs = "".join(f'<clef number="{n}"><sign>G</sign><line>2</line></clef>'
                     for n in range(1, staves + 1))
     attributes = (f"<attributes><divisions>{divisions}</divisions>"
@@ -52,11 +59,11 @@ def a_part(part_id, name, staves, bars=2, divisions=4, fifths=0, time=(4, 4)):
         content = attributes if bar == 1 else ""
         for staff in range(1, staves + 1):
             if staff > 1:
-                content += f"<backup><duration>{divisions * 4}</duration></backup>"
+                content += f"<backup><duration>{bar_length}</duration></backup>"
             content += "".join(
-                a_note("CDEFG"[(staff + n) % 5], duration=divisions,
+                a_note("CDEFG"[(staff + n) % 5], duration=beat,
                        staff=staff if staves > 1 else None, voice=str(staff))
-                for n in range(4))
+                for n in range(time[0]))
         body.append(f'<measure number="{bar}">{content}</measure>')
     return (f'<score-part id="{part_id}"><part-name>{name}</part-name></score-part>',
             f'<part id="{part_id}">{"".join(body)}</part>')
@@ -460,6 +467,159 @@ def test_a_resting_column_inherits_the_system_meter(tmp_path):
     third = read(out).findall("part")[2]
     resting = third.findall("measure")[1]
     assert resting.findtext("note/duration") == "12"      # 3/4 at 4 per quarter
+
+
+# --- the meter -----------------------------------------------------------
+#
+# homr has no token for a numerator: it reads the denominator and infers the
+# number of beats from how long its own decoded bars came out, one crop at a
+# time. These are the cases where that inference is wrong and the assembly can
+# see why -- and, just as much, the cases where it must keep its hands off.
+
+
+def a_staff(lengths, divisions=4, time=(4, 4), changes=None):
+    """One ``<part>`` of one staff: bar N holds ``lengths[N]`` quarter notes.
+
+    ``None`` in place of a length is a whole-measure rest. ``time`` is what the
+    crop declares at its head -- every crop declares one, because every crop is a
+    document that has just begun -- and ``changes`` (``{bar: (beats, type)}``) is
+    a signature it declares later, which is the shape of one the page prints.
+    """
+    changes = changes or {}
+    body = []
+    for n, quarters in enumerate(lengths):
+        declared = ""
+        if n == 0:
+            declared = (f"<attributes><divisions>{divisions}</divisions>"
+                        "<key><fifths>0</fifths></key>"
+                        f"<time><beats>{time[0]}</beats>"
+                        f"<beat-type>{time[1]}</beat-type></time>"
+                        "<clef><sign>G</sign><line>2</line></clef></attributes>")
+        elif n in changes:
+            declared = (f"<attributes><time><beats>{changes[n][0]}</beats>"
+                        f"<beat-type>{changes[n][1]}</beat-type></time></attributes>")
+        if quarters is None:
+            notes = ('<note><rest measure="yes"/>'
+                     f"<duration>{divisions * 4}</duration><voice>1</voice></note>")
+        else:
+            notes = "".join(a_note("C", duration=divisions) for _ in range(quarters))
+        body.append(f'<measure number="{n + 1}">{declared}{notes}</measure>')
+    return f'<part id="P1">{"".join(body)}</part>'
+
+
+def a_scan(index, staves):
+    """A system already flattened, out of ``a_staff`` documents."""
+    made = []
+    for xml in staves:
+        made.extend(omr_systems.flatten_part(etree.fromstring(xml)))
+    return omr_systems.SystemScan(index=index, musicxml="", staves=made)
+
+
+def declared_meters(part):
+    """Every signature the part writes, as ``(bar number, "beats/type")``."""
+    return [(measure.get("number"),
+             f'{measure.findtext("attributes/time/beats")}/'
+             f'{measure.findtext("attributes/time/beat-type")}')
+            for measure in part.findall("measure")
+            if measure.find("attributes/time") is not None]
+
+
+def assembled(tmp_path, *scans):
+    return read(omr_systems.assemble(list(scans), str(tmp_path / "s.musicxml")))
+
+
+def test_a_seam_carries_the_meter_rather_than_the_crops_own_guess(tmp_path):
+    """The second crop begins mid-piece, so nothing in it prints a signature and
+    homr's inferred 3/4 is a claim about bars it could not see the start of."""
+    score = assembled(
+        tmp_path,
+        a_scan(1, [a_staff([4, 4]), a_staff([4, 4])]),
+        a_scan(2, [a_staff([4, 4], time=(3, 4)), a_staff([4, 4], time=(3, 4))]),
+    )
+    assert declared_meters(score.findall("part")[0]) == [("1", "4/4")]
+
+
+def test_a_printed_signature_gets_the_numerator_its_bars_have(tmp_path):
+    """Virta venhettä vie's m13 prints 4/4 and came back 3/4. The change is real
+    -- it is only the number that homr had no way to read."""
+    staves = [a_staff([3, 3, 4, 4], time=(3, 4), changes={2: (3, 4)})] * 2
+    score = assembled(tmp_path, a_scan(1, staves))
+    assert declared_meters(score.findall("part")[0]) == [("1", "3/4"), ("3", "4/4")]
+
+
+def test_a_meter_the_page_really_changes_at_a_seam_is_written(tmp_path):
+    score = assembled(
+        tmp_path,
+        a_scan(1, [a_staff([4, 4]), a_staff([4, 4])]),
+        a_scan(2, [a_staff([3, 3], time=(4, 4)), a_staff([3, 3], time=(4, 4))]),
+    )
+    assert declared_meters(score.findall("part")[0]) == [("1", "4/4"), ("3", "3/4")]
+
+
+def test_one_short_voice_does_not_move_the_meter(tmp_path):
+    """Virta's lower divisi voice is a quarter short in these bars. That is a
+    note error, not a meter, and it has to stay one: a signature bent to fit it
+    would make the bar consistent and the health check silent."""
+    score = assembled(tmp_path, a_scan(1, [a_staff([4, 4]), a_staff([4, 3])]))
+    parts = score.findall("part")
+    assert declared_meters(parts[0]) == [("1", "4/4")]
+    short = parts[1].findall("measure")[1]
+    assert sum(int(d.text) for d in short.findall("note/duration")) == 12
+
+
+def test_a_bar_that_disagrees_on_its_own_is_left_disagreeing(tmp_path):
+    """The 9/8 bar the Soundslice score has too. Giving it a signature of its own
+    would paper over the reading; it gets none, and still overruns the meter."""
+    score = assembled(tmp_path, a_scan(1, [a_staff([4, 6, 4, 4])] * 2))
+    part = score.findall("part")[0]
+    assert declared_meters(part) == [("1", "4/4")]
+    odd = part.findall("measure")[1]
+    assert sum(int(d.text) for d in odd.findall("note/duration")) == 24
+
+
+def test_a_single_bar_is_not_enough_to_overrule_a_signature(tmp_path):
+    """One staff of one bar agreeing with itself is not evidence. B4's last
+    system goes 3/4, 5/4, 4/4 and every one of those numbers has to survive."""
+    score = assembled(tmp_path, a_scan(1, [a_staff([3], time=(4, 4))]))
+    assert declared_meters(score.findall("part")[0]) == [("1", "4/4")]
+
+
+def test_a_whole_measure_rest_is_not_evidence_of_the_bar_length(tmp_path):
+    """homr writes one a whole note long whatever the meter, so counting it
+    would drag every span with a resting staff in it towards 4/4."""
+    score = assembled(tmp_path, a_scan(1, [a_staff([3, 3], time=(3, 4)),
+                                           a_staff([None, None], time=(3, 4))]))
+    assert declared_meters(score.findall("part")[0]) == [("1", "3/4")]
+
+
+def test_a_length_no_numerator_fits_keeps_the_signature(tmp_path):
+    """Three and a half quarters is a bar that lost something, not a meter."""
+    part = etree.fromstring(
+        '<part id="P1">'
+        '<measure number="1"><attributes><divisions>4</divisions>'
+        "<key><fifths>0</fifths></key>"
+        "<time><beats>4</beats><beat-type>4</beat-type></time>"
+        "<clef><sign>G</sign><line>2</line></clef></attributes>"
+        + a_note("C", duration=4) * 3 + a_note("D", duration=2) + "</measure>"
+        '<measure number="2">'
+        + a_note("C", duration=4) * 3 + a_note("D", duration=2) + "</measure></part>")
+    scanned = omr_systems.SystemScan(index=1, musicxml="",
+                                     staves=omr_systems.flatten_part(part))
+    score = assembled(tmp_path, scanned)
+    assert declared_meters(score.findall("part")[0]) == [("1", "4/4")]
+
+
+def test_a_resting_column_gets_the_corrected_bar_length(tmp_path):
+    """The rest is written to the meter the bars have, not the one the crop
+    guessed -- a measure rest the wrong length is silence that overruns the bar,
+    which nothing downstream checks and the scrolling render refuses."""
+    score = assembled(
+        tmp_path,
+        a_scan(1, [a_staff([3, 3], time=(3, 4)), a_staff([3, 3], time=(3, 4))]),
+        a_scan(2, [a_staff([3, 3], time=(4, 4))]),
+    )
+    resting = score.findall("part")[1].findall("measure")[2]
+    assert resting.findtext("note/duration") == "12"
 
 
 def test_every_part_gets_a_clef_and_a_key_to_start_with(tmp_path):
