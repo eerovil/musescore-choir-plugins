@@ -1372,6 +1372,21 @@ state model are in `DESIGN.md`.
   `scripts/answered_vs_reference.py` is that measurement, committed for the same reason
   `scripts/flatten_vs_reference.py` was: it re-scores parses somebody else already made, so
   it needs no homr and the claim below can be checked rather than taken.
+  **And the answer it was made with is frozen** (`fixtures/answered-pages.json`,
+  `scripts/answered_pages.py`), which is the difference between a committed script and
+  committed evidence. The grid answer used to be read live — the bands out of
+  `.systems.json`, the grouping out of the reviewed cleaned score — and both are host state
+  that has moved under earlier measurements on this map already, so the same script on the
+  same cached parses could later answer a different question and print a number with nothing
+  saying the question had changed. The manifest records each band's index, its printed bar
+  range and the staves the grid was answered with, and the scoring path reads that and never
+  a song. A page nobody froze is refused rather than read off the host, and a song that has
+  moved under a frozen page **stops the run** naming the band and both readings; `--record`
+  is the one way to write it and says what it changed.
+  `src/clean_score/tests/test_answered_pages.py` pins the refusals — a grouping edited
+  underneath a frozen run, a band dragged, a band inserted, a page never frozen — and that
+  the grid handed to the rebuild comes off the manifest. It needs no songs, no homr and no
+  MuseScore.
 
   | 4 varying pages | per-system | assembled | assembled, grid answered |
   | --- | --- | --- | --- |

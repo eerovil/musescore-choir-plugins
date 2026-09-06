@@ -1,0 +1,698 @@
+{
+ "why": "The grid answers each measurement in scripts/answered_vs_reference.py was made with. Frozen so a later run of the same script on the same cached parses cannot quietly answer a different question.",
+ "pages": [
+  {
+   "song": "heraa-suomi-final",
+   "page": 1,
+   "bounds_sha256": "3ea930e00408d3de",
+   "cleaned_sha256": "7c698aaacc1fcedb",
+   "bands": [
+    {
+     "index": 1,
+     "measure_start": 1,
+     "measure_end": 3,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 2,
+     "measure_start": 4,
+     "measure_end": 5,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 3,
+     "measure_start": 6,
+     "measure_end": 8,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 4,
+     "measure_start": 9,
+     "measure_end": 10,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "heraa-suomi-final",
+   "page": 2,
+   "bounds_sha256": "3ea930e00408d3de",
+   "cleaned_sha256": "7c698aaacc1fcedb",
+   "bands": [
+    {
+     "index": 5,
+     "measure_start": 11,
+     "measure_end": 13,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 6,
+     "measure_start": 14,
+     "measure_end": 15,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 7,
+     "measure_start": 16,
+     "measure_end": 17,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "heraa-suomi-final",
+   "page": 3,
+   "bounds_sha256": "3ea930e00408d3de",
+   "cleaned_sha256": "7c698aaacc1fcedb",
+   "bands": [
+    {
+     "index": 8,
+     "measure_start": 18,
+     "measure_end": 20,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 9,
+     "measure_start": 21,
+     "measure_end": 23,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 10,
+     "measure_start": 24,
+     "measure_end": 27,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 11,
+     "measure_start": 28,
+     "measure_end": 29,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "heraa-suomi-final",
+   "page": 4,
+   "bounds_sha256": "3ea930e00408d3de",
+   "cleaned_sha256": "7c698aaacc1fcedb",
+   "bands": [
+    {
+     "index": 12,
+     "measure_start": 30,
+     "measure_end": 31,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 13,
+     "measure_start": 32,
+     "measure_end": 34,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 14,
+     "measure_start": 35,
+     "measure_end": 37,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 15,
+     "measure_start": 38,
+     "measure_end": 40,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "heraa-suomi-final",
+   "page": 5,
+   "bounds_sha256": "3ea930e00408d3de",
+   "cleaned_sha256": "7c698aaacc1fcedb",
+   "bands": [
+    {
+     "index": 16,
+     "measure_start": 41,
+     "measure_end": 43,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 17,
+     "measure_start": 44,
+     "measure_end": 46,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 18,
+     "measure_start": 47,
+     "measure_end": 49,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 19,
+     "measure_start": 50,
+     "measure_end": 52,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "heraa-suomi-final",
+   "page": 6,
+   "bounds_sha256": "3ea930e00408d3de",
+   "cleaned_sha256": "7c698aaacc1fcedb",
+   "bands": [
+    {
+     "index": 20,
+     "measure_start": 53,
+     "measure_end": 55,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 21,
+     "measure_start": 56,
+     "measure_end": 58,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 22,
+     "measure_start": 59,
+     "measure_end": 60,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 23,
+     "measure_start": 61,
+     "measure_end": 63,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 24,
+     "measure_start": 64,
+     "measure_end": 66,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kaksi-laulua-krapulasta-2",
+   "page": 1,
+   "bounds_sha256": "6ac94615b7d569c8",
+   "cleaned_sha256": "2e07068ae150141c",
+   "bands": [
+    {
+     "index": 1,
+     "measure_start": 1,
+     "measure_end": 6,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 2,
+     "measure_start": 7,
+     "measure_end": 11,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 3,
+     "measure_start": 12,
+     "measure_end": 15,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 4,
+     "measure_start": 16,
+     "measure_end": 18,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 5,
+     "measure_start": 19,
+     "measure_end": 21,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kaksi-laulua-krapulasta-2",
+   "page": 2,
+   "bounds_sha256": "6ac94615b7d569c8",
+   "cleaned_sha256": "2e07068ae150141c",
+   "bands": [
+    {
+     "index": 6,
+     "measure_start": 22,
+     "measure_end": 24,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 7,
+     "measure_start": 25,
+     "measure_end": 28,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 8,
+     "measure_start": 29,
+     "measure_end": 32,
+     "staves": [
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 9,
+     "measure_start": 33,
+     "measure_end": 36,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 10,
+     "measure_start": 37,
+     "measure_end": 39,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kaksi-laulua-krapulasta-2",
+   "page": 3,
+   "bounds_sha256": "6ac94615b7d569c8",
+   "cleaned_sha256": "2e07068ae150141c",
+   "bands": [
+    {
+     "index": 11,
+     "measure_start": 40,
+     "measure_end": 41,
+     "staves": [
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 12,
+     "measure_start": 42,
+     "measure_end": 45,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 13,
+     "measure_start": 46,
+     "measure_end": 50,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 14,
+     "measure_start": 51,
+     "measure_end": 54,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 15,
+     "measure_start": 55,
+     "measure_end": 57,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kaksi-laulua-krapulasta-2",
+   "page": 4,
+   "bounds_sha256": "6ac94615b7d569c8",
+   "cleaned_sha256": "2e07068ae150141c",
+   "bands": [
+    {
+     "index": 16,
+     "measure_start": 58,
+     "measure_end": 60,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 17,
+     "measure_start": 61,
+     "measure_end": 65,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 18,
+     "measure_start": 66,
+     "measure_end": 69,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 19,
+     "measure_start": 70,
+     "measure_end": 76,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    },
+    {
+     "index": 20,
+     "measure_start": 77,
+     "measure_end": 86,
+     "staves": [
+      "T1+T2",
+      "B1",
+      "B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kayttaytymisohjeita",
+   "page": 1,
+   "bounds_sha256": "c15e3eb5c355f683",
+   "cleaned_sha256": "9d3460c8766040f4",
+   "bands": [
+    {
+     "index": 1,
+     "measure_start": 1,
+     "measure_end": 4,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 2,
+     "measure_start": 5,
+     "measure_end": 8,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 3,
+     "measure_start": 9,
+     "measure_end": 11,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 4,
+     "measure_start": 12,
+     "measure_end": 14,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kayttaytymisohjeita",
+   "page": 2,
+   "bounds_sha256": "c15e3eb5c355f683",
+   "cleaned_sha256": "9d3460c8766040f4",
+   "bands": [
+    {
+     "index": 5,
+     "measure_start": 15,
+     "measure_end": 18,
+     "staves": [
+      "T1",
+      "T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 6,
+     "measure_start": 19,
+     "measure_end": 22,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 7,
+     "measure_start": 23,
+     "measure_end": 26,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 8,
+     "measure_start": 27,
+     "measure_end": 31,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 9,
+     "measure_start": 32,
+     "measure_end": 36,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kayttaytymisohjeita",
+   "page": 3,
+   "bounds_sha256": "c15e3eb5c355f683",
+   "cleaned_sha256": "9d3460c8766040f4",
+   "bands": [
+    {
+     "index": 10,
+     "measure_start": 37,
+     "measure_end": 41,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 11,
+     "measure_start": 42,
+     "measure_end": 46,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 12,
+     "measure_start": 47,
+     "measure_end": 50,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 13,
+     "measure_start": 51,
+     "measure_end": 54,
+     "staves": [
+      "T1",
+      "T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 14,
+     "measure_start": 55,
+     "measure_end": 58,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  },
+  {
+   "song": "kayttaytymisohjeita",
+   "page": 4,
+   "bounds_sha256": "c15e3eb5c355f683",
+   "cleaned_sha256": "9d3460c8766040f4",
+   "bands": [
+    {
+     "index": 15,
+     "measure_start": 59,
+     "measure_end": 62,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 16,
+     "measure_start": 63,
+     "measure_end": 66,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 17,
+     "measure_start": 67,
+     "measure_end": 71,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 18,
+     "measure_start": 72,
+     "measure_end": 74,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    },
+    {
+     "index": 19,
+     "measure_start": 75,
+     "measure_end": 78,
+     "staves": [
+      "T1+T2",
+      "B1+B2"
+     ]
+    }
+   ]
+  }
+ ]
+}

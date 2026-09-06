@@ -9,17 +9,27 @@ operator answer as if it were lost music -- which is what issue #195 was opened
 to separate.
 
 This runs the rest of the way the app runs: the assembled page is converted,
-cleaned in per-system mode with the grid answered from the reviewed score's own
-per-band grouping, and imploded back to the page's printed shape.  That is the
-pipeline the reference itself came out of, so the two sides are comparable.
+cleaned in per-system mode with the grid answered, and imploded back to the
+page's printed shape.  That is the pipeline the reference itself came out of, so
+the two sides are comparable.
 
-    .venv/bin/python scripts/answered_vs_reference.py                 # every page
+    .venv/bin/python scripts/answered_vs_reference.py                 # every frozen page
     .venv/bin/python scripts/answered_vs_reference.py kaksi-laulua-krapulasta-2-p3
 
 **Run the uniform pages too.**  A page whose systems all print the same number of
 staves has nothing for the grid to fix, so it measures what the round trip costs
 on its own; without that control an improvement on the varying pages says
 nothing.  Measured for #195 it is 1.0 point over 10 pages.
+
+**The grid answer is frozen, not read live.**  It comes from
+`fixtures/answered-pages.json` (`scripts/answered_pages.py`), which records each
+band's index, its printed measure range and the grouping the grid was answered
+with.  A page that has not been frozen is an error and never a fall back to the
+song; a song that has moved under a frozen page stops the run naming the band.
+That matters because the bands and the reviewed cleaned score are host state and
+have moved under earlier measurements on this map already -- see #195.
+
+    .venv/bin/python scripts/answered_vs_reference.py --record        # write the manifest
 
 Nothing here reads a page: it re-scores parses somebody else already made.  The
 cached band parses, page references and assembled pages come from #192's store
@@ -43,6 +53,8 @@ from lxml import etree
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from scripts import answered_pages  # noqa: E402
+
 DEFAULT_STORE = Path.home() / ".local/share/musescore-choir-plugins/issue-192"
 DEFAULT_SCORER = Path.home() / "homr/.worktrees/issue-195-scorer"
 
@@ -51,27 +63,46 @@ def log(message: str) -> None:
     print(f"{time.strftime('%H:%M:%S')} {message}", flush=True)
 
 
-def groupings(slug: str, bands, band_grouping, implode_grouping, reference_files):
-    """What each band's system prints, in the words the reference is built from.
+def read_live(slug, page, parts):
+    """What the song on this host says about a page, or `None` if it has none.
 
-    A song with nothing recorded per system falls back to the grouping `implode`
-    infers from the part names -- which is what the reference fell back to as
-    well, so the two sides still agree about what a row is.
+    Only ever used to *check* a frozen entry, or to record one in the first
+    place. Nothing scored is taken from here.
     """
-    cleaned = reference_files(slug).cleaned
-    found = [
-        band_grouping(slug, etree.parse(str(cleaned)).getroot(), band.measure_start)
-        for band in bands
-    ]
-    if any(g is None for g in found):
-        inferred = [
-            printed.names
-            for printed in implode_grouping(
-                etree.parse(str(cleaned)).getroot(), None
-            ).printed
-        ]
-        found = [g if g is not None else inferred for g in found]
-    return found
+    try:
+        bands = sorted(
+            (b for b in parts["pdf_systems"].load_bounds(f"songs/{slug}")
+             if b.page == page),
+            key=lambda b: b.index,
+        )
+        cleaned = parts["reference_files"](slug).cleaned
+    except Exception:                                       # noqa: BLE001
+        return None
+    if not bands:
+        return None
+    found = []
+    for band in bands:
+        grouping = parts["band_grouping"](
+            slug, etree.parse(str(cleaned)).getroot(), band.measure_start
+        )
+        if grouping is None:
+            grouping = [
+                printed.names
+                for printed in parts["implode_grouping"](
+                    etree.parse(str(cleaned)).getroot(), None
+                ).printed
+            ]
+        found.append(answered_pages.FrozenBand(
+            index=band.index,
+            measure_start=band.measure_start or 0,
+            measure_end=band.measure_end or 0,
+            grouping=[list(staff) for staff in grouping],
+        ))
+    return answered_pages.FrozenPage(
+        song=slug, page=page, bands=found,
+        bounds_sha256=answered_pages.digest(Path(f"songs/{slug}/.systems.json")),
+        cleaned_sha256=answered_pages.digest(Path(cleaned)),
+    )
 
 
 def match_octave_notation(source: Path, made: Path) -> None:
@@ -108,32 +139,42 @@ def match_octave_notation(source: Path, made: Path) -> None:
         tree.write(str(made), xml_declaration=True, encoding="UTF-8")
 
 
-def answer(slug, page, bands, assembled, work, parts, cli):
-    """Clean the assembled page with the grid answered, imploded to the page shape."""
-    per_band = groupings(slug, bands, parts["band_grouping"],
-                         parts["implode_grouping"], parts["reference_files"])
-    widest = max(per_band, key=len)
+def grid_answers(frozen, layouts, cleared):
+    """The per-system grid, filled in from the frozen answer and nothing else.
 
-    work.mkdir(parents=True, exist_ok=True)
-    source = work / f"{slug}-p{page}.musicxml"
-    source.write_bytes(assembled.read_bytes())
-    mscx = parts["pipeline"].convert_to_mscx(str(source), str(work))
-
-    per_system = parts["per_system"]
-    layouts = per_system.layout_for_file(mscx)
-    if len(layouts) != len(bands):
+    This is where the measurement's one judgement enters, so it is a function of
+    the frozen page and the file's own layout -- there is no argument it could
+    take the live song through.
+    """
+    per_band = frozen.groupings
+    if len(layouts) != len(per_band):
         raise RuntimeError(
-            f"{len(layouts)} systems in the file against {len(bands)} bands"
+            f"{len(layouts)} systems in the file against {len(per_band)} frozen bands"
         )
     answers = {}
     for layout, grouping in zip(layouts, per_band):
         answers[layout.index] = {
-            row.staff_id: (",".join(grouping[n]) if n < len(grouping)
-                           else per_system.CLEARED)
+            row.staff_id: (",".join(grouping[n]) if n < len(grouping) else cleared)
             for n, row in enumerate(layout.staves)
         }
+    return answers
 
-    cleaned = work / f"{slug}-p{page}_cleaned.mscx"
+
+def answer(frozen, assembled, work, parts, cli):
+    """Clean the assembled page with the frozen grid answer, imploded to the page."""
+    widest = max(frozen.groupings, key=len)
+
+    work.mkdir(parents=True, exist_ok=True)
+    source = work / f"{frozen.name}.musicxml"
+    source.write_bytes(assembled.read_bytes())
+    mscx = parts["pipeline"].convert_to_mscx(str(source), str(work))
+
+    per_system = parts["per_system"]
+    answers = grid_answers(
+        frozen, per_system.layout_for_file(mscx), per_system.CLEARED
+    )
+
+    cleaned = work / f"{frozen.name}_cleaned.mscx"
     with per_system.use_answer_file(str(work / "answers.json")):
         per_system.save_answers(mscx, answers)
         parts["clean_main"](mscx, str(cleaned), interactive=False, per_system=True)
@@ -141,11 +182,11 @@ def answer(slug, page, bands, assembled, work, parts, cli):
         raise RuntimeError("cleaning produced nothing")
 
     root = etree.parse(str(cleaned)).getroot()
-    parts["implode"](root, widest, parts["drop_rests_for"](slug))
-    imploded = work / f"{slug}-p{page}_imploded.mscx"
+    parts["implode"](root, widest, parts["drop_rests_for"](frozen.song))
+    imploded = work / f"{frozen.name}_imploded.mscx"
     etree.ElementTree(root).write(str(imploded), encoding="UTF-8",
                                  xml_declaration=True)
-    exported = work / f"{slug}-p{page}_answered.musicxml"
+    exported = work / f"{frozen.name}_answered.musicxml"
     made = subprocess.run([cli, str(imploded), "-o", str(exported)],
                           capture_output=True, text=True, timeout=600)
     if made.returncode != 0 or not exported.exists():
@@ -160,6 +201,42 @@ def row(result) -> dict:
                 size=result.size, timing=result.timing, meter=result.meter)
 
 
+def wanted(store: Path, chosen) -> list:
+    """The pages to work on, in the store's own order."""
+    found = []
+    for line in (store / "results.jsonl").read_text().splitlines():
+        done = json.loads(line)
+        name = f"{done['song']}-p{done['page']}"
+        if chosen and name not in chosen:
+            continue
+        if any(name == f"{s}-p{p}" for s, p in found):
+            continue
+        found.append((done["song"], done["page"]))
+    return found
+
+
+def record(store, chosen, manifest, parts) -> None:
+    """Write down the grid answers the songs on this host give today."""
+    held = answered_pages.load(manifest)
+    for slug, page in wanted(store, chosen):
+        live = read_live(slug, page, parts)
+        if live is None:
+            log(f"{slug}-p{page}: no song on this host to record from; left alone")
+            continue
+        was = held.get((slug, page))
+        if was is None:
+            log(f"{slug}-p{page}: recorded, {len(live.bands)} bands")
+        else:
+            moved = answered_pages.compare(was, live)
+            log(f"{slug}-p{page}: re-recorded" if moved else
+                f"{slug}-p{page}: unchanged")
+            for line in moved:
+                log(f"    was -> now: {line}")
+        held[(slug, page)] = live
+    answered_pages.save(list(held.values()), manifest)
+    log(f"wrote {manifest}")
+
+
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -168,12 +245,17 @@ def main() -> None:
                         help="where the cached parses and references live")
     parser.add_argument("--scorer", type=Path, default=DEFAULT_SCORER,
                         help="a homr checkout to take `fixturecheck.compare` from")
+    parser.add_argument("--manifest", type=Path, default=None,
+                        help="the frozen grid answers "
+                             f"(default {answered_pages.MANIFEST})")
+    parser.add_argument("--record", action="store_true",
+                        help="write the manifest from the songs on this host, "
+                             "instead of scoring")
     args = parser.parse_args()
 
-    sys.path.insert(0, str(args.scorer))
-    from fixturecheck.compare import compare_output
-
     os.chdir(ROOT)
+    manifest = args.manifest or answered_pages.MANIFEST
+
     from scripts.implode_report import drop_rests_for
     from scripts.make_stem_fixture import band_grouping
     from scripts.reference_manifest import reference_files
@@ -186,30 +268,39 @@ def main() -> None:
     parts = dict(band_grouping=band_grouping, implode_grouping=implode_grouping,
                  reference_files=reference_files, drop_rests_for=drop_rests_for,
                  implode=implode, clean_main=clean_main, per_system=per_system,
-                 pipeline=pipeline)
-    cli = os.environ.get("MUSESCORE_CLI_PATH", "musescore3")
+                 pipeline=pipeline, pdf_systems=pdf_systems)
 
+    if args.record:
+        record(args.store, args.pages, manifest, parts)
+        return
+
+    sys.path.insert(0, str(args.scorer))
+    from fixturecheck.compare import compare_output
+
+    cli = os.environ.get("MUSESCORE_CLI_PATH", "musescore3")
     pooled = {}
     with tempfile.TemporaryDirectory(prefix="answered-") as scratch:
-        for line in (args.store / "results.jsonl").read_text().splitlines():
-            done = json.loads(line)
-            slug, page = done["song"], done["page"]
+        for slug, page in wanted(args.store, args.pages):
             name = f"{slug}-p{page}"
-            if args.pages and name not in args.pages:
-                continue
             reference = args.store / "refs" / f"{name}.musicxml"
             assembled = args.store / "parses" / f"assembled-{name}.musicxml"
             if not reference.exists() or not assembled.exists():
                 log(f"{name}: nothing cached for it; skipped")
                 continue
-            bands = sorted(
-                (b for b in pdf_systems.load_bounds(f"songs/{slug}") if b.page == page),
-                key=lambda b: b.index,
-            )
+            # Frozen first, and the song only as a check on it. A page nobody
+            # wrote down, or one the song has moved under, stops the run rather
+            # than being scored against whatever this host holds today.
+            try:
+                frozen = answered_pages.frozen_page(slug, page, manifest)
+                answered_pages.check(frozen, read_live(slug, page, parts))
+            except (answered_pages.NotFrozen, answered_pages.Drifted) as refused:
+                # Loudly and with a non-zero exit, because the alternative is a
+                # run that keeps printing a number for a question that moved.
+                raise SystemExit(str(refused))
             before = row(compare_output(reference, assembled))
             try:
-                made, rows = answer(slug, page, bands, assembled,
-                                    Path(scratch) / name, parts, cli)
+                made, rows = answer(frozen, assembled, Path(scratch) / name,
+                                    parts, cli)
             except Exception as failure:                        # noqa: BLE001
                 log(f"{name}: could not answer it — {failure}")
                 continue
