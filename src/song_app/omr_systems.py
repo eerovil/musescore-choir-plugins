@@ -372,14 +372,16 @@ def _voice_numbering(per_bar: Sequence[Sequence["_Placed"]]) -> Dict[str, int]:
     is the upper line -- which is false wherever two voices cross.
 
     Re-measured for issue #192 on the engine this host runs (`main @ 6c3bbf4`,
-    issue #173's 63 bands re-read), sorting by pitch is now strictly worse
-    rather than a trade: 67.7% and 84 voice faults against 68.2% and 67. The
-    only page it changes at all is Herää Suomi p3, where the two basses cross on
-    the page and it swaps a column homr had numbered right -- 95.8% and 3 voice
-    faults down to 85.6% and 20. On the older parses it bought Herää Suomi p1
-    back in exchange; it no longer buys anything, because p1's flip has stopped
-    being visible in the heights while remaining in the score (see
-    :func:`assemble`).
+    issue #173's 63 bands re-read), sorting by pitch scores 67.7% and 84 voice
+    faults against 68.2% and 67, and the only page it changes at all is Herää
+    Suomi p3, where the two basses cross on the page and it swaps a column homr
+    had numbered right -- 95.8% and 3 voice faults down to 85.6% and 20.
+    **Those figures are under revision by issue #196**: they come out of a
+    comparator that ranks a staff's voices by which is seen first, which one
+    invented moment can reverse (see :func:`assemble`). What does not move with
+    them is the reason for the refusal -- where two voices cross, "voice 1 is
+    the upper line" is false of the page itself, so it is not a rule this
+    function may adopt whatever the corpus digits settle at.
 
     Homr's numbering is also the better claim on the merits where the two
     disagree: over those 63 parses it puts the higher-sounding voice first in
@@ -508,25 +510,32 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     system -- is gone before assembly sees it. What assembly could still be
     asked to do is reconcile *homr's* numbering between two crops, and it is
     deliberately not asked to. Each crop is read on its own, so nothing ties one
-    crop's "voice 1" to the next crop's, and on Herää Suomi p1 homr really does
-    number the two upper voices one way round in systems 1 and 3 and the other
-    way round in 2 and 4. Sounding height is the only evidence available at that
-    point, and it is not sufficient: on p3 of the same song the two basses cross
-    and change places on the page, so a rule ranking by height would swap a
-    column homr had right. Under the issue #141 rule a crop read with the voices
-    the other way up is homr's to fix, since it is the parse disagreeing with
-    the page rather than us disagreeing with the parse.
+    crop's "voice 1" to the next crop's. Sounding height is the only evidence
+    available at that point, and it is not sufficient: on Herää Suomi p3 the two
+    basses cross and change places on the page, so a rule ranking by height
+    would swap a column homr had right. Under the issue #141 rule a crop really
+    read with the voices the other way up is homr's to fix, since it is the
+    parse disagreeing with the page rather than us disagreeing with the parse.
 
-    Issue #192 re-measured that page on `main @ 6c3bbf4` and it is still 30
-    voice faults, in the same five bars, all on staff 1; swapping that staff's
-    two voices in systems 2 and 4 -- equivalently in 1 and 3 -- still takes the
-    page to 1. What changed is that height can no longer see it. Issue #190
-    found voice 1 is the higher-sounding of the two in all four systems, which
-    is true; on the older parses it was not, because system 1's second voice was
-    a scrap of 3 notes that happened to sit high. The engine now separates those
-    voices properly, so the heights agree with homr's numbering everywhere and
-    the flip survives underneath them -- which is a reason to keep refusing a
-    height rule rather than to reach for one.
+    **Herää Suomi p1 was cited here as an example of that and is not one.**
+    Issues #192 and #194 recorded homr numbering that page's two upper voices
+    one way round in systems 1 and 3 and the other way round in 2 and 4, at 30
+    voice faults; issue #190 retracted it. Each of the four crops agrees with
+    its own reference -- 0, 0, 1 and 0 voice faults, system 4 note-for-note
+    perfect -- homr numbers voice 1 the higher line in all four, and the bars
+    the page-level score faults are correct on both sides. The 30 belong to
+    `fixturecheck.compare._voice_rank`, which ranks a staff's voices by which is
+    seen first: the first moment of staff 1 there is one note homr wrote a
+    quarter early into voice 2, in a moment the reference does not have and the
+    comparison never scores, and that one moment reverses the ranking for the
+    whole page. Fixing it is issue #196, and until it lands no voice-fault
+    figure for that page or in the corpus totals is trustworthy. What is real
+    there is bar 1's early entry, which is a rhythm misread and the fork's.
+
+    None of that weakens issue #187's refusal to sort this assembler by height;
+    it sharpens it. The *harness* needs a height rule, because it has to line one
+    file's voices up against another's and first-seen is not a property of the
+    music. The assembler must not use one, for the p3 reason above.
     """
     if not scans:
         raise ScanError("Nothing to assemble: no systems were read.")
