@@ -1315,7 +1315,10 @@ state model are in `DESIGN.md`.
   and it adds **no** voice faults (93 before, 93 after); and the fourteen assembled pages
   go **62.2% with 257 voice faults** under the old per-bar rule to **68.2% with 67** under
   this one. So what #187 claimed still holds, and the engine's own reading of these bands
-  has improved slightly rather than drifted.
+  has improved slightly rather than drifted. **The voice-fault counts and the assembled
+  percentages are under revision by #196** — the comparator that produced them ranks a
+  staff's voices off one moment, which can be an invented one (see the retraction below);
+  the direction of every comparison here survives that, the digits may not.
   One trap is worth recording because it nearly produced a fake regression. `86d0f2a`
   (#153) writes a head drawn with two stems into **both** voices, as the page prints it,
   and the `b1c9203` scorer collapses a unison on the reference side only — so every
@@ -1323,36 +1326,46 @@ state model are in `DESIGN.md`.
   parses come out 9.3 points *worse* with 49 of 63 systems apparently regressing and not
   one improving, which is the shape that gave it away. **Re-measuring an engine means
   moving the scorer with it.**
-  **Ordering by which voice sounds higher was measured and refused, and on today's engine
-  it is no longer even a close call.** It is the tempting rule — MusicXML's convention is
-  that voice 1 is the upper line — and on `b1c9203`'s parses it scored about the same
-  overall (68.7% against 68.3%). It now scores **67.7% with 84 voice faults against 68.2%
-  with 67**: strictly worse, and the only page it changes at all is Herää Suomi p3, where
-  the two basses cross on the page and ranking by height swaps a column homr had numbered
-  right — **95.8% and 3 voice faults down to 85.6% and 20**. It used to buy Herää Suomi p1
-  back in exchange; it no longer buys anything. Homr's own numbering is also the better
-  claim where the two disagree, putting the higher voice first in **341 of the 357 corpus
-  bars carrying two against 316** for the order the notes happen to be written in.
-  **What is left is a different defect and is homr's**, which is the distinction #187 asked
-  for. Each crop is read on its own, so nothing ties one crop's "voice 1" to the next
-  crop's, and on Herää Suomi p1 homr really does number the two upper voices one way round
-  in systems 1 and 3 and the other way round in 2 and 4 — **30 voice faults** the assembler
-  cannot honestly fix, since height is the only evidence available at the join and p3 is
-  the proof that height is not sufficient. Under the #141 rule a crop read with the voices
-  the other way up is the fork's: the parse disagrees with the page, rather than us
-  disagreeing with the parse.
-  **That page is where re-measuring changed the reasoning rather than the number** (#192).
-  The 30 is still 30, in the same five bars, all on staff 1, and swapping that staff's two
-  voices in systems 2 and 4 — equivalently in 1 and 3 — still takes the page from 30 voice
-  faults to **1**, so the flip is still there. What has gone is any way of *seeing* it from
-  the parse. #190 re-read the four crops and found voice 1 is the higher-sounding of the two
-  in all four systems, which reproduces; on `b1c9203`'s parses it was not, because system 1's
-  second voice was a scrap of 3 notes that happened to sit high, and ordering by height
-  therefore fixed p1 outright. `86d0f2a` separates those voices properly — 8 notes, not 3 —
-  so the heights now agree with homr's numbering in every system **and the flip survives
-  underneath them**. #190's conclusion that the flip is "gone" was a reading of one page's
-  heights rather than of the assembled score; the honest version is that it is no longer
-  detectable by height, which makes the refusal above stronger, not weaker.
+  **Ordering by which voice sounds higher was measured and refused, and nothing since has
+  given a reason to reach for it.** It is the tempting rule — MusicXML's convention is that
+  voice 1 is the upper line — and on `b1c9203`'s parses it scored about the same overall
+  (68.7% against 68.3%). Re-measured for #192 it scores **67.7% with 84 voice faults against
+  68.2% with 67**, and the only page it changes at all is Herää Suomi p3, where the two
+  basses cross on the page and ranking by height swaps a column homr had numbered right —
+  **95.8% and 3 voice faults down to 85.6% and 20**. Those four figures all come out of the
+  harness's comparator and **#196 revises them**, for the reason the next paragraph gives;
+  read them as measured and under revision rather than settled. What does not move with them
+  is the crossing-voices argument, which is a fact about p3's engraving and not about any
+  score: where two voices cross, "voice 1 is the upper line" is false of the page itself.
+  Homr's own numbering is also the better claim where the two disagree, putting the higher
+  voice first in **341 of the 357 corpus bars carrying two against 316** for the order the
+  notes happen to be written in.
+  **Herää Suomi p1 is not evidence of anything, and this is a retraction** (#190, and the
+  claim #194 merged here). Both this file and the two docstrings used to say that homr
+  numbers that page's two upper voices one way round in systems 1 and 3 and the other way
+  round in 2 and 4, at a cost of **30 voice faults** the assembler could not honestly fix.
+  It is not so. Each of the four crops agrees with its own reference — **0, 0, 1 and 0**
+  voice faults, system 4 note-for-note perfect — homr numbers voice 1 the higher line in all
+  four, and the bars the page-level score faults are correct on both sides, printed out note
+  for note. The 30 are the harness's: `fixturecheck.compare._voice_rank` ranks a staff's
+  voices by which is **seen first**, and the first moment of staff 1 on that page is one note
+  homr wrote a quarter early into voice 2 — a moment the reference does not have, so the
+  comparison never scores it while it reverses the ranking of every bar that is scored.
+  Replacing that one rule with mean staff height takes the page **44.5% to 70.9%** and its
+  voice faults **30 to 1**, which is the same 1 #192 reached by swapping two systems' voices
+  and reached by accident. Fixing the comparator and re-measuring is **#196**; until it
+  lands, no voice-fault figure on this page or in the corpus totals above is trustworthy.
+  **What is real there is small and is homr's**: in bar 1 voice 2 enters a quarter early,
+  where the page prints the two in unison entering on beat 2. That is a rhythm misread, so
+  under the #141 rule it is the fork's — its cost as a note error is one row, and its cost
+  as a measurement error was the other 29.
+  **None of this weakens #187's refusal to sort the assembler by height; it sharpens it.**
+  The two rules are not the same rule and must not be run together in the prose. The
+  *harness* needs a height rule, because it has to line one file's voices up against
+  another's and first-seen is not a property of the music. The *assembler* must not use one,
+  because ranking by height is a claim — that voice 1 is the upper line — which p3 shows is
+  false wherever two voices cross, and because the assembler's job is to stop scrambling
+  what homr already said rather than to say something of its own.
   **And voice assignment is no longer the largest remaining boundary-layer loss** (#192).
   It was, when #187 was written; it is now the smallest of the four fault kinds the harness
   counts. The corpus loses 22.9 points between a band as homr wrote it and the assembled
@@ -1360,7 +1373,9 @@ state model are in `DESIGN.md`.
   it splits by page shape. Over the 10 pages every system of which prints the same number
   of staves, assembly costs **nothing**: 89.7% per-system, 89.8% assembled. Over the 4
   where the staff count varies between systems it costs **65 points** — 93.5% to 28.3% —
-  and 592 of those 791 faults are `size`, against 20 voice.
+  and 592 of those 791 faults are `size`, against 20 voice. These are the same
+  under-revision figures (#196), and the split is what matters rather than the digits: what
+  the comparator's ranking bug can move is the voice count, which is the small side of it.
   **That 65 points is what an unanswered file scores, and #195 measured how much of it is
   the file rather than the answer.** The harness scores `scanned.musicxml`, which is a
   positional intermediate — `_fill_column` fills a short system's staves from the top and
@@ -1421,6 +1436,15 @@ state model are in `DESIGN.md`.
   which parts a staff carries, not which row it sits on, and the grid already asks for it.
   What the numbers above do settle is that **every assembled figure this map has quoted is a
   number about an unanswered file**, including #192's own 68.2%.
+  **These carry #196's caveat too, and it lands differently here.** Every figure in this
+  paragraph is scored by the same comparator on both sides, so what #196 can move is the
+  *level* and not the *difference*: the 48.9 points the grid returns, and the 1.0 point the
+  round trip costs, are each one file scored against another by one rule. Herää Suomi p1 is
+  the case that shows it — its 30 spurious voice faults sit in the uniform control on both
+  sides and cost that page 0.9 points either way. So the shape of the finding is safe from
+  #196 and the absolute percentages are not, which is why what is claimed above is that
+  answering the grid returns most of the 65 rather than that the answered corpus is exactly
+  84.4%.
   **Which voice is absent from a short system is not decided here**, because it is not
   recoverable from pixels — you need the words, the range, or the piece. Columns are
   filled from the top and the empty rows are measure rests; naming them is
