@@ -1361,13 +1361,51 @@ state model are in `DESIGN.md`.
   of staves, assembly costs **nothing**: 89.7% per-system, 89.8% assembled. Over the 4
   where the staff count varies between systems it costs **65 points** — 93.5% to 28.3% —
   and 592 of those 791 faults are `size`, against 20 voice.
-  That is `_fill_column` below: a short system's staves are filled **from the top**, so a
-  page's lower voice lands on the upper row and every note of that column reads as the
-  wrong number of notes in the wrong place. It is deliberate as far as it goes — naming an
-  absent voice needs a person, and the `--per-system` grid asks one, which this harness
-  does not run — but the file `assemble` writes does put those notes on the wrong rows, and
-  anything reading it before the grid answers sees the numbers above. #173 said the same
-  thing and it is now the *whole* of the remaining loss rather than the larger half of it.
+  **That 65 points is what an unanswered file scores, and #195 measured how much of it is
+  the file rather than the answer.** The harness scores `scanned.musicxml`, which is a
+  positional intermediate — `_fill_column` fills a short system's staves from the top and
+  says so, and naming the rows is the `--per-system` grid's job, which the harness does not
+  run. So this pull request proposes reporting the same four pages with the grid **answered**
+  the way an operator would, from the reviewed score's own per-band grouping: cleaned in
+  per-system mode and imploded back to the page's printed shape, the pipeline the reference
+  itself came out of. Same parses, same scorer, same references.
+  `scripts/answered_vs_reference.py` is that measurement, committed for the same reason
+  `scripts/flatten_vs_reference.py` was: it re-scores parses somebody else already made, so
+  it needs no homr and the claim below can be checked rather than taken.
+
+  | 4 varying pages | per-system | assembled | assembled, grid answered |
+  | --- | --- | --- | --- |
+  | | 93.5% | 28.3% | **77.2%** |
+  | `size` faults | | 592 | **127** |
+
+  Answering the grid returns **48.9 of the 65 points**, and the control says the pipeline is
+  not what did it: over the 10 uniform pages the same round trip costs **1.0 point**
+  (89.8% → 88.8%), so it neither flatters nor punishes. Corpus-wide, the fourteen pages read
+  **84.4%** answered against 68.2% unanswered.
+
+  **And the 16.3 points left are not row placement at all.** They are on two pages, and both
+  are one thing: a crop that read **one bar more than the page prints** — Kaksi laulua
+  krapulasta 2 p2 s9 and p3 s12 each read 5 bars of a 4-bar system, the only two bar-count
+  disagreements in the corpus — after which the assembled score's bar numbers and the page's
+  part company and every later bar is compared against its neighbour. Scored up to that
+  point those pages are **95.5%** and **97.9%**, against per-system 96.0% and 98.3%: with the
+  grid answered, assembly costs **nothing**. The other two varying pages, which have no extra
+  bar, come back at 84.4% and 92.3% against per-system 86.3% and 94.4%. Under the #141 rule
+  the extra bar is homr's — the parse disagrees with the page — but nothing in the app
+  notices it, though `pdf_systems.label` already knows each band's printed bar range and
+  `read_systems` could compare the two.
+  **So `_fill_column` is not losing music, and it should not start guessing.** The tempting
+  fix is to work out which voice went silent from the clef, the part's range across the join,
+  or the row it held in the neighbouring systems. It would not help, because a short system
+  is usually not a silent voice: of the 9 narrow systems on these four pages, **2** are a
+  voice resting (Kaksi laulua p2 s8 and p3 s11, both tenors) and **7** are divisi printed on
+  two staves in one system and combined onto one in the others — Käyttäytymisohjeita prints
+  T1 and T2 apart in exactly one system of each page and together in the rest. There the
+  narrow system's first staff carries *two* of the reference's rows, so no assignment of it
+  to a single row is right, and no evidence in the pixels changes that. The judgement is
+  which parts a staff carries, not which row it sits on, and the grid already asks for it.
+  What the numbers above do settle is that **every assembled figure this map has quoted is a
+  number about an unanswered file**, including #192's own 68.2%.
   **Which voice is absent from a short system is not decided here**, because it is not
   recoverable from pixels — you need the words, the range, or the piece. Columns are
   filled from the top and the empty rows are measure rests; naming them is

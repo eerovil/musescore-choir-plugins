@@ -33,6 +33,18 @@ columns are filled from the top and the empty rows are measure rests; naming
 them is ``clean_score``'s ``--per-system`` grid's job, and that grid already asks
 a person, which is the only reliable answer.
 
+Issue #195 measured what that refusal costs and what it does not. Scored before
+the grid is answered, the four corpus pages whose systems print different staff
+counts read 28.3% against a per-system 93.5%, and 592 of the 791 faults are
+`size` -- but that is the intermediate being read as if it were the product.
+Answered from the reviewed score's own per-band grouping the same four pages read
+**77.2%**, and every point still missing is on the two pages where a crop read
+one bar more than the page prints; up to that bar assembly costs nothing. A
+better guess here would also not help: of the 9 narrow systems on those pages
+only 2 are a voice resting, and 7 are divisi printed apart in one system and
+together in the rest, where the narrow system's first staff carries two of the
+page's rows and no single row is the right answer.
+
 **Bounds are a precondition.** This module is given the printed systems; it does
 not look for them. Detecting them from the image was measured and abandoned in
 issue #80 (staff-line detection died at half a degree of skew, and grouping by
@@ -486,6 +498,16 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     columns 1 and 2 and leaves the rest resting. That is not a claim about which
     voice is missing -- it is a refusal to make one. The per-system grid asks a
     person, per system and per staff, and top-alignment is the shape it expects.
+
+    **So this file is a positional intermediate and reading it as the product
+    gives a wrong number** (#195). On the four corpus pages whose systems print
+    different staff counts it scores 28.3% against a per-system 93.5%; answered
+    the way an operator answers it, the same pages score 77.2%, and what is left
+    is two pages where a crop read one bar more than the page prints rather than
+    anything about rows. Guessing the row instead would not close it: 7 of those
+    pages' 9 narrow systems are divisi printed apart in one system and together in
+    the rest, so the narrow system's first staff carries two of the page's rows
+    and there is no single row to put it on.
 
     Three seams are closed here, all of them consequences of each crop being its
     own document. ``divisions`` is unified across the score and every duration
