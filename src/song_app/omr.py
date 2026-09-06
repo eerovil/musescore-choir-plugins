@@ -32,6 +32,10 @@ Three things about homr that this module exists to absorb:
   module returns has been through :func:`resolve_slurs`, which is where that is
   argued out. It is a property of the tool, not of a page or a crop, so it is
   normalised once, here.
+* Its **whole-measure rests are not given a voice of their own**. A whole rest
+  and a sung voice's notes come out sharing one ``<voice>``, which overfills
+  the bar by a whole note by construction. :func:`split_measure_rests` moves
+  the rest out; the reasoning is there.
 
 **A scan takes one of this host's heavy slots**, the same way the video render
 does (:mod:`heavy_slot`, issue #100). A page is ~30s of every core on a
@@ -523,6 +527,7 @@ def read_page(
     label: Optional[str] = None,
     queue: bool = True,
     engine: Optional[Engine] = None,
+    repairs: Optional[List["MovedRest"]] = None,
 ) -> str:
     """Read one page image and return the path of the MusicXML written for it.
 
@@ -542,9 +547,15 @@ def read_page(
     a working copy of the fork, run from its own source.
 
     The MusicXML that comes back has had its slurs resolved (:func:`resolve_slurs`)
-    and carries one comment line saying which homr read it
+    and its shared whole-measure rests moved out (:func:`split_measure_rests`),
+    and it carries one comment line saying which homr read it
     (:func:`stamp_provenance`), so a parse read off disk on its own still says
     where it came from.
+
+    ``repairs`` is a list to fill with what the whole-rest repair moved. A
+    caller that has to tell somebody a bar was touched passes one -- the log
+    says it too, but a log is not a record. :mod:`scan` writes them into the
+    song's ``fixes.json``.
     """
     if not os.path.exists(image_path):
         raise HomrError(f"No such image: {image_path}")
@@ -590,6 +601,9 @@ def read_page(
             )
 
         resolve_slurs_in(produced, log=watched)
+        was_moved = split_measure_rests_in(produced, log=watched)
+        if repairs is not None:
+            repairs.extend(was_moved)
         # Last, so the parse carries the identity of whatever produced it
         # however it got here — and so the line is the only thing between what
         # homr wrote and what is on disk.
@@ -709,6 +723,230 @@ def resolve_slurs(part: etree._Element, max_bars: int = MAX_SLUR_BARS) -> int:
         if len(notations) == 0:
             notations.getparent().remove(notations)
     return dropped
+
+
+@dataclass(frozen=True)
+class MovedRest:
+    """One whole-measure rest that was given a voice of its own.
+
+    Everything a person needs to find the bar again on the page: the measure as
+    the parse numbers it, the staff it is written on, the voice it was sharing
+    and the voice it was moved to.
+    """
+
+    measure: str
+    staff: str
+    was: str
+    now: str
+
+    def said(self) -> str:
+        return (f"bar {self.measure}, staff {self.staff}: a whole-measure rest was "
+                f"sharing voice {self.was} with sung notes and was moved to voice "
+                f"{self.now}")
+
+
+#: The elements that move a measure's cursor. Anything else between the first
+#: and the last note of a measure is something :func:`split_measure_rests` does
+#: not understand, and it leaves such a measure alone.
+_TIMED = ("note", "backup", "forward")
+
+
+def split_measure_rests_in(musicxml_path: str, log: Logger = _noop) -> List[MovedRest]:
+    """Split every part's shared whole-measure rests, in place.
+
+    A parse with nothing to move is left untouched rather than rewritten, so a
+    page homr got right comes back exactly as homr wrote it.
+    """
+    tree = etree.parse(musicxml_path)
+    root = tree.getroot()
+    moved: List[MovedRest] = []
+    for part in root.findall("part"):
+        moved.extend(split_measure_rests(part))
+    if moved:
+        tree.write(musicxml_path, xml_declaration=True, encoding="UTF-8")
+        log(f"Moved {len(moved)} whole-measure rest{'s' if len(moved) > 1 else ''} "
+            "into a voice of their own")
+        for one in moved:
+            log("  " + one.said())
+    return moved
+
+
+def split_measure_rests(part: etree._Element) -> List[MovedRest]:
+    """Give a shared whole-measure rest a voice of its own, and close the gap.
+
+    **The rule.** A rest written ``type="whole"`` that shares a ``<voice>`` with
+    any other note or rest cannot be that voice's, because a whole-measure rest
+    alone fills the bar. So it belongs to a voice nothing else is in.
+
+    homr has no way to say "second voice on this staff" -- there is no voice
+    token, no voice field on its symbol record, and ``upper``/``lower`` mean
+    *staff* rather than voice (upstream say so themselves in liebharc/homr#126).
+    So a printed whole-bar rest and the notes of the voice engraved beside it
+    come out in one stream with no ``<backup>`` between them, and the bar
+    overfills by a whole note automatically. The bar this was diagnosed against
+    (#130) is 4/4 and came out **seven quarters long**: a whole rest of 16
+    divisions in front of a half, a dotted eighth and a 16th. Neither
+    ``preprocess_corrupted_measures`` nor ``fix_overfull_measures`` will touch
+    it -- the second correctly refuses a voice that ends on a note -- so it
+    reaches the cleaned score as ``len="28/16"``, and every other staff's
+    measure rest in that bar is then the wrong length, which no health check
+    sees and which surfaces only as a scrolling video the renderer refuses.
+
+    **Why this is honest.** Nothing is invented and nothing is deleted: the same
+    notes and the same rest come out, with one voice number changed and the
+    cursor arithmetic redone around it. It needs **no meter**, which is what
+    makes it a boundary repair rather than a job for ``clean_score``: a
+    per-system crop usually declares no time signature at all, so a rule that
+    had to know the bar length could not run here. That is the same property
+    that put :func:`resolve_slurs` here.
+
+    **What it does not fix.** The voice the rest was sharing is left however
+    homr read it -- in the diagnosed bar, three quarters of music in a bar of
+    four, because a quarter rest was lost as well. That is deliberate: a bar
+    that is *short* is a better failure than a bar 7 quarters long, since the
+    missing note surfaces as lyric syllable overflow at import while the long
+    bar silently drags the practice track. Inventing the missing note is what
+    ``fix_overfull_measures`` refuses to do and this refuses it too. It is still
+    a bar somebody has to look at, which is why :mod:`scan` writes what was
+    moved into the song's ``fixes.json`` as an outstanding free-text fix. A
+    repair nobody is told about turns a loudly wrong bar into a quietly wrong
+    one, and cleaning would then pad the hole and health would go silent.
+
+    **How narrow it is.** Measured over the seven benchmark parses and the
+    fixture's nine system crops (#130): all 41 whole rests carry a full whole
+    note whatever the meter, and this rule fires on **two** of them -- the ones
+    that share a voice. The other 39 rest alone in their voice, make no musical
+    claim, and are already re-lengthed to the real bar by
+    ``fix_overfull_measures``.
+
+    Returns one :class:`MovedRest` per rest moved.
+    """
+    highest = 0
+    for note in part.iter("note"):
+        voice = (note.findtext("voice") or "").strip()
+        if voice.isdigit():
+            highest = max(highest, int(voice))
+
+    # One number past every voice the part uses, so it is free in every measure
+    # -- and the same number in each, because a voice means nothing outside the
+    # measure it is written in and a score with a voice per bar is one MuseScore
+    # cannot hold (it keeps four to a staff).
+    moved: List[MovedRest] = []
+    for measure in part.findall("measure"):
+        moved.extend(_split_measure(measure, highest + 1))
+    return moved
+
+
+def _is_measure_rest(note: etree._Element) -> bool:
+    return (note.find("rest") is not None and note.find("chord") is None
+            and (note.findtext("type") or "").strip() == "whole")
+
+
+def _duration(el: etree._Element) -> int:
+    text = (el.findtext("duration") or "").strip()
+    return int(text) if text.isdigit() else 0
+
+
+def _cursor_move(tag: str, duration: int) -> etree._Element:
+    el = etree.Element(tag)
+    etree.SubElement(el, "duration").text = str(duration)
+    return el
+
+
+def _split_measure(measure: etree._Element, spare: int) -> List[MovedRest]:
+    """One measure's worth of :func:`split_measure_rests`.
+
+    The measure is re-emitted rather than patched in place. Relabelling the
+    rest's ``<voice>`` on its own would leave the bar exactly as long as it was,
+    because the rest still occupies its 16 divisions of the cursor and the notes
+    behind it still start after them. What has to happen is that the rest comes
+    *out of that voice's stream* and the notes behind it move back into the room
+    it was taking, which is arithmetic across the whole measure and not a local
+    edit.
+    """
+    children = list(measure)
+    notes = [c for c in children if c.tag == "note"]
+    if not notes:
+        return []
+    first, last = children.index(notes[0]), children.index(notes[-1])
+    body = children[first:last + 1]
+    if any(c.tag not in _TIMED for c in body):
+        # A direction, a print or a barline sitting among the notes is something
+        # whose place in the stream carries meaning we would be guessing at.
+        return []
+
+    # Where each note actually sounds, by the cursor rules: a note advances it,
+    # a note in a chord shares the previous onset, backup and forward move it.
+    items: List[list] = []
+    cursor = previous = 0
+    for el in body:
+        if el.tag == "backup":
+            cursor -= _duration(el)
+        elif el.tag == "forward":
+            cursor += _duration(el)
+        else:
+            chord = el.find("chord") is not None
+            items.append([el, previous if chord else cursor, chord])
+            if not chord:
+                previous = cursor
+                cursor += _duration(el)
+
+    order: List[str] = []
+    groups: Dict[str, List[list]] = {}
+    for item in items:
+        voice = (item[0].findtext("voice") or "1").strip() or "1"
+        if voice not in groups:
+            groups[voice] = []
+            order.append(voice)
+        groups[voice].append(item)
+
+    targets = []
+    for voice in list(order):
+        group = groups[voice]
+        rests = [it for it in group if _is_measure_rest(it[0])]
+        if rests and len(group) > len(rests):
+            targets.extend((voice, it) for it in rests
+                           if it[0].find("voice") is not None)
+    if not targets:
+        return []
+
+    moved: List[MovedRest] = []
+    for voice, item in targets:
+        group = groups[voice]
+        position = group.index(item)
+        room = _duration(item[0])
+        for later in group[position + 1:]:
+            later[1] -= room
+        group.pop(position)
+        now = str(spare + len(moved))
+        item[0].find("voice").text = now
+        groups[now] = [item]
+        order.append(now)
+        moved.append(MovedRest(
+            measure=measure.get("number") or "?",
+            staff=(item[0].findtext("staff") or "1").strip() or "1",
+            was=voice, now=now,
+        ))
+
+    rebuilt: List[etree._Element] = []
+    cursor = 0
+    for voice in order:
+        for el, onset, chord in groups[voice]:
+            if not chord:
+                if onset > cursor:
+                    rebuilt.append(_cursor_move("forward", onset - cursor))
+                elif onset < cursor:
+                    rebuilt.append(_cursor_move("backup", cursor - onset))
+                cursor = onset
+            rebuilt.append(el)
+            if not chord:
+                cursor += _duration(el)
+
+    for el in body:
+        measure.remove(el)
+    for offset, el in enumerate(rebuilt):
+        measure.insert(first + offset, el)
+    return moved
 
 
 @contextmanager

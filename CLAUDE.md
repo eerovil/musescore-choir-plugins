@@ -351,6 +351,20 @@ Key test modules:
   change comes back byte for byte as homr wrote it. The last needs MuseScore and is the
   defect where it is felt: twelve notes over three bars offer four lyric slots with the
   runaway and twelve without it.
+  A third half is added for #164: the **whole-measure rests**. Most of it is little
+  measures written note by note — a shared rest moves out, the notes behind it move back
+  into the room it was taking (12 divisions, not 16, because the lost quarter rest is not
+  invented back), a rest alone in its voice is left alone, a rest that is not a whole rest
+  is left alone, a second shared rest gets a voice of its own too, the spare voice is
+  reused from one bar to the next because MuseScore holds four to a staff, a chord moves
+  with the note it is stacked on, and a measure with a `direction` among its notes is left
+  alone. The acceptance runs on **a committed copy of the real parse**,
+  `tests/test_files/shared_whole_rest.musicxml` — #130's bar, kept beside the test rather
+  than read out of `songs/`, which is live and changed under that card once already. It
+  asserts the bar stops overfilling and the bars either side of it are untouched. Then the
+  seam: a parse with nothing to move comes back byte for byte, moving one twice finds
+  nothing the second time, and `read_page` applies it, says so in the log, and hands the
+  moves back to a caller that asked.
 - `src/song_app/tests/test_omr_systems.py` — added by this pull request. Two halves.
   **Flattening** is tested with little documents in the shapes homr actually produced
   on the benchmark — four one-staff "Voice" parts, two two-staff "Piano" parts, and a
@@ -386,6 +400,14 @@ Key test modules:
   nothing, an unmarked page is refused before any band is read while a missing poppler is
   not, the route refuses a click aimed at an older reading, and a hole has no fragment to
   render.
+  It also gains the **record of a moved whole-measure rest** (#164): one is written down
+  as an outstanding free-text fix naming the system, the bar and the voices; re-reading the
+  same system does not say it twice; a re-read that moved nothing takes the sentence away;
+  a sentence somebody typed is never touched; a system that could not be read records
+  nothing; and a `fixes.json` broken by hand costs the record rather than the reading. The
+  repair itself is not tested here — it belongs to `omr.py` and is pinned there.
+  `test_fix_panel_ui.py` carries the browser end: the sentence a real scan would leave,
+  written by `record_scan_repairs` rather than typed, showing on the Fix stage.
 - `src/song_app/tests/test_scan_panel_ui.py` — added by this pull request: the Scan panel
   in a real browser, which is where most of #116 actually lives. It opens on the Systems
   editor with the Scan button waiting for the bands; a hole shows what homr said, offers a
@@ -1074,6 +1096,47 @@ state model are in `DESIGN.md`.
   back is one alternating stream, so the score and the pairing cannot drift apart, and
   running it again finds nothing. A parse with nothing to change is left byte for byte
   as homr wrote it.
+  **Every parse also comes back with its whole-measure rests in a voice of their own**
+  (`split_measure_rests`, proposed by this pull request for #164, off #130's
+  measurement). homr's token language has no way to say "second voice on this staff" —
+  no voice token, no voice field on its symbol record, and `upper`/`lower` meaning
+  *staff* rather than voice, which upstream state themselves in liebharc/homr#126. So a
+  printed whole-bar rest and the notes of the voice engraved beside it come out sharing
+  one `<voice>` with no `<backup>` between them, and the bar overfills by a whole note
+  automatically. The bar this was found on is 4/4 and came out **seven quarters long**.
+  Nothing downstream catches it: `preprocess_corrupted_measures` declines, and
+  `fix_overfull_measures` correctly refuses a voice that ends on a note — so it reaches
+  the cleaned score as `len="28/16"`, and every *other* staff's measure rest in that bar
+  is then the wrong length, which no health check sees and which surfaces only as a
+  scrolling video the renderer refuses.
+  The rule is one sentence: **a rest written `type="whole"` that shares a `<voice>` with
+  any other note or rest cannot be that voice's, because a whole-measure rest alone fills
+  the bar.** Nothing is invented and nothing is deleted — one voice number changes and
+  the measure's cursor arithmetic is redone around it, which is what makes the bar
+  shorter; relabelling the `<voice>` alone would leave it exactly as long as it was. It
+  needs **no meter**, and that is what makes it a boundary repair rather than
+  `clean_score`'s: a per-system crop usually declares no time signature at all, so a rule
+  that had to know the bar length could not run here. Same argument as `resolve_slurs`.
+  **It is narrow, and measured.** All 41 whole rests across the seven benchmark parses
+  and the fixture's nine crops carry a full whole note whatever the meter; the rule fires
+  on **two** of them, the two that share a voice. The other 39 rest alone in their voice,
+  make no musical claim, and `fix_overfull_measures` already re-lengths them to the real
+  bar. End to end on the fixture's nine systems, health goes **24 findings to 22** — the
+  two `unprinted-meter` rows on that bar, and nothing else moves.
+  **What it deliberately does not fix**, and why the record below is not optional: the
+  voice the rest was sharing is left however homr read it, which on that bar is three
+  quarters of music in a bar of four, because a quarter rest was lost as well. A *short*
+  bar is a better failure than a bar seven quarters long — the missing note surfaces as
+  lyric syllable overflow at import, while the long bar silently drags the practice track
+  — and inventing it back is what `fix_overfull_measures` refuses to do. But cleaning
+  then pads that hole and health goes quiet, so a loudly wrong bar becomes a quietly
+  wrong one, which is this project's named failure mode occurring inside a repair. Hence
+  `read_page`'s `repairs` argument: a caller that has to tell somebody passes a list, and
+  `scan.py` writes what comes back into the song's `fixes.json` (below). A log line is
+  not a record. The dotted eighth that bar also lost is **not** fixable in principle — a
+  dot rides inside a single rhythm token, so there is nothing to recover — and the
+  `rest_0` token bug behind the four-quarter whole rest is homr's under the #141 rule,
+  opportunistic to upstream and blocking nothing.
   Deliberately **not** here yet, because they belong to other cards on #92's map:
   pages are not stitched into one score (#97), and the deploy and `/healthz` do not
   know homr exists. `read_page` is called now — by `scan.py`, one band at a time.
@@ -1200,6 +1263,22 @@ state model are in `DESIGN.md`.
   per-system record and `homr_now` (the engine installed today) on the wire, and the Scan
   panel's **Read by** section and the `Scan vs page` rows show them; the approval banner
   may say it was given under an older homr and never takes it away.
+  **A whole-measure rest the boundary moved is written down here, and that half is not
+  optional** (#164, proposed by this pull request). `omr.split_measure_rests` straightens
+  the bar; `_record_repairs` → `pipeline.record_scan_repairs` writes one `text` entry per
+  moved rest into the song's `fixes.json`, naming the printed system, the bar, the staff
+  and the voices, and saying that the voice the rest was sharing may still be short of a
+  note. The Fix panel lists it as outstanding (`pipeline.free_text_fixes`). Repairing it
+  quietly would be worse than leaving it: cleaning pads what the repair leaves, health
+  then says nothing, and a bar that was loudly wrong becomes quietly wrong. A `text` entry
+  and not a replayable kind, because there is nothing to replay — the repair happens at
+  the boundary on every parse, so a re-clean gets it for free, and what is left over is
+  the judgement, which is a person's. Re-reading a system **replaces** that system's
+  entries rather than adding to them, so a band read five times is one sentence and a
+  re-read that came back clean takes the old one away; entries somebody typed are never
+  touched. It is written after the fragment is on disk, and a `fixes.json` broken by hand
+  costs the record with a line in the log rather than the twenty bands of reading —
+  cleaning is where such a file is refused properly.
   Measured end to end on the fixture, real crops and real homr: **15 systems, 201s, no
   holes, 52 bars** — the same bar count as the fixture's own cleaned score — every system
   finding the 2 staves the page prints.

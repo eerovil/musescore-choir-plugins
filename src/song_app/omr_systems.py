@@ -113,6 +113,10 @@ class SystemScan:
     index: int                      # 1-based, the band's own index
     musicxml: str
     staves: List[Staff] = field(default_factory=list)
+    #: What `omr.split_measure_rests` moved while reading this system. Carried
+    #: back so the caller can write it down; a repair nobody is told about is
+    #: worse than no repair (see `scan._read_one`).
+    moved_rests: List["omr.MovedRest"] = field(default_factory=list)
 
     @property
     def width(self) -> int:
@@ -175,6 +179,7 @@ def read_system(
     ``engine`` picks which homr reads it (:func:`omr.engines`); the installed
     one otherwise.
     """
+    moved: List[omr.MovedRest] = []
     produced = omr.read_page(
         image.path,
         out_dir=out_dir,
@@ -182,11 +187,13 @@ def read_system(
         label=f"song app homr system {image.index}",
         queue=queue,
         engine=engine,
+        repairs=moved,
     )
     staves = flatten(produced)
     if not staves:
         raise ScanError(f"System {image.index} came back with no staves ({produced}).")
-    return SystemScan(index=image.index, musicxml=produced, staves=staves)
+    return SystemScan(index=image.index, musicxml=produced, staves=staves,
+                      moved_rests=moved)
 
 
 # --- flattening ----------------------------------------------------------

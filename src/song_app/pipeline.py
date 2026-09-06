@@ -219,6 +219,61 @@ def _recorded_fixes(song_dir: str) -> List[Dict]:
     return entries
 
 
+#: What marks a free-text entry as written by the scan rather than by a person.
+SCAN_SOURCE = "scan"
+
+
+def record_scan_repairs(song_dir: str, system: int, moved: List[Dict]) -> int:
+    """Write down the whole-measure rests the scan moved in one printed system.
+
+    One ``text`` entry per rest, so the Fix panel lists each as outstanding and a
+    person is told a bar was touched (`free_text_fixes`). This is the half of
+    :func:`omr.split_measure_rests` that must not be skipped: cleaning pads the
+    hole the repair leaves, health then goes quiet, and a loudly wrong bar becomes
+    a quietly wrong one -- this project's named failure mode, occurring inside a
+    repair. A log line is not a record; it scrolls past and the next page load has
+    never heard of it.
+
+    ``text`` and not one of the applicable kinds, because there is nothing to
+    replay: the repair happens at the boundary on every parse, so a re-clean gets
+    it again for free. What is left over is the judgement, and that is a person's.
+
+    Re-reading a system **replaces** its entries rather than adding to them, so a
+    band read five times is not five copies of the same sentence, and a re-read
+    that came back clean takes the old sentence away. Only this system's are
+    touched; a sentence somebody typed is never one of them.
+
+    Returns how many entries this system now has.
+    """
+    kept = [fix for fix in _recorded_fixes(song_dir)
+            if not (fix.get("source") == SCAN_SOURCE and fix.get("system") == system)]
+    written = [
+        {
+            "kind": "text",
+            "source": SCAN_SOURCE,
+            "system": int(system),
+            "what": (
+                f"Scan, printed system {system}, bar {one['measure']}, staff "
+                f"{one['staff']}: homr wrote a whole-measure rest into the same voice "
+                f"as sung notes, which made the bar a whole note too long. The rest was "
+                f"moved to a voice of its own (voice {one['was']} -> {one['now']}). "
+                "Nothing was added or taken away, so the voice it was sharing may still "
+                "be short of a note that cleaning has since padded with a rest. Read "
+                "this bar against the page."
+            ),
+        }
+        for one in moved
+    ]
+    entries = kept + written
+    path = os.path.join(song_dir, "fixes.json")
+    if not entries and not os.path.exists(path):
+        return 0
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(entries, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    return len(written)
+
+
 def free_text_fixes(song_dir: str) -> List[str]:
     """The song's outstanding free-text fixes, for showing on the Fix stage.
 
