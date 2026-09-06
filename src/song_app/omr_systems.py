@@ -359,6 +359,12 @@ def _voiced(notes: List["_Placed"]) -> List[etree._Element]:
             note = placed.note
             _set(note, "voice", str(n))
             _drop(note, "staff")
+            # `_duration` is 0 for a chord or grace note, so the cursor advances
+            # only for a note that really takes time -- the same rule the reading
+            # side applies, and it has to stay the same rule: a cursor that moved
+            # across a chord would think it stood a whole note further on than
+            # the XML does, and back the *next* note up to somewhere earlier than
+            # homr put it.
             at += _duration(note)
             out.append(note)
     return out

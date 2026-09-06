@@ -225,7 +225,15 @@ def test_a_voice_that_enters_mid_bar_enters_mid_bar():
 
 def test_a_chord_stays_stacked_on_the_note_it_shares_a_beat_with():
     """A chord note sounds *with* the note before it, so nothing steps between
-    them -- winding back over the leader would be the slide in miniature."""
+    them -- winding back over the leader would be the slide in miniature.
+
+    The bar is also asserted to come out with **no step element at all**, which
+    is the half that guards the note *after* the chord. A cursor that counted a
+    chord note's duration would stand a whole note further on than the XML does,
+    and the next note would be backed up to somewhere earlier than homr put it.
+    Nothing here relies on that being noticed by eye: a `backup` appearing in
+    this bar fails the test.
+    """
     stacked = ('<note><chord/><pitch><step>E</step><octave>4</octave></pitch>'
                "<duration>2</duration><voice>1</voice></note>")
     part = etree.fromstring(
@@ -235,6 +243,8 @@ def test_a_chord_stays_stacked_on_the_note_it_shares_a_beat_with():
         + a_note("D", duration=2, voice="1")
         + "</measure></part>")
     staff = omr_systems.flatten_part(part)[0]
+    assert staff.measures[0].findall("backup") == []
+    assert staff.measures[0].findall("forward") == []
     assert onsets(staff.measures[0]) == {"1": [(0, "C"), (0, "E"), (2, "D")]}
 
 
