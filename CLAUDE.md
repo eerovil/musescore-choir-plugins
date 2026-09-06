@@ -380,7 +380,15 @@ Key test modules:
   `tests/test_files/voices_across_the_bar.musicxml` — one printed system of Herää Suomi as
   homr read it, kept beside the test rather than read out of `songs/` — asserting every
   note of it comes out on the beat homr put it on, and naming the bar the old rebuild
-  moved a whole phrase in. **Assembling** is
+  moved a whole phrase in. A third group is added by this pull request for #187, about
+  **which voice a note comes out on**: a voice homr wrote first does not become voice 1
+  for it, a bar only the lower voice sings does not promote it, and a voice numbered 5 is
+  still compacted, because compacting was never the defect. Beside them is that card's
+  acceptance on two more **committed copies of real parses**,
+  `tests/test_files/voice_rank_join_{first,second}.musicxml` — the two printed systems
+  either side of one join of Kaksi laulua krapulasta 2, the join #173 measured losing 21
+  points with every note present — asserting the higher singer holds voice 1 in every bar
+  of both, and again once they are assembled into one part across the join. **Assembling** is
   tested on the seams: continuous bar numbers, a break at each join and none at the
   start, one `divisions` with the durations rescaled to it, a repeated key dropped and a
   changed one kept, a meter change inside a crop left alone, a resting column given the
@@ -1284,6 +1292,38 @@ state model are in `DESIGN.md`.
   is the one case that takes no step, since it sounds *with* the note before it rather
   than after it. `scripts/flatten_vs_reference.py` is the measurement, committed by this
   pull request because #166's own harness did not survive that session.
+  **Which voice a note comes out on is decided once for the staff, and this pull request
+  proposes that** (#187). Renumbering from 1 is still necessary and still done, but it
+  used to be done again in every bar, from the order the notes were *written* in — which
+  is homr's interleaving and not a fact about the music. Two singers therefore swapped
+  places whenever homr happened to write the lower one first, and a bar where only one of
+  them sang compacted whichever singer that was down to voice 1 and handed the part back
+  afterwards. Every note was present, at the right pitch, on the right beat, in the wrong
+  part: **no health check sees that** — both voices are well-formed and the bar adds up —
+  and a singer meets it as somebody else's line in their practice track, which is #148's
+  second-worst error kind in its most confusing form. #173 measured it as the largest
+  remaining boundary-layer loss: Kaksi laulua krapulasta p4, three staves in all five
+  systems, **83.1% flattened against 62.1% assembled with 119 voice faults and zero
+  pitch, size or timing faults**. Now the staff's voices are numbered once, in the order
+  of **homr's own numbers**, and that page assembles at **99.7% with one voice fault**.
+  Over #173's whole 63-parse corpus, flattening's own cost goes **3.9 points to 0.4** and
+  the 103 voice faults it used to add become **none**; the fourteen assembled pages go
+  61.9% to 68.3%.
+  **Ordering by which voice sounds higher was measured and refused.** It is the tempting
+  rule — MusicXML's convention is that voice 1 is the upper line — and it scores about the
+  same overall (68.7%), but it is a second and different claim, and it is false wherever
+  two voices cross: on Herää Suomi p3 the two basses change places on the page and ranking
+  by height swaps a column homr had numbered right, costing 20 voice faults. Homr's own
+  numbering is also the better claim where the two disagree, putting the higher voice
+  first in 295 of the 312 corpus bars carrying two against 270 for the written order.
+  **What is left is a different defect and is homr's**, which is the distinction #187 asked
+  for. Each crop is read on its own, so nothing ties one crop's "voice 1" to the next
+  crop's, and on Herää Suomi p1 homr really does number the two upper voices one way round
+  in systems 1 and 3 and the other way round in 2 and 4 — 30 voice faults the assembler
+  cannot honestly fix, since height is the only evidence available at the join and p3 is
+  the proof that height is not sufficient. Under the #141 rule a crop read with the voices
+  the other way up is the fork's: the parse disagrees with the page, rather than us
+  disagreeing with the parse.
   **Which voice is absent from a short system is not decided here**, because it is not
   recoverable from pixels — you need the words, the range, or the piece. Columns are
   filled from the top and the empty rows are measure rests; naming them is

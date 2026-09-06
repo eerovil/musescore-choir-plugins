@@ -351,6 +351,126 @@ def test_the_upper_voice_of_the_real_bar_two_enters_where_the_page_has_it():
     # entire, a beat early, under a whole note that does start on beat one.
 
 
+# --- which singer is voice 1 (issue #187) --------------------------------
+
+#: The two printed systems either side of one join of Kaksi laulua krapulasta 2,
+#: as homr really read them, committed rather than read out of `songs/`. See
+#: `test_files/README.md` for what makes them the fixture.
+A_JOIN = [os.path.join(os.path.dirname(__file__), "test_files", name)
+          for name in ("voice_rank_join_first.musicxml",
+                       "voice_rank_join_second.musicxml")]
+
+STEPS = "CDEFGAB"
+
+
+def voices_by_height(measure):
+    """``{voice: mean height}`` for one flattened bar, in diatonic steps.
+
+    Height and not pitch name, because all that is being asked is which of the
+    two is written above the other.
+    """
+    heights = {}
+    for note in measure.iter("note"):
+        step = note.findtext("pitch/step")
+        if step is None:
+            continue
+        heights.setdefault(note.findtext("voice"), []).append(
+            7 * int(note.findtext("pitch/octave")) + STEPS.index(step))
+    return {voice: sum(seen) / len(seen) for voice, seen in heights.items()}
+
+
+def test_a_voice_keeps_its_number_when_homr_writes_it_first():
+    """Issue #187, in miniature. Which voice homr writes first is a fact about
+    its interleaving, not about the music, so it must not decide who is voice 1.
+
+    Both bars hold the same two lines. The first is written lower voice first,
+    the second upper voice first, and homr calls them 2 and 1 in both.
+    """
+    lower = a_note("C", octave="4", duration=1, voice="2")
+    upper = a_note("A", octave="5", duration=1, voice="1")
+
+    def bar(number, first, second):
+        return (f'<measure number="{number}">'
+                "<attributes><divisions>1</divisions></attributes>"
+                + first + "<backup><duration>1</duration></backup>" + second
+                + "</measure>")
+    part = etree.fromstring('<part id="P1">' + bar(1, lower, upper)
+                            + bar(2, upper, lower) + "</part>")
+    staff = omr_systems.flatten_part(part)[0]
+    # The A5 is homr's voice 1 in both bars, so it is voice 1 in both bars here.
+    assert onsets(staff.measures[0])["1"] == [(0, "A")]
+    assert onsets(staff.measures[1])["1"] == [(0, "A")]
+
+
+def test_a_bar_only_the_lower_voice_sings_does_not_promote_it():
+    """The other half of the same defect, and the one that is invisible.
+
+    Nothing is written the wrong way round here -- the upper voice simply rests
+    through the second bar. Numbering each bar on its own compacted the one
+    voice left down to 1, so the lower singer took over the upper part for a
+    bar and handed it back afterwards.
+    """
+    part = etree.fromstring(
+        '<part id="P1">'
+        '<measure number="1"><attributes><divisions>1</divisions></attributes>'
+        + a_note("A", octave="5", duration=1, voice="1")
+        + "<backup><duration>1</duration></backup>"
+        + a_note("C", octave="4", duration=1, voice="2") + "</measure>"
+        '<measure number="2">' + a_note("D", octave="4", duration=1, voice="2")
+        + "</measure></part>")
+    staff = omr_systems.flatten_part(part)[0]
+    assert onsets(staff.measures[1]) == {"2": [(0, "D")]}
+
+
+def test_a_voice_number_homr_never_used_is_still_compacted():
+    """Renumbering from 1 is still done -- a staff arriving as voice 5 of a part
+    that has one is what it is for. Only *which* voice gets which number
+    changes."""
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1">'
+        "<attributes><divisions>1</divisions></attributes>"
+        + a_note("A", octave="5", duration=1, voice="5")
+        + "<backup><duration>1</duration></backup>"
+        + a_note("C", octave="4", duration=1, voice="7") + "</measure></part>")
+    staff = omr_systems.flatten_part(part)[0]
+    assert onsets(staff.measures[0]) == {"1": [(0, "A")], "2": [(0, "C")]}
+
+
+def test_the_real_join_keeps_the_upper_singer_on_the_upper_voice():
+    """Issue #187's acceptance, on the two real parses either side of the join.
+
+    Every bar of the upper staff that carries both lines has to put the higher
+    one on voice 1 -- in the first system, where homr writes the lower one
+    first in all three bars, and in the second, where it changes its mind after
+    bar 1. Before this, the first system came out with the two singers swapped
+    and the second swapped them back mid-phrase.
+    """
+    for path in A_JOIN:
+        upper = omr_systems.flatten(path)[0]
+        for number, measure in enumerate(upper.measures, start=1):
+            heights = voices_by_height(measure)
+            if len(heights) < 2:
+                continue
+            assert heights["1"] > heights["2"], f"{path} bar {number}"
+
+
+def test_the_real_join_assembles_without_the_singers_changing_places(tmp_path):
+    """The same two systems joined, which is where a swap is actually felt: one
+    part of the assembled score has to be one singer the whole way through."""
+    scans = [omr_systems.SystemScan(index=index, musicxml=path,
+                                    staves=omr_systems.flatten(path))
+             for index, path in enumerate(A_JOIN, start=1)]
+    out = omr_systems.assemble(scans, str(tmp_path / "joined.musicxml"))
+    part = read(out).findall("part")[0]
+    both = [measure for measure in part.findall("measure")
+            if len(voices_by_height(measure)) > 1]
+    # All three bars of the first system and all five of the second.
+    assert len(both) == 8
+    for measure in both:
+        heights = voices_by_height(measure)
+        assert heights["1"] > heights["2"], measure.get("number")
+
+
 # --- assembling ----------------------------------------------------------
 
 
