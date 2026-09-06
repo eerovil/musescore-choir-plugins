@@ -31,7 +31,11 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.implode_report import drop_rests_for, override_for  # noqa: E402
+from scripts.implode_report import (  # noqa: E402
+    drop_rests_for,
+    override_for,
+    system_override_for,
+)
 from scripts.reference_manifest import reference_files  # noqa: E402
 from src.clean_score.implode import grouping, implode  # noqa: E402
 from src.song_app import pdf_systems  # noqa: E402
@@ -93,12 +97,16 @@ def system_override(root: etree._Element, start: int) -> list[list[str]] | None:
     Both go away by asking the band's own system instead of the score.  The
     per-system map records it position by position, `Grouping.systems` carries it
     through, and `implode` already accepts a grouping by part name -- the same
-    door a person's reading of the page comes through, which is why a recorded
-    override still wins over this.
+    door a person's reading of the page comes through.
+
+    The positions are numbered by musical rank, so this can still be **wrong
+    about the order** where the page is: a voice printed above the parts it
+    ranks below -- `laulun-aika-3`'s T3 over T1 and T2 -- comes back underneath
+    them.  `system_override_for` is where that is corrected, and `band_grouping`
+    is the order the three answers are asked in.
 
     Nothing is inferred here.  A score with no per-system map, or one whose map
-    does not cover this bar, is imploded as the whole score, which is what fixed
-    staff roles should do.
+    does not cover this bar, falls back to whatever `band_grouping` has left.
     """
     found = grouping(root)
     system = next((s for s in found.systems if s.start <= start <= s.end), None)
@@ -108,6 +116,34 @@ def system_override(root: etree._Element, start: int) -> list[list[str]] | None:
     if any(not name for group in printed for name in group):
         return None
     return printed
+
+
+def band_grouping(
+    slug: str, root: etree._Element, start: int
+) -> list[list[str]] | None:
+    """The staves this band's own system prints, best evidence first.
+
+    A reading of **this system** beats the score's own map, which beats a
+    reading of the **whole song** -- and that last step is a correction.  A
+    whole-song reading used to beat everything, on the principle that a person
+    who looked at the page outranks a map the app wrote.  It does, about the
+    same thing: `laulun-aika-3`'s recorded reading is one grouping for a song
+    that prints two staves in four systems, three in two of them and four in the
+    last, so it was applied to five bands it does not describe and made three of
+    the worst six references in the corpus.  Specificity, not authority, is what
+    orders these -- so a per-system reading is added and sits at the top.
+
+    The map is right about which staves a system prints and can be wrong about
+    their **order**: it numbers positions by musical rank (S<A<T<B), and an
+    extra voice printed above the others -- `laulun-aika-3`'s T3 -- is then
+    ranked below the parts it sits over.  That is what a per-system reading is
+    for here; where the two agree there is nothing to record.
+    """
+    return (
+        system_override_for(slug, start)
+        or system_override(root, start)
+        or override_for(slug)
+    )
 
 
 def main() -> None:
@@ -137,7 +173,7 @@ def main() -> None:
         picture.write_bytes(Path(image.path).read_bytes())
 
         root = etree.parse(str(sources.cleaned)).getroot()
-        override = override_for(args.slug) or system_override(root, band.measure_start)
+        override = band_grouping(args.slug, root, band.measure_start)
         implode(root, override, drop_rests_for(args.slug))
         trim(root, band.measure_start, band.measure_end)
         score = Path(tmp) / f"{name}.mscx"
