@@ -155,9 +155,30 @@ def test_voices_are_renumbered_from_one(tmp_path):
     assert {n.findtext("voice") for n in lower.measures[0].findall("note")} == {"1"}
 
 
-def test_two_voices_on_one_staff_keep_their_backup():
-    """Dropping the backups is only safe because they are rebuilt: two voices
-    sharing a staff must still start at the same point in the bar."""
+def onsets(measure):
+    """Where each note of a flattened bar sounds, by voice, following its cursor.
+
+    Read the same way the flattening reads homr: a note moves the cursor on, a
+    ``backup`` winds it back, a ``forward`` moves it on. What comes back is
+    ``{voice: [(onset, step), ...]}`` -- the beat, and the note written there.
+    """
+    out, at, onset = {}, 0, 0
+    for child in measure:
+        if child.tag == "backup":
+            at -= int(child.findtext("duration"))
+        elif child.tag == "forward":
+            at += int(child.findtext("duration"))
+        elif child.tag == "note":
+            if child.find("chord") is None:
+                onset = at
+                at += int(child.findtext("duration") or 0)
+            out.setdefault(child.findtext("voice"), []).append(
+                (onset, child.findtext("pitch/step")))
+    return out
+
+
+def test_two_voices_on_one_staff_start_together():
+    """Two voices homr started together still start together."""
     part = etree.fromstring(
         '<part id="P1"><measure number="1">'
         "<attributes><divisions>1</divisions></attributes>"
@@ -166,19 +187,151 @@ def test_two_voices_on_one_staff_keep_their_backup():
         + a_note("E", duration=1, voice="2") + a_note("F", duration=1, voice="2")
         + "</measure></part>")
     staff = omr_systems.flatten_part(part)[0]
-    backups = staff.measures[0].findall("backup")
-    assert [b.findtext("duration") for b in backups] == ["2"]
+    assert onsets(staff.measures[0]) == {
+        "1": [(0, "C"), (1, "D")], "2": [(0, "E"), (1, "F")]}
 
 
-def test_three_voices_wind_back_only_one_voice_at_a_time():
-    """A running total would put the third voice before the start of the bar."""
+def test_a_voice_homr_wrote_later_in_the_bar_stays_there():
+    """Issue #172. Three notes homr wrote one after the other sound one after
+    the other, whatever voice numbers it gave them.
+
+    This is the bar the old rebuild lost: it started every voice again at the
+    head of the bar, so these three stacked up on beat one -- three singers
+    holding a chord where the page has a phrase. Measured over 61 systems in
+    issue #166, that slide cost 18.8 points of note accuracy.
+    """
     notes = "".join(a_note("C", duration=1, voice=str(v)) for v in (1, 2, 3))
     part = etree.fromstring(
         '<part id="P1"><measure number="1">'
         "<attributes><divisions>1</divisions></attributes>" + notes + "</measure></part>")
     staff = omr_systems.flatten_part(part)[0]
-    assert [b.findtext("duration")
-            for b in staff.measures[0].findall("backup")] == ["1", "1"]
+    assert onsets(staff.measures[0]) == {
+        "1": [(0, "C")], "2": [(1, "C")], "3": [(2, "C")]}
+
+
+def test_a_voice_that_enters_mid_bar_enters_mid_bar():
+    """The shape that costs the most: homr backs up part of the way, not all of
+    it, and the voice it is placing sings from the middle of the bar."""
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1">'
+        "<attributes><divisions>1</divisions></attributes>"
+        + "".join(a_note(s, duration=1, voice="1") for s in "CDEF")
+        + "<backup><duration>2</duration></backup>"
+        + a_note("G", duration=1, voice="2") + a_note("A", duration=1, voice="2")
+        + "</measure></part>")
+    staff = omr_systems.flatten_part(part)[0]
+    assert onsets(staff.measures[0])["2"] == [(2, "G"), (3, "A")]
+
+
+def test_a_chord_stays_stacked_on_the_note_it_shares_a_beat_with():
+    """A chord note sounds *with* the note before it, so nothing steps between
+    them -- winding back over the leader would be the slide in miniature."""
+    stacked = ('<note><chord/><pitch><step>E</step><octave>4</octave></pitch>'
+               "<duration>2</duration><voice>1</voice></note>")
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1">'
+        "<attributes><divisions>1</divisions></attributes>"
+        + a_note("C", duration=2, voice="1") + stacked
+        + a_note("D", duration=2, voice="1")
+        + "</measure></part>")
+    staff = omr_systems.flatten_part(part)[0]
+    assert onsets(staff.measures[0]) == {"1": [(0, "C"), (0, "E"), (2, "D")]}
+
+
+def test_the_staves_of_a_fused_part_each_start_at_the_head_of_the_bar():
+    """The backup between two staves of a grand staff is homr saying "the second
+    staff starts again here", and the second staff has to arrive believing it."""
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1">'
+        "<attributes><divisions>1</divisions><staves>2</staves></attributes>"
+        + a_note("C", duration=1, voice="1", staff=1)
+        + a_note("D", duration=1, voice="1", staff=1)
+        + "<backup><duration>2</duration></backup>"
+        + a_note("E", duration=1, voice="2", staff=2)
+        + a_note("F", duration=1, voice="2", staff=2)
+        + "</measure></part>")
+    upper, lower = omr_systems.flatten_part(part)
+    assert onsets(upper.measures[0]) == {"1": [(0, "C"), (1, "D")]}
+    assert onsets(lower.measures[0]) == {"1": [(0, "E"), (1, "F")]}
+
+
+# --- the same thing on a real parse --------------------------------------
+
+#: One printed system of Herää Suomi as homr really read it, kept beside the
+#: test rather than read out of `songs/`, which is live and has changed under
+#: two cards already. Two staves of two voices each, written the way homr writes
+#: them: a note, a backup, the next voice's note, over and over. The page is in
+#: the public-domain slice of the benchmark (`fixtures/omr-benchmark`, B1a).
+A_REAL_SYSTEM = os.path.join(os.path.dirname(__file__), "test_files",
+                             "voices_across_the_bar.musicxml")
+
+
+def where_homr_put_them(path, staff):
+    """One staff's notes as homr placed them: ``{bar: {(beat, pitch), ...}}``.
+
+    Read off the part's own cursor, which is the thing the flattening has to
+    keep. Beats are in that document's divisions.
+    """
+    root = etree.parse(path).getroot()
+    out = {}
+    for part in root.findall("part"):
+        for bar, measure in enumerate(part.findall("measure"), start=1):
+            found, at, onset = set(), 0, 0
+            for child in measure:
+                if child.tag == "backup":
+                    at -= int(child.findtext("duration"))
+                elif child.tag == "forward":
+                    at += int(child.findtext("duration"))
+                elif child.tag == "note":
+                    if child.find("chord") is None:
+                        onset = at
+                        at += int(child.findtext("duration") or 0)
+                    if (child.findtext("staff") or "1") == str(staff):
+                        found.add((onset, child.findtext("pitch/step"),
+                                   child.findtext("pitch/octave")))
+            out[bar] = found
+    return out
+
+
+def where_they_came_out(staff):
+    out = {}
+    for bar, measure in enumerate(staff.measures, start=1):
+        found, at, onset = set(), 0, 0
+        for child in measure:
+            if child.tag == "backup":
+                at -= int(child.findtext("duration"))
+            elif child.tag == "forward":
+                at += int(child.findtext("duration"))
+            elif child.tag == "note":
+                if child.find("chord") is None:
+                    onset = at
+                    at += int(child.findtext("duration") or 0)
+                found.add((onset, child.findtext("pitch/step"),
+                           child.findtext("pitch/octave")))
+        out[bar] = found
+    return out
+
+
+def test_a_real_system_comes_out_on_the_beats_homr_put_it_on():
+    """Issue #172's acceptance in one file: every note of a real parse, on the
+    beat homr gave it. The old rebuild moved 16 of this system's 57."""
+    staves = omr_systems.flatten(A_REAL_SYSTEM)
+    assert len(staves) == 2
+    for number, staff in enumerate(staves, start=1):
+        assert where_they_came_out(staff) == where_homr_put_them(A_REAL_SYSTEM, number)
+
+
+def test_the_upper_voice_of_the_real_bar_two_enters_where_the_page_has_it():
+    """The shape the old rebuild lost, named. homr reads the upper staff of bar
+    2 as a whole note in one voice and a phrase in the other that starts on the
+    second beat; laying that second voice from the head of the bar puts its
+    every note a beat early for the rest of the bar."""
+    upper = omr_systems.flatten(A_REAL_SYSTEM)[0]
+    # Divisions are 4, so these are beats 2, 2¾, 3 and 4 of a bar of four.
+    assert onsets(upper.measures[1])["2"] == [
+        (4, "A"), (7, "A"), (8, "A"), (12, "G")]
+    # The old rebuild wrote the same four notes at 0, 3, 4 and 8 -- the phrase
+    # entire, a beat early, under a whole note that does start on beat one.
 
 
 # --- assembling ----------------------------------------------------------

@@ -107,6 +107,14 @@ class Staff:
 
 
 @dataclass
+class _Placed:
+    """A note and the beat homr's own cursor put it on, in that part's divisions."""
+
+    onset: int
+    note: etree._Element
+
+
+@dataclass
 class SystemScan:
     """What came back for one printed system."""
 
@@ -244,11 +252,18 @@ def _staff_numbers(part: etree._Element) -> List[int]:
 def _extract_staff(part: etree._Element, number: int) -> Staff:
     """One staff of a part, rebuilt as a part of its own.
 
-    ``<backup>`` and ``<forward>`` are dropped rather than filtered: they exist
-    to move the cursor between staves *and* between voices, and telling those
-    two apart after the fact is guesswork. Instead each bar is rebuilt from its
-    notes -- grouped by voice, with a backup of the previous group's own length
-    written between groups -- which is well defined whatever the input did.
+    ``<backup>`` and ``<forward>`` are not kept as they stand -- they move the
+    cursor between staves as well as between voices, and this staff is about to
+    lose the other staves -- but **what they say about onsets is**. Each bar is
+    read by following the cursor homr wrote (a note advances it, a ``backup``
+    winds it back, a ``forward`` moves it on), which gives every note the beat
+    homr put it on; the staff is then written back out voice by voice with the
+    steps that put each note back at that beat.
+
+    That is the whole of issue #172. The rebuild used to start every voice again
+    at the head of the bar, so a voice homr placed later in the bar slid to beat
+    one -- measured over 61 systems in issue #166, it cost 18.8 points of
+    note accuracy, and this is the largest single loss that map found.
     """
     measures: List[etree._Element] = []
     divisions = 0
@@ -256,8 +271,10 @@ def _extract_staff(part: etree._Element, number: int) -> Staff:
 
     for source in part.findall("measure"):
         measure = etree.Element("measure", number=source.get("number") or "")
-        notes: List[etree._Element] = []
+        notes: List[_Placed] = []
         trailing: List[etree._Element] = []
+        at = 0            # where homr's cursor stands
+        onset = 0         # where the note being read starts
         for child in source:
             tag = child.tag
             if tag == "attributes":
@@ -269,10 +286,18 @@ def _extract_staff(part: etree._Element, number: int) -> Staff:
                 if len(attrs):
                     measure.append(attrs)
             elif tag == "note":
+                # A note with <chord/> sounds with the one before it rather than
+                # after it: it neither advances the cursor nor takes an onset of
+                # its own.
+                if child.find("chord") is None:
+                    onset = at
+                    at += _duration(child)
                 if _staff_of(child) == number:
-                    notes.append(copy.deepcopy(child))
-            elif tag in ("backup", "forward"):
-                continue
+                    notes.append(_Placed(onset, copy.deepcopy(child)))
+            elif tag == "backup":
+                at = max(0, at - _int(child.findtext("duration")))
+            elif tag == "forward":
+                at += _int(child.findtext("duration"))
             elif tag == "print":
                 continue
             elif tag in ("direction", "harmony", "figured-bass"):
@@ -297,33 +322,44 @@ def _extract_staff(part: etree._Element, number: int) -> Staff:
                  clef=clef, key=key, time=time)
 
 
-def _voiced(notes: List[etree._Element]) -> List[etree._Element]:
-    """Notes regrouped voice by voice, with the backups that implies.
+def _voiced(notes: List["_Placed"]) -> List[etree._Element]:
+    """Notes regrouped voice by voice, each put back where homr had it.
 
     Voices are renumbered from 1, because a voice number is only meaningful
     inside its part and this staff is about to become a part of its own -- a
     staff whose notes said ``<voice>5</voice>`` would otherwise arrive claiming
     to be the fifth voice of a part that has one.
+
+    The steps between them are **arithmetic on the onsets read out of homr's own
+    cursor**, not an assumption about where a voice begins: a ``backup`` where
+    the next note sounds earlier than the cursor stands, a ``forward`` where it
+    sounds later. Two voices homr started together still start together, because
+    their first notes have the same onset -- but two voices homr wrote one after
+    the other stay one after the other, which is what this used to lose.
     """
-    groups: Dict[str, List[etree._Element]] = {}
-    for note in notes:
-        groups.setdefault((note.findtext("voice") or "1").strip(), []).append(note)
+    groups: Dict[str, List[_Placed]] = {}
+    for placed in notes:
+        voice = (placed.note.findtext("voice") or "1").strip()
+        groups.setdefault(voice, []).append(placed)
 
     out: List[etree._Element] = []
-    spent = 0
+    at = 0
     for n, (_voice, group) in enumerate(groups.items(), start=1):
-        # Back up by the *previous* voice's own length, not by everything
-        # written so far: each voice starts again at the head of the bar, so a
-        # running total would wind the third voice back past the start of it.
-        if out and spent:
-            backup = etree.Element("backup")
-            etree.SubElement(backup, "duration").text = str(spent)
-            out.append(backup)
-        spent = 0
-        for note in group:
+        for placed in group:
+            step = placed.onset - at
+            # A chord note follows its leader immediately and shares its onset,
+            # so stepping to that onset would wind back over the leader itself.
+            stacked = placed.note.find("chord") is not None and bool(out) \
+                and out[-1].tag == "note"
+            if step and not stacked:
+                move = etree.Element("backup" if step < 0 else "forward")
+                etree.SubElement(move, "duration").text = str(abs(step))
+                out.append(move)
+                at = placed.onset
+            note = placed.note
             _set(note, "voice", str(n))
             _drop(note, "staff")
-            spent += _duration(note)
+            at += _duration(note)
             out.append(note)
     return out
 
