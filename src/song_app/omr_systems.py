@@ -369,16 +369,22 @@ def _voice_numbering(per_bar: Sequence[Sequence["_Placed"]]) -> Dict[str, int]:
     voice sounds highest. That is a deliberate refusal to make a claim: this
     function's whole job is to stop the assembler *scrambling* what homr said,
     and re-sorting by pitch would be a second, different claim -- that voice 1
-    is the upper line -- which is false wherever two voices cross. Measured on
-    the same corpus, sorting by pitch reorders staves homr had numbered
-    consistently and costs Herää Suomi p3 20 voice faults where the two basses
-    change places; it buys p1, which is the *other* defect, and not one the
-    assembler can honestly fix (see :func:`assemble`).
+    is the upper line -- which is false wherever two voices cross.
+
+    Re-measured for issue #192 on the engine this host runs (`main @ 6c3bbf4`,
+    issue #173's 63 bands re-read), sorting by pitch is now strictly worse
+    rather than a trade: 67.7% and 84 voice faults against 68.2% and 67. The
+    only page it changes at all is Herää Suomi p3, where the two basses cross on
+    the page and it swaps a column homr had numbered right -- 95.8% and 3 voice
+    faults down to 85.6% and 20. On the older parses it bought Herää Suomi p1
+    back in exchange; it no longer buys anything, because p1's flip has stopped
+    being visible in the heights while remaining in the score (see
+    :func:`assemble`).
 
     Homr's numbering is also the better claim on the merits where the two
-    disagree: over the 63 band parses issue #173 cached, it puts the
-    higher-sounding voice first in 295 of the 312 bars carrying two, against
-    270 for the order the notes happen to be written in.
+    disagree: over those 63 parses it puts the higher-sounding voice first in
+    341 of the 357 bars carrying two, against 316 for the order the notes
+    happen to be written in.
     """
     labels = {(placed.note.findtext("voice") or "1").strip()
               for notes in per_bar for placed in notes}
@@ -510,6 +516,17 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     column homr had right. Under the issue #141 rule a crop read with the voices
     the other way up is homr's to fix, since it is the parse disagreeing with
     the page rather than us disagreeing with the parse.
+
+    Issue #192 re-measured that page on `main @ 6c3bbf4` and it is still 30
+    voice faults, in the same five bars, all on staff 1; swapping that staff's
+    two voices in systems 2 and 4 -- equivalently in 1 and 3 -- still takes the
+    page to 1. What changed is that height can no longer see it. Issue #190
+    found voice 1 is the higher-sounding of the two in all four systems, which
+    is true; on the older parses it was not, because system 1's second voice was
+    a scrap of 3 notes that happened to sit high. The engine now separates those
+    voices properly, so the heights agree with homr's numbering everywhere and
+    the flip survives underneath them -- which is a reason to keep refusing a
+    height rule rather than to reach for one.
     """
     if not scans:
         raise ScanError("Nothing to assemble: no systems were read.")
