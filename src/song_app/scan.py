@@ -280,18 +280,30 @@ def findings_by_system(song: state.Song) -> Optional[Dict[str, int]]:
     system. So the findings are carried back and attributed by bar.
 
     ``None`` rather than zeros whenever the attribution cannot be trusted: no
-    cleaning yet, a hole, or a cleaned score that is not the length the fragments
-    add up to. A wrong system number sends somebody to re-read music that was read
-    correctly, which is worse than saying nothing.
+    cleaning yet, a hole, a health record that is not about the cleaned score as it
+    stands now, or a cleaned score that is not the length the fragments add up to. A
+    wrong system number sends somebody to re-read music that was read correctly,
+    which is worse than saying nothing.
     """
     fragments = _fragments(song)
     bands = pdf_systems.load_bounds(song.dir)
     if not bands or not fragments:
         return None
-    issues = [i for i in (song.data.get("health", {}).get("issues") or [])
+    health_record = song.data.get("health") or {}
+    issues = [i for i in (health_record.get("issues") or [])
               if i.get("status") == "open"]
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
+        return None
+    # The findings have to be about the score that is there now, and the bar count
+    # below does not establish that: somebody editing the score in MuseScore
+    # ordinarily changes what is *in* the bars, not how many there are, so a stale
+    # record sails straight through a length check. This is the same test
+    # `verification.summary` calls stale, and it matters more here than there --
+    # Review would merely be showing an old count, while this stage names systems
+    # and tells a person to read them again, which is sending them to re-read music
+    # that may have been repaired since.
+    if health_record.get("checked_against") != state.file_fingerprint(cleaned):
         return None
     # Cleaning does not renumber bars, so the fragments' own lengths lay the score
     # out -- but only if they still add up to it. They do not after a per-system

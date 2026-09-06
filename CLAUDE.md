@@ -718,9 +718,13 @@ state model are in `DESIGN.md`.
   instead is **attribution**: once a song has been cleaned, `scan.findings_by_system`
   maps each finding's bar to the printed system it fell in, and the panel names the
   worst systems directly above the buttons that re-read one. It answers `None` — not
-  zeros — whenever the numbering cannot be trusted (no clean yet, a hole, or fragments
-  whose bar lengths no longer add up to the cleaned score), because a wrong system
-  number sends somebody to re-read music that was read correctly.
+  zeros — whenever the numbering cannot be trusted, because a wrong system number sends
+  somebody to re-read music that was read correctly: no clean yet, a hole, fragments
+  whose bar lengths no longer add up to the cleaned score, or a health record checked
+  against an older one. That last is the same `checked_against` test `verification`
+  calls stale, and it is not covered by the bar count — editing a score in MuseScore
+  changes what is in the bars and not how many there are — so without it the panel
+  would send somebody back to a system they had just repaired.
   Two caveats worth carrying: #169 is separately checking whether the walk's 60-vs-1
   against Soundslice is like-for-like, and #166 found that a large share of that damage
   may be `omr_systems.flatten` dropping `<backup>` rather than the scan being bad. The
