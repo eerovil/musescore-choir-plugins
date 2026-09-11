@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from contextlib import nullcontext
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 
 from . import heavy_slot, omr, pdf_systems, system_finder_legacy as legacy
 from .omr import Engine, HomrError, HomrMissing
@@ -56,11 +57,15 @@ def _engine_command(engine: Engine) -> List[str]:
 
 
 def _unsupported(stderr: str) -> bool:
-    """Whether this is the expected old-homr answer that permits compatibility fallback."""
-    lowered = stderr.lower()
-    return "--find-system-bounds" in lowered and (
-        "unrecognized arguments" in lowered or "no such option" in lowered
-    )
+    """Only an explicit rejection of the proposal flag permits legacy fallback."""
+    # argparse also prints supported options in its usage text. Finding the flag
+    # there must not turn an unrelated CLI error into a successful legacy result.
+    return re.search(
+        r"(?:unrecognized arguments|no such option):[^\r\n]*"
+        r"(?<![\w-])--find-system-bounds(?![\w-])",
+        stderr,
+        re.IGNORECASE,
+    ) is not None
 
 
 def _page_from_homr(
@@ -110,6 +115,8 @@ def _page_from_homr(
     try:
         payload = json.loads(result.stdout)
         rows = payload["systems"]
+        if not isinstance(rows, list):
+            raise ValueError("systems must be a list")
         bounds = [
             SystemBounds(
                 index=int(row["index"]),
@@ -121,11 +128,13 @@ def _page_from_homr(
             )
             for row in rows
         ]
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise HomrError(f"Could not read homr's system proposal for page {page}: {exc}") from exc
 
     if any(bound.page != page for bound in bounds):
         raise HomrError(f"homr returned a system for the wrong page while proposing page {page}")
+    if any(bound.index < 1 or not 0.0 <= bound.top < bound.bottom <= 1.0 for bound in bounds):
+        raise HomrError(f"homr returned invalid system bounds while proposing page {page}")
     return bounds
 
 
