@@ -23,6 +23,7 @@ import shutil
 import pytest
 
 from src.song_app import omr, pdf_systems, system_finder
+from src.song_app import system_finder_legacy as legacy
 from src.song_app.tests import benchmark
 
 # --- the rule -------------------------------------------------------------
@@ -151,7 +152,9 @@ def test_a_page_with_no_staves_proposes_nothing():
     assert system_finder.bands_for_page(1, [], []) == []
 
 
-# --- reaching homr --------------------------------------------------------
+# --- reaching legacy homr -------------------------------------------------
+# Keep testing the compatibility helper where it lives after #213. The public
+# adapter's supported CLI contract is covered in test_system_finder_homr_api.py.
 
 
 def test_the_helper_runs_under_the_engine_that_would_read_the_page(monkeypatch, tmp_path):
@@ -170,21 +173,21 @@ def test_the_helper_runs_under_the_engine_that_would_read_the_page(monkeypatch, 
     installed = omr.Engine(key="default", label="main", command=[str(venv_bin / "homr")],
                            default=True)
     monkeypatch.setattr(omr, "default_engine", lambda: installed)
-    command, env = system_finder._helper_command(None)
-    assert command == [str(python), system_finder.HELPER]
+    command, env = legacy._helper_command(None)
+    assert command == [str(python), legacy.HELPER]
     assert env == {}
 
     checkout = omr.Engine(key="wt", label="branch", command=[str(python), "-c", "..."],
                           env={"PYTHONPATH": "/somewhere/homr"})
-    command, env = system_finder._helper_command(checkout)
-    assert command == [str(python), system_finder.HELPER]
+    command, env = legacy._helper_command(checkout)
+    assert command == [str(python), legacy.HELPER]
     assert env == {"PYTHONPATH": "/somewhere/homr"}
 
 
 def test_no_homr_is_refused_by_name(monkeypatch):
     monkeypatch.setattr(omr, "default_engine", lambda: None)
     with pytest.raises(omr.HomrMissing) as raised:
-        system_finder._helper_command(None)
+        legacy._helper_command(None)
     assert "install-homr.sh" in str(raised.value)
 
 
@@ -197,11 +200,11 @@ def test_a_page_homr_could_not_read_says_so(monkeypatch, tmp_path):
         stdout = ""
         stderr = "No noteheads found"
 
-    monkeypatch.setattr(system_finder, "_helper_command",
+    monkeypatch.setattr(legacy, "_helper_command",
                         lambda engine: (["/bin/true"], {}))
-    monkeypatch.setattr(system_finder.subprocess, "run", lambda *a, **k: Failed())
+    monkeypatch.setattr(legacy.subprocess, "run", lambda *a, **k: Failed())
     with pytest.raises(omr.HomrError) as raised:
-        system_finder.staves_on_page(str(image))
+        legacy.staves_on_page(str(image))
     assert "No noteheads found" in str(raised.value)
 
 
