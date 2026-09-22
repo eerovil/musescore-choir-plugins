@@ -154,3 +154,23 @@ def test_a_crop_follows_the_score_it_was_cut_from(bounds, tmp_path):
 
     assert second.path != first.path
     assert Image.open(second.path).tobytes() != Image.open(first.path).tobytes()
+
+
+def test_a_rendered_page_follows_what_the_file_holds_now(tmp_path):
+    """One path, rewritten: the render must follow it.
+
+    The cleaned score's PDF is rebuilt in place at a single path whenever the
+    score changes. Keying the page cache on the path alone kept counting systems
+    off the picture from before the change -- after a lyric import relaid a
+    5-system score as 6, the compare view refused to pair anything and said the
+    scan's systems and the cleaned score's do not correspond.
+    """
+    path = str(tmp_path / "render.pdf")
+    subprocess.run(["pdfseparate", "-f", "1", "-l", "1", PDF, path], check=True)
+    before = pdf_systems.render_page(path, 1, DPI, str(tmp_path))
+
+    subprocess.run(["pdfseparate", "-f", "2", "-l", "2", PDF, path], check=True)
+    after = pdf_systems.render_page(path, 1, DPI, str(tmp_path))
+
+    assert after != before, "the rewritten file was served from the old cache name"
+    assert Image.open(after).tobytes() != Image.open(before).tobytes()

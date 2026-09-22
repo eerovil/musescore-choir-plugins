@@ -78,7 +78,7 @@ def page_count(pdf_path: str) -> int:
 
 
 def render_page(pdf_path: str, page: int, dpi: int, out_dir: str) -> str:
-    """Rasterise one page, cached by (page, dpi) under out_dir.
+    """Rasterise one page, cached by (source, version, page, dpi) under out_dir.
 
     Rendered to a private name and moved into place, because the editor asks for
     every page at once: two requests for the same page would otherwise render over
@@ -88,7 +88,17 @@ def render_page(pdf_path: str, page: int, dpi: int, out_dir: str) -> str:
     # The source has to be part of the cache name: a song folder renders both the
     # original scan and the cleaned score, and without this the second one to be
     # asked for is served the first one's pages.
-    who = hashlib.sha1(os.path.abspath(pdf_path).encode("utf-8")).hexdigest()[:8]
+    #
+    # And so does what that source holds *now*, for the same reason `crop_systems`
+    # carries it. The cleaned score's render is rewritten in place at one path
+    # whenever the score changes, so a name made of the path alone keeps serving
+    # the picture before the change. That is not merely a stale picture: the
+    # compare view counts the systems in this render to pair them with the
+    # printed ones, and a lyric import relaid a 5-system score as 6, so the pairing
+    # was refused as "the systems do not correspond" with nothing wrong but the cache.
+    who = hashlib.sha1(
+        f"{os.path.abspath(pdf_path)}:{file_version(pdf_path)}".encode("utf-8")
+    ).hexdigest()[:8]
     out = os.path.join(out_dir, f"page-{who}-{page:02d}@{dpi}.png")
     if os.path.exists(out):
         return out
