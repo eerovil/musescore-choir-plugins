@@ -44,8 +44,12 @@ better guess here would also not help: of the 9 narrow systems on those pages
 only 2 are a voice resting, and 7 are divisi printed apart in one system and
 together in the rest, where the narrow system's first staff carries two of the
 page's rows and no single row is the right answer. Those percentages were scored
-by the comparator issue #196 has since replaced and were not re-scored; the
-*difference* between them is unaffected, since both sides come off one rule.
+by the comparator issue #196 has since replaced and were not re-scored -- **the
+gap between them included**. Both sides come off one rule, which makes 28.3%
+against 77.2% an honest measurement under that rule; it does not make the gap
+invariant under the new one, since a different ranking can move the two sides by
+different amounts. The conclusion stands as plausible and unverified until
+someone re-scores both with issue #196's rule.
 
 **Bounds are a precondition.** This module is given the printed systems; it does
 not look for them. Detecting them from the image was measured and abandoned in
@@ -517,8 +521,11 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     pages' 9 narrow systems are divisi printed apart in one system and together in
     the rest, so the narrow system's first staff carries two of the page's rows
     and there is no single row to put it on. Both percentages were scored by the
-    comparator issue #196 has since replaced and were not re-scored; the gap
-    between them is unaffected, being one comparator's reading of two files.
+    comparator issue #196 has since replaced and were not re-scored, **and so was
+    the gap between them**. One comparator reading two files is a fair comparison
+    under that comparator and not a guarantee that a different ranking would move
+    the two sides by the same amount, so the gap is a historical measurement that
+    nobody has checked against issue #196's rule.
 
     Three seams are closed here, all of them consequences of each crop being its
     own document. ``divisions`` is unified across the score and every duration

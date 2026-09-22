@@ -1339,8 +1339,10 @@ state model are in `DESIGN.md`.
   basses cross on the page and ranking by height swaps a column homr had numbered right —
   **95.8% and 3 voice faults down to 85.6% and 20**. Those four figures were scored by the
   comparator **#196 has since replaced** and were not re-derived, so read the p3 swap as
-  large rather than as exactly 10.2 points; both sides of each pair come off one rule, which
-  is what the comparison rests on. What does not move with them
+  large rather than as exactly 10.2 points. Both sides of each pair come off one rule, which
+  makes them a fair comparison **under that rule**; it does not make the gap invariant under
+  #196's, since a new ranking can move the two sides by different amounts, and that has not
+  been measured. What does not move with them
   is the crossing-voices argument, which is a fact about p3's engraving and not about any
   score: where two voices cross, "voice 1 is the upper line" is false of the page itself.
   Homr's own numbering is also the better claim where the two disagree, putting the higher
@@ -1460,17 +1462,26 @@ state model are in `DESIGN.md`.
   What the numbers above do settle is that **every assembled figure this map has quoted is a
   number about an unanswered file**, including the corpus 69.1% above.
   **Every figure in this #195 paragraph and its table was scored by the comparator #196 has
-  since replaced, and none of them has been re-scored.** They are quoted here as #195
-  measured them, so the two columns of the table are like for like and the 28.3% in it is
-  #195's own rather than the 28.1% the paragraph above now carries. That is deliberate: what
-  #196 can move is the *level* and not the *difference*, and every figure here is one file
-  scored against another by one rule — the 48.9 points the grid returns, the 1.0 point the
-  round trip costs, the 84.4% against 68.2% corpus-wide. Herää Suomi p1 is the case that
-  shows it: its 30 spurious voice faults sat in the uniform control on both sides and cost
-  that page 0.9 points either way. So the shape of the finding survived #196 and the
-  absolute percentages are not its to vouch for, which is why what is claimed above is that
-  answering the grid returns most of the 65 rather than that the answered corpus is exactly
-  84.4%. Re-scoring the answered pages on today's comparator is not on this map.
+  since replaced, and none of them has been re-scored — the differences included.** They are
+  quoted here as #195 measured them, so the two columns of the table are like for like and
+  the 28.3% in it is #195's own rather than the 28.1% the paragraph above now carries.
+  **The gaps are not exempt from that, and an earlier version of this paragraph said they
+  were.** It argued that #196 could move the *level* of a score but not the *difference*
+  between two scores made with one comparator. That does not follow: replacing the ranking
+  rule can move the answered and the unanswered score by **different** amounts, in which
+  case the gap between them moves too. Both sides sharing a comparator makes the 48.9 points
+  the grid returns, the 1.0 point the round trip costs, and the 84.4% against 68.2%
+  corpus-wide honest **historical** measurements under the superseded rule; it does not make
+  them invariant under the new one, and nobody has checked. Herää Suomi p1 shows why the
+  intuition is tempting and not why it is safe: its 30 spurious voice faults sat in the
+  uniform control on both sides and cost that page 0.9 points either way — one page where the
+  error happened to cancel, which is an example rather than a proof.
+  So the qualitative finding — that answering the grid returns most of the 65 points, and
+  that the pipeline round trip is not what did it — is **plausible and unverified**, which is
+  why what is claimed above is that most of the 65 comes back rather than that the answered
+  corpus is exactly 84.4%. Settling it takes one measurement and no argument: re-score #195's
+  cached answered and unanswered outputs with #196's shipped rule and publish the new pair.
+  That needs the fork's harness inside homr's venv and is not on this map yet.
   **Which voice is absent from a short system is not decided here**, because it is not
   recoverable from pixels — you need the words, the range, or the piece. Columns are
   filled from the top and the empty rows are measure rests; naming them is
