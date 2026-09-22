@@ -79,6 +79,71 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
     return target
 
 
+# --------------------------------------------------------------------------
+# Taking the score away to MuseScore and bringing it back
+# --------------------------------------------------------------------------
+# The Fix stage's instruction is "fix it in MuseScore, save, and it re-checks
+# automatically", and the button under it opens the file with `open -a` — both of
+# which assume the person sitting at MuseScore is sitting at the host the app runs
+# on. From a phone, or from any other machine, neither is true, so the score could
+# be looked at and never edited. Downloading it and sending the fixed one back is
+# the same loop over the network.
+UPLOAD_EXTS = (".mscx", ".mscz")
+
+
+class ScoreUploadError(ValueError):
+    """An uploaded file that must not be put in place of the cleaned score."""
+
+
+def _uploaded_score_summary(mscx_path: str) -> Dict:
+    """What an uploaded file has to be to count as a score, and what it holds."""
+    try:
+        root = etree.parse(mscx_path).getroot()
+    except etree.XMLSyntaxError as exc:
+        raise ScoreUploadError(f"That file is not readable as MuseScore XML: {exc}")
+    score = root.find("Score") if root.tag == "museScore" else None
+    if score is None:
+        raise ScoreUploadError("That XML is not a MuseScore score.")
+    staves = [s for s in score.findall("Staff") if s.find("Measure") is not None]
+    if not staves:
+        raise ScoreUploadError("That score has no staves with any music in them.")
+    return {"staves": len(staves),
+            "measures": max(len(s.findall("Measure")) for s in staves)}
+
+
+def accept_uploaded_score(cleaned_path: str, filename: str, data: bytes) -> Dict:
+    """Put an uploaded score in place of the cleaned one, having checked it first.
+
+    This is the only route that overwrites the file every later stage is derived
+    from, so nothing is replaced until the upload has been parsed and found to be a
+    score with music in it: a refused upload leaves the score that is there alone.
+    A `.mscz` is accepted as well, because that is what MuseScore's Save As offers
+    by default and noticing is not a reasonable thing to ask of somebody fixing a
+    bar on their laptop.
+    """
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in UPLOAD_EXTS:
+        raise ScoreUploadError(
+            f"Upload the score as .mscx or .mscz — '{os.path.basename(filename or 'that file')}' is neither.")
+    tmp = tempfile.mkdtemp(prefix=".upload-", dir=os.path.dirname(cleaned_path))
+    try:
+        landed = os.path.join(tmp, "uploaded" + ext)
+        with open(landed, "wb") as f:
+            f.write(data)
+        if ext == ".mscz":
+            try:
+                landed = convert_to_mscx(landed, tmp)
+            except (RuntimeError, zipfile.BadZipFile) as exc:
+                raise ScoreUploadError(f"Could not read that .mscz: {exc}")
+        summary = _uploaded_score_summary(landed)
+        # A move rather than a copy, and from a directory beside the target, so the
+        # score is never half-written on disk.
+        shutil.move(landed, cleaned_path)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return summary
+
+
 def system_grid(mscx_path: str) -> List[Dict]:
     """Per-system staff layout for the clean-stage grid form.
 

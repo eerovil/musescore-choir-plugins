@@ -501,6 +501,19 @@ Key test modules:
   refusal (no reason, a span past the bar, a slur already there) writes neither. The
   third is the browser: the bar shown as its own notes, the cost said before the
   write, the warning when lyrics are already imported, and that it fits a phone.
+- `src/song_app/tests/test_score_file.py` / `test_score_file_ui.py` — added by this
+  pull request for taking the score away to MuseScore and bringing it back (#216).
+  The first is mostly about what must **not** be replaced: a PDF, a transfer that
+  truncated, MusicXML rather than MuseScore, a score with no music in it, a `.mscz`
+  with nothing inside — each refused with the score on disk untouched — plus nothing
+  replaced underneath a running job. Then the half that has to happen: the file comes
+  down under its own name, a `.mscx` and a `.mscz` both land, the health record is
+  re-taken against what arrived, and an approval given against the old score lapses.
+  The second is the browser: the download really saves under the score's name, a
+  picked file reaches disk and the panel still says so after its own refresh, and a
+  refusal is said in the panel rather than only to a log nobody has open. Neither
+  needs MuseScore. Screenshots go to `EVIDENCE_DIR` when the run names one, so none
+  is committed here.
 
 ## Where an OMR fix belongs: the fork or this repo
 
@@ -1038,6 +1051,23 @@ state model are in `DESIGN.md`.
   one syllable too long. The cleaned system crop is shown alongside where one is
   available (`/compare` + `/cleaned-system/{index}`); it needs a MuseScore render, so
   not having it costs a picture rather than the feature.
+- **The score can be taken away and brought back**, which this pull request proposes
+  (#216). Both editing routes the app had assumed MuseScore was on *this* host:
+  `open-score` shells out to `open -a`, and the file watcher re-checks a score saved
+  under `songs/`. From the phone the app is actually used from — or from any other
+  computer — neither happens, so the Fix and Review stages could be read and never
+  acted on. `GET /score-file` sends the cleaned `.mscx` as a download under its own
+  name, and `POST /score-file` puts the fixed one back: `pipeline.accept_uploaded_score`
+  parses it first and only then moves it into place, so a refused upload leaves the
+  score that is there alone — this is the one route that overwrites the file every
+  later stage is derived from. `.mscz` is accepted as well, because that is what
+  MuseScore's Save As writes by default. Landing it is deliberately **an edit and not
+  a stage**: the route claims its own write with `_rescan` (so the watcher does not
+  check the same file twice), the health record is re-taken against what arrived, and
+  an approval recorded against the old fingerprint lapses by itself. Nothing is
+  replaced while a scan, clean, render or upload is running — that would be read
+  half-written — and the panel's confirmation survives its own refresh, or the only
+  sign the file arrived would be the health rows quietly changing.
 - `omr.py` is added by this pull request: **one call that turns a page image into a
   MusicXML path**, `read_page(image, out_dir=..., log=...)`. It runs homr (optical
   music recognition, adopted in #86), which is the first thing the app depends on that
