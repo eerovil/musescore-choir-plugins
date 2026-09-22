@@ -1095,6 +1095,52 @@ def api_open_score(slug: str) -> Dict:
     return {"ok": True}
 
 
+@app.get("/api/songs/{slug}/score-file")
+def api_score_file(slug: str):
+    """The cleaned score, as a download.
+
+    `open-score` above only works for somebody sitting at this host. This is the
+    other half of the same idea for everybody else: take the file to whatever
+    machine has MuseScore on it.
+    """
+    song = _require(slug)
+    cleaned = _cleaned_or_400(song)
+    return FileResponse(cleaned, media_type="application/octet-stream",
+                        filename=os.path.basename(cleaned), headers=dict(REVALIDATE))
+
+
+@app.post("/api/songs/{slug}/score-file")
+async def api_upload_score_file(slug: str, file: UploadFile = None) -> Dict:
+    """Put a fixed score back, and re-check it.
+
+    The same thing the file watcher does when the score is saved in MuseScore on
+    this host — which is what makes this an edit rather than a new stage: the
+    health check runs against the new file, and an approval given against the old
+    one lapses because the fingerprint it was recorded against has moved.
+    """
+    song = _require(slug)
+    cleaned = _cleaned_or_400(song)
+    if not file or not file.filename:
+        raise HTTPException(400, "No file was uploaded")
+    if is_recording(song) or is_scanning(song) or any(
+            job_state.is_running(song.dir, kind) for kind in ("clean", "render", "upload")):
+        raise HTTPException(409, "A scan, clean, render, or upload is running for this song — "
+                                 "replacing the score underneath it would be read half-written.")
+    try:
+        summary = pipeline.accept_uploaded_score(cleaned, file.filename, await file.read())
+    except pipeline.ScoreUploadError as exc:
+        raise HTTPException(400, str(exc))
+    except OSError as exc:
+        raise HTTPException(500, str(exc))
+    hub.emit(slug, {"type": "log", "line": (
+        f"Replaced the cleaned score with {os.path.basename(file.filename)} — "
+        f"{summary['staves']} staves, {summary['measures']} bars")})
+    # Our own write, so claim it: otherwise the file watcher reads it as a MuseScore
+    # edit and checks the same file a second time.
+    _rescan(song)
+    return _derived(song)
+
+
 @app.post("/api/songs/{slug}/reveal-pdf")
 def api_reveal_pdf(slug: str) -> Dict:
     song = _require(slug)

@@ -1458,8 +1458,66 @@ function panelFix(panel, song, P, refresh) {
   panel.append(el("div", { className: "row" },
     el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
     el("button", { onclick: async () => { await postJSON(`${P}/rescan`); refresh(); } }, "Re-check now")));
+  panel.append(scoreFileTransfer(song, P, refresh));
   slurRecorder(panel, song, P, refresh);
 }
+
+// Taking the score away and bringing it back. "Open in MuseScore" only opens it on
+// the machine the app runs on, so from a phone — or from any other computer — the
+// Fix stage could be read and never acted on. Downloading the file and sending the
+// fixed one back is the same loop for everybody else.
+let lastScoreUpload = null;   // {slug, text} — see below
+
+function scoreFileTransfer(song, P, refresh) {
+  const box = el("div", { className: "scorefile" });
+  if (!song.has_cleaned) return box;
+  // A successful upload refreshes the panel, which throws away whatever this span
+  // was saying — so what it said survives the redraw. Otherwise the only sign the
+  // file arrived is the health rows quietly changing.
+  const status = el("span", { className: "hint scorefilestatus" },
+    lastScoreUpload?.slug === song.slug ? lastScoreUpload.text : "");
+  const problem = el("p", { className: "lyerr scorefileerr" });
+  const picker = el("input", { type: "file", accept: ".mscx,.mscz", className: "scorefilepick",
+    hidden: true });
+  const upload = el("button", { className: "scorefileup" }, "Upload fixed score");
+
+  picker.addEventListener("change", async () => {
+    const file = picker.files && picker.files[0];
+    if (!file) return;
+    problem.textContent = "";
+    // The one route that overwrites the file every later stage is derived from, so
+    // it is worth one question before it does.
+    if (!confirm(`Replace the cleaned score with ${file.name}?`)) { picker.value = ""; return; }
+    status.textContent = `Uploading ${file.name}…`;
+    upload.disabled = true;
+    try {
+      Object.assign(song, await api(`${P}/score-file`, { method: "POST", body: sendFile(file) }));
+      lastScoreUpload = { slug: song.slug, text: `Replaced with ${file.name} — re-checked.` };
+      status.textContent = lastScoreUpload.text;
+      refresh();
+    } catch (error) {
+      lastScoreUpload = null;
+      status.textContent = "";
+      problem.textContent = error.message;
+    }
+    upload.disabled = false;
+    picker.value = "";
+  });
+  upload.onclick = () => picker.click();
+
+  box.append(
+    el("h3", {}, "Fix it elsewhere"),
+    el("p", { className: "sub" },
+      "MuseScore on another machine? Download the score, fix it there, and send it back — it is re-checked on arrival, the same as an edit saved on this host."),
+    el("div", { className: "row" },
+      el("a", { className: "button scorefiledl", href: `${P}/score-file`, download: "" },
+        "Download score (.mscx)"),
+      upload, status),
+    picker, problem);
+  return box;
+}
+
+const sendFile = (file) => { const body = new FormData(); body.append("file", file); return body; };
 
 // Recording a missing slur. The judgement is a person's — nothing upstream will guess
 // a slur back, because it joins different pitches and cannot be pitch-checked — so all
@@ -1810,6 +1868,7 @@ function panelReview(panel, song, P, refresh, actions) {
         refresh();
       } }, "Re-run health check"),
       el("button", { onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore")),
+    scoreFileTransfer(song, P, refresh),
     el("div", { className: "review-actions" }, approve)));
 }
 
