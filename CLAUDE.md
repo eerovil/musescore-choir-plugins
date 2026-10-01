@@ -80,7 +80,9 @@ backup/                  Gitignored .mscz backups (created by backup.sh)
   `YOUTUBE_CLIENT_SECRETS_PATH`. Never commit real secrets;
   `.env`, `client_secrets.json`, and `token.pickle` are gitignored.
 - The CLI wrappers import the package via `from src.clean_score... import ...`,
-  so **run them from the repo root** (e.g. `./clean_score.py ...`).
+  so **run them from the repo root** (e.g. `./clean_score.py ...`). Their shebang is the
+  system `python3`, which lacks the dependencies, so unless `.venv` is activated run them
+  as `.venv/bin/python clean_score.py ...`.
 - `./song.py` prefers port 8000, scans the next 49 ports when it is occupied,
   and enables uvicorn source reload by default (watching only `src/`). Use
   `--port`, `--no-browser`, or `--no-reload` when needed.
@@ -124,7 +126,8 @@ read it — and it is free to change shape as the app does.
 automatic passes refuse to guess at (`utils/score_fixes.py`). Each entry names a
 staff, measure and chord, and says **why**. Applying is strict: an entry that no
 longer matches raises, so a pipeline change that moves the note fails the build
-instead of quietly leaving the defect in.
+instead of quietly leaving the defect in. Fix a song's defect from the printed page into
+that song's `fixes.json`, with the reason; do not add a deterministic repair pass for it.
 
 **Every song gets this, not just the fixture.** `run_clean` applies
 `<song dir>/fixes.json` right after cleaning (`pipeline.apply_recorded_fixes`), so a
@@ -222,7 +225,9 @@ See `fixtures/omr-benchmark/README.md`.
 
 An issue worker gets a fresh worktree under `.worktrees/issue-N`, and a fresh worktree
 has **no `.venv`, no `.env` and no `songs/`** — all three are gitignored and live only
-in the main checkout at `~/musescore-choir-plugins`. Without them nothing runs: there is
+in the main checkout at `~/musescore-choir-plugins`. Interactive sessions use their own
+worktree too (`git worktree add .worktrees/<topic> -b <branch> origin/main`), never that
+shared checkout: several sessions share it, and a dirty one blocks the deploy timer. Without them nothing runs: there is
 no interpreter with lxml in it, `MUSESCORE_CLI_PATH` is unset, and the app has no songs.
 Link them in before doing anything else:
 
@@ -601,6 +606,13 @@ over the existing scripts** — it adds no musical logic; it shells out to
 (`create_video.run`), and drives MuseScore via `open -a`. Full rationale and the
 state model are in `DESIGN.md`.
 
+- **Before working a song, check its source.** Song input scores come from Soundslice plus
+  hand fixes, so a reference built from a cleaned score is not ground truth: treat any
+  homr-vs-reference disagreement as a candidate and check it against the printed band.
+  Check that the input in `.song.json` is the raw import ("Track N" part names, crowded
+  voices, partial lyrics), not a finished score beside it; cross-check it bar by bar
+  (allowing a small offset) against another copy in `songs/`; and assume OCR lyrics are
+  mojibake and read the words off the page.
 - **A Song** = a folder `songs/<slug>/` plus `.song.json` (the state file *is* the
   UX). `state.py` owns the slug, the human display name, the stage machine
   (`register → scan → clean → fix → lyrics → review → record → upload`), and file
@@ -1300,7 +1312,10 @@ state model are in `DESIGN.md`.
   its notes carry, so a fused two-staff "Piano" contributes two exactly where a pair of
   "Voice" parts would. **`part-name` is never read** — homr says "Voice" and "Piano"
   and means neither, and since the notes of a fused part are fully separable,
-  grand-staff fusion is a labelling detail with no information loss. `assemble` writes
+  grand-staff fusion is a labelling detail with no information loss *in flattening*. homr
+  itself fuses braced staves before decoding, though, and on a crowded bar the fused pass
+  can drop noteheads: before blaming the model for a lost note, re-read the band one staff
+  at a time and check `--output-confidence`. `assemble` writes
   the systems out as one score, one part per staff column.
   **What flattening must not do is move the notes, and until this pull request it did**
   (#172). Splitting a part on its `<staff>` means the `<backup>` and `<forward>` homr
