@@ -83,7 +83,82 @@ async function renderLibrary() {
           } }, "Import existing"),
           el("button", { className: "primary", onclick: newSongDialog }, "+ New song"))),
       cards.length ? el("div", { className: "cards" }, cards)
-                   : el("p", { className: "hint" }, "No songs yet. Create one to begin.")));
+                   : el("p", { className: "hint" }, "No songs yet. Create one to begin."),
+      homrBox()));
+}
+
+// ---- installing homr ---------------------------------------------------------
+// Which homr this host reads scans with, whether the fork's main has moved past
+// it, and a button that runs scripts/install-homr.sh (#249). Updating is a press,
+// never automatic: the day a parse changes is a day somebody chose.
+const short = (c) => (c ? c.slice(0, 7) : "");
+
+function homrBox() {
+  const line = el("p", { className: "homr-line" }, "homr: checking…");
+  const btn = el("button", { hidden: true });
+  const again = el("button", { hidden: true }, "Reinstall");
+  const out = el("pre", { className: "log homr-log", hidden: true });
+  const box = el("details", { className: "homr-box" },
+    el("summary", {}, "homr — reads scanned pages"), line,
+    el("div", { className: "row" }, btn, again), out);
+  let timer = null;
+
+  function draw(st) {
+    const installed = st.installed ? `${st.label || "installed"}` : null;
+    const r = st.result || {};
+    if (st.running) {
+      line.textContent = "Installing homr… this takes a few minutes the first time.";
+    } else if (r.finished_at && !r.ok) {
+      line.textContent = "Install failed — see the log below.";
+    } else if (!installed) {
+      line.textContent = "homr: not installed. Scanning a PDF needs it.";
+    } else if (st.up_to_date) {
+      line.textContent = `homr: ${installed} — up to date`;
+    } else if (st.up_to_date === false) {
+      line.textContent = `homr: ${installed} — newer on GitHub: main @ ${short(st.latest)}`;
+    } else {
+      line.textContent = `homr: ${installed} — couldn't reach GitHub to check for a newer one`;
+    }
+    if (r.finished_at && r.ok && !st.running) {
+      line.textContent = `Installed ${installed || "homr"}` + (st.up_to_date ? " — up to date" : "");
+    }
+    btn.disabled = !!st.running;
+    btn.textContent = st.running ? "Installing…" : installed ? "Update homr" : "Install homr";
+    btn.hidden = !st.running && !!installed && st.up_to_date !== false;
+    again.hidden = st.running || !installed || !btn.hidden;
+    const lines = st.log || [];
+    out.hidden = !lines.length;
+    out.textContent = lines.join("\n");
+    out.scrollTop = out.scrollHeight;
+    if (st.running || r.finished_at && !r.ok) box.open = true;
+  }
+
+  async function poll() {
+    clearTimeout(timer);
+    if (!box.isConnected) return;  // the Library was left; stop asking
+    try {
+      const st = await getJSON("/api/homr/install");
+      draw(st);
+      if (st.running) timer = setTimeout(poll, 2000);
+    } catch (err) { line.textContent = "homr: " + err.message; }
+  }
+
+  async function install() {
+    btn.disabled = again.disabled = true;
+    try { await postJSON("/api/homr/install"); }
+    catch (err) { alert(err.message); }
+    again.disabled = false;
+    poll();
+  }
+  btn.onclick = install;
+  again.onclick = () => {
+    if (confirm("Install homr again from the fork's main? It is already up to date.")) install();
+  };
+  getJSON("/api/homr/install").then((st) => {
+    draw(st);
+    if (st.running) timer = setTimeout(poll, 2000);
+  }).catch((err) => { line.textContent = "homr: " + err.message; });
+  return box;
 }
 
 function newSongDialog() {

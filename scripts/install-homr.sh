@@ -13,6 +13,10 @@
 #
 #   scripts/install-homr.sh                 # default location
 #   HOMR_VENV=/somewhere/else scripts/install-homr.sh
+#   scripts/install-homr.sh --status        # installed vs the fork's main; installs nothing
+#
+# The song app's Library page runs this same script behind its Install / Update
+# homr button (src/song_app/homr_install.py), so a phone can update homr too.
 #
 # This is the ONLY install. A branch of the fork is not installed at all: the
 # app runs a local working copy of it straight from source, borrowing this
@@ -58,9 +62,36 @@ fi
 HOMR_PYTHON="${HOMR_PYTHON:-3.12}"
 HOMR_VENV="${HOMR_VENV:-$DEFAULT_VENV}"
 
+if [ "${1:-}" = "--status" ]; then
+    # The same two facts the app's homr box shows, for someone at a shell.
+    installed=none
+    for info in "$HOMR_VENV"/lib/python3.*/site-packages/homr-*.dist-info/direct_url.json; do
+        [ -f "$info" ] || continue
+        installed=$(grep -o '"commit_id": *"[0-9a-f]*"' "$info" | grep -o '[0-9a-f]\{40\}' || true)
+        installed=${installed:-unknown}
+    done
+    latest=$(git ls-remote "$HOMR_REPO" refs/heads/main 2>/dev/null | cut -f1)
+    echo "installed=$installed"
+    echo "latest=${latest:-unreachable}"
+    exit 0
+fi
+
+# uv is where the installer gets python and the wheels from. A fresh host
+# usually lacks it, and that was the one step that stopped this script cold, so
+# fetch it with astral's own installer into ~/.local/bin rather than give up.
+# The app's service has a bare PATH, hence the prepend even when uv is there.
+export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then
-    echo "uv is not installed. See https://docs.astral.sh/uv/getting-started/" >&2
-    exit 1
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "uv is not installed. See https://docs.astral.sh/uv/getting-started/" >&2
+        exit 1
+    fi
+    echo "uv not found — installing it into ~/.local/bin"
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh
+    if ! command -v uv >/dev/null 2>&1; then
+        echo "uv's installer ran but uv is still not on PATH." >&2
+        exit 1
+    fi
 fi
 
 echo "Creating $HOMR_VENV (python $HOMR_PYTHON)"

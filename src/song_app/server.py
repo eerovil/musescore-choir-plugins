@@ -16,8 +16,8 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import (agentdeck, health, heavy_slot, job_state, omr, pdf_systems,
-               pipeline, pwa_assets, scan, state, system_finder, verification)
+from . import (agentdeck, health, heavy_slot, homr_install, job_state, omr,
+               pdf_systems, pipeline, pwa_assets, scan, state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
 
@@ -439,6 +439,8 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         raise HTTPException(
             400, "Page(s) " + ", ".join(str(p) for p in gaps) + " have no "
             "printed systems marked. Mark every page in the Systems viewer first.")
+    if homr_install.busy():
+        raise HTTPException(409, HOMR_UPDATING)
     opts = dict(body or {})
     try:
         opts["systems"] = [int(i) for i in (opts.get("systems") or [])]
@@ -470,6 +472,33 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         _job_finish(song, "scan", str(exc))
         raise
     asyncio.get_running_loop().run_in_executor(None, _run_scan, slug, opts)
+    return {"started": True}
+
+
+HOMR_UPDATING = "homr is being updated — try again when it finishes."
+
+
+@app.get("/api/homr/install")
+def api_homr_install_status(refresh: bool = False) -> Dict:
+    """Which homr is installed, whether the fork has moved on, and the install log.
+
+    `refresh` asks GitHub again rather than trusting the ten-minute cache.
+    """
+    return homr_install.status(refresh=refresh)
+
+
+@app.post("/api/homr/install")
+async def api_homr_install() -> Dict:
+    """Run scripts/install-homr.sh: install homr, or update it to the fork's main.
+
+    A press, never automatic, and refused while any song job is running — the
+    script replaces files inside the venv a scan would be reading from.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        homr_install.start(lambda work: loop.run_in_executor(None, work))
+    except homr_install.Refused as exc:
+        raise HTTPException(409, str(exc)) from None
     return {"started": True}
 
 
@@ -1016,6 +1045,8 @@ async def api_find_systems(slug: str, body: Dict = None) -> Dict:
             traceback.print_exc()
             raise HTTPException(500, str(exc)) from None
         return {"systems": found}
+    if homr_install.busy():
+        raise HTTPException(409, HOMR_UPDATING)
     key = (body or {}).get("engine")
     engine = None
     if key and key != omr.DEFAULT_ENGINE:

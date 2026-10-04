@@ -91,3 +91,62 @@ def test_an_explicit_source_is_its_own_label(install) -> None:
     assert "pip install homr==9.9.9" in uv_log
     venv = install.home / ".local/share/musescore-choir-plugins/homr-venv"
     assert (venv / "homr-engine.txt").read_text().splitlines() == ["source=homr==9.9.9"]
+
+
+# What astral's installer would do, minus the download: put a uv where it was told.
+FAKE_CURL = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$CURL_LOG"
+cat <<'SH'
+mkdir -p "$UV_INSTALL_DIR"
+cp "$FAKE_UV_SOURCE" "$UV_INSTALL_DIR/uv"
+chmod +x "$UV_INSTALL_DIR/uv"
+SH
+"""
+
+
+def test_a_host_without_uv_gets_one(tmp_path: Path) -> None:
+    """A fresh host has no uv, and that was the step that stopped the install (#249)."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "curl").write_text(FAKE_CURL, encoding="utf-8")
+    (fake_bin / "curl").chmod(0o755)
+    uv_source = tmp_path / "uv-source"
+    uv_source.write_text(FAKE_UV, encoding="utf-8")
+    home = tmp_path / "home"
+    env = {
+        # No uv anywhere on this PATH: only the fake curl and the system tools.
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "HOME": str(home),
+        "UV_LOG": str(tmp_path / "uv.log"),
+        "HOMR_LOG": str(tmp_path / "homr.log"),
+        "CURL_LOG": str(tmp_path / "curl.log"),
+        "FAKE_UV_SOURCE": str(uv_source),
+    }
+    out = subprocess.run(["scripts/install-homr.sh"], check=True, env=env, text=True,
+                         capture_output=True).stdout
+
+    assert "uv not found" in out
+    assert "astral.sh/uv/install.sh" in (tmp_path / "curl.log").read_text()
+    assert (home / ".local/bin/uv").exists()
+    assert f"pip install {DEFAULT_SOURCE}" in (tmp_path / "uv.log").read_text()
+
+
+def test_status_reports_both_commits_and_installs_nothing(tmp_path: Path) -> None:
+    venv = tmp_path / "venv"
+    info = venv / "lib/python3.12/site-packages/homr-0.7.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "direct_url.json").write_text(
+        '{"url": "x", "vcs_info": {"vcs": "git", "commit_id": "' + "a" * 40 + '"}}')
+    remote = tmp_path / "remote"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(remote), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    head = subprocess.run(["git", "-C", str(remote), "rev-parse", "HEAD"], check=True,
+                          capture_output=True, text=True).stdout.strip()
+    env = dict(os.environ, HOMR_VENV=str(venv), HOMR_REPO=str(remote),
+               PATH="/usr/bin:/bin", HOME=str(tmp_path / "home"))
+    out = subprocess.run(["scripts/install-homr.sh", "--status"], check=True, env=env,
+                         text=True, capture_output=True).stdout.splitlines()
+
+    assert out == ["installed=" + "a" * 40, f"latest={head}"]
+    assert not (tmp_path / "home").exists()
