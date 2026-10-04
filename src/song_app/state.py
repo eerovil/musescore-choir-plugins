@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import unicodedata
 from typing import Dict, List, Optional
@@ -107,10 +108,19 @@ class Song:
 
     # ---- persistence -----------------------------------------------------
     def save(self) -> None:
+        """Write the whole state, under the song's lock and in one rename.
+
+        The rename means a reader never sees half a file. The lock is what lets a
+        writer that only owns a few fields (`server._rescan`) re-read and write in
+        one step without another save landing in between (#252).
+        """
         os.makedirs(self.dir, exist_ok=True)
-        self.data["updated_at"] = time.time()
-        with open(self.state_path(), "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2, ensure_ascii=False)
+        with song_lock(self.slug):
+            self.data["updated_at"] = time.time()
+            tmp = self.state_path() + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, self.state_path())
 
     def to_summary(self) -> Dict:
         """Lightweight view for the library list."""
@@ -134,6 +144,21 @@ class Song:
             "created_at": self.data.get("created_at") or self.data.get("updated_at") or 0,
             "updated_at": self.data.get("updated_at") or 0,
         }
+
+
+_LOCKS: Dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def song_lock(slug: str) -> threading.RLock:
+    """The lock every save of this song's state takes.
+
+    Routes load, work, then save the whole state, so a save from a stale copy
+    silently undoes whatever was saved since it was loaded. Hold this across a
+    re-load and the save that follows it to make the pair one step.
+    """
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(slug, threading.RLock())
 
 
 def load(slug: str) -> Optional[Song]:

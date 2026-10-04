@@ -640,17 +640,38 @@ def _health_scan(song: state.Song, cleaned: str) -> List[Dict]:
 
 
 def _rescan(song: state.Song) -> None:
+    """Re-check the cleaned score's health and record what it was checked against.
+
+    This owns two fields and nothing else, so it writes only those, onto the state
+    as it is on disk *now*. Saving the copy the caller loaded used to undo whatever
+    a route had saved in the meantime: the file watcher loaded a song, a lyric
+    import rewrote the score and saved its `lyrics` record and stage, and the
+    watcher's save put the pre-import state back (#252). `song` is refreshed to
+    what was written, so a caller answering with `_derived(song)` is not stale.
+    """
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         return
+    fingerprint = state.file_fingerprint(cleaned)
     found = health.scan(cleaned)
-    prev = song.data.get("health", {}).get("issues", [])
-    song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
-    song.data["health"] = {
-        "checked_against": song.data["cleaned_fingerprint"],
-        "issues": health.merge_issues(found, prev),
-    }
-    song.save()
+    with state.song_lock(song.slug):
+        fresh = state.load(song.slug) or song
+        current = fresh.data.get("health", {})
+        # The score moved again while it was being checked, so these findings are
+        # about a file that is gone. Whoever moved it rescans it (the watcher sees
+        # the save); writing these now would record the older file over theirs.
+        moved = state.file_fingerprint(cleaned) != fingerprint
+        # Somebody already checked this exact file and said so — typically the
+        # route whose write woke the watcher. Theirs is the record; leave it.
+        if not moved and not (fresh.data.get("cleaned_fingerprint") == fingerprint
+                              and current.get("checked_against") == fingerprint):
+            fresh.data["cleaned_fingerprint"] = fingerprint
+            fresh.data["health"] = {
+                "checked_against": fingerprint,
+                "issues": health.merge_issues(found, current.get("issues", [])),
+            }
+            fresh.save()
+    song.data = fresh.data
 
 
 @app.post("/api/songs/{slug}/rescan")
@@ -1652,14 +1673,21 @@ async def _watch_cleaned() -> None:
                 slug = os.path.basename(os.path.dirname(path))
                 touched.add(slug)
         for slug in touched:
-            song = state.load(slug)
-            if not song:
-                continue
-            # Only react if the file actually changed since our last scan.
-            fp = state.file_fingerprint(song.cleaned_path())
-            if fp and fp != song.data.get("cleaned_fingerprint"):
-                _rescan(song)
+            if _on_cleaned_saved(slug):
                 hub.emit(slug, {"type": "state"})
+
+
+def _on_cleaned_saved(slug: str) -> bool:
+    """React to a saved cleaned score; True when the health record was re-taken."""
+    song = state.load(slug)
+    if not song:
+        return False
+    # Only react if the file actually changed since our last scan.
+    fp = state.file_fingerprint(song.cleaned_path())
+    if not fp or fp == song.data.get("cleaned_fingerprint"):
+        return False
+    _rescan(song)
+    return True
 
 
 @app.on_event("startup")

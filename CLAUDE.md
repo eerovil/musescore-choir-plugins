@@ -517,6 +517,13 @@ Key test modules:
   refusal (no reason, a span past the bar, a slur already there) writes neither. The
   third is the browser: the bar shown as its own notes, the cost said before the
   write, the warning when lyrics are already imported, and that it fits a phone.
+- `src/song_app/tests/test_state_race.py` — added for #252. The file watcher used to
+  save the whole song state it had loaded, so a lyric import that saved while the
+  watcher was checking health was silently undone. It drives both interleavings (a
+  copy loaded before the import, and the import landing mid-check) and asserts the
+  import's `lyrics` record and stage survive. The rule it pins: `_rescan` writes only
+  health and the fingerprint, onto the state re-read under `state.song_lock`, and
+  every `Song.save` takes that lock and writes by rename.
 - `src/song_app/tests/test_score_file.py` / `test_score_file_ui.py` — added by this
   pull request for taking the score away to MuseScore and bringing it back (#216).
   The first is mostly about what must **not** be replaced: a PDF, a transfer that
