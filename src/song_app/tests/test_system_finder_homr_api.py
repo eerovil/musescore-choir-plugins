@@ -25,11 +25,6 @@ def test_supported_homr_cli_is_the_primary_proposal_path(monkeypatch):
         return [SystemBounds(index=1, page=page, top=0.1, bottom=0.9)]
 
     monkeypatch.setattr(system_finder, "_page_from_homr", propose)
-    monkeypatch.setattr(
-        system_finder.legacy,
-        "find_bands",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy fallback used")),
-    )
 
     found = system_finder.find_bands(
         "/tmp/score.pdf", engine=_engine(), queue=False, dpi=200
@@ -92,7 +87,8 @@ def test_checkout_engine_uses_public_homr_module_cli(monkeypatch):
     assert found == [SystemBounds(index=1, page=3, top=0.2, bottom=0.7)]
 
 
-def test_old_homr_cli_selects_compatibility_fallback(monkeypatch):
+def test_an_old_homr_is_told_to_update_rather_than_answered_another_way(monkeypatch):
+    """The app's own copy of the grouping rule is gone (#144): no second answer."""
     monkeypatch.setattr(
         system_finder.subprocess,
         "run",
@@ -103,44 +99,17 @@ def test_old_homr_cli_selects_compatibility_fallback(monkeypatch):
         ),
     )
 
-    assert (
+    try:
         system_finder._page_from_homr(
-            "/tmp/score.pdf",
-            1,
-            engine=_engine(),
-            dpi=200,
-            log=lambda _line: None,
-        )
-        is None
-    )
+            "/tmp/score.pdf", 1, engine=_engine(), dpi=200, log=lambda _line: None)
+    except omr.HomrError as error:
+        assert "too old" in str(error)
+        assert "test homr" in str(error)
+    else:
+        raise AssertionError("an old homr was not refused")
 
 
-def test_fallback_restarts_with_the_legacy_whole_pdf_path(monkeypatch):
-    monkeypatch.setattr(system_finder.pdf_systems, "page_count", lambda _pdf: 4)
-    calls = []
-
-    def unsupported(*args, **kwargs):
-        calls.append("supported")
-        return None
-
-    expected = [SystemBounds(index=1, page=1, top=0.1, bottom=0.9)]
-
-    def legacy(*args, **kwargs):
-        calls.append("legacy")
-        return expected
-
-    monkeypatch.setattr(system_finder, "_page_from_homr", unsupported)
-    monkeypatch.setattr(system_finder.legacy, "find_bands", legacy)
-
-    found = system_finder.find_bands(
-        "/tmp/score.pdf", engine=_engine(), queue=False, dpi=200
-    )
-
-    assert found == expected
-    assert calls == ["supported", "legacy"]
-
-
-def test_supported_homr_failure_does_not_hide_behind_legacy(monkeypatch):
+def test_a_supported_homr_failure_is_not_called_too_old(monkeypatch):
     monkeypatch.setattr(
         system_finder.subprocess,
         "run",

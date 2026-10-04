@@ -347,15 +347,9 @@ Key test modules:
   chosen engine's argv *and environment* are what read the page. `test_install_homr.py`
   pins the other end — the one venv, what it says about itself, and an explicit
   `HOMR_SOURCE` being its own label.
-  A second half is added for #113: the **slurs**, written as little token streams
-  (`"1( 1) 3( 5)"`) because that is the level the defect lives at. A slur inside a bar
-  and one across a single barline survive; two barlines is dropped and the slurs on
-  either side of it are not; a redundant start, an unmatched stop and a start that
-  never stops all go; B5's own m46 shape resolves in one pass and finds nothing on a
-  second; `read_page` applies it and says so in the log; and a parse with nothing to
-  change comes back byte for byte as homr wrote it. The last needs MuseScore and is the
-  defect where it is felt: twelve notes over three bars offer four lyric slots with the
-  runaway and twelve without it.
+  The **slurs** half added for #113 moved to the fork with the repair (#144); what is
+  left pins that the app passes homr's slurs through untouched and that a parse with
+  nothing to change comes back byte for byte as homr wrote it.
   A third half is added for #164: the **whole-measure rests**. Most of it is little
   measures written note by note — a shared rest moves out, the notes behind it move back
   into the room it was taking (12 divisions, not 16, because the lost quarter rest is not
@@ -457,11 +451,8 @@ Key test modules:
   `test_scan.py` carries the attribution itself — the bar-to-system mapping, a collapsed
   row shared over the bars it names rather than landing on the first, and the three ways
   of refusing to attribute at all.
-- `src/song_app/tests/test_system_finder.py` — added by this pull request. Two tiers.
-  **No dependencies**: the grouping rule, written as little pages of staves and barlines
-  — staves carrying the same bars are one system, the end lines are not evidence, a
-  break needs the white to go with it, a staff with no barline of its own falls back to
-  the gap, and where the band edges land. **homr** (marked `omr`, ~70s): the acceptance,
+- `src/song_app/tests/test_system_finder.py` — the grouping-rule tier moved to the fork
+  with the rule (#144). **homr** (marked `omr`, ~70s): the acceptance,
   against the bands a person drew — the fixture's 15 across four pages and both Herää
   Suomi scans, each boundary within 0.02 of the hand-drawn one. The route and the button
   are pinned where they live: `test_bounds_api.py` (a proposal saves nothing, a page
@@ -554,12 +545,19 @@ be repaired in either place and the call went both ways for reasons that lived o
 commit messages. Under this one it cannot: a runaway slur is not on the page, so it is
 homr's to not emit.
 
-**Which means this repo's OMR boundary layer was drift.** `omr.resolve_slurs`,
-`omr_systems`' per-system reading and `system_finder` are all "make the parse match the
-page", and all three are on the fork's side of the rule. They are staying where they
-are for now — **the rule binds new fixes**, and #141 files a separate issue, blocked by
-it, to move them. Until that lands, the code here contradicts the rule in three visible
-places and this paragraph is the reason why.
+**Which means this repo's OMR boundary layer was drift, and #144 moved it.** Slur
+pairing (`omr.resolve_slurs`), per-system reading and the system finder are all "make the
+parse match the page", so all three were ported into the fork (eerovil/homr#62, #63,
+#65). Once the fork was installed here (`main @ 7652330`) and re-measured on 21 printed
+systems, #144 took the app's copies of the **slur repair** and the **system finder's
+grouping rule** out: the old slur pass dropped nothing on the fork's output, and *Find
+systems* now only asks homr (`--find-system-bounds`). A homr older than that fork is
+refused for *Find systems* and its slurs go unrepaired — update it rather than reviving
+the copies. **The per-system cropping stays in `omr_systems` for now**: homr's own
+`--system-bounds` mode finds the same staves and bars on all 21 systems but differs at
+note level on 12 (it rasterises with pypdfium, not poppler), so switching would change
+re-read songs' readings. That switch waits until the upstream homr update and the next
+fixture have been measured.
 
 **`clean_score`'s OCR repairs are the known tension.** `fix_missing_tuplets`,
 `fix_spurious_timesigs`, `fix_overfull_measures`, `add_missing_ties` and the recorded
@@ -1214,8 +1212,10 @@ state model are in `DESIGN.md`.
   pages already read are on disk. A caller that would rather hold one lease across a
   whole song passes `queue=False` and wraps the loop itself, so the two never nest
   (nesting would deadlock a one-slot pool).
-  **Every parse comes back with its slurs paired and the runaways dropped**
-  (`resolve_slurs`, proposed by this pull request for #113). homr predicts
+  **Slur pairing used to happen here and is homr's now** (#144: eerovil/homr#62's
+  `homr/slur_resolution.py`; the app copy was removed once the fork was installed and the
+  old pass dropped nothing on its output). What follows is why it exists, kept because
+  the reasoning is the fork's justification too. It was `resolve_slurs`, added for #113. homr predicts
   `slurStart` / `slurStop` one note at a time and never pairs them, and the MusicXML
   `number` that pairing depends on is the *staff* number — the same for every slur on
   the staff. So a dropped stop does not merely lose its own slur: it leaves the start
@@ -1268,7 +1268,7 @@ state model are in `DESIGN.md`.
   shorter; relabelling the `<voice>` alone would leave it exactly as long as it was. It
   needs **no meter**, and that is what makes it a boundary repair rather than
   `clean_score`'s: a per-system crop usually declares no time signature at all, so a rule
-  that had to know the bar length could not run here. Same argument as `resolve_slurs`.
+  that had to know the bar length could not run here.
   **It is narrow, and measured.** All 41 whole rests across the seven benchmark parses
   and the fixture's nine crops carry a full whole note whatever the meter; the rule fires
   on **two** of them, the two that share a voice. The other 39 rest alone in their voice,
@@ -1722,10 +1722,12 @@ state model are in `DESIGN.md`.
   half a degree of skew, at 20% ink dropout, and on the editions that print no bracket
   (it agreed with the score twice out of nine songs). This asks **homr**, which finds
   staves for a living: the same segmentation network and the same `detect_staff` that
-  read the music, stopped before any of it is parsed. `scripts/homr_staves.py` is the
-  helper that runs inside homr's venv and reports the staves and barlines as fractions
-  of the page; it is reached through the same `Engine` the scan uses, so proposing bands
-  and reading music are the same homr. A page is ~8s (a segmentation pass, not a parse)
+  read the music, stopped before any of it is parsed. Since #144 the whole proposal is
+  homr's own command (`--find-system-bounds`, eerovil/homr#65, documented in the fork's
+  `SYSTEM_BOUNDS.md`): this module only schedules it a page at a time and turns its JSON
+  into `SystemBounds`. It is reached through the same `Engine` the scan uses, so proposing
+  bands and reading music are the same homr, and a homr too old to have the command is
+  refused by name rather than answered by an app-side copy of the rule. A page is ~8s (a segmentation pass, not a parse)
   and takes **one heavy slot per page**, `omr.py`'s rule unchanged.
   **The grouping is decided by the barlines, and that is the whole idea.** Which staves
   make one system is what homr does not answer — its `MultiStaff` is a brace or a grand
@@ -1746,8 +1748,8 @@ state model are in `DESIGN.md`.
   **Measured against the bands a person actually drew**: all 15 of the fixture's, plus
   B1a and B1b. Every page comes back with the systems it prints, and every internal
   boundary within 0.02 of page height of the hand-drawn one (worst 0.020 on B1b, the
-  rest ≤0.014). That is what `test_system_finder.py`'s `omr` tier pins; the rule itself
-  is pinned without homr on little pages of staves and barlines.
+  rest ≤0.014). That is what `test_system_finder.py`'s `omr` tier pins, and it still
+  passes through the fork's command; the rule itself is pinned in the fork.
 - The **Scan panel** is added by this pull request (#116), replacing the holding one that
   #115 left. Its whole job is to stop a tidy-looking parse becoming a practice track, and
   every piece of it follows from that.
@@ -2529,9 +2531,9 @@ straight at the wrong answer. What tells them apart: sharing shows up as a voice
 per-measure note counts match another voice's exactly, while a runaway shows up as
 **one bar losing most of its slots to a slur crossing several barlines**. Look for the
 long slur first, since that is a single check: `lyric_txt.syllable_slots(root, staff,
-measure)` says note by note which are being swallowed. This pull request proposes
-repairing it at the boundary for homr parses (`omr.resolve_slurs`), which would leave
-a score scanned before that, or one from another OMR tool, as the cases to watch for.
+measure)` says note by note which are being swallowed. homr now pairs its own slurs
+(eerovil/homr#62), which leaves a score scanned with an older homr, or one from another
+OMR tool, as the cases to watch for.
 
 **Voices sing words that are not printed under them.** Older choral engraving prints
 a text once and expects more than one voice to use it, so notes with no text beneath
