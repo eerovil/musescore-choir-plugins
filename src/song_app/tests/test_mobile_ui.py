@@ -2,10 +2,12 @@
 The phone layout, in a real browser at a phone's size.
 
 The three-pane workspace (stage rail · panel · viewer) does not fit a 390px screen, so
-below the breakpoint one pane is shown at a time and a bar at the bottom switches
-between them. What is pinned here is that switch, that the page itself never scrolls
-(the panes scroll inside themselves — a page that scrolls carries the bar off-screen),
-and that the desktop layout still shows all three panes at a desktop size.
+below the breakpoint the panel and the viewer are shown one at a time, a bar at the
+bottom switches between them, and the stage rail is a drawer the header's ☰ slides in
+(#258). What is pinned here is that switch, the drawer, that the bar stays on the
+screen whatever happens to the page (the panes scroll inside themselves — a page that
+scrolls or zooms carries the bar off-screen), that the score zooms itself because the
+page cannot, and that the desktop layout still shows all three panes at a desktop size.
 
 Same two-step install as `test_ui_flow.py`; the module skips without it.
 """
@@ -173,35 +175,197 @@ def test_new_issue_link_is_global_and_mobile_safe(live_app, own_answers, page):
     assert not _page_scrolls(page)
 
 
+def _bar_on_screen(page):
+    """The bar's whole box is inside the window, and nothing else is on top of it."""
+    return page.evaluate("""() => {
+        const bar = document.querySelector('.mobilebar');
+        const r = bar.getBoundingClientRect();
+        const inside = r.top >= 0 && r.bottom <= window.innerHeight + 0.5 && r.height > 40;
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return inside && bar.contains(hit);
+    }""")
+
+
 def test_phone_shows_one_pane_at_a_time_and_the_bar_switches_them(live_app, own_answers, page):
     page.set_viewport_size(PHONE)
     _new_song(page, live_app, "Phone song")
 
     bar = page.locator(".mobilebar")
     expect(bar).to_be_visible()
+    # Two tabs: the stage list is no longer one of them, it is the ☰ drawer.
+    expect(bar.locator(".mtab")).to_have_count(2)
 
     # It opens on the stage panel, with the rail and the viewer out of the way.
     expect(page.locator(".panel")).to_be_visible()
     expect(page.locator(".stagebar")).to_be_hidden()
     expect(page.locator(".viewer")).to_be_hidden()
-    # The middle button names the stage it shows, so the bar says where you are.
+    # The first button names the stage it shows, so the bar says where you are.
     expect(bar.get_by_role("button", name="Clean")).to_be_visible()
 
     bar.get_by_role("button", name="Score").click()
     expect(page.locator(".viewer")).to_be_visible()
     expect(page.locator(".panel")).to_be_hidden()
-
-    bar.get_by_role("button", name="Stages").click()
-    expect(page.locator(".stagebar")).to_be_visible()
-    expect(page.locator(".viewer")).to_be_hidden()
-
-    # Picking a stage means "take me to it" — the panel comes forward by itself.
-    page.locator(".stagebar .step", has_text="Lyrics").click()
-    expect(page.locator(".panel")).to_be_visible()
-    expect(page.locator(".stagebar")).to_be_hidden()
-    expect(bar.get_by_role("button", name="Lyrics")).to_be_visible()
+    assert _bar_on_screen(page)
 
     assert not _page_scrolls(page)
+
+
+def test_phone_stages_are_a_drawer_the_header_opens(live_app, own_answers, page):
+    """The stage list is the same left-hand sidebar as on desktop, slid in by ☰."""
+    page.set_viewport_size(PHONE)
+    _new_song(page, live_app, "Drawer song")
+    menu = page.locator("#stagemenu")
+    rail = page.locator(".stagebar")
+
+    expect(menu).to_be_visible()
+    expect(menu).to_have_attribute("aria-expanded", "false")
+    expect(rail).to_be_hidden()
+
+    menu.click()
+    expect(rail).to_be_visible()
+    expect(menu).to_have_attribute("aria-expanded", "true")
+    page.wait_for_function(
+        "() => document.querySelector('.stagebar').getBoundingClientRect().left === 0")
+    box = rail.bounding_box()
+    assert box["x"] == 0 and box["width"] <= 0.8 * PHONE["width"] + 1, box
+
+    # Picking a stage means "take me to it" — the drawer closes and its panel shows.
+    page.locator(".stagebar .step", has_text="Lyrics").click()
+    expect(rail).to_be_hidden()
+    expect(page.locator(".panel")).to_be_visible()
+    expect(page.locator(".mobilebar").get_by_role("button", name="Lyrics")).to_be_visible()
+    expect(menu).to_have_attribute("aria-expanded", "false")
+
+    # Tapping outside it, Escape, and the phone's Back all close it and change nothing.
+    menu.click()
+    expect(rail).to_be_visible()
+    page.mouse.click(PHONE["width"] - 20, PHONE["height"] // 2)
+    expect(rail).to_be_hidden()
+    menu.click()
+    page.keyboard.press("Escape")
+    expect(rail).to_be_hidden()
+    menu.click()
+    page.go_back()
+    expect(rail).to_be_hidden()
+    assert "#/song/" in page.url, "Back with the drawer open left the song"
+    expect(page.locator(".mobilebar").get_by_role("button", name="Lyrics")).to_be_visible()
+
+    # Held sideways the list is taller than the screen, so it scrolls to the last stage.
+    page.set_viewport_size({"width": 844, "height": 390})
+    menu.click()
+    last = page.locator(".stagebar .step").last
+    last.scroll_into_view_if_needed()
+    expect(last).to_be_in_viewport()
+
+    # The Library has no stages, so no ☰.
+    page.goto(live_app)
+    expect(page.locator(".card").first).to_be_visible()
+    expect(menu).to_be_hidden()
+
+
+def test_phone_bar_stays_on_screen(live_app, own_answers, page):
+    """Whatever happens to the page, the bar is still there at the bottom (#258).
+
+    The page is never meant to scroll, but a browser scrolling a focused field into
+    view can still move it, and the keyboard shrinks the window."""
+    page.set_viewport_size(PHONE)
+    _new_song(page, live_app, "Bar song")
+    assert _bar_on_screen(page)
+
+    # Something scrolls the page itself (a field brought into view, say): put back.
+    page.evaluate("() => { document.scrollingElement.scrollTop = 300; window.scrollTo(0, 300); }")
+    page.wait_for_function("() => document.scrollingElement.scrollTop === 0")
+    assert _bar_on_screen(page)
+
+    # The keyboard opening: the window shrinks, the bar stays in it.
+    page.set_viewport_size({"width": PHONE["width"], "height": 420})
+    assert _bar_on_screen(page)
+    page.set_viewport_size(PHONE)
+
+    # A pane holding something far taller than the screen does not push it out.
+    page.locator(".mobilebar").get_by_role("button", name="Score").click()
+    page.locator(".pdfview").first.evaluate(
+        "e => { const d = document.createElement('div'); d.style.height = '5000px'; e.append(d); }")
+    assert _bar_on_screen(page)
+    assert not _page_scrolls(page)
+
+    # The page cannot be pinch-zoomed on a phone (that is what carries the bar away);
+    # on a desktop it is left alone.
+    assert page.evaluate("() => getComputedStyle(document.documentElement).touchAction") == "pan-x pan-y"
+    page.set_viewport_size(DESKTOP)
+    assert page.evaluate("() => getComputedStyle(document.documentElement).touchAction") == "auto"
+
+
+def test_phone_score_zooms_itself(live_app, own_answers, page):
+    """With page zoom off, the score viewer zooms: − / + / Fit, kept across panes."""
+    page.set_viewport_size(PHONE)
+    page.route("**/pdf.min.js", lambda route: route.fulfill(
+        body=_FAKE_PDFJS, content_type="application/javascript"))
+    _new_song(page, live_app, "Zoom song")
+    page.locator(".mobilebar").get_by_role("button", name="Score").click()
+
+    view = page.locator(".pdfview").first
+    page.wait_for_function("e => Boolean(e._renderedUrl) && e.querySelector('canvas')",
+                           arg=view.element_handle())
+    zoom = page.locator(".vzoom").first
+    expect(zoom).to_be_visible()
+    fit_width = view.evaluate("e => e.querySelector('canvas').getBoundingClientRect().width")
+    assert view.evaluate("e => e.scrollWidth <= e.clientWidth + 1")
+
+    zoom.get_by_role("button", name="Zoom in").click()
+    page.wait_for_function("e => e.scrollWidth > e.clientWidth + 50", arg=view.element_handle())
+    wider = view.evaluate("e => e.querySelector('canvas').getBoundingClientRect().width")
+    assert wider > fit_width * 1.4, (fit_width, wider)
+
+    # Switching to the panel and back keeps it.
+    page.locator(".mobilebar .mtab").first.click()
+    page.locator(".mobilebar").get_by_role("button", name="Score").click()
+    assert view.evaluate("e => e._zoom") > 1
+
+    zoom.get_by_role("button", name="Fit", exact=True).click()
+    page.wait_for_function("e => e.scrollWidth <= e.clientWidth + 1", arg=view.element_handle())
+
+    # Two fingers spreading apart zoom the score, not the page.
+    view.evaluate(_PINCH)
+    page.wait_for_function("e => (e._zoom || 1) > 1.5", arg=view.element_handle())
+    assert page.evaluate("() => window.visualViewport.scale") == 1
+    assert _bar_on_screen(page)
+
+    # At a desktop size there is nothing to zoom with: the page zooms there.
+    page.set_viewport_size(DESKTOP)
+    expect(zoom).to_be_hidden()
+    expect(page.locator("#stagemenu")).to_be_hidden()
+
+
+# pdf.js stood in for: the CDN is not part of this test, and the zoom only needs a
+# document whose pages draw at the size they are asked for.
+_FAKE_PDFJS = """
+window.pdfjsLib = {
+  GlobalWorkerOptions: {},
+  getDocument: () => ({ promise: Promise.resolve({
+    numPages: 2,
+    getPage: async () => ({
+      getViewport: ({ scale }) => ({ width: 595 * scale, height: 842 * scale }),
+      render: () => ({ promise: Promise.resolve() }),
+    }),
+  }) }),
+};
+"""
+
+# A pinch, as the touch events a phone sends for one: two fingers down, apart, up.
+_PINCH = """e => {
+  const r = e.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const touches = (d) => [
+    new Touch({ identifier: 1, target: e, clientX: cx - d, clientY: cy }),
+    new Touch({ identifier: 2, target: e, clientX: cx + d, clientY: cy }),
+  ];
+  const fire = (type, list) => e.dispatchEvent(new TouchEvent(type, {
+    touches: list, targetTouches: list, changedTouches: list, bubbles: true, cancelable: true }));
+  fire('touchstart', touches(40));
+  fire('touchmove', touches(80));
+  fire('touchmove', touches(100));
+  fire('touchend', []);
+}"""
 
 
 def test_phone_library_and_panels_do_not_overflow_the_screen(live_app, own_answers, page):
@@ -210,15 +374,17 @@ def test_phone_library_and_panels_do_not_overflow_the_screen(live_app, own_answe
     page.set_viewport_size(PHONE)
     _new_song(page, live_app, "Overflow check")
 
-    for pane in ["Stages", "Score"]:
-        page.locator(".mobilebar").get_by_role("button", name=pane).click()
-        assert not _page_scrolls(page), f"the {pane} pane overflows the screen"
+    page.locator("#stagemenu").click()
+    assert not _page_scrolls(page), "the stage drawer overflows the screen"
+    page.keyboard.press("Escape")
+    page.locator(".mobilebar").get_by_role("button", name="Score").click()
+    assert not _page_scrolls(page), "the Score pane overflows the screen"
 
     # The clean panel's per-system grid is a four-column table, stacked into a card
     # per staff on a phone. It did not overflow before that (the table squeezed its
     # columns instead) — the stacking is for reading it; this only pins that nothing
     # regressed into being too wide.
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator("#stagemenu").click()
     page.locator(".stagebar .step", has_text="Clean").click()
     expect(page.locator(".sysblock").first).to_be_visible()
     assert not _page_scrolls(page), "the per-system grid overflows the screen"

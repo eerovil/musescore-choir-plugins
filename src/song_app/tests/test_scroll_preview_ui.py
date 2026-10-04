@@ -596,8 +596,8 @@ def test_the_player_fits_a_phone(live, page):
             if "/scroll-preview?" in request.url else None)
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(f"{base}/#/song/{slug}")
-    # One pane at a time on a phone: the stage rail is behind the bottom bar.
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    # One pane at a time on a phone: the stage rail is behind the header's ☰.
+    page.locator("#stagemenu").click()
     page.locator(".stagebar .step", has_text="Record").click()
     page.wait_for_selector("text=Video style")
     page.locator(".mobilebar").get_by_role("button", name="Preview").click()
@@ -627,7 +627,8 @@ def test_the_player_fits_a_phone(live, page):
     page.locator(".mobilebar").get_by_role("button", name="Record").click()
     assert page.locator(".pvviewport").count() == 1
     assert page.locator('[data-preview="play"]').inner_text() == "Play"
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator("#stagemenu").click()       # the drawer opening pauses nothing either
+    page.keyboard.press("Escape")
     page.locator(".mobilebar").get_by_role("button", name="Preview").click()
     assert page.locator(".pvviewport").is_visible()
     assert len(requests) == 1, "pane switching must reuse the prepared preview"

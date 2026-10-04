@@ -185,7 +185,7 @@ def test_it_fits_a_phone(live, page):
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(f"{base}/#/song/{song.slug}")
     # Below the breakpoint one pane shows at a time, so the stage rail is a tab.
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator("#stagemenu").click()
     page.locator(".stagebar .step", has_text="Fix").first.click()
     page.wait_for_selector(".slurfix .slurnote")
     _pick_bar(page, 2)

@@ -354,42 +354,83 @@ table.grid input.unset { border-color: var(--warn); }
 .recordpreview .svgpreview { width: min(100%, 1100px); margin: 0 auto; }
 
 /* ---- Phone ---------------------------------------------------------------
-   The bar that switches panes is in the DOM at every width; here is the only
-   place it exists. Everything below the breakpoint is additive: not one rule
+   The bar that switches panes, the stage drawer's ☰ and backdrop, and the
+   viewer's zoom buttons are in the DOM at every width; here is the only place
+   they exist. Everything below the breakpoint is additive: not one rule
    above this line changes, so the desktop layout and its browser tests are
    untouched.
 
    The second condition catches a phone held sideways — 844x390 is wider than the
    breakpoint but has nowhere near the height the three-pane layout needs. A
    desktop window under 500px tall is not a case worth protecting. */
-.mobilebar { display: none; }
+.mobilebar, .stagemenu, .drawer-backdrop, .vzoom { display: none; }
 
 @media (max-width: 840px), (max-height: 500px) {
   /* The window, not the document, is the frame — 100dvh so an iOS URL bar sliding
      away doesn't leave the tab bar hanging below the fold. */
   html, body { height: 100dvh; }
+  /* No pinch-zooming the page: a zoomed page carries the header and the bottom bar
+     off the screen, which is how a phone "lost" its bar (#258). The score zooms
+     itself instead (`pinchZoom` in app.js, and the − / + / Fit buttons). This also
+     stops double-tap zoom. */
+  html, body { touch-action: pan-x pan-y; }
   header { padding: 8px 12px; gap: 8px; }
+  .stagemenu { display: inline-flex; align-items: center; justify-content: center;
+               min-width: 44px; padding: 0 10px; font-size: 20px; line-height: 1; }
+  .stagemenu[hidden] { display: none; }
   .brand { font-size: 15px; }
   #crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* One pane at a time, the bar underneath it. `.wide` is a desktop-only mode and
-     its column rule would otherwise win on specificity and drop the bar's row. */
-  .ws, .ws.wide { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
-  .ws > .stagebar, .ws > .panel, .ws > .viewer,
-  .ws.wide > .stagebar, .ws.wide > .panel {
+     its column rule would otherwise win on specificity. The bar is pinned to the
+     bottom of the window rather than being the grid's last row, and the workspace
+     leaves room for it: then nothing a pane holds, and no scrolling of the page,
+     can push it out of sight (#258). */
+  :root { --mobilebar-h: calc(57px + env(safe-area-inset-bottom, 0px)); }
+  .ws, .ws.wide { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr);
+                  padding-bottom: var(--mobilebar-h); }
+  .ws > .panel, .ws > .viewer, .ws.wide > .panel {
     grid-row: 1; grid-column: 1; display: none; border-right: 0;
   }
-  .ws.m-stages > .stagebar { display: block; }
   .ws.m-panel > .panel { display: block; }
   .ws.m-viewer > .viewer { display: flex; }
   .ws > .widetoggle { display: none; }   /* hiding the panel is what the bar is for */
 
   .mobilebar {
-    grid-row: 2; grid-column: 1; display: flex; gap: 6px; padding: 6px;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    display: flex; gap: 6px; padding: 6px;
     border-top: 1px solid var(--line); background: var(--panel);
     padding-bottom: max(6px, env(safe-area-inset-bottom));
   }
   .mtab { flex: 1; min-height: 44px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* The stage list: the same left-hand sidebar as on desktop, slid in over the
+     page by the header's ☰ (#258). Off-screen rather than display:none, so it can
+     slide; scrollable, because a phone held sideways is shorter than the list. */
+  .ws > .stagebar, .ws.wide > .stagebar {
+    display: block; position: fixed; top: 0; bottom: 0; left: 0; z-index: 40;
+    width: min(260px, 80vw); overflow-y: auto; border-right: 1px solid var(--line);
+    padding-top: max(8px, env(safe-area-inset-top));
+    transform: translateX(-100%); visibility: hidden;
+    transition: transform .2s ease, visibility 0s linear .2s;
+  }
+  .ws.drawer-open > .stagebar {
+    transform: none; visibility: visible; transition: transform .2s ease;
+    box-shadow: 4px 0 18px rgb(0 0 0 / .45);
+  }
+  .ws.drawer-open > .drawer-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 39; background: rgb(0 0 0 / .45);
+  }
+
+  /* The score's own zoom, since the page's is off. */
+  /* Pinned to the right of the tab row, which scrolls sideways: zooming must not
+     mean first scrolling the tabs to find the buttons. */
+  .vzoom { display: inline-flex; gap: 4px; flex: 0 0 auto; position: sticky; right: 0;
+           margin-left: auto; padding-left: 6px; background: var(--panel); }
+  .vzoom[hidden] { display: none; }
+  .vzoom button { min-width: 40px; padding: 5px 10px; font-size: 12px; }
+  .pdfview { touch-action: pan-x pan-y; }
+  .vbody { overflow: hidden; }           /* a pinch in progress stays in its pane */
   .mtab.active { background: var(--accent); color: #0c1320; border-color: var(--accent); font-weight: 600; }
 
   /* Thumbs, not a mouse pointer: 44px targets, and 16px text in fields because
@@ -450,6 +491,11 @@ table.grid input.unset { border-color: var(--warn); }
   table.grid td:nth-child(2)::before { content: "voices: "; color: var(--muted); }
 
   .log { max-height: 160px; }
+}
+
+@media (max-width: 840px) and (prefers-reduced-motion: reduce),
+       (max-height: 500px) and (prefers-reduced-motion: reduce) {
+  .ws > .stagebar, .ws.drawer-open > .stagebar { transition: none; }
 }
 
 @media (max-width: 420px) {

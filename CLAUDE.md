@@ -889,11 +889,26 @@ state model are in `DESIGN.md`.
   the explicit `min-height: 0`, or they refuse to shrink below their content and
   `overflow: auto` never fires.
 - `static/` **on a phone**: the three panes cannot share a 390px screen, so below the
-  breakpoint one is shown at a time and a bar at the bottom of the workspace switches
-  between them (Stages · the current stage · Score). The bar is in the DOM at every
-  width and the stylesheet hides it above the breakpoint — there is no width-sniffing
+  breakpoint the panel and the viewer are shown one at a time and a bar at the bottom
+  switches between them (the current stage · Score). The stage list is the same
+  left-hand sidebar as on desktop, slid in over the page by a ☰ in the header (#258);
+  opening it adds a history entry, so Android's Back closes it instead of leaving the
+  song. The bar, the ☰ and the drawer's backdrop are in the DOM at every
+  width and the stylesheet hides them above the breakpoint — there is no width-sniffing
   in `app.js` that could disagree with the media query, and every mobile rule is
-  additive, so the desktop layout is untouched. The breakpoint is
+  additive, so the desktop layout is untouched.
+  **The bar must never leave the screen**, and on an Android phone it did (#258) — not
+  reproduced in an emulated phone, so the fix does not rest on one cause. The bar is
+  pinned to the bottom of the window (`position: fixed`) with the workspace padded to
+  leave room, rather than being the grid's last row; the page snaps back to the top if
+  anything scrolls it (a field brought into view, the keyboard closing); the keyboard
+  shrinks the page instead of covering it (`interactive-widget=resizes-content`); and
+  the page cannot be pinch-zoomed below the breakpoint (`touch-action: pan-x pan-y`),
+  since a zoomed page carries the bar off with it. The score zooms itself instead —
+  pinch on it, or − / + / Fit in its tab row — redrawing the PDF at the new size
+  (`zoomPdf`). Those buttons are deliberately not `.vtab`: `rendering_state.js`
+  remembers a `.vtab` click as the document to reopen and replays it after every
+  redraw, and its `MOBILE_PANES` list is the bar's tabs by position. The breakpoint is
   `max-width: 840px, max-height: 500px`; the second condition catches a phone held
   sideways, which is wider than the breakpoint but nothing like tall enough. Two
   things had to change beyond CSS: the viewer's "wait for layout" retry now stops

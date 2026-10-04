@@ -281,7 +281,7 @@ def test_mobile_review_and_record_are_task_focused(live, page):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.set_viewport_size({"width": 320, "height": 700})
     page.goto(f"{base}/#/song/{slug}")
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator("#stagemenu").click()
     page.locator(".stagebar .step", has_text="Review").click()
 
     expect(page.locator(".compact-review")).to_be_visible()
@@ -297,7 +297,7 @@ def test_mobile_review_and_record_are_task_focused(live, page):
     song.data["health"]["checked_against"] = "older-score"
     song.save()
     page.reload()
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator("#stagemenu").click()
     page.locator(".stagebar .step", has_text="Review").click()
     expect(page.get_by_text("Needs attention", exact=True)).to_be_visible()
     expect(page.locator(".compact-check.stale")).to_be_visible()
@@ -309,7 +309,7 @@ def test_mobile_review_and_record_are_task_focused(live, page):
     song.save()
     page.reload()
     page.set_viewport_size({"width": 430, "height": 820})
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator("#stagemenu").click()
     page.locator(".stagebar .step", has_text="Review").click()
     page.get_by_role("button", name="✓ Approve → Record").click()
     page.wait_for_timeout(300)
@@ -328,7 +328,7 @@ def test_mobile_review_and_record_are_task_focused(live, page):
     assert not _page_overflows(page)
     _screenshot(page, "issue-66-record-screen-430.png")
 
-    page.locator(".mobilebar").get_by_role("button", name="Stages").click()
+    page.locator("#stagemenu").click()
     expect(page.locator(".stagebar")).to_be_visible()
     assert not _page_overflows(page)
     _screenshot(page, "issue-66-stages-430.png")
