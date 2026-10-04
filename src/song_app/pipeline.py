@@ -17,7 +17,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from . import pdf_systems
+from . import pdf_systems, system_finder
 from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
@@ -587,6 +587,12 @@ Breaks alone are not enough to keep the printed layout: at full size a system
 
 def _page_cache(song_dir: str) -> str:
     return os.path.join(song_dir, ".pages")
+
+
+def quick_system_bands(song_dir: str, pdf_path: str, log=lambda _m: None) -> List[Dict]:
+    """A quick proposal for the printed systems, off the pages the editor shows."""
+    return [b.to_dict() for b in
+            system_finder.quick_bands(pdf_path, _page_cache(song_dir), log=log)]
 
 
 def system_bounds(song_dir: str) -> List[Dict]:
