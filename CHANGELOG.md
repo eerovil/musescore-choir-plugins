@@ -7,6 +7,8 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-04
 
+- The README is now about the web app, with screenshots; the command-line tools
+  and MuseScore plugins moved to TOOLS.md, and this changelog was added. (#264)
 - On a phone, the stage list moves into a ☰ drawer, the bottom bar stays on
   screen, and the score zooms itself (pinch, or − / + / Fit). (#263)
 - The homr install box moved from the Library page to the Scan panel, where homr
