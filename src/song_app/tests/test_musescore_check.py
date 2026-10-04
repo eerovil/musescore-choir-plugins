@@ -33,8 +33,9 @@ TIE_IN = ('<Spanner type="Tie"><prev><location><measures>-1</measures>'
           '<fractions>1/2</fractions></location></prev></Spanner>')
 TIE_INSIDE = ('<Spanner type="Tie"><Tie/><next><location><fractions>1/2</fractions>'
               '</location></next></Spanner>')
+# Ends at the start of bar 3, begun on beat 2 of bar 2.
 SLUR_IN = ('<Spanner type="Slur"><prev><location><measures>-1</measures>'
-           '<fractions>-1/4</fractions></location></prev></Spanner>')
+           '<fractions>1/4</fractions></location></prev></Spanner>')
 
 
 def _chord(kind, pitch, extra=""):
@@ -88,6 +89,45 @@ def test_ties_and_slurs_reaching_into_the_reset_bar_are_cut_and_others_kept():
     # The tie inside bar 1 stays; the one that crossed into bar 2 has nowhere to land.
     assert len(ties) == 1 and ties[0].find("next/location/measures") is None
     assert third.find(".//Spanner") is None
+
+
+def _spanning_score():
+    """Four bars on one staff. A slur and a tie run from bar 1 over bar 2 to bar 3,
+    and a slur runs from bar 2 to bar 4 -- MuseScore writes each end as a bar offset
+    plus a position offset from where that end stands."""
+    over_out = ('<Spanner type="Slur"><Slur/><next><location><measures>2</measures>'
+                '</location></next></Spanner>')
+    over_in = ('<Spanner type="Slur"><prev><location><measures>-2</measures>'
+               '</location></prev></Spanner>')
+    tie_over_out = ('<Spanner type="Tie"><Tie/><next><location><measures>2</measures>'
+                    '<fractions>-1/2</fractions></location></next></Spanner>')
+    tie_over_in = ('<Spanner type="Tie"><prev><location><measures>-2</measures>'
+                   '<fractions>1/2</fractions></location></prev></Spanner>')
+    from_out = ('<Spanner type="Slur"><Slur/><next><location><measures>2</measures>'
+                '</location></next></Spanner>')
+    from_in = ('<Spanner type="Slur"><prev><location><measures>-2</measures>'
+               '</location></prev></Spanner>')
+    bars = [
+        f'{over_out}{_chord("half", 60)}{_chord("half", 60, tie_over_out)}',
+        f'{from_out}{_chord("whole", 62)}',
+        f'{over_in}{_chord("half", 64, tie_over_in)}{_chord("half", 64)}',
+        f'{from_in}{_chord("whole", 65)}',
+    ]
+    staff = '<Staff id="1">' + "".join(
+        f"<Measure><voice>{body}</voice></Measure>" for body in bars) + "</Staff>"
+    return etree.fromstring(('<museScore><Score><Part><trackName>T1</trackName>'
+                             f'<Staff id="1"/></Part>{staff}</Score></museScore>').encode())
+
+
+def test_a_tie_or_slur_passing_over_the_reset_bar_keeps_both_ends():
+    root = _spanning_score()
+    clear_bar(root, 1, 2)
+    first, _, third, fourth = root.findall(".//Score/Staff")[0].findall("Measure")
+    # Bar 1 to bar 3 never touched bar 2: both ends of the slur and the tie stay.
+    assert [s.get("type") for s in first.iter("Spanner")] == ["Slur", "Tie"]
+    assert [s.get("type") for s in third.iter("Spanner")] == ["Slur", "Tie"]
+    # The slur that began in bar 2 has lost its start, so its end in bar 4 goes too.
+    assert fourth.find(".//Spanner") is None
 
 
 def test_the_rest_takes_the_bars_own_length():

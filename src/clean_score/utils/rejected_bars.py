@@ -73,33 +73,51 @@ def _walk(voice: etree._Element, bar: Fraction) -> Iterator[Tuple[Fraction, etre
                 pos += _DUR[kind] * _DOT.get(dots, Fraction(1)) * scale
 
 
-def _lands_outside(pos: Fraction, pointer: etree._Element, bar: Fraction) -> bool:
-    """Whether a spanner's `next`/`prev` location reaches out of its own bar."""
+def _target_bar(home: int, pos: Fraction, pointer: etree._Element,
+                lengths: List[Fraction]) -> Optional[int]:
+    """Which bar (0-based) a spanner's `next`/`prev` location points at.
+
+    MuseScore writes the other end as a bar offset plus a position offset from where
+    this end stands, so a slur from bar 20 to bar 22 says `measures 2` and lands in
+    bar 22, not bar 21. A position that runs off either end of its bar carries on into
+    the neighbouring ones. None when there is no location to follow.
+    """
     loc = pointer.find("location")
     if loc is None:
-        return False
-    if loc.find("measures") is not None:
-        return True
-    target = pos + (_fraction(loc.findtext("fractions")) or 0)
-    return target < 0 or target >= bar
+        return None
+    index = home + int((loc.findtext("measures") or "0").strip() or 0)
+    at = pos + (_fraction(loc.findtext("fractions")) or 0)
+    while at < 0 and index > 0:
+        index -= 1
+        at += lengths[index]
+    while 0 <= index < len(lengths) and at >= lengths[index]:
+        at -= lengths[index]
+        index += 1
+    return index
 
 
-def _cut_spanners_into(measure: Optional[etree._Element], bar: Fraction, side: str) -> None:
-    """Drop the half of any tie or slur in `measure` whose other half was cleared."""
-    if measure is None:
-        return
-    for voice in measure.findall("voice"):
-        for pos, el in list(_walk(voice, bar)):
-            if el.tag == "Spanner":
-                pointer = el.find(side)
-                if pointer is not None and _lands_outside(pos, pointer, bar):
-                    voice.remove(el)
-            elif el.tag == "Chord":
-                for note in el.findall("Note"):
-                    for tie in note.findall("Spanner"):
-                        pointer = tie.find(side)
-                        if pointer is not None and _lands_outside(pos, pointer, bar):
-                            note.remove(tie)
+def _cut_spanners_into(measures: List[etree._Element], lengths: List[Fraction],
+                       cleared: int) -> None:
+    """Drop the half of any tie or slur on this staff whose other half was cleared.
+
+    Only a pointer that resolves to the cleared bar is cut: a slur that passes over it
+    on the way to a bar further along still has both of its ends.
+    """
+    for home, measure in enumerate(measures):
+        if home == cleared:
+            continue
+        for voice in measure.findall("voice"):
+            for pos, el in list(_walk(voice, lengths[home])):
+                holders = [(voice, el)] if el.tag == "Spanner" else (
+                    [(note, tie) for note in el.findall("Note") for tie in note.findall("Spanner")]
+                    if el.tag == "Chord" else [])
+                for parent, spanner in holders:
+                    for side in ("next", "prev"):
+                        pointer = spanner.find(side)
+                        if pointer is not None and \
+                                _target_bar(home, pos, pointer, lengths) == cleared:
+                            parent.remove(spanner)
+                            break
 
 
 def clear_bar(root: etree._Element, staff_index: int, measure_no: int) -> Optional[List[str]]:
@@ -137,10 +155,7 @@ def clear_bar(root: etree._Element, staff_index: int, measure_no: int) -> Option
     etree.SubElement(rest, "durationType").text = "measure"
     etree.SubElement(rest, "duration").text = f"{bar.numerator}/{bar.denominator}"
 
-    if measure_no > 1:
-        _cut_spanners_into(measures[measure_no - 2], lengths[measure_no - 2], "next")
-    if measure_no < len(measures):
-        _cut_spanners_into(measures[measure_no], lengths[measure_no], "prev")
+    _cut_spanners_into(measures, lengths, measure_no - 1)
     return removed
 
 
