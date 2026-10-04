@@ -1141,6 +1141,17 @@ state model are in `DESIGN.md`.
   So: a `uv`-managed python 3.12 venv outside the checkout, built by
   **`scripts/install-homr.sh`** (idempotent; `HOMR_VENV` moves it), called as a
   subprocess. A fresh clone runs one script.
+  **And the app can run that script itself** (#249, `homr_install.py`): the
+  Library page's *homr* box shows the installed commit against the fork's `main`
+  (`git ls-remote`, cached ten minutes) and an **Install / Update homr** button,
+  with the script's log fetched every 2s while it runs. It is still a press and
+  never automatic — the deploy does not touch homr, so the day a parse changes is a
+  day somebody chose. It runs under one heavy slot, is refused while any song job
+  runs (it replaces files inside the venv a scan reads from), and scans and *Ask
+  homr* answer 409 while it runs — each read holds a token file taken under the same `flock` as the install, so neither can start in the gap after the other's check, even across the old and new server during a restart; a pid lock file beside the songs keeps it to one
+  at a time. The button always installs `main` (an explicit `HOMR_SOURCE` is a
+  shell's business), and the script now fetches `uv` into `~/.local/bin` when a
+  host has none, which was the one step that stopped a fresh install cold.
   **Where homr comes from is one variable in that script, `HOMR_SOURCE`.** It defaulted
   to the immutable `eerovil/homr` commit matching upstream `v0.7.0`; this pull request
   moves it to **`@main`**, the fork's tip, which today is upstream's own tip. An

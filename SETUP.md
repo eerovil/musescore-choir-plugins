@@ -57,8 +57,16 @@ the unattended deploy reinstalls this project's requirements on every merge.
 So it gets a venv of its own, outside the checkout, built by a script:
 
 ```bash
-scripts/install-homr.sh          # needs uv; ~10 minutes, ~660 MB on disk
+scripts/install-homr.sh          # ~10 minutes, ~660 MB on disk
+scripts/install-homr.sh --status # installed commit vs the fork's main; installs nothing
 ```
+
+Or press **Install homr** in the *homr* box at the bottom of the app's Library
+page — it runs this same script and shows its log, so a phone can do it. The box
+also says when the fork's `main` has moved past the installed commit and offers
+**Update homr**. It is refused while a song is scanning, cleaning, rendering or
+uploading, and scans wait while it runs. If `uv` is missing, the script installs
+it into `~/.local/bin` with astral's own installer first.
 
 That creates `~/.local/share/musescore-choir-plugins/homr-venv` on python 3.12
 and downloads the model weights, so the first scan is not the slow one.

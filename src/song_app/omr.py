@@ -395,7 +395,8 @@ def engine_for(key: Optional[str]) -> Engine:
         if not engine:
             raise HomrMissing(
                 f"homr is not installed ({homr_binary()}). Run "
-                "scripts/install-homr.sh, or set HOMR_BIN if it lives elsewhere.")
+                "scripts/install-homr.sh (or press Install homr on the Library page), "
+                "or set HOMR_BIN if it lives elsewhere.")
         return engine
     for engine in engines():
         if engine.key == key:
@@ -575,7 +576,8 @@ def read_page(
     engine = engine or default_engine()
     if not engine:
         raise HomrMissing(
-            f"homr is not installed ({homr_binary()}). Run scripts/install-homr.sh, "
+            f"homr is not installed ({homr_binary()}). Run scripts/install-homr.sh "
+            "(or press Install homr on the Library page), "
             "or set HOMR_BIN if it lives somewhere else."
         )
 

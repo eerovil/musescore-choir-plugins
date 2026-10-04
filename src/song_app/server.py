@@ -16,8 +16,8 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import (agentdeck, health, heavy_slot, job_state, omr, pdf_systems,
-               pipeline, pwa_assets, scan, state, system_finder, verification)
+from . import (agentdeck, health, heavy_slot, homr_install, job_state, omr,
+               pdf_systems, pipeline, pwa_assets, scan, state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
 
@@ -398,7 +398,8 @@ def api_song(slug: str) -> Dict:
 # --------------------------------------------------------------------------
 # Scan stage — read the score off the PDF, one printed system at a time
 # --------------------------------------------------------------------------
-def _run_scan(slug: str, opts: Dict) -> None:
+def _run_scan(slug: str, opts: Dict,
+              reader: Optional[homr_install.Reader] = None) -> None:
     song = _require(slug)
     log = lambda m: _job_emit(slug, "scan", m)
     try:
@@ -419,6 +420,8 @@ def _run_scan(slug: str, opts: Dict) -> None:
         _job_emit(slug, "scan", str(exc), "error")
         _job_finish(song, "scan", str(exc))
     finally:
+        if reader:
+            reader.release()
         lock = _scan_lock_path(song)
         if os.path.exists(lock):
             os.remove(lock)
@@ -439,6 +442,21 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
         raise HTTPException(
             400, "Page(s) " + ", ".join(str(p) for p in gaps) + " have no "
             "printed systems marked. Mark every page in the Systems viewer first.")
+    # Held from here until the scan's worker finishes: an install cannot start
+    # while it is, and this cannot start while an install runs.
+    try:
+        reader = homr_install.begin_read()
+    except homr_install.Refused as exc:
+        raise HTTPException(409, str(exc)) from None
+    try:
+        return _start_scan(song, slug, body, reader)
+    except BaseException:
+        reader.release()
+        raise
+
+
+def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
+                reader: homr_install.Reader) -> Dict:
     opts = dict(body or {})
     try:
         opts["systems"] = [int(i) for i in (opts.get("systems") or [])]
@@ -469,7 +487,32 @@ async def api_scan(slug: str, body: Dict = None) -> Dict:
     except Exception as exc:
         _job_finish(song, "scan", str(exc))
         raise
-    asyncio.get_running_loop().run_in_executor(None, _run_scan, slug, opts)
+    asyncio.get_running_loop().run_in_executor(None, _run_scan, slug, opts, reader)
+    return {"started": True}
+
+
+
+@app.get("/api/homr/install")
+def api_homr_install_status(refresh: bool = False) -> Dict:
+    """Which homr is installed, whether the fork has moved on, and the install log.
+
+    `refresh` asks GitHub again rather than trusting the ten-minute cache.
+    """
+    return homr_install.status(refresh=refresh)
+
+
+@app.post("/api/homr/install")
+async def api_homr_install() -> Dict:
+    """Run scripts/install-homr.sh: install homr, or update it to the fork's main.
+
+    A press, never automatic, and refused while any song job is running — the
+    script replaces files inside the venv a scan would be reading from.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        homr_install.start(lambda work: loop.run_in_executor(None, work))
+    except homr_install.Refused as exc:
+        raise HTTPException(409, str(exc)) from None
     return {"started": True}
 
 
@@ -1016,6 +1059,15 @@ async def api_find_systems(slug: str, body: Dict = None) -> Dict:
             traceback.print_exc()
             raise HTTPException(500, str(exc)) from None
         return {"systems": found}
+    try:
+        reader = homr_install.begin_read()
+    except homr_install.Refused as exc:
+        raise HTTPException(409, str(exc)) from None
+    with reader:
+        return await _find_with_homr(slug, pdf, body)
+
+
+async def _find_with_homr(slug: str, pdf: str, body: Optional[Dict]) -> Dict:
     key = (body or {}).get("engine")
     engine = None
     if key and key != omr.DEFAULT_ENGINE:

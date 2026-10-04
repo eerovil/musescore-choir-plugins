@@ -70,6 +70,12 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); }
   padding: 16px; cursor: pointer; text-decoration: none; color: var(--text); display: block;
 }
 .card:hover { border-color: var(--accent); }
+/* The homr box under the song cards: which homr reads scans, and its install. */
+.homr-box { margin-top: 22px; border: 1px solid var(--line); border-radius: 11px;
+            padding: 10px 14px; background: var(--panel); }
+.homr-box summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.homr-line { margin: 10px 0 8px; overflow-wrap: anywhere; }
+.homr-log { max-height: 240px; overflow-y: auto; margin-top: 10px; }
 .card h3 { margin: 0 0 10px; }
 .rail { display: flex; gap: 6px; align-items: center; margin: 10px 0; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
