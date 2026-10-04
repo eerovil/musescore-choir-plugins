@@ -80,7 +80,7 @@ def live(tmp_path_factory):
 
 
 def _choose_stage(page, label):
-    stages = page.locator(".mobilebar").get_by_role("button", name="Stages")
+    stages = page.locator("#stagemenu")
     if stages.is_visible():
         stages.click()
     page.locator(".stagebar .step", has_text=label).click()

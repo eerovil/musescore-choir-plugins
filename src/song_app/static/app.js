@@ -26,6 +26,46 @@ const DEFAULT_TOP_MARGIN = 0;
 const DEFAULT_BOTTOM_MARGIN = 5;
 const STAGE_LABEL = { register: "Start", scan: "Scan", clean: "Clean", fix: "Fix", lyrics: "Lyrics", review: "Review", record: "Record", upload: "Upload" };
 
+const stageMenu = document.getElementById("stagemenu");
+
+// The phone's stage drawer (#258). Opening it adds a history entry, so Android's Back
+// closes the drawer rather than leaving the song; every other way of closing it goes
+// back through that entry too, so the history never collects stale ones.
+const drawerWs = () => document.querySelector(".ws.drawer-open");
+const markDrawer = (ws, open) => {
+  ws.classList.toggle("drawer-open", open);
+  stageMenu.setAttribute("aria-expanded", open ? "true" : "false");
+};
+function openDrawer(ws) {
+  if (ws.classList.contains("drawer-open")) return;
+  markDrawer(ws, true);
+  history.pushState({ drawer: true }, "");
+}
+function closeDrawer() {
+  const ws = drawerWs();
+  if (!ws) return;
+  markDrawer(ws, false);
+  if (history.state && history.state.drawer) history.back();
+}
+window.addEventListener("popstate", () => { const ws = drawerWs(); if (ws) markDrawer(ws, false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+
+// On a phone the bottom bar is the way around a song, so the page itself must never
+// end up scrolled: it does not scroll on its own (html and body are overflow:hidden),
+// but a browser scrolling a focused field into view still can, and leaves it there
+// after the keyboard closes — the bar is then below the screen (#258). Put it back
+// whenever the page scrolls, the window's shape changes or a field lets go of the
+// focus.
+const unscrollPage = () => {
+  const root = document.scrollingElement || document.documentElement;
+  if (root.scrollTop || root.scrollLeft) root.scrollTo(0, 0);
+};
+window.visualViewport?.addEventListener("resize", unscrollPage);
+window.addEventListener("scroll", unscrollPage, { passive: true });
+window.addEventListener("resize", unscrollPage);
+window.addEventListener("orientationchange", unscrollPage);
+document.addEventListener("focusout", () => setTimeout(unscrollPage, 0));
+
 // ---- router --------------------------------------------------------------
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", route);
@@ -45,6 +85,7 @@ const SORTS = {
 
 async function renderLibrary() {
   crumb.textContent = "";
+  stageMenu.hidden = true;     // the Library has no stages
   const songs = await getJSON("/api/songs");
   const sortKey = SORTS[localStorage.getItem("songSort")] ? localStorage.getItem("songSort") : "updated";
   songs.sort(SORTS[sortKey].fn);
@@ -278,25 +319,33 @@ async function renderWorkspace(slug) {
     onclick: () => setWide(!wsGrid.classList.contains("wide")) });
   wsGrid.append(wideBtn);
 
-  // On a phone the three panes cannot share the screen, so one is shown at a time and
-  // this bar switches between them. It is in the DOM at every width — the stylesheet
-  // hides it above the breakpoint, so the desktop layout is untouched and there is no
-  // width-sniffing in here to disagree with the media query.
+  // On a phone the panel and the viewer cannot share the screen, so one is shown at a
+  // time and this bar switches between them. The stage list is the same left-hand
+  // sidebar as on desktop, slid in over the page by the header's ☰ (#258). The bar and
+  // the backdrop are in the DOM at every width — the stylesheet hides them above the
+  // breakpoint, so the desktop layout is untouched and there is no width-sniffing in
+  // here to disagree with the media query.
   const paneBtns = {};
   let pane = "panel";
   const showPane = (p) => {
     if (p !== "viewer") viewerEl._pausePreview();
     pane = p;
-    for (const k of ["stages", "panel", "viewer"]) wsGrid.classList.toggle("m-" + k, k === p);
+    for (const k of ["panel", "viewer"]) wsGrid.classList.toggle("m-" + k, k === p);
     for (const k in paneBtns) paneBtns[k].className = "mtab" + (k === p ? " active" : "");
     // A pane that was hidden has no width, so its PDF could not render while it was
     // away; now that it is on screen, let it.
     if (p === "viewer") viewerEl._wake();
   };
   const mobilebar = el("div", { className: "mobilebar" },
-    [["stages", "Stages"], ["panel", "Panel"], ["viewer", "Score"]].map(([k, label]) =>
+    [["panel", "Panel"], ["viewer", "Score"]].map(([k, label]) =>
       (paneBtns[k] = el("button", { className: "mtab", onclick: () => showPane(k) }, label))));
-  wsGrid.append(mobilebar);
+  const backdrop = el("div", { className: "drawer-backdrop", onclick: closeDrawer });
+  wsGrid.append(mobilebar, backdrop);
+  // Assigned, not added: each song's render replaces the last one's handler.
+  stageMenu.onclick = () =>
+    wsGrid.classList.contains("drawer-open") ? closeDrawer() : openDrawer(wsGrid);
+  stageMenu.hidden = false;
+  stageMenu.setAttribute("aria-expanded", "false");
 
   app.replaceChildren(wsGrid);
   setWide(localStorage.getItem("wsWide") === "1");
@@ -341,6 +390,7 @@ async function renderWorkspace(slug) {
   }
 
   function selectStage(stage) {
+    closeDrawer();
     view = stage;
     if (view === "review" && song.lyrics) panes[0] = "cleaned";
     else if (view === "record") panes[0] = "preview";
@@ -446,28 +496,104 @@ function ensurePdfjs() {
   return pdfjsReady;
 }
 
-// Render `url` into `view` (a scrollable div), preserving its current scrollTop.
-async function renderPdf(view, url) {
+// The viewer's own zoom (#258). On a phone the page itself cannot be pinch-zoomed —
+// zooming the page is what carried the bottom bar off the screen — so the score is
+// zoomed here instead, by drawing it again at the new size rather than stretching
+// a picture. `MAX_PDF_PIXELS` caps a page's drawn width: at zoom 4 on a 3x screen a
+// page would otherwise be a canvas of ~28M pixels, and a score has several.
+const MIN_ZOOM = 1, MAX_ZOOM = 4, MAX_PDF_PIXELS = 2400;
+const clampZoom = (z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
+// Render `url` into `view` (a scrollable div) at `view._zoom`, preserving its current
+// scroll. `anchor` names a point on screen ({x, y} inside the view) that should stay
+// over the same spot of the music, which is what a zoom wants; without one the
+// scroll position is kept as it is (same zoom → same content height → exact).
+async function renderPdf(view, url, anchor) {
   const token = (view._tok = (view._tok || 0) + 1);
   const lib = await ensurePdfjs();
   const pdf = await lib.getDocument(url).promise;
   if (view._tok !== token) return; // superseded by a newer render
   const width = view.clientWidth || 600;
+  const zoom = view._zoom || 1;
+  const cssWidth = (width - 14) * zoom;
+  const ratio = Math.min(window.devicePixelRatio || 1, MAX_PDF_PIXELS / cssWidth);
   const canvases = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     if (view._tok !== token) return;
     const base = page.getViewport({ scale: 1 });
-    const vp = page.getViewport({ scale: (width - 14) / base.width });
+    const vp = page.getViewport({ scale: (cssWidth / base.width) * Math.max(ratio, 1 / zoom) });
     const c = el("canvas", { className: "pdfpage" });
     c.width = vp.width; c.height = vp.height;
+    c.style.width = `${cssWidth}px`;
+    if (zoom > 1) c.style.maxWidth = "none";
     await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
     if (view._tok !== token) return;
     canvases.push(c);
   }
-  const top = view.scrollTop;          // same content height → restoring is exact
+  let fx, fy;
+  if (anchor) {
+    fx = (view.scrollLeft + anchor.x) / Math.max(1, view.scrollWidth);
+    fy = (view.scrollTop + anchor.y) / Math.max(1, view.scrollHeight);
+  }
+  const top = view.scrollTop, left = view.scrollLeft;
+  view.style.transform = "";           // a pinch in progress is now drawn for real
   view.replaceChildren(...canvases);
-  view.scrollTop = top;
+  if (anchor) {
+    view.scrollLeft = fx * view.scrollWidth - anchor.x;
+    view.scrollTop = fy * view.scrollHeight - anchor.y;
+  } else {
+    view.scrollTop = top;
+    view.scrollLeft = left;
+  }
+}
+
+// Draw `view` again at `zoom`, keeping `anchor` (a point inside the view; its centre
+// by default) over the same spot of the music.
+function zoomPdf(view, zoom, anchor) {
+  zoom = clampZoom(zoom);
+  if (!view._url || view._renderedUrl !== view._url) { view._zoom = zoom; return; }
+  if (zoom === (view._zoom || 1)) { view.style.transform = ""; return; }
+  view._zoom = zoom;
+  renderPdf(view, view._url,
+    anchor || { x: view.clientWidth / 2, y: view.clientHeight / 2 }).catch(() => {});
+}
+
+// Two fingers on the score zoom the score, not the page. While the fingers move the
+// view is only scaled, which is cheap; on release it is drawn again at that size.
+// Touch events rather than pointer events: with page panning still allowed, the
+// browser cancels a pointer as soon as it starts scrolling, and a pinch would die
+// half-way through.
+function pinchZoom(view) {
+  let start = null;
+  const spread = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  view.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 2 || !view._url) return;
+    e.preventDefault();
+    const r = view.getBoundingClientRect();
+    const t = e.touches;
+    start = {
+      d: spread(t), scale: 1,
+      x: (t[0].clientX + t[1].clientX) / 2 - r.left,
+      y: (t[0].clientY + t[1].clientY) / 2 - r.top,
+    };
+    view.style.transformOrigin = `${start.x + view.scrollLeft}px ${start.y + view.scrollTop}px`;
+  }, { passive: false });
+  view.addEventListener("touchmove", (e) => {
+    if (!start || e.touches.length !== 2) return;
+    e.preventDefault();
+    const zoom = view._zoom || 1;
+    start.scale = clampZoom(zoom * spread(e.touches) / start.d) / zoom;
+    view.style.transform = `scale(${start.scale})`;
+  }, { passive: false });
+  const end = () => {
+    if (!start) return;
+    const { scale, x, y } = start;
+    start = null;
+    zoomPdf(view, (view._zoom || 1) * scale, { x, y });
+  };
+  view.addEventListener("touchend", end);
+  view.addEventListener("touchcancel", end);
 }
 
 // Render with pdf.js; fall back to a native iframe if pdf.js can't load (offline).
@@ -915,15 +1041,25 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
           v._sync = () => preview._syncPreview?.();
           v.append(preview);
         }
-        else v._url = docUrl(slug, doc, song.cleaned_fingerprint);
+        else { v._url = docUrl(slug, doc, song.cleaned_fingerprint); pinchZoom(v); }
       }
       for (const d in frames) frames[d].style.display = d === doc ? "" : "none";
       for (const k in btns) btns[k].className = k === doc ? "vtab active" : "vtab";
+      zoomBox.hidden = !frames[doc]._url;   // only a PDF zooms
       ensureRendered(doc); // now visible → has width
     };
     const tabRow = tabs.map(([k, label]) => (btns[k] = el("button", {
       className: "vtab", onclick: () => show(k),
     }, label)));
+    // Phone only (the stylesheet hides it above the breakpoint): page zoom is off
+    // there, so this and a pinch on the score are how it is read up close. Not
+    // `.vtab`: rendering_state.js remembers a `.vtab` click as the document to
+    // reopen, and would press Fit again after every redraw.
+    const zoomBy = (f) => () => { const v = frames[panes[i]]; if (v) zoomPdf(v, f ? (v._zoom || 1) * f : 1); };
+    const zoomBox = el("span", { className: "vzoom" },
+      el("button", { title: "Zoom out", "aria-label": "Zoom out", onclick: zoomBy(1 / 1.5) }, "−"),
+      el("button", { title: "Zoom in", "aria-label": "Zoom in", onclick: zoomBy(1.5) }, "+"),
+      el("button", { title: "Fit the width", onclick: zoomBy(0) }, "Fit"));
 
     if (keys.includes("system") || keys.includes("scanned")) {
       const onAsk = (ev) => {
@@ -957,7 +1093,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
       : el("button", { className: "vtab close", title: "Close this pane",
           onclick: () => { panes.splice(i, 1); rebuild(); } }, "✕");
 
-    const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), ctrl);
+    const bar = el("div", { className: "viewtabs" }, ...tabRow, el("span", { className: "spacer" }), zoomBox, ctrl);
     show(panes[i]);
     selectors.push(show);
     previewPausers.push(() => frames.preview?._pause?.());

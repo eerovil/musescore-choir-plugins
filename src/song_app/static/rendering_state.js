@@ -7,7 +7,9 @@
 // tabs make that reload land exactly where the user was.
 (() => {
   const STORAGE_PREFIX = "songWorkspace:";
-  const MOBILE_PANES = ["stages", "panel", "viewer"];
+  // The phone bar's tabs, in order. Stages left it for a drawer (#258); a "stages"
+  // remembered from before then simply finds no tab and the panel stays forward.
+  const MOBILE_PANES = ["panel", "viewer"];
   const appRoot = document.getElementById("app");
 
   let restoreQueued = false;

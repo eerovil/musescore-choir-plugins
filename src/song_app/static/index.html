@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta id="viewport" name="viewport" content="width=device-width, initial-scale=1" />
+  <meta id="viewport" name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
   <script>
     // `viewport-fit=cover` is what lets the installed app paint under the notch and
     // the home indicator, and pwa.css pads those safe areas back. In an ordinary
@@ -11,12 +11,18 @@
     // exactly there, so it goes with it (#54). Opt in only where the app owns the
     // whole screen. Inline and in the head, so the viewport is settled before the
     // first paint rather than after a visible reflow.
+    //
+    // `interactive-widget=resizes-content` makes Android Chrome shrink the page when
+    // the keyboard opens, instead of laying the keyboard over it and scrolling the
+    // page to the field — which could leave the page shifted, and the bottom bar off
+    // the screen, after the keyboard closed (#258).
     (() => {
       const standalone = window.navigator.standalone === true
         || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
       if (!standalone) return;
       document.getElementById("viewport").setAttribute(
-        "content", "width=device-width, initial-scale=1, viewport-fit=cover");
+        "content",
+        "width=device-width, initial-scale=1, interactive-widget=resizes-content, viewport-fit=cover");
     })();
   </script>
   <meta name="color-scheme" content="dark" />
@@ -34,6 +40,10 @@
 </head>
 <body>
   <header>
+    <!-- The stage list on a phone: a drawer this opens (#258). Shown only on a
+         song's page, and only below the phone breakpoint. -->
+    <button id="stagemenu" class="stagemenu" type="button" aria-label="Stages"
+            aria-expanded="false" hidden>☰</button>
     <a href="#/" class="brand">♪ song</a>
     <span id="crumb"></span>
     <!-- The installed app has no browser toolbar, so no reload button of its own
