@@ -83,14 +83,14 @@ async function renderLibrary() {
           } }, "Import existing"),
           el("button", { className: "primary", onclick: newSongDialog }, "+ New song"))),
       cards.length ? el("div", { className: "cards" }, cards)
-                   : el("p", { className: "hint" }, "No songs yet. Create one to begin."),
-      homrBox()));
+                   : el("p", { className: "hint" }, "No songs yet. Create one to begin.")));
 }
 
 // ---- installing homr ---------------------------------------------------------
 // Which homr this host reads scans with, whether the fork's main has moved past
 // it, and a button that runs scripts/install-homr.sh (#249). Updating is a press,
-// never automatic: the day a parse changes is a day somebody chose.
+// never automatic: the day a parse changes is a day somebody chose. It lives in
+// the Scan panel (#261), where homr is used and where "not installed" is said.
 const short = (c) => (c ? c.slice(0, 7) : "");
 
 function homrBox() {
@@ -130,12 +130,12 @@ function homrBox() {
     out.hidden = !lines.length;
     out.textContent = lines.join("\n");
     out.scrollTop = out.scrollHeight;
-    if (st.running || r.finished_at && !r.ok) box.open = true;
+    if (st.running || r.finished_at && !r.ok || !installed) box.open = true;
   }
 
   async function poll() {
     clearTimeout(timer);
-    if (!box.isConnected) return;  // the Library was left; stop asking
+    if (!box.isConnected) return;  // the panel was left or redrawn; stop asking
     try {
       const st = await getJSON("/api/homr/install");
       draw(st);
@@ -1174,6 +1174,7 @@ function panelScan(panel, song, P, refresh, actions) {
     engine = sel.value;
     engineRow.append(el("label", { className: "hint" }, "Read with"), sel);
   }).catch(() => {});
+  panel.append(homrBox());
 
   const rerun = async (systems) => {
     appendLog(systems ? "Re-reading system(s) " + systems.join(", ") + "…"
