@@ -16,7 +16,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bisect import bisect_left
 from dataclasses import dataclass, replace
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 import mido
 import numpy as np
@@ -191,6 +191,7 @@ class Prepared:
     midi: str
     engraving: object         # engrave.Engraving
     names: List[str]          # the parts that can be sung
+    staff_of: Dict[str, int]  # which engraved staff each part is drawn on
     wanted: List[str]         # the parts asked for
     dropped: List[str]        # parts left out for having nothing to sing
     spaced: bool              # a spacer staff was engraved (and is cropped off)
@@ -210,6 +211,22 @@ class Prepared:
         return self.engraving.layout
 
     @property
+    def staff_count(self) -> int:
+        """How many singing staves the picture should have: fewer than the parts
+        when some of them share a staff."""
+        return len(set(self.staff_of.values()))
+
+    def focus_staff(self, part: Optional[str]) -> Optional[int]:
+        """The staff to light for this part, or None to light every staff.
+
+        A part maps to a staff only when the engraving came out with the staves
+        the score asked for; otherwise every staff is lit rather than a guessed one.
+        """
+        if not part or self.singing_staves != self.staff_count:
+            return None
+        return self.staff_of.get(part)
+
+    @property
     def view_height(self) -> float:
         return self.view_end - self.view_start
 
@@ -220,8 +237,15 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
             smooth_seconds: float = SMOOTH_SECONDS, fps: int = 60,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
             system_starts: Optional[Sequence[int]] = None,
+            staff_groups: Optional[Sequence[Sequence[str]]] = None,
             log: Logger = _noop) -> Prepared:
     """Do everything a render needs before rasterising, and check it is renderable.
+
+    `staff_groups` puts parts on a shared staff in the picture, e.g.
+    `[("S1", "S2"), ("A1", "A2")]`: the first of each pair is voice 1, the second
+    voice 2. Only the engraving is made from the merged score. The MIDI the clock
+    comes from and `source`, which the audio mixes are made from, stay unmerged, so
+    the alignment check below measures the merged picture against the real sound.
 
     `tmp` is a directory the intermediate files are written into; it has to outlive
     the returned `Prepared`, whose `source` the audio mixes are rendered from.
@@ -257,8 +281,15 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
             f"No such part(s): {', '.join(unknown)}. Score has: {', '.join(names)}"
             + (f" (left out: {', '.join(dropped)})" if dropped else ""))
 
+    picture = source
+    staff_of = {name: index for index, name in enumerate(names)}
+    if staff_groups:
+        score_mod.validate_groups(staff_groups, names, dropped)
+        picture, staff_of = score_mod.merged_copy(source, tmp, staff_groups)
+        log("Sharing staves: " + score_mod.format_groups(staff_groups))
+
     log("Converting for engraving (MuseScore CLI)")
-    musicxml = audio_mod.run_musescore(source, os.path.join(tmp, "score.musicxml"))
+    musicxml = audio_mod.run_musescore(picture, os.path.join(tmp, "score.musicxml"))
     midi = audio_mod.run_musescore(source, os.path.join(tmp, "score.mid"))
 
     # Bars that would scroll much faster than their neighbours are widened with a
@@ -276,8 +307,9 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
         max_ratio=spacing_ratio, log=log)
     layout = eng.layout
     singing_staves = len(layout.staff_tops) - (1 if spaced else 0)
-    if singing_staves != len(names):
-        log(f"Warning: {singing_staves} engraved staves vs {len(names)} parts; "
+    expected_staves = len(set(staff_of.values()))
+    if singing_staves != expected_staves:
+        log(f"Warning: {singing_staves} engraved staves vs {expected_staves} expected; "
             "highlighting every voice equally.")
 
     tempo = TempoMap.from_midi(midi)
@@ -312,6 +344,7 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
 
     return Prepared(
         source=source, musicxml=musicxml, midi=midi, engraving=eng, names=names,
+        staff_of=staff_of,
         wanted=wanted, dropped=dropped, spaced=bool(spaced),
         singing_staves=singing_staves, tempo=tempo, notes=notes, rests=rests,
         events=events, anchors=anchors, visible_height=visible,
@@ -429,6 +462,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  system_starts: Optional[Sequence[int]] = None,
                  hardware_encoding: bool = True,
                  audio_cache_dir: Optional[str] = None,
+                 staff_groups: Optional[Sequence[Sequence[str]]] = None,
                  log: Logger = _noop, progress: Logger = _noop) -> List[str]:
     """Render a scrolling video per voice. Returns the paths written.
 
@@ -441,6 +475,9 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
     ``top_margin_percent`` and ``bottom_margin_percent`` adjust the current vertical
     viewport independently. Zero preserves the historical layout exactly; positive
     values add white space and negative values crop that edge.
+
+    `staff_groups` draws pairs of parts on one staff (see `prepare`); the files
+    written, and the mix in each, are the same as without it.
 
     `combined` also writes "<base> ALL", the same picture with every voice at equal
     volume — what a singer listens to once they know their own line, and what the
@@ -467,7 +504,8 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent,
-                        system_starts=system_starts, log=log)
+                        system_starts=system_starts, staff_groups=staff_groups,
+                        log=log)
         source = ready.source
         layout = ready.layout
         names, wanted = ready.names, ready.wanted
@@ -515,8 +553,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
 
         if emphasise:
             for name, focus in mixes:
-                staff = (names.index(focus)
-                         if focus and ready.singing_staves == len(names) else None)
+                staff = ready.focus_staff(focus)
                 log(f"{name}: rendering video (emphasised)")
                 out = os.path.join(out_dir, f"{base} {name}.mp4")
                 render(strip, placed, anchors, out, px_per_unit=px_per_unit, width=width,

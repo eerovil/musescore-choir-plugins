@@ -107,9 +107,19 @@ def _new_song(page, base, name):
     page.get_by_placeholder("Song name").fill(name)
     page.locator("#f-xml").set_input_files(FIXTURE)
     page.locator("select").select_option("men")
-    page.locator("input[type=checkbox]").check()      # per-system, like the fixture
     page.get_by_role("button", name="Create").click()
     expect(page.locator(".ws")).to_be_visible()
+    _use_per_system(page, base)                       # per-system, like the fixture
+    expect(page.locator(".ws")).to_be_visible()
+
+
+def _use_per_system(page, base):
+    """Switch the song just created to per-system mode, as the Clean panel's
+    toggle does: the New song form no longer asks."""
+    slug = page.url.split("#/song/", 1)[1]
+    response = page.request.post(f"{base}/api/songs/{slug}/mode", data={"mode": "per-system"})
+    assert response.ok, response.text()
+    page.reload()
 
 
 def _page_scrolls(page):

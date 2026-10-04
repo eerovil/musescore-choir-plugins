@@ -88,7 +88,6 @@ async function renderLibrary() {
 
 function newSongDialog() {
   const name = el("input", { placeholder: "Song name, e.g. Laulun aika" });
-  const per = el("input", { type: "checkbox" });
   // Which voices sing it. Asked here because nothing in the file can settle it:
   // a male-choir score is written in treble sounding an octave down and editions
   // routinely leave the 8 off the clef, so its tenor line reads as a soprano one.
@@ -140,7 +139,6 @@ function newSongDialog() {
     if (!voicing.value) { status.textContent = "Choose who sings it — it decides the part names."; return; }
     const fd = new FormData();
     fd.append("name", name.value.trim() || fileName());
-    fd.append("per_system", per.checked);
     fd.append("voicing", voicing.value);
     if (xml.files[0]) fd.append("xml", xml.files[0]);
     if (pdf.files[0]) fd.append("pdf", pdf.files[0]);
@@ -160,7 +158,6 @@ function newSongDialog() {
     el("p", { className: "hint" }, "Optional — a score you already have. Hand one in and the page is not scanned."),
     routeHint,
     el("label", {}, "Who sings it"), voicing,
-    el("div", { className: "row" }, per, el("span", {}, "Staves change parts per system (per-system mode)")),
     el("div", { className: "row" }, create, el("button", { onclick: renderLibrary }, "Cancel")),
     status));
 }
@@ -1957,6 +1954,12 @@ function panelRecord(panel, song, P, refresh, actions) {
     type: "number", value: rec.bottom_margin ?? DEFAULT_BOTTOM_MARGIN, min: -40, max: 100, step: 1,
     style: "width:100px", "data-video-margin": "bottom"
   });
+  // Parts that share a staff in the picture (#246): "S1+S2, A1+A2" draws four
+  // parts on two staves. The videos and their mixes stay one per part.
+  const staffGroups = el("input", {
+    type: "text", value: rec.staff_groups ?? "", placeholder: "e.g. S1+S2, A1+A2",
+    style: "width:220px", "data-staff-groups": ""
+  });
   const hardwareEncoding = el("input", {
     type: "checkbox", checked: rec.hardware_encoding !== false
   });
@@ -1981,6 +1984,7 @@ function panelRecord(panel, song, P, refresh, actions) {
       ? post({ quality: quality.value, hardware_encoding: hardwareEncoding.checked,
                top_margin: Number(topMargin.value) || 0,
                bottom_margin: Number(bottomMargin.value) || 0,
+               staff_groups: staffGroups.value.trim(),
                ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}) },
              "Rendering the scrolling video…")
       : post({ audio_delay_ms: Number(delay.value) || 1300,
@@ -2005,6 +2009,11 @@ function panelRecord(panel, song, P, refresh, actions) {
     el("div", { className: "row" },
       el("span", {}, "Bottom margin"), bottomMargin, el("span", {}, "%")),
     el("p", { className: "hint" }, "0 = current layout; positive adds white space; negative crops that edge"),
+    el("label", {}, "Shared staves"),
+    el("div", { className: "row" }, staffGroups),
+    el("p", { className: "hint" },
+      "Two parts on one staff, upper part first; blank = one staff per part. Still one video per part."
+      + (parts.length ? ` Parts: ${parts.join(" ")}` : "")),
     el("div", { className: "row" }, hardwareEncoding,
       el("span", {}, "Use NVIDIA hardware encoding when available")));
   const screenAdvanced = el("div", {},
@@ -2030,9 +2039,10 @@ function panelRecord(panel, song, P, refresh, actions) {
     quality: quality.value,
     top_margin: Number(topMargin.value) || 0,
     bottom_margin: Number(bottomMargin.value) || 0,
+    staff_groups: staffGroups.value.trim(),
     ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
   }));
-  for (const control of [quality, topMargin, bottomMargin, bpm]) {
+  for (const control of [quality, topMargin, bottomMargin, bpm, staffGroups]) {
     control.addEventListener("input", actions.previewInputsChanged);
   }
 

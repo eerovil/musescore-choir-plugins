@@ -2194,7 +2194,8 @@ bars:
 build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
              fps=60, with_audio=True, keep_silent=False, emphasise=False,
              combined=True, spacing_ratio=1.3, smooth_seconds=2.0,
-             basename=None, system_starts=None, log=...) -> [video paths]
+             basename=None, system_starts=None, staff_groups=None,
+             log=...) -> [video paths]
 preview(mscx_path, out_dir, width=3840, height=2160, fps=60, ...) -> payload
 ```
 
@@ -2308,6 +2309,23 @@ to `entry["tstamp"]`.
   otherwise cost a staff of height in every frame and each get their own pointless
   practice video. The original file is never touched; with nothing to drop it is used
   as-is. `build_videos(..., keep_silent=True)` / `--keep-silent` turns it off.
+- **Two parts can share a staff in the picture** (#246): `staff_groups=[("S1",
+  "S2"), ("A1", "A2")]`, `--merge S1+S2`, or the Record panel's *Shared staves*
+  field (kept in `record.staff_groups`). `score.merge_staves` moves the lower part
+  into the upper part's staff as voice 2, on a copy, before MuseScore exports the
+  MusicXML, so MuseScore lays out the two voices (stems, rests, beams) itself. The
+  staff takes the lower part's clef and is labelled `S1/S2`; words both sing are
+  printed once and differing words go on a second line; a bar both rest through
+  gets one rest. **Only the picture changes**: the MIDI the clock comes from and
+  the score the mixes come from stay unmerged, so the files, the mixes and the
+  audio cache are the same as without it, and the 98% alignment check measures the
+  merged picture against the real sound. At most two parts a staff, and a part that
+  already has two voices in a bar is refused naming the bar. The shared staff's
+  clefs are all the lower part's, its later changes included, each put at the same
+  beat in voice 1 (`_walk` counts dots, tuplets and `location` gaps to find it);
+  the upper part's own clef changes are not drawn.
+  `Prepared.staff_of` says which staff each part is drawn on, which is what
+  `--emphasise` and the preview's part highlight use.
 - `engrave.py` renders with `breaks: "none"` so the whole score is one system
   (one page — a second page is an error, not something to stitch). Notes are
   `<g id=... class="note">` and the timemap's `on`/`off` lists name those same ids;
@@ -2587,6 +2605,10 @@ without it, like the browser tests:
   clean jump rather than three smeared ones.
 - `test_score.py` — which parts count as silent, that dropping one takes its staff
   with it, and that the original file is never modified.
+- `test_merge_staves.py` — sharing a staff: which voice each part lands in, the
+  clef, the label, words once or on a second line, one rest for two, stems left to
+  MuseScore, the refusals, and (with MuseScore) two parts engraving as one staff
+  with the same notes and the same unmerged audio source.
 - `test_audio.py` / `test_build.py` — the volume edit (replaced, not duplicated;
   pan/program untouched), the D.C.-jump refusal, that section repeats/voltas are
   *not* refused, and the alignment measure itself (full when highlights match the

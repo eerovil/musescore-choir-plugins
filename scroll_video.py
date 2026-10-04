@@ -8,6 +8,7 @@ the audio from the MuseScore CLI.
 Usage:
   ./scroll_video.py songs/MySong/MySong_cleaned.mscx
   ./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 1080 --fps 30
+  ./scroll_video.py score.mscx --merge S1+S2 --merge A1+A2   # 4 parts on 2 staves
 """
 
 import argparse
@@ -19,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 
 from src.scrollvideo import build_videos
+from src.scrollvideo.score import parse_groups
 from src.scrollvideo.spacing import DEFAULT_MAX_RATIO
 
 load_dotenv(".env") or load_dotenv(".env.default")
@@ -53,6 +55,10 @@ def main() -> None:
     parser.add_argument("--bottom-margin", type=float, default=0.0, metavar="PERCENT",
                         help="bottom video margin adjustment in percent; 0 keeps the current "
                              "layout, positive adds white space, negative crops")
+    parser.add_argument("--merge", action="append", default=[], metavar="UPPER+LOWER",
+                        help="draw two parts on one staff, e.g. --merge S1+S2 --merge "
+                             "A1+A2; the upper part is voice 1. Videos and mixes are "
+                             "unchanged")
     parser.add_argument("--emphasise", action="store_true",
                         help="light each voice's own notes brighter; re-encodes per voice (slow)")
     parser.add_argument("--no-combined", action="store_true",
@@ -64,6 +70,7 @@ def main() -> None:
     out_dir = args.out_dir or os.path.join(os.path.dirname(os.path.abspath(args.score)),
                                            "media", "scroll")
     try:
+        staff_groups = parse_groups(", ".join(args.merge))
         # Height alone should give a sensible video: setting only --height used to
         # keep the 4K width and produce a 32:9 letterbox.
         width = args.width or round(args.height * 16 / 9 / 2) * 2
@@ -75,6 +82,7 @@ def main() -> None:
                                spacing_ratio=args.spacing_ratio, smooth_seconds=args.smooth,
                                top_margin_percent=args.top_margin,
                                bottom_margin_percent=args.bottom_margin,
+                               staff_groups=staff_groups,
                                log=lambda m: print(m, flush=True),
                                progress=lambda m: print(m, flush=True))
     except (NotImplementedError, ValueError) as exc:

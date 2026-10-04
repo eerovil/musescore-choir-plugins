@@ -414,3 +414,56 @@ def test_relaying_out_the_source_throws_the_preview_away(client, song, prepared)
     client.get(f"/api/songs/{song.slug}/scroll-preview")
 
     assert [call["system_starts"] for call in prepared] == [[0, 4, 8], [0, 6]]
+
+
+def _two_parts(song):
+    """A cleaned score with two singing parts, S1 and B1."""
+    chord = "<Chord><durationType>whole</durationType><Note><pitch>60</pitch></Note></Chord>"
+    parts = "".join(f'<Part><Staff id="{i}"/><trackName>{n}</trackName></Part>'
+                    for i, n in ((1, "S1"), (2, "B1")))
+    staves = "".join(f'<Staff id="{i}"><Measure><voice>{chord}</voice></Measure></Staff>'
+                     for i in (1, 2))
+    with open(song.cleaned_path(), "w") as fh:
+        fh.write(f"<museScore><Score>{parts}{staves}</Score></museScore>")
+
+
+def test_shared_staves_are_part_of_what_the_preview_is_of(client, song, prepared):
+    """#246: the preview draws the grouping the render will, and changing it redraws."""
+    _two_parts(song)
+    client.get(f"/api/songs/{song.slug}/scroll-preview")
+    client.get(f"/api/songs/{song.slug}/scroll-preview", params={"staff_groups": "S1+B1"})
+    client.get(f"/api/songs/{song.slug}/scroll-preview", params={"staff_groups": "S1+B1"})
+    assert len(prepared) == 2
+    assert prepared[0]["staff_groups"] is None
+    assert prepared[1]["staff_groups"] == [("S1", "B1")]
+    rec = client.get(f"/api/songs/{song.slug}").json()["record"]
+    assert rec["staff_groups"] == "S1+B1"
+
+
+def test_no_grouping_keeps_the_preview_a_song_already_had(song, prepared):
+    """A song that never shared a staff must not have its preview drawn again."""
+    first = pipeline.scroll_preview(song.dir, song.cleaned_path())
+    again = pipeline.scroll_preview(song.dir, song.cleaned_path(), staff_groups=[])
+    assert first == again and len(prepared) == 1
+
+
+def test_preview_audio_for_shared_staves_matches_its_picture(song, prepared, monkeypatch):
+    _two_parts(song)
+    payload = pipeline.scroll_preview(song.dir, song.cleaned_path(),
+                                      staff_groups=[("S1", "B1")])
+    monkeypatch.setattr("src.scrollvideo.audio.render_mix_cached",
+                        lambda source, focus, cache: (os.path.join(cache, "m.wav"), True))
+    pipeline.scroll_preview_audio(song.dir, song.cleaned_path(), "B1",
+                                  payload["revision"], staff_groups=[("S1", "B1")])
+    with pytest.raises(ValueError, match="changed"):
+        pipeline.scroll_preview_audio(song.dir, song.cleaned_path(), "B1",
+                                      payload["revision"])
+
+
+def test_a_grouping_naming_a_part_the_song_lacks_is_refused(client, song, prepared):
+    _two_parts(song)
+    response = client.get(f"/api/songs/{song.slug}/scroll-preview",
+                          params={"staff_groups": "S1+T2"})
+    assert response.status_code == 400
+    assert "No such part: T2" in response.json()["detail"]
+    assert prepared == []
