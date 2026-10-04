@@ -1770,6 +1770,20 @@ state model are in `DESIGN.md`.
   boundary within 0.02 of page height of the hand-drawn one (worst 0.020 on B1b, the
   rest ≤0.014). That is what `test_system_finder.py`'s `omr` tier pins, and it still
   passes through the fork's command; the rule itself is pinned in the fork.
+  **`Find systems` no longer asks homr by default; it reads the page itself** (#234,
+  `system_finder.quick_bands`). Asking homr is ~8s a page and needs homr installed, and a
+  person drags the bands into place anyway, so the default is a deterministic finder that
+  takes well under a second a page. It answers #80's two failures: staff lines are found
+  in 24 narrow vertical strips and kept when a quarter of the strips agree, so a tilted or
+  broken line is still whole across one strip; and two staves are one system when a single
+  column of ink spans the gap between them — the systemic barline, which every scan on this
+  host prints whether or not it has a bracket. When nothing on a page joins, the gaps decide
+  if they clearly come in two sizes. Measured against the hand-drawn bands of all 14
+  scanned songs here and B1a/B1b: every page comes back with the number of systems it
+  prints, internal boundaries within ~0.035 of the hand ones (it cuts halfway between
+  systems). `Ask homr` (`{"method": "homr"}`) is still there, shown only when homr is
+  installed. `test_quick_system_finder.py` pins it: drawn pages for the rules, the fixture
+  and both B1 scans for the acceptance (needs poppler, no homr).
 - The **Scan panel** is added by this pull request (#116), replacing the holding one that
   #115 left. Its whole job is to stop a tidy-looking parse becoming a practice track, and
   every piece of it follows from that.

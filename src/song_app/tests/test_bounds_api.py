@@ -139,12 +139,21 @@ def test_finding_the_systems_proposes_and_saves_nothing(client, monkeypatch):
 
     proposal = [pdf_systems.SystemBounds(index=1, page=1, top=0.1, bottom=0.5),
                 pdf_systems.SystemBounds(index=2, page=1, top=0.5, bottom=0.9)]
-    monkeypatch.setattr(system_finder, "find_bands", lambda *a, **k: proposal)
+    monkeypatch.setattr(system_finder, "quick_bands", lambda *a, **k: proposal)
+    monkeypatch.setattr(system_finder, "find_bands", lambda *a, **k: proposal[:1])
 
     before = client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]
     found = client.post(f"/api/songs/{SLUG}/find-systems", json={}).json()["systems"]
     assert [(b["page"], b["top"]) for b in found] == [(1, 0.1), (1, 0.5)]
+    asked = client.post(f"/api/songs/{SLUG}/find-systems",
+                        json={"method": "homr"}).json()["systems"]
+    assert [(b["page"], b["top"]) for b in asked] == [(1, 0.1)]
     assert client.get(f"/api/songs/{SLUG}/bounds").json()["systems"] == before
+
+
+def test_an_unknown_finder_is_refused(client):
+    r = client.post(f"/api/songs/{SLUG}/find-systems", json={"method": "guess"})
+    assert r.status_code == 400
 
 
 def test_a_page_the_finder_could_not_read_is_said_rather_than_swallowed(client, monkeypatch):
@@ -154,6 +163,6 @@ def test_a_page_the_finder_could_not_read_is_said_rather_than_swallowed(client, 
         raise omr.HomrError("No noteheads found on page 2")
 
     monkeypatch.setattr(system_finder, "find_bands", boom)
-    r = client.post(f"/api/songs/{SLUG}/find-systems", json={})
+    r = client.post(f"/api/songs/{SLUG}/find-systems", json={"method": "homr"})
     assert r.status_code == 400
     assert "No noteheads found on page 2" in r.text

@@ -933,11 +933,25 @@ async def api_find_systems(slug: str, body: Dict = None) -> Dict:
     not. Nothing here writes `.systems.json`, so a wrong reading costs a drag
     rather than a scan of the wrong music.
 
-    Slow enough to watch — seconds a page — so its progress goes to the song's
-    live log while the request is still open.
+    Two ways to find them. `{"method": "quick"}`, the default, reads the page
+    itself in well under a second a page and needs no homr. `{"method": "homr"}`
+    asks homr, which is seconds a page, so its progress goes to the song's live
+    log while the request is still open.
     """
     song = _require(slug)
     pdf = _song_pdf(song)
+    method = (body or {}).get("method") or "quick"
+    if method not in ("quick", "homr"):
+        raise HTTPException(400, f"Unknown method {method!r}: use quick or homr")
+    if method == "quick":
+        log = lambda m: hub.emit(slug, {"type": "log", "line": m})
+        try:
+            found = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: pipeline.quick_system_bands(song.dir, pdf, log=log))
+        except Exception as exc:
+            traceback.print_exc()
+            raise HTTPException(500, str(exc)) from None
+        return {"systems": found}
     key = (body or {}).get("engine")
     engine = None
     if key and key != omr.DEFAULT_ENGINE:

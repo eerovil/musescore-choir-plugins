@@ -624,18 +624,20 @@ async function systemsEditor(view, slug) {
 
   // Finding them is a proposal and nothing more: the bands land here unsaved and
   // dirty, exactly as if they had been dragged, so a wrong reading costs a drag
-  // rather than a scan of the wrong music.
-  const findBtn = el("button", {}, "Find systems");
+  // rather than a scan of the wrong music. "Find systems" reads the page itself
+  // in well under a second a page; "Ask homr" is the slower second opinion, offered
+  // only where homr is installed.
   const findNote = el("span", { className: "muted" });
-  findBtn.onclick = async () => {
+  const propose = async (method, btn, who, wait) => {
     if (bands.length && !confirm(
-      `Replace the ${bands.length} band(s) on this song with what homr finds?`)) return;
-    findBtn.disabled = true;
+      `Replace the ${bands.length} band(s) on this song with what ${who} finds?`)) return;
+    btn.disabled = true;
     findNote.className = "muted";
-    findNote.textContent = " Looking for the systems — seconds a page…";
+    findNote.textContent = ` Looking for the systems — ${wait}…`;
     try {
       const res = await fetch(`${P}/find-systems`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method }),
       });
       if (!res.ok) throw new Error(await res.text());
       const out = await res.json();
@@ -648,9 +650,16 @@ async function systemsEditor(view, slug) {
       findNote.className = "warn";
       findNote.textContent = " Could not find the systems: " + e.message;
     } finally {
-      findBtn.disabled = false;
+      btn.disabled = false;
     }
   };
+  const findBtn = el("button", {}, "Find systems");
+  findBtn.onclick = () => propose("quick", findBtn, "the quick finder", "a moment");
+  const homrBtn = el("button", { hidden: true }, "Ask homr");
+  homrBtn.onclick = () => propose("homr", homrBtn, "homr", "seconds a page");
+  getJSON("/api/homr-engines").then(({ engines }) => {
+    homrBtn.hidden = !(engines && engines.length);
+  }).catch(() => {});
 
   const pagesWrap = el("div", { className: "syspages" });
   // Pages are built once and kept. Rebuilding them per redraw recreates the <img>,
@@ -741,6 +750,7 @@ async function systemsEditor(view, slug) {
     el("div", { className: "sysbar" },
       el("button", { className: "primary", onclick: save }, "Save boundaries"),
       findBtn,
+      homrBtn,
       status,
       el("span", { className: "muted" },
         " Drag an edge to adjust; click the page for a new system; × removes one."),
