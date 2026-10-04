@@ -1,7 +1,8 @@
 """Preparing a temporary score before it is engraved and played.
 
-Render-only edits live here: dropping staves that carry no music, and supplying
-an opening tempo when the score has none. The source score is never changed.
+Render-only edits live here: dropping staves that carry no music, taking out the
+red marks cleaning leaves for a person, and supplying an opening tempo when the
+score has none. The source score is never changed.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from typing import List, Optional, Tuple
 
 from lxml import etree
 
+from src.clean_score.utils.problem_marks import strip_marks
 from src.clean_score.utils.utils import starts_new_system
 
 
@@ -145,6 +147,9 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     root = tree.getroot()
     silent = [] if keep_silent else silent_parts(root)
     changed = bool(drop_parts(root, silent))
+    # The red marks cleaning leaves for a person fixing the score (#238) are not
+    # part of the music; a forgotten one must not end up in a practice track.
+    changed = bool(strip_marks(root)) or changed
     if initial_bpm is not None:
         changed = add_opening_tempo(root, initial_bpm) or changed
     if not changed:

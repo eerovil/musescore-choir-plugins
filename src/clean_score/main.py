@@ -21,6 +21,8 @@ from .utils.reversed_voices import (
 from .utils.corrupted_measures import preprocess_corrupted_measures
 from .utils.overfull_measures import fix_overfull_measures
 from .utils.shared_rests import share_rests
+from .utils.cross_voice_slurs import drop_cross_voice_slurs
+from .utils.long_bars import trim_long_bars
 from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.spurious_timesigs import fix_spurious_timesigs
 from .utils.interactive import resolve_voice_anomalies
@@ -45,6 +47,21 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def mark_scan_damage(root: etree._Element) -> None:
+    """Take out what the scan got wrong in a way no score-side pass can repair (#238).
+
+    A slur joining two singers and a bar longer than its time signature. Both run on
+    the finished parts -- the part names go into the red marks they leave on each bar
+    they change, and a slur only joins two singers once the voices are apart. The marks
+    are for a person; the scrolling video strips them.
+    """
+    for slur in drop_cross_voice_slurs(root):
+        logger.warning("Removed a slur the scan ran from %s bar %s to %s bar %s (marked)",
+                       slur["part"], slur["measure"], slur["end_part"], slur["end_measure"])
+    for bar in trim_long_bars(root):
+        logger.warning("Cut bar %s from %s to %s (marked)", bar["measure"], bar["was"], bar["meter"])
 
 
 def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
@@ -246,6 +263,7 @@ def main(
         if not result:
             logger.warning("Per-system re-voicing produced no parts; nothing written.")
             return
+        mark_scan_damage(root)
         output_content = etree.tostring(
             root, pretty_print=True, encoding="UTF-8"
         ).decode("UTF-8")
@@ -553,6 +571,8 @@ def main(
     # (move into an existing part's staff, or place on a new staff).
     if revoice_plan and revoice_baseline is not None:
         apply_revoice_plan(root, revoice_plan, revoice_baseline, printed_to_output)
+
+    mark_scan_damage(root)
 
     # Serialize the output XML
     output_content: str = etree.tostring(
