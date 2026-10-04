@@ -154,3 +154,43 @@ def test_a_crop_follows_the_score_it_was_cut_from(bounds, tmp_path):
 
     assert second.path != first.path
     assert Image.open(second.path).tobytes() != Image.open(first.path).tobytes()
+
+
+def _staff_pdf(path, systems_per_page, pages, staves=2):
+    """A PDF of plain staves, `systems_per_page` systems of `staves` on each page."""
+    from PIL import ImageDraw
+    w, h = 850, 1100
+    images = []
+    for _ in range(pages):
+        img = Image.new("RGB", (w, h), "white")
+        draw = ImageDraw.Draw(img)
+        step = h // (systems_per_page * staves + 1)
+        for k in range(systems_per_page * staves):
+            top = step * (k + 1) - 20
+            for line in range(5):
+                y = top + line * 10
+                draw.line([(60, y), (w - 60, y)], fill="black", width=2)
+        images.append(img)
+    images[0].save(path, "PDF", resolution=100, save_all=True,
+                   append_images=images[1:])
+
+
+def test_a_page_rewritten_in_place_is_rasterised_again(tmp_path):
+    """#255: a render rebuilt at the same path kept being read off its old pages.
+
+    The cleaned render is rewritten whenever the score changes, and the page cache
+    was named by path alone, so the Fix comparison counted the previous render's
+    systems and refused to compare a render that was correct.
+    """
+    pdf = str(tmp_path / "score.breaks.render.pdf")
+    cache = str(tmp_path / ".pages")
+    _staff_pdf(pdf, systems_per_page=2, pages=2)
+    assert len(pdf_systems.rendered_system_bands(pdf, 2, cache)) == 4
+
+    _staff_pdf(pdf, systems_per_page=3, pages=2)
+    os.utime(pdf, ns=(os.stat(pdf).st_atime_ns, os.stat(pdf).st_mtime_ns + 10**9))
+    assert len(pdf_systems.rendered_system_bands(pdf, 2, cache)) == 6
+
+    # The old render's pages are gone rather than left to pile up.
+    pages = sorted(n for n in os.listdir(cache) if n.startswith("page-"))
+    assert len(pages) == 2, pages
