@@ -175,6 +175,25 @@ def test_a_lock_left_by_a_dead_server_is_stale(host) -> None:
     assert not os.path.exists(homr_install._lock_path())
 
 
+def test_a_lock_held_by_another_live_process_is_kept(host) -> None:
+    """An overlapping restart's install is still running: its lock must hold."""
+    import subprocess
+
+    other = subprocess.Popen(["sleep", "30"])
+    try:
+        Path(homr_install._lock_path()).write_text(str(other.pid))
+        assert homr_install.busy() is True
+        assert os.path.exists(homr_install._lock_path())
+        with pytest.raises(homr_install.Refused, match="already"):
+            homr_install.start(_inline)
+    finally:
+        other.kill()
+        other.wait()
+    # Once that process is gone the lock is stale and is cleared.
+    assert homr_install.busy() is False
+    assert not os.path.exists(homr_install._lock_path())
+
+
 def test_refused_while_a_song_job_runs(host) -> None:
     song = state.create("Talviuni", per_system=False)
     job_state.start(song.dir, "scan")

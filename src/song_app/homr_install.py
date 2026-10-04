@@ -80,9 +80,9 @@ def _lock_path() -> str:
 
 
 def busy() -> bool:
-    """True while an install started by *this* server is running.
+    """True while an install is running, in this server or another live process.
 
-    A lock left by a server that has since died is stale and is cleared, so a
+    A lock whose process has died is stale and is cleared, so a
     crash mid-install cannot leave scanning refused for good.
     """
     path = _lock_path()
@@ -93,13 +93,29 @@ def busy() -> bool:
         return False
     except (OSError, ValueError):
         pid = 0
-    if pid == os.getpid():
+    if pid == os.getpid() or _alive(pid):
+        # Another live process (an overlapping restart, a second worker) may be
+        # mid-install in the same venv: only a dead holder's lock is stale.
         return True
     try:
         os.remove(path)
     except OSError:
         pass
     return False
+
+
+def _alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # it exists; it just is not ours to signal
+    except OSError:
+        return False
+    return True
 
 
 def _venv() -> str:
