@@ -36,6 +36,7 @@ def host(tmp_path: Path, monkeypatch):
     remote = {"commit": NEW}
     monkeypatch.setattr(homr_install, "_ls_remote", lambda: remote["commit"])
     monkeypatch.setitem(homr_install._latest, "commit", None)
+    monkeypatch.setitem(homr_install._latest, "at", 0.0)
     homr_install._log.clear()
     homr_install._result.clear()
 
@@ -83,6 +84,16 @@ def test_the_fork_commit_is_cached_until_refreshed(host) -> None:
     host.remote["commit"] = OLD
     assert homr_install.status()["latest"] == NEW
     assert homr_install.status(refresh=True)["latest"] == OLD
+
+
+def test_github_going_quiet_after_the_cache_expires_is_unknown(host) -> None:
+    """An expired cache must not keep showing the commit from before GitHub went away."""
+    assert homr_install.status()["latest"] == NEW
+    homr_install._latest["at"] -= homr_install.LATEST_TTL_S + 1
+    host.remote["commit"] = None
+
+    st = homr_install.status()
+    assert st["latest"] is None and st["up_to_date"] is None
 
 
 def test_an_install_streams_the_log_and_records_success(host) -> None:

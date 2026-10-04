@@ -114,10 +114,11 @@ def _ls_remote() -> Optional[str]:
 
 def latest(refresh: bool = False) -> Optional[str]:
     now = time.time()
-    if refresh or not _latest["commit"] or now - float(_latest["at"]) > LATEST_TTL_S:
-        commit = _ls_remote()
-        if commit or refresh:
-            _latest.update(at=now, commit=commit)
+    # A failed lookup is cached as None like any other answer: keeping the old
+    # commit would show GitHub's state from before it stopped answering, and
+    # asking again on every request would cost each one the lookup's timeout.
+    if refresh or not _latest["at"] or now - float(_latest["at"]) > LATEST_TTL_S:
+        _latest.update(at=now, commit=_ls_remote())
     return _latest["commit"]  # type: ignore[return-value]
 
 

@@ -63,6 +63,7 @@ def live(tmp_path, monkeypatch):
         command=["homr"], default=True, commit=installed["commit"]))
     monkeypatch.setattr(homr_install, "_ls_remote", lambda: NEW)
     monkeypatch.setitem(homr_install._latest, "commit", None)
+    monkeypatch.setitem(homr_install._latest, "at", 0.0)
     homr_install._log.clear()
     homr_install._result.clear()
     go = tmp_path / "go"
