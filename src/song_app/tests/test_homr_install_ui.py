@@ -1,4 +1,4 @@
-"""The Library page's homr box, in a real browser (#249).
+"""The Scan panel's homr box, in a real browser (#249, moved off the Library by #261).
 
 The rules are pinned in test_homr_install.py. What only exists here is whether a
 person on a phone can see that a newer homr is on GitHub, press one button, watch
@@ -55,12 +55,20 @@ def live(tmp_path, monkeypatch):
     monkeypatch.setenv("MUSESCORE_CLI_PATH", str(tmp_path / "no-musescore-here"))
     monkeypatch.delenv("AGENTDECK_API_URL", raising=False)
     monkeypatch.delenv("AGENTDECK_URL", raising=False)
-    state.create("Talviuni", per_system=False)
+    song = state.create("Talviuni", per_system=False)
+    with open(song.path("scan.pdf"), "wb") as fh:
+        fh.write(b"%PDF-1.4 not really a pdf\n")
+    song.data["sources"]["pdf"] = "scan.pdf"
+    song.set_stage("scan")
+    song.save()
 
     installed = {"commit": OLD}
-    monkeypatch.setattr(omr, "default_engine", lambda: omr.Engine(
+    monkeypatch.setattr(omr, "default_engine", lambda: installed["commit"] and omr.Engine(
         key="default", label=f"installed: main @ {installed['commit'][:7]}",
         command=["homr"], default=True, commit=installed["commit"]))
+    # This host's own homr checkouts are not what is under test; without this the
+    # Scan panel offers them in its "Read with" picker.
+    monkeypatch.setattr(omr, "engines", lambda: [e for e in [omr.default_engine()] if e])
     monkeypatch.setattr(homr_install, "_ls_remote", lambda _url: NEW)
     monkeypatch.setitem(homr_install._latest, "commit", None)
     monkeypatch.setitem(homr_install._latest, "at", 0.0)
@@ -92,7 +100,7 @@ def live(tmp_path, monkeypatch):
         while not srv.started and time.time() < deadline:
             time.sleep(0.05)
         assert srv.started, "the app did not start"
-        yield f"http://127.0.0.1:{port}", finish
+        yield f"http://127.0.0.1:{port}/#/song/{song.slug}", finish, installed
     finally:
         go.touch()
         srv.should_exit = True
@@ -110,7 +118,7 @@ def _evidence(page, name):
 def _update_walk(page, base, finish, prefix):
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(base + "/")
+    page.goto(base)
     box = page.locator(".homr-box")
     box.locator("summary").click()
     page.wait_for_selector("text=newer on GitHub: main @ 1a2b3c4")
@@ -130,15 +138,34 @@ def _update_walk(page, base, finish, prefix):
     assert not errors, f"the page raised: {errors}"
 
 
-def test_a_newer_homr_is_installed_from_the_library(live, page):
-    base, finish = live
+def test_a_newer_homr_is_installed_from_the_scan_panel(live, page):
+    base, finish, _ = live
     page.set_viewport_size({"width": 1280, "height": 800})
-    _update_walk(page, base, finish, "issue-249-desktop")
+    _update_walk(page, base, finish, "issue-261-desktop")
+
+
+def test_the_library_no_longer_carries_it(live, page):
+    base, _, _ = live
+    page.goto(base.split("#")[0])
+    page.wait_for_selector(".lib .card")
+    assert page.locator(".homr-box").count() == 0
+
+
+def test_not_installed_is_said_open_with_the_button(live, page):
+    base, _, installed = live
+    installed["commit"] = None
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.goto(base)
+    page.wait_for_selector(".homr-box >> text=homr: not installed")
+    box = page.locator(".homr-box")
+    assert box.evaluate("b => b.open"), "a missing homr is not hidden in a closed box"
+    assert box.get_by_role("button", name="Install homr").is_visible()
+    _evidence(page, "issue-261-not-installed.png")
 
 
 def test_it_fits_a_phone(live, page):
-    base, finish = live
+    base, finish, _ = live
     page.set_viewport_size({"width": 390, "height": 844})
-    _update_walk(page, base, finish, "issue-249-phone")
+    _update_walk(page, base, finish, "issue-261-phone")
     width = page.evaluate("document.querySelector('.homr-box').getBoundingClientRect().right")
     assert width <= 390

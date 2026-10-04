@@ -1142,7 +1142,8 @@ state model are in `DESIGN.md`.
   **`scripts/install-homr.sh`** (idempotent; `HOMR_VENV` moves it), called as a
   subprocess. A fresh clone runs one script.
   **And the app can run that script itself** (#249, `homr_install.py`): the
-  Library page's *homr* box shows the installed commit against the fork's `main`
+  Scan panel's *homr* box (moved there from the Library page by #261, since that is
+  where homr is used and where "not installed" is said) shows the installed commit against the fork's `main`
   (`git ls-remote`, cached ten minutes) and an **Install / Update homr** button,
   with the script's log fetched every 2s while it runs. It is still a press and
   never automatic — the deploy does not touch homr, so the day a parse changes is a

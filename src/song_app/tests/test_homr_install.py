@@ -1,8 +1,8 @@
 """Installing homr from the app (#249): when it may run, and what it says.
 
 The installer itself is pinned in test_install_homr.py. A stub stands in for it
-here, because what this module owns is around the script: the status the Library
-box draws, one install at a time, never underneath a running song job, scans
+here, because what this module owns is around the script: the status the Scan
+panel's box draws, one install at a time, never underneath a running song job, scans
 refused while it runs, and a lost heavy slot stopping the script.
 """
 from __future__ import annotations
