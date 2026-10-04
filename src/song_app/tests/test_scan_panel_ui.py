@@ -291,6 +291,25 @@ def test_a_system_that_read_fine_can_still_be_read_again(live, page, monkeypatch
     assert not errors, f"the panel raised: {errors}"
 
 
+def test_the_whole_score_can_be_read_again_in_one_press(live, page, monkeypatch):
+    """Trying another engine on a whole song should not take one press per system."""
+    base, song = live
+    _read(state.load(song.slug), 3)
+    asked = []
+    monkeypatch.setattr(server.scan, "run", lambda song, **kw: (
+        asked.append(sorted(kw.get("only") or [])) or
+        {"read": 3, "systems": 3, "holes": []}))
+
+    errors = _open(page, base, song.slug)
+    page.get_by_role("button", name="Read all systems again").click()
+    deadline = time.time() + 10
+    while not asked and time.time() < deadline:
+        page.wait_for_timeout(100)
+
+    assert asked == [[1, 2, 3]], "every system is re-read, through the per-system path"
+    assert not errors, f"the panel raised: {errors}"
+
+
 def test_the_compare_rows_re_read_the_system_being_looked_at(live, page, monkeypatch):
     """The decision is made looking at the parse against the page, so the button
     is there too — and it says what a changed reading costs."""
