@@ -471,6 +471,46 @@ def test_the_real_join_assembles_without_the_singers_changing_places(tmp_path):
         assert heights["1"] > heights["2"], measure.get("number")
 
 
+# --- homr's note positions (#220) ----------------------------------------
+#
+# Upstream homr writes where each note sits on the image as a comment inside
+# every <note> (dda4d2f). It is not music, so flattening and assembling must
+# come out exactly as they do without it.
+
+
+def with_image_positions(path, into):
+    """A copy of a parse with an ``imgpos`` comment in every note, as homr writes it."""
+    data = open(path, "rb").read()
+    count = data.count(b"</note>")
+    for n in range(count):
+        data = data.replace(b"</note>", f"<!-- imgpos: {10 + n}, {200 + n} --></NOTE>".encode(), 1)
+    into.write_bytes(data.replace(b"</NOTE>", b"</note>"))
+    return str(into)
+
+
+def test_note_positions_do_not_move_a_note_when_flattening(tmp_path):
+    marked = with_image_positions(A_REAL_SYSTEM, tmp_path / "marked.musicxml")
+    assert open(marked, "rb").read().count(b"imgpos") > 10
+    plain, commented = omr_systems.flatten(A_REAL_SYSTEM), omr_systems.flatten(marked)
+    assert len(plain) == len(commented)
+    for a, b in zip(plain, commented):
+        assert where_they_came_out(b) == where_they_came_out(a)
+
+
+def test_note_positions_do_not_change_an_assembled_score(tmp_path):
+    def joined(paths, name):
+        scans = [omr_systems.SystemScan(index=index, musicxml=path,
+                                        staves=omr_systems.flatten(path))
+                 for index, path in enumerate(paths, start=1)]
+        return open(omr_systems.assemble(scans, str(tmp_path / name)), "rb").read()
+
+    marked = [with_image_positions(path, tmp_path / f"marked-{n}.musicxml")
+              for n, path in enumerate(A_JOIN)]
+    plain, commented = joined(A_JOIN, "plain.musicxml"), joined(marked, "marked.musicxml")
+    assert b"imgpos" in commented
+    assert omr.strip_image_positions(commented) == plain
+
+
 # --- assembling ----------------------------------------------------------
 
 

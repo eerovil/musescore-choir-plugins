@@ -470,6 +470,19 @@ def provenance_comment(record: Dict[str, object]) -> bytes:
     return f"<!-- {PROVENANCE_TAG} {fields} -->\n".encode("utf-8")
 
 
+#: Where homr thinks each note is on the image it was given (upstream dda4d2f): one
+#: comment inside every ``<note>``, from the decoder's attention. It is a position,
+#: not music, so like the provenance line it is stepped over when a parse's content
+#: is compared -- otherwise every song's first re-read after the upgrade would lapse
+#: its scan approval with no note changed (#220).
+_IMAGE_POSITION_RE = re.compile(rb"\s*<!--\s*imgpos:[^>]*?-->")
+
+
+def strip_image_positions(data: bytes) -> bytes:
+    """The parse with homr's ``imgpos`` comments taken out, whitespace before them too."""
+    return _IMAGE_POSITION_RE.sub(b"", data)
+
+
 def strip_provenance(data: bytes) -> bytes:
     """The file as homr wrote it, with any provenance line taken back off.
 
@@ -582,7 +595,7 @@ def read_page(
             # that is where the lease is checked (heavy_slot.Slot.guard).
             watched = slot.guard(log)
             watched(f"Reading {os.path.basename(image_path)} with homr")
-            output = _run(list(engine.command) + ["--gpu", "no", scratch_image],
+            output = _run(list(engine.command) + ["--gpu", "no", "--no-title", scratch_image],
                           watched, timeout, engine.env)
             slot.check()
 
