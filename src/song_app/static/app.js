@@ -958,6 +958,7 @@ function verificationView(summary) {
     el("ul", {},
       row("Health", summary.health),
       row("Source notes", summary.notes),
+      row("Opens in MuseScore", summary.musescore),
       row("Lyrics", summary.lyrics),
       row("Rendered files", media),
       ...files),
@@ -1014,6 +1015,7 @@ function compactReview(summary) {
     parseVerdict(summary?.health),
     el("ul", {},
       compactCheck("Notes", summary?.notes),
+      compactCheck("MuseScore", summary?.musescore),
       compactCheck("Lyrics", summary?.lyrics),
       compactCheck("Health", summary?.health),
       compactCheck("Videos", summary?.media)));

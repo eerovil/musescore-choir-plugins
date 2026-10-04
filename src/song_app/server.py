@@ -552,9 +552,10 @@ def _run_clean(slug: str) -> None:
     xml = song.source_path("xml")
     log = lambda m: _job_emit(slug, "clean", m)
     try:
+        opens: Dict = {}
         cleaned, source_mscx = pipeline.run_clean(
             xml, song.dir, per_system=(song.mode == "per-system"), log=log,
-            voicing=song.data.get("voicing") or None,
+            voicing=song.data.get("voicing") or None, check=opens,
         )
         rel = os.path.relpath(cleaned, song.dir)
         song.data["cleaned"] = rel
@@ -563,8 +564,11 @@ def _run_clean(slug: str) -> None:
         song.data.setdefault("verification", {})["notes"] = {
             **note_check, "checked_against": song.data["cleaned_fingerprint"],
         }
+        song.data["verification"]["musescore"] = {
+            **opens, "checked_against": song.data["cleaned_fingerprint"],
+        }
         # Run the health check.
-        found = health.scan(cleaned)
+        found = _health_scan(song, cleaned)
         prev = song.data.get("health", {}).get("issues", [])
         song.data["health"] = {
             "checked_against": song.data["cleaned_fingerprint"],
@@ -606,6 +610,20 @@ async def api_clean(slug: str) -> Dict:
 # --------------------------------------------------------------------------
 # Fix stage — health check
 # --------------------------------------------------------------------------
+def _health_scan(song: state.Song, cleaned: str) -> List[Dict]:
+    """The health findings, plus anything MuseScore 3 still refuses in this score.
+
+    MuseScore's verdict comes from the clean (`pipeline.check_opens_in_musescore`) and
+    holds only for the file it was given: a score saved since then has been through
+    MuseScore, so its own check has had its say and those rows go.
+    """
+    found = health.scan(cleaned)
+    opens = song.data.get("verification", {}).get("musescore") or {}
+    if opens.get("rejected") and opens.get("checked_against") == state.file_fingerprint(cleaned):
+        found += pipeline.musescore_findings(cleaned, opens["rejected"])
+    return found
+
+
 def _rescan(song: state.Song) -> None:
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
@@ -851,16 +869,18 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     }
     # Import may add full-measure rests to otherwise empty measures, so health must
     # be checked again rather than rebound to the new fingerprint without evidence.
+    # Pitch events do not change during lyric placement, so this narrower result can
+    # safely follow the controlled XML edit without repeating the source comparison.
+    # Nor do note lengths, which are all MuseScore's own check looks at.
+    for name in ("notes", "musescore"):
+        data = song.data.get("verification", {}).get(name, {})
+        if data.get("checked_against") == previous_fingerprint:
+            data["checked_against"] = current_fingerprint
     previous_issues = song.data.get("health", {}).get("issues", [])
     song.data["health"] = {
         "checked_against": current_fingerprint,
-        "issues": health.merge_issues(health.scan(cleaned), previous_issues),
+        "issues": health.merge_issues(_health_scan(song, cleaned), previous_issues),
     }
-    # Pitch events do not change during lyric placement, so this narrower result can
-    # safely follow the controlled XML edit without repeating the source comparison.
-    note_data = song.data.get("verification", {}).get("notes", {})
-    if note_data.get("checked_against") == previous_fingerprint:
-        note_data["checked_against"] = current_fingerprint
     song.data["cleaned_fingerprint"] = current_fingerprint
     if result.ok:
         song.set_stage("review")

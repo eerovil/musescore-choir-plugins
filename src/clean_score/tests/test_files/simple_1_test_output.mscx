@@ -200,9 +200,9 @@
         </Measure>
       <Measure>
         <voice>
-          <location>
-            <fractions>1/2</fractions>
-            </location>
+          <Rest>
+            <durationType>half</durationType>
+            </Rest>
           <Beam>
             </Beam>
           <Chord>

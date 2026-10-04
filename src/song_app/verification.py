@@ -7,7 +7,7 @@ import json
 import math
 import os
 import subprocess
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 from lxml import etree
 
@@ -150,6 +150,28 @@ def verify_media(song: state.Song, outputs: Iterable[str], parts: Iterable[str])
                    missing=missing, unexpected=unexpected, files=by_part)
 
 
+def _musescore_result(stored: Optional[Dict], current: Optional[str]) -> Dict:
+    """Whether MuseScore 3 opens the cleaned score without calling it corrupted."""
+    if not current:
+        return _result("not_checked", "No cleaned score exists.")
+    if not stored:
+        return _result("not_checked", "Not checked yet; cleaning again runs MuseScore 3's own check.")
+    if stored.get("checked_against") != current:
+        return _result("stale", "MuseScore 3's check applies to an older cleaned score.")
+    status = stored.get("status")
+    reset = len(stored.get("reset") or [])
+    if status == "passed":
+        return _result("passed", "MuseScore 3 opens it without calling it corrupted.")
+    if status == "repaired":
+        return _result("warning", f"MuseScore 3 called {reset} staff-bar(s) corrupted; they were "
+                                  "reset to rests and are listed in the Fix panel.", reset=reset)
+    if status == "rejected":
+        left = len(stored.get("rejected") or [])
+        return _result("warning", f"MuseScore 3 still calls it corrupted ({left} problem(s)); "
+                                  "see the Fix panel.", reset=reset, rejected=left)
+    return _result("not_checked", "No MuseScore 3 was available to check it.")
+
+
 def summary(song: state.Song, systems: int) -> Dict:
     cleaned = song.cleaned_path()
     current = state.file_fingerprint(cleaned) if cleaned else None
@@ -191,6 +213,8 @@ def summary(song: state.Song, systems: int) -> Dict:
         notes = _result("stale", "Note comparison applies to an older cleaned score.")
     else:
         notes = {k: v for k, v in stored.items() if k != "checked_against"}
+
+    opens = _musescore_result(song.data.get("verification", {}).get("musescore"), current)
 
     lyrics = song.data.get("lyrics")
     if not lyrics:
@@ -236,6 +260,7 @@ def summary(song: state.Song, systems: int) -> Dict:
         "cleaned_fingerprint": current,
         "health": health_result,
         "notes": notes,
+        "musescore": opens,
         "lyrics": lyric_result,
         "expected_parts": parts,
         "systems": systems,
