@@ -20,6 +20,7 @@ from .utils.reversed_voices import (
 
 from .utils.corrupted_measures import preprocess_corrupted_measures
 from .utils.overfull_measures import fix_overfull_measures
+from .utils.shared_rests import share_rests
 from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.spurious_timesigs import fix_spurious_timesigs
 from .utils.interactive import resolve_voice_anomalies
@@ -232,6 +233,9 @@ def main(
         # deliberately stays out: per-system answers already say what each voice is.
         preprocess_corrupted_measures(root)
         fix_overfull_measures(root)
+        # The rebuild pulls one (staff, voice) at a time, so a rest the page prints
+        # once for both voices is lost here exactly as it is in the split below.
+        share_rests(root)
 
         can_prompt = interactive and sys.stdin.isatty()
         result = clean_per_system(
@@ -267,6 +271,9 @@ def main(
     # ...and repair what that one declines: it is all-or-nothing, so a measure
     # where one voice ends on a note rather than a rest keeps its bad len.
     fix_overfull_measures(root)
+    # A rest the page prints once for two voices sits in one of them only, and the
+    # split below would leave the other voice's bar ending early on its own staff.
+    share_rests(root)
     # Convert staff ids to make space after each staff
     # id="1" becomes id="1" and
     # id="2" becomes id="3"

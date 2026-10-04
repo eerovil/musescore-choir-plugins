@@ -483,6 +483,15 @@ Key test modules:
   renderer is not under test and a real MuseScore run would make it slow and
   host-dependent. Both were verified by sabotage: breaking the cell attachment or the
   `-` rule in `app.js` fails the matching test.
+- `test_shared_rests.py` / `src/song_app/tests/test_musescore_check.py` — added for
+  #235. The first: a rest shared at the end or in the middle of a bar reaches both
+  voices, a gap the other voice sings through or that its rests do not cover exactly is
+  left, a rest in a triplet is not copied, and a second run changes nothing. The
+  second: a reset bar is one whole-bar rest of the bar's own length naming the notes it
+  held, the other staff and bars are untouched, a tie or slur into it is cut; the real
+  MuseScore (skips without it) names a bar it refuses and accepts it once reset; no
+  MuseScore is "not checked"; the sentence is written once, replaced on a re-clean,
+  removed when the clean passes, and never touches a typed one.
 - `test_missing_tuplets.py` — the dropped-tuplet cross-voice auto-fix (mirror
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` — the re-voicing plan and the
@@ -1842,6 +1851,26 @@ state model are in `DESIGN.md`.
   redrawing reloads every crop; a system read while it is open therefore appears in it.
   On a phone it is the existing pane switcher and the compare rows, both already built
   for 390px.
+- **Every clean asks MuseScore 3 whether it would open the result** (#235). MuseScore
+  checks a score as it opens it (`Score::sanityCheck`: voice 1 of each staff must fill
+  the bar exactly, no other voice may run past it) and calls one that fails
+  "corrupted" -- on Sangerhilsen the app crashed instead. Only the app runs that check;
+  a command-line export does not, which is why every render went through and nobody
+  heard of it until a person opened the file. The one export that does run it is
+  `-o x.mlog`, so `pipeline.musescore_check` asks MuseScore itself rather than keeping
+  a copy of its rule here. Note MuseScore fills *gaps* with rests while reading, so a
+  short voice passes; what fails is a voice that runs past the bar, typically a
+  misread triplet. `check_opens_in_musescore` runs after the recorded fixes: each
+  staff-bar MuseScore rejects is reset to a whole-bar rest (`rejected_bars.clear_bar`,
+  which also cuts a tie or slur reaching into it), the notes taken out are written into
+  `fixes.json` as a `text` entry (`source: "musescore-check"`, replaced on every clean
+  so a bar a better reading fixed stops being listed), and the score is checked again.
+  Anything still refused becomes a `musescore-corrupt` health row
+  (`server._health_scan`). The outcome is kept as `verification.musescore` and shown as
+  the Review stage's **Opens in MuseScore** row. Without a MuseScore it says "not
+  checked", never "fine". The reset loses notes on purpose: there is no reading of the
+  page left in such a bar, and a file that will not open blocks the one route a person
+  has for putting the right notes back.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
@@ -1888,6 +1917,14 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    gaps, or a voice looks complete on its notes while the file has it occupying more
    of the bar. The fixture's m26 cost two wrong versions before that shape — see its
    STEPS.md.
+1b. `share_rests` (`utils/shared_rests.py`) gives both voices of a staff the rest the
+   page prints once for the two of them. The scan writes it into one voice only, which
+   is right on a shared staff (MuseScore fills the other voice's gap as it reads) and
+   wrong the moment the split puts each voice on its own staff: the other voice's bar
+   ends early. A gap is filled only with copies of the other voice's rests, and only
+   when they cover it exactly; a gap the other voice sings through is a missing note
+   and stays for the health check. On Sangerhilsen this was 19 of 29 findings (#235).
+   Runs in both modes, since the per-system rebuild pulls one voice at a time too.
 2. Decide which staves actually contain 2 voices; only those get split.
    Staff ids are renumbered to leave a gap after each split staff
    (split staff `n` → `n` and `n+1`), tracked in `GLOBALS.STAFF_MAPPING`.

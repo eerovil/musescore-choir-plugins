@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -22,6 +23,7 @@ from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
+from src.clean_score.utils.rejected_bars import clear_bar, staff_names
 from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text, read_bar
 from src.clean_score.utils.utils import starts_new_system
 
@@ -184,11 +186,14 @@ def run_clean(
     add_staffs: Optional[str] = None,
     log: Logger = _noop,
     voicing: Optional[str] = None,
+    check: Optional[Dict] = None,
 ) -> Tuple[str, str]:
     """Convert + clean. Returns (cleaned_path, mscx_intermediate_path).
 
     Runs non-interactively: per-system reads .persystem_cache.json; normal mode
     reduces >2-voice measures automatically (the health check flags them).
+    A caller that passes `check` gets what MuseScore 3's own check said about the
+    result put in it (see `check_opens_in_musescore`).
     """
     mscx_path = convert_to_mscx(input_path, out_dir, log)
     base = os.path.splitext(os.path.basename(mscx_path))[0]
@@ -210,9 +215,12 @@ def run_clean(
         raise RuntimeError("Cleaning produced no output (no parts declared?).")
     try:
         apply_recorded_fixes(building, out_dir, log)
+        outcome = check_opens_in_musescore(building, out_dir, log)
     except Exception:
         os.remove(building)
         raise
+    if check is not None:
+        check.update(outcome)
     os.replace(building, cleaned)
     log("Cleaned score written.")
     return cleaned, mscx_path
@@ -284,6 +292,182 @@ def _recorded_fixes(song_dir: str) -> List[Dict]:
     return entries
 
 
+# --------------------------------------------------------------------------
+# Would MuseScore 3 open it?
+# --------------------------------------------------------------------------
+# MuseScore checks every score it opens and calls one that fails "corrupted" -- on
+# Sangerhilsen the app crashed on it instead. Only the app runs that check; an export
+# from the command line does not, which is why every render went through and the
+# first anyone heard of it was a person opening the file. Except for one export: to
+# `.mlog`, which runs the same `Score::sanityCheck` and writes what it found as JSON
+# (`mscore/file.cpp`, 3.6.2). So this asks MuseScore itself rather than keeping a
+# copy of its rule here that could drift from it.
+
+#: What marks a free-text entry as written by this check rather than by a person.
+MUSESCORE_CHECK_SOURCE = "musescore-check"
+
+_REJECTION = re.compile(
+    r"Measure (?P<measure>\d+), staff (?P<staff>\d+)(?:, voice (?P<voice>\d+))? "
+    r"(?P<what>incomplete|too long)\. Expected: (?P<expected>\S+); Found: (?P<found>\S+)")
+
+
+def musescore_check(mscx_path: str) -> Optional[List[Dict]]:
+    """What MuseScore 3 objects to when it opens this score. Empty list: nothing.
+
+    Each objection is `{measure, staff, voice, message}`, 1-based the way MuseScore
+    counts (staff = position in the score, measure = every bar from the top). None
+    when no MuseScore answered -- which is "not checked", never "fine".
+    """
+    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "check.mlog")
+        # MuseScore reads the format off the extension, and a clean checks the file
+        # while it is still `<name>.mscx.building`.
+        score = os.path.join(tmp, "check.mscx")
+        shutil.copyfile(mscx_path, score)
+        try:
+            # Exits 1 when the score fails the check, so the exit code is not the test.
+            subprocess.run([cli, score, "-o", out], capture_output=True, text=True,
+                           timeout=MUSESCORE_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        try:
+            with open(out, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return None
+    if not data.get("result"):
+        return []
+    # MuseScore writes its line breaks into the JSON as a literal backslash-n.
+    lines = [line.strip() for line in (data.get("error") or "").replace("\\n", "\n").split("\n")]
+    found = []
+    for line in filter(None, lines):
+        match = _REJECTION.search(line)
+        found.append({
+            "measure": int(match["measure"]) if match else 0,
+            "staff": int(match["staff"]) if match else 0,
+            "voice": int(match["voice"] or 1) if match else 0,
+            "message": line,
+        })
+    return found or [{"measure": 0, "staff": 0, "voice": 0,
+                      "message": "MuseScore called the score corrupted without saying where."}]
+
+
+def reset_rejected_bars(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
+    """Reset each bar MuseScore rejected to a whole-bar rest. Returns what was done.
+
+    One entry per staff-bar: `{measure, staff, part, message, removed}`. A rejection
+    that names no bar MuseScore can be pointed at is skipped and stays rejected.
+    """
+    tree = etree.parse(mscx_path)
+    root = tree.getroot()
+    names = staff_names(root)
+    done: Dict[Tuple[int, int], Dict] = {}
+    for one in rejected:
+        key = (one["staff"], one["measure"])
+        if key in done:
+            done[key]["message"] += "; " + one["message"]
+            continue
+        removed = clear_bar(root, *key)
+        if removed is None:
+            continue
+        done[key] = {"measure": one["measure"], "staff": one["staff"],
+                     "part": names.get(one["staff"], f"staff {one['staff']}"),
+                     "message": one["message"], "removed": removed}
+    if done:
+        tree.write(mscx_path, encoding="UTF-8", xml_declaration=True)
+    return sorted(done.values(), key=lambda d: (d["measure"], d["staff"]))
+
+
+def record_musescore_resets(song_dir: str, resets: List[Dict]) -> int:
+    """Write each reset bar into `fixes.json` as an outstanding free-text fix.
+
+    The notes were taken out to make the file open; a person has to put the right
+    ones back from the page, and the Fix panel is where they will be told. Every
+    clean re-checks the whole score, so this **replaces** all of the previous ones
+    rather than adding to them -- a bar a better reading has since fixed stops being
+    listed. A sentence somebody typed is never touched.
+    """
+    written = [
+        {
+            "kind": "text",
+            "source": MUSESCORE_CHECK_SOURCE,
+            "measure": one["measure"],
+            "staff": one["staff"],
+            "what": (
+                f"Bar {one['measure']}, {one['part']}: MuseScore 3 called this bar "
+                f"corrupted ({one['message']}), so cleaning reset it to a whole-bar "
+                f"rest. Taken out: {' '.join(one['removed']) or 'nothing'}. "
+                "Put the notes back from the page."
+            ),
+        }
+        for one in resets
+    ]
+    _replace_recorded(song_dir, lambda fix: fix.get("source") == MUSESCORE_CHECK_SOURCE, written)
+    return len(written)
+
+
+def check_opens_in_musescore(mscx_path: str, song_dir: str, log: Logger = _noop) -> Dict:
+    """Run MuseScore's own check, reset what it rejects, and check again.
+
+    Returns what a song records: `status` (`passed` / `repaired` / `rejected` /
+    `not_checked`), `reset` (the bars reset) and `rejected` (what MuseScore still
+    objects to after that, which should be nothing).
+    """
+    found = musescore_check(mscx_path)
+    if found is None:
+        log("Not checked against MuseScore 3's own check: no MuseScore answered "
+            "(MUSESCORE_CLI_PATH).")
+        return {"status": "not_checked", "reset": [], "rejected": []}
+    if not found:
+        record_musescore_resets(song_dir, [])
+        log("MuseScore 3 opens the cleaned score without calling it corrupted.")
+        return {"status": "passed", "reset": [], "rejected": []}
+    log(f"MuseScore 3 would call this score corrupted ({len(found)} problem(s)):")
+    for one in found:
+        log("  " + one["message"])
+    resets = reset_rejected_bars(mscx_path, found)
+    record_musescore_resets(song_dir, resets)
+    for one in resets:
+        log(f"  Reset bar {one['measure']} of {one['part']} to a rest; "
+            f"listed in the Fix panel. Taken out: {' '.join(one['removed']) or 'nothing'}")
+    again = musescore_check(mscx_path)
+    if again is None:
+        log("Could not check again after resetting those bars.")
+        return {"status": "not_checked", "reset": resets, "rejected": []}
+    if again:
+        log(f"MuseScore 3 still calls the score corrupted ({len(again)} problem(s)).")
+        return {"status": "rejected", "reset": resets, "rejected": again}
+    log("MuseScore 3 opens it now.")
+    return {"status": "repaired", "reset": resets, "rejected": []}
+
+
+def musescore_findings(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
+    """Health rows for what MuseScore still rejects, so the Fix panel lists them."""
+    try:
+        names = staff_names(etree.parse(mscx_path).getroot())
+    except (OSError, etree.XMLSyntaxError):
+        names = {}
+    return [{
+        "id": f"musescore-corrupt-m{one['measure']}-s{one['staff']}-v{one['voice']}",
+        "kind": "musescore-corrupt",
+        "measure": one["measure"] or None,
+        "staff": names.get(one["staff"], f"staff {one['staff']}") if one["staff"] else "whole score",
+        "detail": f"MuseScore 3 calls this corrupted: {one['message']}",
+    } for one in rejected]
+
+
+def _replace_recorded(song_dir: str, owned: Callable[[Dict], bool], written: List[Dict]) -> None:
+    """Swap the `fixes.json` entries `owned` picks out for `written`, keeping the rest."""
+    entries = [fix for fix in _recorded_fixes(song_dir) if not owned(fix)] + written
+    path = os.path.join(song_dir, "fixes.json")
+    if not entries and not os.path.exists(path):
+        return
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(entries, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+
+
 #: What marks a free-text entry as written by the scan rather than by a person.
 SCAN_SOURCE = "scan"
 
@@ -310,8 +494,6 @@ def record_scan_repairs(song_dir: str, system: int, moved: List[Dict]) -> int:
 
     Returns how many entries this system now has.
     """
-    kept = [fix for fix in _recorded_fixes(song_dir)
-            if not (fix.get("source") == SCAN_SOURCE and fix.get("system") == system)]
     written = [
         {
             "kind": "text",
@@ -329,13 +511,10 @@ def record_scan_repairs(song_dir: str, system: int, moved: List[Dict]) -> int:
         }
         for one in moved
     ]
-    entries = kept + written
-    path = os.path.join(song_dir, "fixes.json")
-    if not entries and not os.path.exists(path):
-        return 0
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(entries, fh, indent=2, ensure_ascii=False)
-        fh.write("\n")
+    _replace_recorded(
+        song_dir,
+        lambda fix: fix.get("source") == SCAN_SOURCE and fix.get("system") == system,
+        written)
     return len(written)
 
 
