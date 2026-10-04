@@ -1137,7 +1137,12 @@ function panelScan(panel, song, P, refresh, actions) {
         + "different discards that system's answers and lapses your OK; one that "
         + "comes out the same costs nothing."),
       el("div", { className: "row" }, ...done.map((i) =>
-        el("button", { disabled: running, onclick: () => rerun([i]) }, String(i)))));
+        el("button", { disabled: running, onclick: () => rerun([i]) }, String(i)))),
+      // The whole score through the same per-system path, so each system still
+      // only costs anything when its reading comes out different.
+      el("div", { className: "row" },
+        el("button", { disabled: running, onclick: () => rerun(done) },
+          "Read all systems again")));
   }
 
   if (st.read) panel.append(scanProvenance(st));
