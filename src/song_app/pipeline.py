@@ -23,6 +23,7 @@ from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
+from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.rejected_bars import clear_bar, staff_names
 from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text, read_bar
 from src.clean_score.utils.utils import starts_new_system
@@ -215,6 +216,7 @@ def run_clean(
         raise RuntimeError("Cleaning produced no output (no parts declared?).")
     try:
         apply_recorded_fixes(building, out_dir, log)
+        record_clean_marks(building, out_dir, log)
         outcome = check_opens_in_musescore(building, out_dir, log)
     except Exception:
         os.remove(building)
@@ -371,6 +373,9 @@ def reset_rejected_bars(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
         removed = clear_bar(root, *key)
         if removed is None:
             continue
+        mark_bar(root.findall(".//Score/Staff")[key[0] - 1].findall("Measure")[key[1] - 1],
+                 f"MuseScore 3 rejected this bar; reset to a rest. Taken out: "
+                 f"{' '.join(removed) or 'nothing'}")
         done[key] = {"measure": one["measure"], "staff": one["staff"],
                      "part": names.get(one["staff"], f"staff {one['staff']}"),
                      "message": one["message"], "removed": removed}
@@ -404,6 +409,35 @@ def record_musescore_resets(song_dir: str, resets: List[Dict]) -> int:
         for one in resets
     ]
     _replace_recorded(song_dir, lambda fix: fix.get("source") == MUSESCORE_CHECK_SOURCE, written)
+    return len(written)
+
+
+#: What marks a free-text entry as one of the red marks cleaning left in the score.
+CLEAN_MARK_SOURCE = "clean-marker"
+
+
+def record_clean_marks(mscx_path: str, song_dir: str, log: Logger = _noop) -> int:
+    """List each red mark cleaning left in the score as an outstanding fix (#238).
+
+    The marks are in the bars, where somebody fixing the score in MuseScore will see
+    them; this puts the same sentences in the Fix panel, where somebody on the phone
+    will. Every clean writes the marks afresh, so this **replaces** the previous ones
+    -- a bar a better reading no longer damages stops being listed. Runs before the
+    MuseScore check, whose resets keep their own entries.
+    """
+    root = etree.parse(mscx_path).getroot()
+    names, found = staff_names(root), marks(root)
+    written = [{
+        "kind": "text",
+        "source": CLEAN_MARK_SOURCE,
+        "measure": one["measure"],
+        "staff": one["staff"],
+        "what": f"Bar {one['measure']}, {names.get(one['staff'], one['staff'])} "
+                f"(red mark in the score): {one['text']}",
+    } for one in found]
+    _replace_recorded(song_dir, lambda fix: fix.get("source") == CLEAN_MARK_SOURCE, written)
+    for one in written:
+        log("  " + one["what"])
     return len(written)
 
 

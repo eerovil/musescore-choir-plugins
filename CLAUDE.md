@@ -492,6 +492,17 @@ Key test modules:
   MuseScore (skips without it) names a bar it refuses and accepts it once reset; no
   MuseScore is "not checked"; the sentence is written once, replaced on a re-clean,
   removed when the clean passes, and never touches a typed one.
+- `test_cross_voice_slurs.py` / `test_long_bars.py` / `src/song_app/tests/test_clean_marks.py`
+  — added for #238. A slur from one voice into the other loses both halves, is
+  reported as one slur, marks both bars and gives the lower voice its syllable back,
+  while a slur inside one voice is untouched. A bar an eighth too long comes back 4/4
+  with the cut notes named in its mark; a note across the barline is shortened, a
+  triplet across it goes whole, a voice off the beat grid is left short rather than
+  padded wrong, a tie into the cut-away part goes, and short bars, bars printing their
+  own signature and the bars either side are untouched. Then the marks: red, `⚠`,
+  listed by health until deleted, one Fix-panel sentence each replaced on every clean
+  (a typed one never touched), put on a bar MuseScore rejected, and absent from the
+  video.
 - `test_missing_tuplets.py` — the dropped-tuplet cross-voice auto-fix (mirror
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` — the re-voicing plan and the
@@ -1957,6 +1968,23 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    the score. Then `detect_part_types` (clef + pitch-range heuristics name parts
    S/A/T/B and set clefs), apply names/clefs, strip brackets/barLineSpan.
 7. `--add SSAA` appends new empty staves (rests) with the right clef per letter.
+8. `mark_scan_damage` runs last, in both modes, and takes out two things a scan gets
+   wrong that nothing can repair from the score (#238). A **slur joining two singers**
+   (`utils/cross_voice_slurs.py`): homr pairs a slur by the staff's number, so on a
+   shared staff it can start in one voice and stop in the other, and after the split
+   each half points at nothing, the end half costing that singer a syllable. Both halves
+   go. A **bar longer than its time signature** (`utils/long_bars.py`): a misread
+   rhythm leaves `len="9/8"` under 4/4 and every part plays an extra eighth; each voice
+   is cut at the barline, a note across it shortened or taken out, a tuplet across it
+   taken out whole, rests put back only where they spell the gap exactly. Neither
+   guesses the right music back. Instead each bar it changed gets a **red mark**
+   (`utils/problem_marks.py`): a staff text starting with `⚠`, saying what was taken
+   out. The app's clean also marks each bar the MuseScore check resets. Deleting a mark
+   in MuseScore is how a person says the bar is fixed: until then health lists it
+   (`marked-problem`) and `pipeline.record_clean_marks` puts its sentence in the Fix
+   panel (`source: "clean-marker"`, replaced on every clean). The scrolling video
+   strips marks (`scrollvideo/score.prepare`), so a forgotten one never reaches a
+   practice track.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
 (which makes an upper/lower pair) and is either an OCR glitch or a real multi-way

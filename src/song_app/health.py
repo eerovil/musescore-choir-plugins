@@ -15,6 +15,10 @@ Validation only; never mutates the score. Findings:
   - meter-collapsed: the same finding, counted instead of listed, for a score
     whose bars mostly declare their own length. See below — this used to be
     silence, and silence was the bug.
+  - marked-problem: a red `⚠` mark cleaning left on a bar it had to change (a slur
+    joining two singers, a bar cut back to its time signature, a bar MuseScore
+    rejected). A person deletes the mark once the bar is fixed; until then it is
+    listed, so the score does not look finished while one is left (#238).
 
 Missing notes that *do* fill the bar (a half-rest standing in for lost notes)
 aren't tick-detectable; they surface as lyric syllable overflow at import time.
@@ -30,6 +34,8 @@ from fractions import Fraction
 from typing import Dict, Iterable, List, Optional
 
 from lxml import etree
+
+from src.clean_score.utils.problem_marks import marks
 
 # durationType (and fraction) -> whole-note fraction
 _DUR = {
@@ -224,6 +230,20 @@ def scan(cleaned_path: str) -> List[Dict]:
     # here. Saying how many bars and where the first one is lets a person tell them
     # apart in the score, which is where the answer actually is. Nothing to count is
     # nothing to say: a free-metered score that agrees with itself stays clean.
+    staff_ids = [int(st.get("id", "0")) for st in score.findall("Staff")]
+    seen: Dict[str, int] = {}
+    for mark in marks(score):
+        sid = staff_ids[mark["staff"] - 1]
+        key = f"marked-m{mark['measure']}-s{sid}"
+        seen[key] = seen.get(key, 0) + 1
+        issues.append({
+            "id": key if seen[key] == 1 else f"{key}-{seen[key]}",
+            "kind": "marked-problem",
+            "measure": mark["measure"],
+            "staff": staff_name.get(sid) or f"staff {sid}",
+            "detail": mark["text"],
+        })
+
     if collapsed:
         bars = sorted({i["measure"] for i in collapsed})
         issues.append({
