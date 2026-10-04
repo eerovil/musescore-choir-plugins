@@ -553,11 +553,19 @@ systems, #144 took the app's copies of the **slur repair** and the **system find
 grouping rule** out: the old slur pass dropped nothing on the fork's output, and *Find
 systems* now only asks homr (`--find-system-bounds`). A homr older than that fork is
 refused for *Find systems* and its slurs go unrepaired — update it rather than reviving
-the copies. **The per-system cropping stays in `omr_systems` for now**: homr's own
-`--system-bounds` mode finds the same staves and bars on all 21 systems but differs at
-note level on 12 (it rasterises with pypdfium, not poppler), so switching would change
-re-read songs' readings. That switch waits until the upstream homr update and the next
-fixture have been measured.
+the copies. **The per-system cropping stays in `omr_systems`, and #223 measured why.**
+homr's own `--system-bounds` mode cuts the same padded band at the same dpi with the
+same pixel rounding; the one difference is the rasteriser (pypdfium where the app uses
+poppler). Re-measured on the fork after the upstream sync (`main @ 8512194`, 200 dpi,
+2% pad) with `scripts/system_bounds_vs_crop.py`, on the Virta fixture's 15 systems and
+B1a/B1b's 3 each: staves and bars agree on 21/21, the parses are identical on only 4,
+note counts differ by at most one per system, and against B1's hand transcription
+(onsets only — it writes every notehead as a C) the app's crop gets **107/120** onsets
+on B1a against homr's **106**, and **88/120** on B1b both ways, with homr's crop losing
+one slur on B1a system 2. The card's rule was to switch only if homr's route was at
+least as good, and it is not, so nothing moved. The gap is at noise level, so this is
+worth measuring again when a new scanned fixture with note-level truth exists — the
+script reuses reads it already has under `--out`.
 
 **`clean_score`'s OCR repairs are the known tension.** `fix_missing_tuplets`,
 `fix_spurious_timesigs`, `fix_overfull_measures`, `add_missing_ties` and the recorded
