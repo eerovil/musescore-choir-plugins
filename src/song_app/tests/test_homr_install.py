@@ -34,7 +34,7 @@ def host(tmp_path: Path, monkeypatch):
         command=["homr"], default=True, commit=installed["commit"])
         if installed["commit"] else None)
     remote = {"commit": NEW}
-    monkeypatch.setattr(homr_install, "_ls_remote", lambda: remote["commit"])
+    monkeypatch.setattr(homr_install, "_ls_remote", lambda _url: remote["commit"])
     monkeypatch.setitem(homr_install._latest, "commit", None)
     monkeypatch.setitem(homr_install._latest, "at", 0.0)
     homr_install._log.clear()
@@ -94,6 +94,28 @@ def test_github_going_quiet_after_the_cache_expires_is_unknown(host) -> None:
 
     st = homr_install.status()
     assert st["latest"] is None and st["up_to_date"] is None
+
+
+def test_the_fork_is_read_from_the_app_env_when_asked(host, monkeypatch, tmp_path) -> None:
+    """HOMR_REPO from the app's .env is loaded after this module is imported (#249).
+
+    The status check has to ask the repository the installer will install from.
+    """
+    import dotenv
+
+    asked = []
+    monkeypatch.setattr(homr_install, "_ls_remote",
+                        lambda url: asked.append(url) or NEW)
+    monkeypatch.delenv("HOMR_REPO", raising=False)
+    homr_install.status()
+    assert asked[-1] == homr_install.DEFAULT_REPO
+
+    env = tmp_path / ".env"
+    env.write_text("HOMR_REPO=https://example.test/other/homr.git\n")
+    monkeypatch.setenv("HOMR_REPO", "")  # registered so monkeypatch restores it
+    dotenv.load_dotenv(env, override=True)
+    homr_install.status()   # a different repo is not answered from the cache
+    assert asked[-1] == "https://example.test/other/homr.git"
 
 
 def test_an_install_streams_the_log_and_records_success(host) -> None:

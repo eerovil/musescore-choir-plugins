@@ -61,7 +61,7 @@ def live(tmp_path, monkeypatch):
     monkeypatch.setattr(omr, "default_engine", lambda: omr.Engine(
         key="default", label=f"installed: main @ {installed['commit'][:7]}",
         command=["homr"], default=True, commit=installed["commit"]))
-    monkeypatch.setattr(homr_install, "_ls_remote", lambda: NEW)
+    monkeypatch.setattr(homr_install, "_ls_remote", lambda _url: NEW)
     monkeypatch.setitem(homr_install._latest, "commit", None)
     monkeypatch.setitem(homr_install._latest, "at", 0.0)
     homr_install._log.clear()

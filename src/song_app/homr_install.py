@@ -40,8 +40,18 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 #: The installer this runs. Module-level so a test can hand it a stub.
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "install-homr.sh")
 
-#: Where the fork lives; the same default as the script's own ``HOMR_REPO``.
-REPO = os.getenv("HOMR_REPO", "https://github.com/eerovil/homr.git")
+#: Where the fork lives when ``HOMR_REPO`` does not say; the script's own default.
+DEFAULT_REPO = "https://github.com/eerovil/homr.git"
+
+
+def repo() -> str:
+    """The fork to compare against, read when asked rather than at import.
+
+    The server loads ``.env`` after importing this module, and the installer it
+    runs sees that ``.env`` value, so reading it at import would compare against
+    one repository and install from another.
+    """
+    return os.getenv("HOMR_REPO") or DEFAULT_REPO
 
 #: How long the fork's ``main`` commit is trusted before asking GitHub again.
 LATEST_TTL_S = 600
@@ -57,7 +67,7 @@ SONG_JOBS = ("scan", "clean", "render", "upload")
 _guard = threading.Lock()
 _log: "collections.deque[str]" = collections.deque(maxlen=LOG_LINES)
 _result: Dict[str, object] = {}
-_latest: Dict[str, object] = {"at": 0.0, "commit": None}
+_latest: Dict[str, object] = {"at": 0.0, "commit": None, "repo": None}
 
 
 class Refused(RuntimeError):
@@ -100,10 +110,10 @@ def _venv() -> str:
     return omr.DEFAULT_VENV
 
 
-def _ls_remote() -> Optional[str]:
+def _ls_remote(url: str) -> Optional[str]:
     """The commit the fork's ``main`` points at, or None when GitHub is not there."""
     try:
-        out = subprocess.run(["git", "ls-remote", REPO, "refs/heads/main"],
+        out = subprocess.run(["git", "ls-remote", url, "refs/heads/main"],
                              capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -117,8 +127,10 @@ def latest(refresh: bool = False) -> Optional[str]:
     # A failed lookup is cached as None like any other answer: keeping the old
     # commit would show GitHub's state from before it stopped answering, and
     # asking again on every request would cost each one the lookup's timeout.
-    if refresh or not _latest["at"] or now - float(_latest["at"]) > LATEST_TTL_S:
-        _latest.update(at=now, commit=_ls_remote())
+    url = repo()
+    if (refresh or not _latest["at"] or _latest["repo"] != url
+            or now - float(_latest["at"]) > LATEST_TTL_S):
+        _latest.update(at=now, commit=_ls_remote(url), repo=url)
     return _latest["commit"]  # type: ignore[return-value]
 
 
