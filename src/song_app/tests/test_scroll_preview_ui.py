@@ -394,6 +394,28 @@ def test_a_part_mix_changes_focus_without_rebuilding_the_picture(player):
         original_canvas
 
 
+def test_a_part_sharing_a_staff_lights_the_staff_it_is_drawn_on(live, page):
+    """#246: with S1 and B1 on one staff, B1's mix lights that staff, not the next."""
+    base, slug, _ = live
+
+    def shared(route):
+        response = route.fetch()
+        data = response.json()
+        data["staff_of"] = {"S1": 0, "B1": 0}
+        route.fulfill(response=response, json=data)
+
+    page.route("**/scroll-preview?*", shared)
+    _open_record(page, base, slug)
+    page.locator('[data-preview="open"]').click()
+    page.wait_for_selector(".pvviewport > canvas")
+    _enable_audio(page)
+    page.locator('[data-preview="seek"]').fill("1")
+    page.locator('[data-preview="mix"]').select_option("B1")
+    page.wait_for_selector('[data-preview="audio-status"]:has-text("B1 audio ready")')
+    assert _on_screen(page, EVENTS[0]) == HIGHLIGHT
+    assert _on_screen(page, EVENTS[1]) == BACKGROUND
+
+
 def test_a_late_mix_request_cannot_replace_the_new_selection(player):
     page, _ = player
     _enable_audio(page)

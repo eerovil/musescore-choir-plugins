@@ -61,14 +61,14 @@ def _fake_scroll(monkeypatch, seen, parts=("S1", "A1")):
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
              initial_bpm=None,
              top_margin_percent=0.0, bottom_margin_percent=0.0,
-             system_starts=None,
+             system_starts=None, staff_groups=None,
              log=lambda m: None,
              progress=lambda m: None):
         seen.update(song_dir=song_dir, cleaned=cleaned, name=name, quality=quality,
                     hardware_encoding=hardware_encoding, initial_bpm=initial_bpm,
                     top_margin_percent=top_margin_percent,
                     bottom_margin_percent=bottom_margin_percent,
-                    system_starts=system_starts)
+                    system_starts=system_starts, staff_groups=staff_groups)
         out = os.path.join(song_dir, "media", "video")
         os.makedirs(out, exist_ok=True)
         made = []
@@ -337,7 +337,7 @@ def test_render_status_and_logs_are_available_after_a_fresh_song_read(
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
              initial_bpm=None,
              top_margin_percent=0.0, bottom_margin_percent=0.0,
-             system_starts=None,
+             system_starts=None, staff_groups=None,
              log=lambda m: None,
              progress=lambda m: None):
         log("Engraving")
@@ -366,7 +366,7 @@ def test_a_score_edit_during_render_marks_the_outputs_stale(client, song, monkey
     def fake(song_dir, cleaned, name, *, quality="4k", hardware_encoding=True,
              initial_bpm=None,
              top_margin_percent=0.0, bottom_margin_percent=0.0,
-             system_starts=None,
+             system_starts=None, staff_groups=None,
              log=lambda m: None,
              progress=lambda m: None):
         with open(cleaned, "a") as f:
@@ -593,3 +593,62 @@ def test_a_source_with_no_breaks_leaves_the_grouping_to_the_renderer(client, son
     _finished(client, song.slug)
 
     assert seen["system_starts"] == []
+
+
+def _two_parts(song):
+    """Give the song a cleaned score with two singing parts, S1 and A1, approved."""
+    chord = "<Chord><durationType>whole</durationType><Note><pitch>60</pitch></Note></Chord>"
+    parts = "".join(f'<Part><Staff id="{i}"/><trackName>{n}</trackName></Part>'
+                    for i, n in ((1, "S1"), (2, "A1")))
+    staves = "".join(f'<Staff id="{i}"><Measure><voice>{chord}</voice></Measure></Staff>'
+                     for i in (1, 2))
+    with open(song.cleaned_path(), "w") as fh:
+        fh.write(f"<museScore><Score>{parts}{staves}</Score></museScore>")
+    song.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    song.save()
+
+
+def test_shared_staves_reach_the_renderer_and_are_remembered(client, song, monkeypatch):
+    """#246: the grouping changes the picture only; the same files are written."""
+    _two_parts(song)
+    seen = {}
+    _fake_scroll(monkeypatch, seen)
+    response = client.post(f"/api/songs/{song.slug}/record",
+                           json={"staff_groups": " S1 + A1 "})
+    assert response.status_code == 200
+    data = _finished(client, song.slug)
+    assert seen["staff_groups"] == [("S1", "A1")]
+    assert data["record"]["staff_groups"] == "S1+A1"
+    assert sorted(os.path.basename(p) for p in data["record"]["outputs"]) == \
+        [f"{song.slug} A1.mp4", f"{song.slug} S1.mp4"]
+
+    # Asked again without saying, the song's own choice is used.
+    seen.clear()
+    client.post(f"/api/songs/{song.slug}/record", json={})
+    _finished(client, song.slug)
+    assert seen["staff_groups"] == [("S1", "A1")]
+
+
+def test_a_blank_grouping_is_one_staff_per_part(client, song, monkeypatch):
+    _two_parts(song)
+    seen = {}
+    _fake_scroll(monkeypatch, seen)
+    client.post(f"/api/songs/{song.slug}/record", json={"staff_groups": ""})
+    data = _finished(client, song.slug)
+    assert seen["staff_groups"] == []
+    assert data["record"]["staff_groups"] == ""
+
+
+@pytest.mark.parametrize("text, said", [
+    ("S1+T1", "No such part: T1"),
+    ("S1+A1+A1", "two parts"),
+])
+def test_a_grouping_the_score_cannot_have_is_refused_before_rendering(
+        client, song, monkeypatch, text, said):
+    _two_parts(song)
+    monkeypatch.setattr(pipeline, "run_scroll_video",
+                        lambda *_a, **_k: pytest.fail("a bad grouping must not render"))
+    response = client.post(f"/api/songs/{song.slug}/record", json={"staff_groups": text})
+    assert response.status_code == 400
+    assert said in response.json()["detail"]
+    assert "staff_groups" not in state.load(song.slug).data.get("record", {})

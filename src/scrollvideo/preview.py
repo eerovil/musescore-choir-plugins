@@ -129,6 +129,7 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
             smooth_seconds: float = SMOOTH_SECONDS,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
             system_starts: Optional[Sequence[int]] = None,
+            staff_groups: Optional[Sequence[Sequence[str]]] = None,
             preview_height: int = PREVIEW_HEIGHT, log: Logger = _noop) -> Dict:
     """Draw this render as tiles in `out_dir` and return what a player needs with them.
 
@@ -147,7 +148,8 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent,
-                        system_starts=system_starts, log=log)
+                        system_starts=system_starts, staff_groups=staff_groups,
+                        log=log)
         drawn = raster(ready, preview_height, log)
         frame_width = max(1, int(round(preview_height * width / height)))
 
@@ -187,7 +189,9 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
                           "background_alpha": BACKGROUND_ALPHA},
             "parts": list(ready.names),
             "dropped": list(ready.dropped),
-            # A part maps to one visible staff only in this shape. Otherwise the
-            # renderer highlights every staff equally rather than guessing.
-            "focus_staves": ready.singing_staves == len(ready.names),
+            # A part maps to a visible staff only when the engraving has the staves
+            # asked for. Otherwise the renderer highlights every staff equally
+            # rather than guessing. Two parts sharing a staff share its number.
+            "focus_staves": ready.singing_staves == ready.staff_count,
+            "staff_of": dict(ready.staff_of),
         }

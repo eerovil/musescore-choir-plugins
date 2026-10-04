@@ -1068,12 +1068,38 @@ def has_opening_tempo(mscx_path: str) -> bool:
     return score_has_opening_tempo(etree.parse(mscx_path).getroot())
 
 
+def staff_groups(cleaned_path: str, text: Optional[str]) -> List[Tuple[str, str]]:
+    """Read a staff grouping ("S1+S2, A1+A2") and check it against this score.
+
+    Checked against the parts the video will actually have — silent ones such as
+    a click staff are left out of it — so a typo is refused when it is typed
+    rather than after the engraving. Raises `ValueError` with a sentence to show.
+    """
+    from src.scrollvideo import score as score_mod
+    from src.scrollvideo.audio import part_names
+
+    groups = score_mod.parse_groups(text)
+    if groups:
+        root = etree.parse(cleaned_path).getroot()
+        silent = score_mod.silent_parts(root)
+        names = [n for n in part_names(root) if n not in silent]
+        score_mod.validate_groups(groups, names, silent)
+    return groups
+
+
+def _staves_setting(groups) -> Dict:
+    """The preview-key entry for a grouping; nothing at all when there is none,
+    so a song that never shared a staff keeps the previews it already has."""
+    return {"staves": [list(g) for g in groups]} if groups else {}
+
+
 def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                      quality: str = "4k", hardware_encoding: bool = True,
                      initial_bpm: Optional[int] = None,
                      top_margin_percent: float = 0.0,
                      bottom_margin_percent: float = 0.0,
                      system_starts: Optional[List[int]] = None,
+                     staff_groups: Optional[List[Tuple[str, str]]] = None,
                      log: Logger = _noop,
                      progress: Logger = _noop) -> List[str]:
     """Render one scrolling practice video per voice into media/video.
@@ -1094,6 +1120,7 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent,
                         system_starts=system_starts,
+                        staff_groups=staff_groups or None,
                         audio_cache_dir=audio_cache_dir)
 
 
@@ -1124,6 +1151,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                    top_margin_percent: float = 0.0,
                    bottom_margin_percent: float = 0.0,
                    system_starts: Optional[List[int]] = None,
+                   staff_groups: Optional[List[Tuple[str, str]]] = None,
                    log: Logger = _noop) -> Dict:
     """The scrolling render as pictures a browser can play, without rendering it.
 
@@ -1145,7 +1173,8 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                 "bpm": initial_bpm, "top": top_margin_percent,
                 "bottom": bottom_margin_percent,
                 "systems": list(system_starts or []),
-                "ratio": spacing_mod.DEFAULT_MAX_RATIO}
+                "ratio": spacing_mod.DEFAULT_MAX_RATIO,
+                **_staves_setting(staff_groups)}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     path = os.path.join(cache_dir, PREVIEW_PAYLOAD)
@@ -1165,7 +1194,8 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                       spacing_ratio=settings["ratio"],
                       top_margin_percent=top_margin_percent,
                       bottom_margin_percent=bottom_margin_percent,
-                      system_starts=system_starts, log=log)
+                      system_starts=system_starts,
+                      staff_groups=staff_groups or None, log=log)
     payload["revision"] = _preview_revision(key)
     os.makedirs(cache_dir, exist_ok=True)
     tmp = path + ".tmp"
@@ -1180,6 +1210,7 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
                          top_margin_percent: float = 0.0,
                          bottom_margin_percent: float = 0.0,
                          system_starts: Optional[List[int]] = None,
+                         staff_groups: Optional[List[Tuple[str, str]]] = None,
                          log: Logger = _noop) -> Tuple[str, bool]:
     """Return one lazy preview WAV made from the final renderer's prepared score.
 
@@ -1199,7 +1230,8 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
                 "bpm": initial_bpm, "top": top_margin_percent,
                 "bottom": bottom_margin_percent,
                 "systems": list(system_starts or []),
-                "ratio": spacing_mod.DEFAULT_MAX_RATIO}
+                "ratio": spacing_mod.DEFAULT_MAX_RATIO,
+                **_staves_setting(staff_groups)}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     source = os.path.join(cache_dir, AUDIO_SOURCE)

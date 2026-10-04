@@ -16,6 +16,7 @@ _NEEDS = "pip install pytest-playwright && playwright install chromium"
 pytest.importorskip("playwright.sync_api", reason=_NEEDS)
 pytest.importorskip("pytest_playwright", reason=_NEEDS)
 pytest.importorskip("uvicorn")
+from playwright.sync_api import expect  # noqa: E402
 
 
 def _browser_installed() -> bool:
@@ -224,6 +225,27 @@ def test_margin_adjustments_are_posted_independently(record_panel):
     assert sent
     assert sent[0]["top_margin"] == 12
     assert sent[0]["bottom_margin"] == -8
+
+
+def test_shared_staves_are_offered_with_the_parts_and_posted(record_panel):
+    """#246: the grouping is typed under the margins, beside the parts it can name."""
+    view, slug, _ = record_panel
+    sent = []
+    view.route(f"**/api/songs/{slug}/record", lambda route: (
+        sent.append(json.loads(route.request.post_data or "{}")),
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"started": true}')))
+
+    view.locator(".record-advanced").locator("summary").click()
+    field = view.locator("input[data-staff-groups]")
+    expect(field).to_be_visible()
+    expect(view.locator(".record-advanced")).to_contain_text("Parts: S A T B")
+    field.fill("S+A, T+B")
+    _screenshot(view, "record-shared-staves.png")
+    view.get_by_role("button", name="Render all 4 parts").click()
+    view.wait_for_timeout(300)
+
+    assert sent and sent[0]["staff_groups"] == "S+A, T+B"
 
 
 def test_render_progress_survives_a_page_reload(record_panel):

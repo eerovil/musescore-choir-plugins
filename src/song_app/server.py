@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from . import (agentdeck, health, heavy_slot, job_state, omr, pdf_systems,
                pipeline, pwa_assets, scan, state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
+from src.scrollvideo.score import format_groups, parse_groups
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -1230,8 +1231,22 @@ def _margin(value, label: str) -> float:
     return margin
 
 
-def _remember_margins(song: state.Song, top: float, bottom: float) -> None:
+def _staff_groups(cleaned: str, text) -> str:
+    """A staff grouping ("S1+S2, A1+A2") checked against this score, written the
+    one way it is stored. Blank is no grouping; a part the video does not have is
+    a 400 saying which."""
+    try:
+        return format_groups(pipeline.staff_groups(cleaned, str(text or "")))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+def _remember_margins(song: state.Song, top: float, bottom: float,
+                      staff_groups: Optional[str] = None) -> None:
     """Keep the framing this song was last shown at.
+
+    The staff grouping (#246) is part of the framing — it changes what is drawn,
+    not what is heard — so it is kept the same way, when given.
 
     Written when a render is asked for and when a preview succeeds, so nudging a
     margin to see what it looks like is enough to keep it — that is the moment the
@@ -1241,13 +1256,14 @@ def _remember_margins(song: state.Song, top: float, bottom: float) -> None:
     the same reason.
     """
     rec = song.data.get("record", {})
-    if (rec.get("top_margin"), rec.get("bottom_margin")) == (top, bottom):
+    wanted = {"top_margin": top, "bottom_margin": bottom}
+    if staff_groups is not None:
+        wanted["staff_groups"] = staff_groups
+    if all(rec.get(key) == value for key, value in wanted.items()):
         return
     if is_recording(song):
         return
-    rec = song.data.setdefault("record", {})
-    rec["top_margin"] = top
-    rec["bottom_margin"] = bottom
+    song.data.setdefault("record", {}).update(wanted)
     song.save()
 
 
@@ -1255,7 +1271,7 @@ def _remember_margins(song: state.Song, top: float, bottom: float) -> None:
 async def api_scroll_preview(slug: str, quality: str = "4k",
                              top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
                              bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
-                             bpm: Optional[int] = None):
+                             bpm: Optional[int] = None, staff_groups: str = ""):
     """The scrolling render as pictures the browser can play, before any video exists.
 
     This is the picture without the encoding: the same engraving, viewport, clock,
@@ -1285,6 +1301,8 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
         # preview has to be told the same grouping the render is told.
         "system_starts": _printed_systems(song),
     }
+    groups = _staff_groups(cleaned, staff_groups)
+    settings["staff_groups"] = parse_groups(groups)
     try:
         payload = await asyncio.get_running_loop().run_in_executor(
             None, lambda: pipeline.scroll_preview(song.dir, cleaned, **settings))
@@ -1295,7 +1313,7 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
     # Only once the picture came out: a framing the renderer refuses is not one to
     # come back to. Reloaded, because preparing can take seconds.
     _remember_margins(_require(slug), settings["top_margin_percent"],
-                      settings["bottom_margin_percent"])
+                      settings["bottom_margin_percent"], groups)
     return JSONResponse(payload, headers=dict(REVALIDATE))
 
 
@@ -1319,7 +1337,7 @@ async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
                                    quality: str = "4k",
                                    top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
                                    bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
-                                   bpm: Optional[int] = None):
+                                   bpm: Optional[int] = None, staff_groups: str = ""):
     """One selected MuseScore mix, prepared lazily for the browser preview."""
     song = _require(slug)
     cleaned = song.cleaned_path()
@@ -1332,6 +1350,7 @@ async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
         "initial_bpm": bpm if bpm and not pipeline.has_opening_tempo(cleaned) else None,
         "system_starts": _printed_systems(song),
     }
+    settings["staff_groups"] = parse_groups(_staff_groups(cleaned, staff_groups))
     try:
         path, reused = await asyncio.get_running_loop().run_in_executor(
             None, lambda: pipeline.scroll_preview_audio(
@@ -1406,6 +1425,8 @@ def _run_record(slug: str, opts: Dict) -> None:
                                                     hardware_encoding=hardware_encoding,
                                                     initial_bpm=opts.get("bpm"),
                                                     system_starts=_printed_systems(song),
+                                                    staff_groups=parse_groups(
+                                                        opts.get("staff_groups")),
                                                     log=slot.guard(log),
                                                     progress=slot.guard(progress),
                                                     **margin_options)
@@ -1418,6 +1439,7 @@ def _run_record(slug: str, opts: Dict) -> None:
             rec["hardware_encoding"] = hardware_encoding
             rec["top_margin"] = top_margin
             rec["bottom_margin"] = bottom_margin
+            rec["staff_groups"] = opts.get("staff_groups") or ""
             rec["outputs"] = [os.path.basename(p) for p in outputs]
             rec["rendered_against"] = start_fingerprint
             rec["verification"] = verification.verify_media(
@@ -1527,7 +1549,11 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
                 ("top_margin", "Top", DEFAULT_TOP_MARGIN_PERCENT),
                 ("bottom_margin", "Bottom", DEFAULT_BOTTOM_MARGIN_PERCENT)):
             opts[key] = _margin(opts.get(key, remembered.get(key, default)), label)
-        _remember_margins(song, opts["top_margin"], opts["bottom_margin"])
+        if cleaned and os.path.exists(cleaned):
+            opts["staff_groups"] = _staff_groups(
+                cleaned, opts.get("staff_groups", remembered.get("staff_groups", "")))
+        _remember_margins(song, opts["top_margin"], opts["bottom_margin"],
+                          opts.get("staff_groups"))
     if scrolling_render and cleaned and os.path.exists(cleaned) \
             and not pipeline.has_opening_tempo(cleaned):
         try:

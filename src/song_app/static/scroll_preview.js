@@ -330,8 +330,9 @@
       clearAudio();
       audioFailed = false;
       wantedPlay = resume;
+      // Two parts sharing a staff share its number, so the payload says which.
       focusStaff = name === "ALL" || !data.focus_staves
-        ? null : player.parts.indexOf(name);
+        ? null : (data.staff_of?.[name] ?? player.parts.indexOf(name));
       audioStatus.className = "pvaudio-status";
       audioStatus.textContent = `Preparing ${name} audio…`;
       show();
