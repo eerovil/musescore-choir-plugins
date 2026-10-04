@@ -130,10 +130,20 @@ def _new_song(page, base, name, per_system=True):
     page.get_by_placeholder("Song name").fill(name)
     page.locator("#f-xml").set_input_files(FIXTURE)
     page.locator("select").select_option("men")     # laulun_aika is a male-choir score
-    if per_system:
-        page.locator("input[type=checkbox]").check()
     page.get_by_role("button", name="Create").click()
     expect(page.locator(".stagebar")).to_be_visible()
+    if per_system:
+        _use_per_system(page, base)
+        expect(page.locator(".stagebar")).to_be_visible()
+
+
+def _use_per_system(page, base):
+    """Switch the song just created to per-system mode, as the Clean panel's
+    toggle does: the New song form no longer asks."""
+    slug = page.url.split("#/song/", 1)[1]
+    response = page.request.post(f"{base}/api/songs/{slug}/mode", data={"mode": "per-system"})
+    assert response.ok, response.text()
+    page.reload()
 
 
 def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_app, own_answers, page):
