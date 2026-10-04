@@ -146,10 +146,14 @@ def content_stamp(path: str) -> str:
     is the hours of re-reading #154 decided against. Stripping it textually also
     keeps every stamp already recorded on this host unchanged — a file with no
     such line hashes exactly as it always did.
+
+    **Nor are the note positions** homr writes inside every ``<note>``
+    (:func:`omr.strip_image_positions`): where the decoder looked is not what it
+    read, and a file without them hashes as it always did.
     """
     try:
         with open(path, "rb") as f:
-            data = omr.strip_provenance(f.read())
+            data = omr.strip_image_positions(omr.strip_provenance(f.read()))
     except OSError:
         return ""
     return hashlib.sha1(data).hexdigest()[:12]

@@ -297,6 +297,18 @@ def test_the_gpu_is_switched_off_explicitly(monkeypatch, tmp_path):
     assert "--gpu no" in open(tmp_path / "args").read()
 
 
+def test_the_title_is_not_read(monkeypatch, tmp_path):
+    # The app never uses the title homr reads, and since upstream 9ec3a78 reading
+    # it means fetching OCR weights first (#220).
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path,
+        'echo "$@" > ' + str(tmp_path / "args") + '\n'
+        'echo "<score/>" > "${!#%.*}.musicxml"\n',
+    ))
+    omr.read_page(a_page(tmp_path))
+    assert "--no-title" in open(tmp_path / "args").read().split()
+
+
 def test_progress_reaches_the_log(monkeypatch, tmp_path):
     monkeypatch.setenv("HOMR_BIN", stub_homr(
         tmp_path,
@@ -824,6 +836,44 @@ def test_moving_one_twice_finds_nothing_the_second_time(tmp_path):
 
     assert len(omr.split_measure_rests_in(str(path))) == 1
     assert omr.split_measure_rests_in(str(path)) == []
+
+
+# --- homr's note positions (#220) ----------------------------------------
+#
+# Upstream homr writes where each note sits on the image as a comment inside
+# every <note> (dda4d2f). The repair at this boundary reads the notes, so it
+# must do the same with the comments there as without them.
+
+
+def with_image_positions(data):
+    """``data`` with an ``imgpos`` comment in every note, as homr writes it."""
+    out, n = b"", 0
+    for piece in data.split(b"</note>")[:-1]:
+        out += piece + f"<!-- imgpos: {10 + n}, {200 + n} -->".encode() + b"</note>"
+        n += 1
+    return out + data.split(b"</note>")[-1]
+
+
+def test_note_positions_are_not_content():
+    data = open(FRAGMENT, "rb").read()
+    marked = with_image_positions(data)
+    assert marked != data and marked.count(b"imgpos") == data.count(b"</note>")
+    assert omr.strip_image_positions(marked) == data
+    assert omr.strip_image_positions(data) == data, "nothing to strip is untouched"
+
+
+def test_shared_rests_move_the_same_with_note_positions(tmp_path):
+    plain, marked = tmp_path / "plain.musicxml", tmp_path / "marked.musicxml"
+    shutil.copy(FRAGMENT, plain)
+    marked.write_bytes(with_image_positions(open(FRAGMENT, "rb").read()))
+
+    moves = [(m.measure, m.staff, m.was, m.now)
+             for m in omr.split_measure_rests_in(str(plain))]
+    assert moves == [("2", "2", "5", "7")]
+    assert [(m.measure, m.staff, m.was, m.now)
+            for m in omr.split_measure_rests_in(str(marked))] == moves
+    assert (omr.strip_image_positions(marked.read_bytes())
+            == plain.read_bytes())
 
 
 def test_a_page_comes_back_with_its_shared_rests_moved(monkeypatch, tmp_path):

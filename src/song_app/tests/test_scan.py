@@ -840,6 +840,29 @@ def test_another_homr_reading_the_same_music_costs_nothing(songs, reader, monkey
         assert fresh.stage == "clean"
 
 
+def test_note_positions_are_not_part_of_the_content_stamp(tmp_path):
+    """homr's ``imgpos`` comments say where it looked, not what it read (#220).
+
+    So a parse carrying them stamps as the same parse without them, and the
+    first re-read after the upgrade lapses nobody's approval -- while a parse
+    whose music differs still stamps differently.
+    """
+    note = ("<note><pitch><step>{}</step><octave>4</octave></pitch>"
+            "<duration>4</duration><voice>1</voice>{}</note>")
+    doc = '<?xml version="1.0"?><score-partwise><part id="P1"><measure number="1">{}</measure></part></score-partwise>'
+    plain = tmp_path / "plain.musicxml"
+    marked = tmp_path / "marked.musicxml"
+    other = tmp_path / "other.musicxml"
+    plain.write_text(doc.format(note.format("C", "") + note.format("D", "")))
+    marked.write_text(doc.format(note.format("C", "<!-- imgpos: 45, 231 -->")
+                                 + note.format("D", "<!-- imgpos: 80, 229 -->")))
+    other.write_text(doc.format(note.format("C", "<!-- imgpos: 45, 231 -->")
+                                + note.format("E", "<!-- imgpos: 80, 229 -->")))
+
+    assert scan.content_stamp(str(marked)) == scan.content_stamp(str(plain))
+    assert scan.content_stamp(str(other)) != scan.content_stamp(str(plain))
+
+
 def test_a_different_reading_still_costs_what_it_always_did(songs, reader, tmp_path):
     """The other half: this is not a licence to keep answers that went stale."""
     with per_system.use_answer_file(str(tmp_path / "answers.json")):
