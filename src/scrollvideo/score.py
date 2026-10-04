@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import os
 import re
+from fractions import Fraction
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from lxml import etree
@@ -248,17 +249,89 @@ def _syllables(voice: etree._Element) -> List[str]:
             if (lyric.findtext("no") or "0").strip() in ("", "0")]
 
 
-def _opening_clef(staff: etree._Element) -> Optional[etree._Element]:
-    measure = staff.find("Measure")
-    voice = measure.find("voice") if measure is not None else None
-    if voice is None:
-        return None
+# Written note values as fractions of a whole note.
+_VALUES = {"longa": Fraction(4), "breve": Fraction(2), "whole": Fraction(1),
+           "half": Fraction(1, 2), "quarter": Fraction(1, 4), "eighth": Fraction(1, 8),
+           "16th": Fraction(1, 16), "32nd": Fraction(1, 32), "64th": Fraction(1, 64),
+           "128th": Fraction(1, 128), "256th": Fraction(1, 256)}
+_GRACE = ("acciaccatura", "appoggiatura", "grace4", "grace16", "grace32",
+          "grace8after", "grace16after", "grace32after")
+
+
+def _fraction(text: Optional[str]) -> Fraction:
+    try:
+        return Fraction((text or "0").strip())
+    except (ValueError, ZeroDivisionError):
+        return Fraction(0)
+
+
+def _walk(voice: etree._Element):
+    """Yield (element, where in the bar it starts) for every child of a voice.
+
+    Where is a fraction of a whole note, read the way MuseScore reads the file: a
+    chord or rest moves on by its written value (dots and tuplets included), a
+    `location` moves on by its fractions, and a grace note takes no time.
+    """
+    at = Fraction(0)
+    tuplets: List[Fraction] = []
     for element in voice:
-        if element.tag == "Clef":
-            return element
+        yield element, at
+        if element.tag == "Tuplet":
+            normal = _fraction(element.findtext("normalNotes")) or Fraction(1)
+            actual = _fraction(element.findtext("actualNotes")) or Fraction(1)
+            tuplets.append(normal / actual)
+        elif element.tag == "endTuplet":
+            if tuplets:
+                tuplets.pop()
+        elif element.tag == "location":
+            at += _fraction(element.findtext("fractions"))
+        elif element.tag in ("Chord", "Rest"):
+            if any(element.find(tag) is not None for tag in _GRACE):
+                continue
+            kind = (element.findtext("durationType") or "").strip()
+            if kind == "measure":
+                at += _fraction(element.findtext("duration"))
+                continue
+            value = _VALUES.get(kind, Fraction(0))
+            dots = int((element.findtext("dots") or "0").strip() or 0)
+            value *= 2 - Fraction(1, 2 ** dots)
+            for ratio in tuplets:
+                value *= ratio
+            at += value
+
+
+def _clefs_at(voice: etree._Element) -> List[Tuple[Fraction, etree._Element]]:
+    """Every clef in this voice, with where in the bar it stands."""
+    return [(at, element) for element, at in _walk(voice) if element.tag == "Clef"]
+
+
+def _first_voice(measure: etree._Element) -> etree._Element:
+    voice = measure.find("voice")
+    if voice is None:
+        voice = etree.Element("voice")
+        index = next((i for i, child in enumerate(measure) if child.tag != "voice"),
+                     len(measure))
+        measure.insert(index, voice)
+    return voice
+
+
+def _insert_at(voice: etree._Element, at: Fraction, clef: etree._Element) -> None:
+    """Put a clef into this voice where the bar reaches `at`.
+
+    It goes in front of whatever introduces the first chord or rest starting there
+    (a tuplet or beam marker belongs with its chord), or at the end of the bar when
+    nothing starts that late — a clef before the barline for the next bar.
+    """
+    anchor = 0
+    for index, (element, start) in enumerate(_walk(voice)):
         if element.tag in ("Chord", "Rest"):
-            return None
-    return None
+            if start >= at:
+                voice.insert(anchor, clef)
+                return
+            anchor = index + 1
+        elif element.tag == "location":
+            anchor = index + 1
+    voice.append(clef)
 
 
 def merge_staves(root: etree._Element, groups: Sequence[Sequence[str]]) -> Dict[str, int]:
@@ -291,15 +364,17 @@ def merge_staves(root: etree._Element, groups: Sequence[Sequence[str]]) -> Dict[
                         f"{name} has more than one voice in bar {number}, so it "
                         "cannot share a staff.")
 
-        # The lower part's clef: tenor and bass go on a bass clef, the way a closed
-        # score prints them. Pitches are absolute, so no note moves.
-        clef = _opening_clef(lower)
+        # The lower part's clefs: tenor and bass go on a bass clef, the way a closed
+        # score prints them, and a clef change the lower part makes later is made
+        # on the shared staff too, at the same beat. Pitches are absolute, so no
+        # note moves whichever clef is drawn.
         for voice in upper.iter("voice"):
             for element in voice.findall("Clef"):
                 voice.remove(element)
-        first = upper.find("Measure/voice")
-        if clef is not None and first is not None:
-            first.insert(0, copy.deepcopy(clef))
+        for top, bottom in zip(upper_bars, lower_bars):
+            for voice in bottom.findall("voice"):
+                for at, clef in _clefs_at(voice):
+                    _insert_at(_first_voice(top), at, copy.deepcopy(clef))
 
         for top, bottom in zip(upper_bars, lower_bars):
             above = (_music_voices(top) or top.findall("voice")[:1])

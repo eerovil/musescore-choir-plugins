@@ -2320,8 +2320,10 @@ to `entry["tstamp"]`.
   the score the mixes come from stay unmerged, so the files, the mixes and the
   audio cache are the same as without it, and the 98% alignment check measures the
   merged picture against the real sound. At most two parts a staff, and a part that
-  already has two voices in a bar is refused naming the bar. Mid-score clef changes
-  on a shared staff are dropped (only the lower part's opening clef is kept).
+  already has two voices in a bar is refused naming the bar. The shared staff's
+  clefs are all the lower part's, its later changes included, each put at the same
+  beat in voice 1 (`_walk` counts dots, tuplets and `location` gaps to find it);
+  the upper part's own clef changes are not drawn.
   `Prepared.staff_of` says which staff each part is drawn on, which is what
   `--emphasise` and the preview's part highlight use.
 - `engrave.py` renders with `breaks: "none"` so the whole score is one system

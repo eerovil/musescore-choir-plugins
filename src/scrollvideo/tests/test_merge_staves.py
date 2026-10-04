@@ -98,6 +98,67 @@ def test_the_lower_parts_clef_is_the_staffs_clef():
     assert [c.findtext("concertClefType") for c in staff.iter("Clef")] == ["F"]
 
 
+def _clef(kind):
+    return (f"<Clef><concertClefType>{kind}</concertClefType>"
+            f"<transposingClefType>{kind}</transposingClefType></Clef>")
+
+
+def _clefs(staff):
+    """[(bar, clef, how many chords or rests come before it in its voice)]."""
+    found = []
+    for number, measure in enumerate(staff.findall("Measure"), 1):
+        for voice in measure.findall("voice"):
+            before = 0
+            for element in voice:
+                if element.tag == "Clef":
+                    found.append((number, element.findtext("concertClefType"), before))
+                elif element.tag in ("Chord", "Rest"):
+                    before += 1
+    return found
+
+
+def test_a_clef_change_in_the_lower_part_is_kept_where_it_happens():
+    """A clef change part-way through stays at its beat; the upper part's own go.
+
+    The lower part decides the staff's clef (tenor and bass share a bass clef), so
+    its later changes are the staff's too. Dropping them would draw the rest of the
+    song in the wrong clef: still the right pitches, but read off ledger lines.
+    """
+    root = _score([
+        ("T", "G8vb", [_chord(60) + _chord(62),
+                       _chord(60) + _clef("F") + _chord(62),
+                       _chord(60) + _chord(62)]),
+        ("B", "F", [_chord(48) + _chord(50),
+                    _chord(48) + _chord(50),
+                    _chord(48) + _clef("G8vb") + _chord(50)]),
+    ])
+    score_mod.merge_staves(root, [("T", "B")])
+    staff = root.find("Score/Staff[@id='1']")
+    assert _clefs(staff) == [(1, "F", 0), (3, "G8vb", 1)]
+    # In the voice the staff's clefs live in, not in the moved one.
+    bar = staff.findall("Measure")[2]
+    assert bar.findall("voice")[0].find("Clef") is not None
+    assert bar.findall("voice")[1].find("Clef") is None
+
+
+def test_a_clef_change_lands_on_its_beat_past_dots_and_triplets():
+    triplet = ("<Tuplet><normalNotes>2</normalNotes><actualNotes>3</actualNotes>"
+               "<baseNote>eighth</baseNote></Tuplet>"
+               + "<Chord><durationType>eighth</durationType><Note><pitch>48</pitch></Note>"
+                 "</Chord>" * 3 + "<endTuplet/>")
+    dotted = ("<Chord><durationType>quarter</durationType><dots>1</dots>"
+              "<Note><pitch>60</pitch></Note></Chord>")
+    eighth = "<Chord><durationType>eighth</durationType><Note><pitch>60</pitch></Note></Chord>"
+    half = "<Chord><durationType>half</durationType><Note><pitch>60</pitch></Note></Chord>"
+    root = _score([
+        ("T", "G8vb", [dotted + eighth + half]),            # beat 3 is the third event
+        ("B", "F", [triplet + "<Rest><durationType>quarter</durationType>"
+                    "</Rest>" + _clef("C3") + half]),       # changes clef on beat 3
+    ])
+    score_mod.merge_staves(root, [("T", "B")])
+    assert _clefs(root.find("Score/Staff[@id='1']")) == [(1, "F", 0), (1, "C3", 2)]
+
+
 def test_stems_are_left_for_musescore_to_choose():
     root = _four()
     score_mod.merge_staves(root, [("S1", "S2")])
@@ -201,3 +262,20 @@ def test_two_parts_engrave_as_one_staff_and_still_line_up_with_the_sound(tmp_pat
     assert len(merged.notes) == len(plain.notes)
     # The audio is made from the same score either way, so the mixes are too.
     assert merged.source == plain.source == SIMPLE
+
+
+@needs_musescore
+def test_a_clef_change_reaches_the_engraving(tmp_path):
+    """The lower part's mid-song clef change is still drawn once the staff is shared."""
+    tree = etree.parse(SIMPLE)
+    alto = tree.getroot().find("Score/Staff[@id='2']")
+    bar = alto.findall("Measure")[1].find("voice")
+    bar.insert(bar.index(bar.find("Beam")), etree.fromstring(_clef("F")))
+    source = tmp_path / "clef_change.mscx"
+    tree.write(str(source))
+
+    merged = prepare(str(source), str(tmp_path), staff_groups=[("S1", "A1")])
+    xml = etree.parse(merged.musicxml).getroot()
+    signs = [(m.get("number"), c.findtext("sign"))
+             for m in xml.iter("measure") for c in m.iter("clef")]
+    assert signs == [("1", "G"), ("2", "F")]
