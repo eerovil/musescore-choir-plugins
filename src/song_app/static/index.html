@@ -36,8 +36,16 @@
   <header>
     <a href="#/" class="brand">♪ song</a>
     <span id="crumb"></span>
+    <!-- The installed app has no browser toolbar, so no reload button of its own
+         (#257). On every page, so it is there when a page looks stuck. -->
+    <button id="reload-page" class="new-issue-link" type="button"
+            onclick="location.reload()"
+            aria-label="Reload page" title="Reload page">
+      <span aria-hidden="true">↻</span>
+      <span>Reload</span>
+    </button>
     <button id="agentdeck-action" class="new-issue-link" type="button"
-            style="display:none;margin-left:auto;background:transparent;font:inherit;cursor:pointer">
+            style="display:none;margin-left:0;background:transparent;font:inherit;cursor:pointer">
       AgentDeck
     </button>
     <a class="new-issue-link"
