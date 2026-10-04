@@ -116,18 +116,30 @@ function newSongDialog() {
       ? "Starts at Scan — mark the printed systems on the page, then read the score off them."
       : "A PDF alone starts at Scan; a score file starts at Clean and skips scanning.";
   };
-  pdf.onchange = sayRoute;
-  xml.onchange = sayRoute;
+  // A blank name falls back to the file's own name, the PDF first (#241). It is
+  // filled into the box so it can be read and edited; a typed name is never
+  // replaced. The server applies the same rule to a blank name.
+  const fileName = () => {
+    const f = pdf.files[0] || xml.files[0];
+    return f ? f.name.replace(/\.[^.]*$/, "").replace(/_/g, " ").replace(/\s+/g, " ").trim() : "";
+  };
+  let autoName = "";
+  const sayName = () => {
+    if (name.value.trim() && name.value !== autoName) return;
+    autoName = fileName();
+    name.value = autoName;
+  };
+  pdf.onchange = () => { sayRoute(); sayName(); };
+  xml.onchange = () => { sayRoute(); sayName(); };
   sayRoute();
   const create = el("button", { className: "primary", onclick: async () => {
-    if (!name.value.trim()) { status.textContent = "Name is required."; return; }
     if (!pdf.files[0] && !xml.files[0]) {
       status.textContent = "A score PDF or a score file is required — give at least one.";
       return;
     }
     if (!voicing.value) { status.textContent = "Choose who sings it — it decides the part names."; return; }
     const fd = new FormData();
-    fd.append("name", name.value.trim());
+    fd.append("name", name.value.trim() || fileName());
     fd.append("per_system", per.checked);
     fd.append("voicing", voicing.value);
     if (xml.files[0]) fd.append("xml", xml.files[0]);

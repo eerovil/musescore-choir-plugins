@@ -337,9 +337,15 @@ def api_import() -> Dict:
     return {"imported": import_legacy()}
 
 
+def name_from_filename(filename: str) -> str:
+    """`Laulun_aika.pdf` -> `Laulun aika`: the stem, underscores as spaces."""
+    stem = os.path.splitext(os.path.basename(filename or ""))[0]
+    return " ".join(stem.replace("_", " ").split())
+
+
 @app.post("/api/songs")
 async def api_create(
-    name: str = Form(...),
+    name: str = Form(""),
     per_system: bool = Form(False),
     voicing: str = Form(""),
     xml: UploadFile = None,
@@ -354,16 +360,19 @@ async def api_create(
     manual route (#86), and a song that arrives with a score is past scanning by
     definition.
     """
-    if not name.strip():
-        raise HTTPException(400, "Name is required")
     has_xml = xml is not None and bool(xml.filename)
     has_pdf = pdf is not None and bool(pdf.filename)
     if not (has_xml or has_pdf):
         raise HTTPException(400, "A MuseScore/MusicXML file or a PDF is required")
+    # A blank name falls back to the file's own name, the PDF first since that
+    # is the ordinary way in (#241).
+    name = name.strip() or name_from_filename(pdf.filename if has_pdf else xml.filename)
+    if not name:
+        raise HTTPException(400, "Name is required")
 
     if voicing and voicing not in ("men", "women", "mixed"):
         raise HTTPException(400, "voicing must be men, women or mixed")
-    song = state.create(name.strip(), per_system, voicing)
+    song = state.create(name, per_system, voicing)
     sources = song.data.setdefault("sources", {})
     if has_xml:
         xml_name = os.path.basename(xml.filename)
