@@ -352,7 +352,7 @@
       "pdf": "Talviuni.pdf",
       "cleaned": "scanned_cleaned.mscx",
       "pdf_sha256": "f2c79a76595f577c",
-      "cleaned_sha256": "1d53204899bd6758",
+      "cleaned_sha256": "6b92aeb5f9cbfc04",
       "video": {
         "videos": 5,
         "uploads": 5,
@@ -378,7 +378,7 @@
       },
       "review": {
         "status": "ok",
-        "notes": "scanned with homr 7652330 on 2026-09-22, then fixed by hand in MuseScore by Eero; the cleaned score is his corrected reading of the page, which is what the practice videos were rendered from"
+        "notes": "scanned with homr 7652330 on 2026-09-22, then fixed by hand in MuseScore by Eero; the cleaned score is his corrected reading of the page, re-uploaded as ground truth on 2026-10-04 (#230). System 3 is known to be wrong in it"
       }
     },
     "virta-scratch": {
