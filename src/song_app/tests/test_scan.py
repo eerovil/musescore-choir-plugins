@@ -397,6 +397,26 @@ def test_a_score_still_starts_at_clean(client, songs):
     assert state.load(r.json()["slug"]).stage == "clean"
 
 
+def test_a_blank_name_falls_back_to_the_pdfs_file_name(client, songs):
+    r = client.post("/api/songs", data={"name": "  "},
+                    files={"pdf": ("Laulun_aika.pdf", b"%PDF-1.4\n", "application/pdf"),
+                           "xml": ("other.musicxml", b"<score/>", "text/xml")})
+    assert r.status_code == 200
+    assert state.load(r.json()["slug"]).name == "Laulun aika"
+
+
+def test_a_blank_name_with_only_a_score_takes_the_scores_file_name(client, songs):
+    r = client.post("/api/songs", files={"xml": ("Hanget soi.mscz", b"x", "application/zip")})
+    assert r.status_code == 200
+    assert state.load(r.json()["slug"]).name == "Hanget soi"
+
+
+def test_a_typed_name_wins_over_the_file_name(client, songs):
+    r = client.post("/api/songs", data={"name": "Typed"},
+                    files={"pdf": ("page.pdf", b"%PDF-1.4\n", "application/pdf")})
+    assert state.load(r.json()["slug"]).name == "Typed"
+
+
 def test_neither_a_score_nor_a_pdf_is_refused(client, songs):
     r = client.post("/api/songs", data={"name": "Nothing"})
     assert r.status_code == 400
