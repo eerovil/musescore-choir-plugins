@@ -78,7 +78,7 @@ def page_count(pdf_path: str) -> int:
 
 
 def render_page(pdf_path: str, page: int, dpi: int, out_dir: str) -> str:
-    """Rasterise one page, cached by (page, dpi) under out_dir.
+    """Rasterise one page, cached by (PDF, its version, page, dpi) under out_dir.
 
     Rendered to a private name and moved into place, because the editor asks for
     every page at once: two requests for the same page would otherwise render over
@@ -89,9 +89,15 @@ def render_page(pdf_path: str, page: int, dpi: int, out_dir: str) -> str:
     # original scan and the cleaned score, and without this the second one to be
     # asked for is served the first one's pages.
     who = hashlib.sha1(os.path.abspath(pdf_path).encode("utf-8")).hexdigest()[:8]
-    out = os.path.join(out_dir, f"page-{who}-{page:02d}@{dpi}.png")
+    # And so does its version. A rendered score is rebuilt at the same path
+    # whenever the score changes, and a name made of the path alone kept serving
+    # the old render's pages: the Fix comparison counted 16 systems on a render
+    # holding 24 and said the two did not correspond (#255).
+    ver = hashlib.sha1(file_version(pdf_path).encode("utf-8")).hexdigest()[:8]
+    out = os.path.join(out_dir, f"page-{who}-{ver}-{page:02d}@{dpi}.png")
     if os.path.exists(out):
         return out
+    _drop_old_versions(out_dir, who, ver, f"-{page:02d}@{dpi}")
     stem = os.path.join(out_dir, f".tmp-{os.getpid()}-{threading.get_ident()}-{who}-{page}@{dpi}")
     subprocess.run(
         ["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page),
@@ -100,6 +106,22 @@ def render_page(pdf_path: str, page: int, dpi: int, out_dir: str) -> str:
     )
     os.replace(stem + ".png", out)          # atomic; last writer wins, both are valid
     return out
+
+
+def _drop_old_versions(out_dir: str, who: str, ver: str, tail: str) -> None:
+    """Remove this page's images from earlier versions of the same PDF.
+
+    Nothing will ask for them again, and a re-rendered score would otherwise
+    leave a full set behind every time it changes.
+    """
+    prefix = f"page-{who}-"
+    for name in os.listdir(out_dir):
+        if (name.startswith(prefix) and not name.startswith(f"{prefix}{ver}-")
+                and (name.endswith(f"{tail}.png") or name.endswith(f"{tail}-grid.png"))):
+            try:
+                os.remove(os.path.join(out_dir, name))
+            except OSError:
+                pass
 
 
 def page_images(
