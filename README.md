@@ -1,213 +1,90 @@
-# plugins/
+# song — choir practice tracks from sheet music
 
-Plugins to help creating practise tracks
+A small web app that turns a choir score into practice videos: one video per
+voice, the score scrolling past with the sounding notes lit up, and that voice
+louder than the others in the mix. It runs on your own machine and works from a
+phone as well as a desktop.
 
-Install by linking/copying to ~/Documents/MuseScore3/Plugins
+You bring the sheet music as a **PDF** (or a score file you already have). The
+app walks one song at a time through a fixed set of stages, remembers where each
+song is, and keeps the printed page on screen next to whatever you are doing.
 
-export.qml is used to create mp3:s for each staff. You can also rename the saves quickly for any combination SSAA, SATB, TTBB, SAM (Soprano, alto, men) etc.
+<img src="docs/images/library.png" width="800" alt="The song library: each song shows how far along it is">
 
-voice2.qml splits a selection into two voices (chords are split, lowest note goes to voice 2, single notes are duplicated)
+## The stages
 
-replacelyrics.qml Is a search an replace for lyrics
+Each song moves left to right along the stage list. You can go back to an earlier
+stage at any time; redoing one clears only what depended on it.
 
-copylyrics.qml copies topmost lyrics to bottom staves
+1. **Start** — name the song and give it a PDF, a score file, or both. A PDF on
+   its own starts at Scan; a score file skips scanning and starts at Clean.
+   Choose whether it is a men's, women's or mixed choir, which decides how the
+   parts are named.
+2. **Scan** — read the notes off the PDF. Mark where each printed system (one
+   line of music across all the staves) sits on the page — *Find systems*
+   proposes them and you drag the edges to fix them — then press *Scan the
+   score*. Each system is read separately by [homr](https://github.com/eerovil/homr),
+   an optical music reader, and you compare every system with the page before
+   approving the result. A system that came out wrong can be read again on its own.
+3. **Clean** — split staves that carry two voices into one staff per voice and
+   name the parts (S1, A1, T1, B1, …). When the staves change parts from one
+   system to the next, you fill in a small grid saying who sings on which staff.
+4. **Fix** — a health check lists bars that look damaged: a voice that does not
+   fill its bar, an extra voice, a bar longer than its time signature. Fix them in
+   MuseScore — on this machine, or download the score, fix it anywhere and upload
+   it back. Recorded fixes (for example a slur the scan missed) are kept in
+   `fixes.json` and applied again every time the song is cleaned.
+5. **Lyrics** — either paste lyrics from your own AI chat (copy the prompt, give it
+   the PDF, paste the answer back; no API key needed) or type them system by
+   system. The app shows where the words and the notes do not match up.
+6. **Review** — one place that says whether the score is ready: health, lyrics,
+   whether MuseScore 3 will open the file. Approve it to move on.
+7. **Record** — render the videos. Preview the scrolling picture in the browser
+   first, adjust tempo, margins and which parts share a staff, then render every
+   part (plus an *ALL* mix) unattended.
+8. **Upload** — send the videos to YouTube, into a playlist if you like. Renaming
+   the song later retitles the uploaded videos too.
 
-add_rest_track adds a new staff that contains 16th rests. This makes all measures about evenly spaced
+<img src="docs/images/scan.png" width="400" alt="Scan stage: proposed system bands drawn over the page"> <img src="docs/images/review.png" width="400" alt="Review stage with the original PDF beside it">
 
-# Setting up on a new machine
+<img src="docs/images/lyrics.png" width="400" alt="Lyrics stage: paste lyrics read by your own AI"> <img src="docs/images/record.png" width="400" alt="Record stage with the scrolling preview playing">
 
-See **[SETUP.md](SETUP.md)**. The short version: the songs are copyrighted, so
-they live in a separate private repo cloned into `songs/`, and you need
-MuseScore 3, `brew install ffmpeg poppler`, and a `.venv`.
+The right-hand viewer switches between the original PDF, single printed systems,
+the scanned score and the cleaned score (with and without lyrics), and can split
+into two panes to compare any two of them.
 
-# song.py — the web app (start here)
+## On a phone
 
-`song.py` is a local web app that ties the whole workflow together behind one
-state-aware door, so you don't have to remember which script to run next.
+Below tablet width the stage panel and the score are shown one at a time, with a
+bar at the bottom to switch between them. The stage list slides in from the ☰ in
+the header, and the score zooms with a pinch or its − / + / Fit buttons. The app can
+be installed to the home screen (see [docs/PWA.md](docs/PWA.md)).
+
+<img src="docs/images/phone.png" width="260" alt="Record stage on a phone">
+
+## Running it
 
 ```bash
-./song.py            # starts a local server and opens the browser
+./song.py                 # starts the server and opens the browser
+./song.py --no-browser    # just the server
+./song.py --port 8123     # prefer a port (the next free one is used if it is taken)
 ```
 
-You start with a **PDF** and an OCR'd **score** (`.mscx`/`.mscz`/`.musicxml`/`.xml`).
-The app walks you through, one song at a time:
+`song.py` uses the project's virtualenv (`.venv/bin/python song.py` if `.venv` is
+not active). Setting up a machine — Python, MuseScore 3, ffmpeg, poppler, and the
+optional homr install — is in **[SETUP.md](SETUP.md)**. homr can also be installed
+or updated from the Scan stage, in its *homr* box.
 
-1. **New song** — name it, drop in the score + PDF, tick *per-system mode* if the
-   staves change parts between systems. The PDF is copied into the song folder.
-2. **Clean** — builds one staff per part. In per-system mode you fill a grid
-   (one row per staff, per system) naming each staff's voices; answers are saved.
-3. **Fix** — a health check lists OCR damage it found (malformed measures, stray
-   extra voices) with measure numbers. Fix them in MuseScore (one click opens the
-   score); when you save, the app re-checks automatically. Dismiss false positives.
-4. **Lyrics** — copy the prompt, hand it + the PDF to ChatGPT/Claude yourself
-   (no API key needed), paste the JSON back; it imports and flags syllable
-   mismatches (which usually mean missing notes — back to Fix).
-5. **Review** — open the finished score for a final look.
-6. **Record** — export per-voice audio / record the play-along video / upload.
+Each song is a folder under `songs/` with its state in `songs/<song>/.song.json`.
+The songs are copyrighted sheet music, so they live in a separate private
+repository cloned into `songs/`.
 
-The PDF stays on screen next to whatever you're working on. State lives in
-`songs/<slug>/.song.json`. Everything below is the underlying CLIs the app drives;
-you can still use them directly. See `DESIGN.md` for the design.
+## More
 
-# clean_score.py
-
-Splits a score where two voices share a staff into one-voice-per-staff, names the
-parts, and writes a `lyricsStaffMap` so lyrics can be re-applied later.
-
-How to use
-
-* Get a musescore file or musicxml file.
-
-* Run from command line
-    ./clean_score.py "path/to/your/file.mscz"
-
-* Output is saved to songs/<name>/<name>_cleaned.mscx
-
-* Force-add empty practice staves with --add, e.g. --add SSAA
-
-* OCR'd scores sometimes have a measure with more than two voices (a chord
-  exploded into several voices, or a real extra part for a few bars). By default
-  (when run in a terminal) clean_score does interactive re-voicing:
-    1. It asks you to name the normal voices top to bottom once, e.g. T1, T2, B.
-    2. At each measure with more than two voices it shows the current voicing and
-       each voice's notes, and asks for the new voicing — one name per voice, in
-       order (blank = drop that voice).
-    3. A name from this staff stays put; a new name (e.g. T3) is placed on a new
-       staff (rests everywhere else); a name belonging to another part is moved
-       into that part's staff.
-  Pass --no-interactive to skip all prompts and just reduce such measures to the
-  staff's normal voice count (with a warning).
-
-* For really badly-parsed scores, where the physical staves carry different parts
-  in different systems (e.g. staff 1 is T1+T2 at the start but T3 from measure 20),
-  use --per-system. clean_score walks the score one printed system at a time (split
-  at line breaks) and, for each system, asks you to name each staff's voices. It
-  then rebuilds the score as one clean staff per part (T1, T2, T3, B, …), pulling
-  each part from whichever staff/voice you named in each system and filling rests
-  where a part is absent. Empty/unused staves are dropped. Per voice: a blank name
-  skips it; if two staves are given the same name in one system, the first wins.
-  Each staff prompt shows the previous system's answer in [brackets] — press Enter
-  to reuse it (type '-' to clear a staff), so unchanged systems need almost no
-  typing. Answers are cached per input file in .persystem_cache.json (repo root), so
-  re-running reuses them automatically (and lets the conversion run without a prompt).
-  The printed system layout (line breaks) is preserved in the result. For lyrics,
-  clean_score writes a per-system staff map so the JSON's printed staff numbers (which
-  shift as parts are omitted per system) land on the right output voices.
-
-# lyric_txt.py — fixing lyrics from a PDF
-
-Scores often arrive with garbled OCR'd lyrics. To replace them with clean lyrics
-read from the original PDF:
-
-1. Split the score first with clean_score.py (this writes the staff map needed below).
-
-2. Ask an LLM (e.g. ChatGPT) to read the PDF and output JSON in the format of
-   lyric_json_prompt.txt (one entry per printed line). Label each line with the voice
-   part(s) it belongs to by NAME ("parts": ["T1","T2"]), read from the staff label in
-   the score. The LLM output will not be 100% correct — fix it by hand as needed.
-
-3. Import the JSON, replacing the existing OCR lyrics:
-       ./lyric_txt.py import laulun_aika.json "songs/Laulun aika/Laulun aika_cleaned.mscx" --replace
-
-   * "parts" by name maps straight to the matching output staff (T1, T2, T3, B …),
-     so it works even when a part is omitted on some lines or printed out of order
-     (e.g. an ossia T3 on top). List several names for a unison line.
-   * If a line has no "parts", import falls back to staff_number + above/below position
-     mapped via the per-system staff map (less robust; names are preferred).
-   * "parts" also accepts output staff ids (integers) if you prefer.
-   * Without --replace, only the measures/staves named in the JSON are changed
-     (partial edit); existing lyrics elsewhere are kept.
-   * Ties dropped by OCR are recovered automatically by clean_score when a parallel
-     voice still has the same-pitch tie. Slurs are NOT auto-recovered (mirroring a slur
-     between voices guesses wrong) — fix them by hand in the score. Lyric alignment is
-     per-measure, so a missing slur only affects its own measure, not the rest of the line.
-
-You can also export the current lyrics to a checkable text format:
-    ./lyric_txt.py export "songs/Laulun aika/Laulun aika_cleaned.mscx" -o lyrics.txt
-
-# record_stemmanauha
-
-IF ONLY RECORDING AUDIO: just run export.qml plugin in musescore
-you don't need this script
-
-Install QuickRecorder.
-Set up QuickRecorder: Add keyboard shortcuts to start record and stop
-	-- Send Shift+Control+Cmd + R to start
-    -- Send Shift+Control+Cmd + S to stop
-
-Setup musescore 3 to export with keyboard shortcut.
-i.e. install plugins and run plugin export.qml with keyboard shortcut
-	-- Send Command-Option-E
-
-Open wanted sheet music in musescore
-Test quickrecorder that the recording area is correct
-
-Run this script with the same basename as the directory in songs/
-i.e. if your song is in songs/MySong, run
-    ./record_stemmanauha.py MySong
-
-media files should appear in song folder. To re-record, delete files
-
-# scroll_video.py — practice videos without the GUI
-
-An alternative to `record_stemmanauha`: instead of screen-recording MuseScore's
-playback cursor, this renders the video directly from the score. No QuickRecorder,
-no AppleScript, no keyboard shortcuts, nothing on screen — so it can run
-unattended, and the audio can't drift against the picture.
-
-    ./scroll_video.py "songs/MySong/MySong_cleaned.mscx"
-    ./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 720 --no-audio
-    # --height alone picks a 16:9 width; pass --width only to override it
-
-One video per voice: the score scrolls horizontally as one long system, a bar number
-above the first bar of each printed system, and the notehead of every sounding note
-turns MuseScore blue — the head itself, not a box drawn over it. Click/percussion
-staves are left out (`--keep-silent` keeps them).
-
-Output is **3840x2160 at 60fps** (`--width`, `--height`, `--fps` to change it); 60fps
-because the picture pans sideways the whole time, which is what judders at 30.
-
-The picture is the same for all voices, so it is encoded once and each voice is that
-video with its own mix muxed on — the same shape as `record_stemmanauha`, where one
-recording gets four mp3s merged onto it. A 2:32 four-part score takes about 4 minutes
-for all four 4K videos (25 MB each), or about 50 seconds at `--height 1080 --fps 30`.
-`--emphasise` instead lights each voice's own notes brighter than the rest, which
-costs a full re-encode per voice.
-
-The scroll is kept from lurching: a bar of 32 notes is drawn five times wider per
-beat than an equally long bar of 4, and since the scroll follows the notes, the
-video surges through one and crawls through the other. This pull request proposes
-capping how much a bar's width per beat may differ from the bar next to it
-(`--spacing-ratio`, default 1.3) and widening only the bars needed to keep that,
-using a hidden staff of rests that is engraved and then cropped off the picture —
-the trick the `add_rest_track.qml` click staff used to do. A dense bar widens the
-few bars around it and tapers away; a song of ordinary bars is left at its natural
-width and gets no hidden staff at all. `--spacing-ratio 0` turns it off.
-`--smooth SECONDS` sets how long the scroll speed is averaged over (default 2;
-0 disables).
-
-The render is deterministic: same score in, byte-identical videos out.
-
-How it fits together:
-
-    .mscx --(MuseScore CLI)--> MusicXML --(verovio)--> engraving + note positions
-          --(MuseScore CLI)--> MIDI ---------------->  the clock (tempo map)
-          --(MuseScore CLI)--> WAV per voice -------->  the audio
-
-Needs `ffmpeg`/`ffprobe` on PATH and `MUSESCORE_CLI_PATH` set, plus the Python
-deps in `pip-requirements.txt` (verovio, cairosvg, mido, numpy).
-
-Repeats and voltas work: the section is drawn once and the scroll jumps back to
-play it again, the way your eyes do. **D.C./D.S. jumps are refused** — the
-engraving doesn't follow them, so the video would drift; write the jump out in
-full first. Every render is also checked against the exported audio before it is
-written, and refused if the highlights don't line up, so a silently out-of-sync
-video is not a thing that can happen.
-
-Note this produces a *scrolling score* video, not a play-along recording of a
-MuseScore window; if you want the latter, `record_stemmanauha` is still there.
-
-The song web app's **Record** stage offers both and defaults to this one — pick
-"Screen recording" there to get the old behaviour. Either way the videos land in
-`songs/<song>/media/video/` under the same names, so the Upload stage does not
-care which one made them.
+- [CHANGELOG.md](CHANGELOG.md) — what changed, and when.
+- [TOOLS.md](TOOLS.md) — the command-line tools the app is built on
+  (`clean_score.py`, `lyric_txt.py`, `scroll_video.py`, `record_stemmanauha.py`)
+  and the MuseScore 3 plugins in `plugins/`.
+- [DESIGN.md](DESIGN.md) — why the app is shaped the way it is.
+- [SETUP.md](SETUP.md) — setting up a new machine.
+- [CLAUDE.md](CLAUDE.md) — detailed notes for whoever works on the code.

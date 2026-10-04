@@ -65,6 +65,9 @@ fixtures/                In-repo prototyping song + the OMR benchmark's PD slice
                          (see fixtures/*/README.md, STEPS.md)
 songs/                   Per-song working dirs (gitignored, output lives here)
 backup/                  Gitignored .mscz backups (created by backup.sh)
+README.md                The web app, for people using it (screenshots in docs/images/)
+TOOLS.md                 The CLI tools and MuseScore plugins, run by hand
+CHANGELOG.md             What changed, by merge date — add a line for each user-facing PR
 *.txt prompts            lyric_json_prompt.txt, lyrics_txt_prompt.txt (LLM prompts for lyric fixing)
 ```
 
@@ -2753,7 +2756,7 @@ This is heavily environment-dependent: it relies on specific macOS apps, global
 keyboard shortcuts wired in QuickRecorder/MuseScore, `MUSESCORE_EXPORT_PATH`,
 `VIDEO_EXPORT_PATH`, and `ffmpeg`/`ffprobe`. It is not portable or testable in
 CI. The `.scpt` AppleScript files and the keyboard shortcuts described in
-`README.md`/`record_stemmanauha.py --help` must match. The CLI still skips a
+`TOOLS.md`/`record_stemmanauha.py --help` must match. The CLI still skips a
 stage when its output exists; the web app exposes the redo flags instead.
 
 ## This host: the live app, the deploy, the board
