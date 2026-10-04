@@ -88,7 +88,6 @@ async function renderLibrary() {
 
 function newSongDialog() {
   const name = el("input", { placeholder: "Song name, e.g. Laulun aika" });
-  const per = el("input", { type: "checkbox" });
   // Which voices sing it. Asked here because nothing in the file can settle it:
   // a male-choir score is written in treble sounding an octave down and editions
   // routinely leave the 8 off the clef, so its tenor line reads as a soprano one.
@@ -140,7 +139,6 @@ function newSongDialog() {
     if (!voicing.value) { status.textContent = "Choose who sings it — it decides the part names."; return; }
     const fd = new FormData();
     fd.append("name", name.value.trim() || fileName());
-    fd.append("per_system", per.checked);
     fd.append("voicing", voicing.value);
     if (xml.files[0]) fd.append("xml", xml.files[0]);
     if (pdf.files[0]) fd.append("pdf", pdf.files[0]);
@@ -160,7 +158,6 @@ function newSongDialog() {
     el("p", { className: "hint" }, "Optional — a score you already have. Hand one in and the page is not scanned."),
     routeHint,
     el("label", {}, "Who sings it"), voicing,
-    el("div", { className: "row" }, per, el("span", {}, "Staves change parts per system (per-system mode)")),
     el("div", { className: "row" }, create, el("button", { onclick: renderLibrary }, "Cancel")),
     status));
 }
