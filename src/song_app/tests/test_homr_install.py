@@ -264,3 +264,98 @@ def test_scanning_and_asking_homr_wait_for_an_install(host, monkeypatch) -> None
         assert r.status_code == 409, (path, r.text)
         assert "being updated" in r.json()["detail"]
     assert not job_state.is_running(song.dir, "scan")
+
+
+def _scannable_song(monkeypatch):
+    from src.song_app import pdf_systems, scan
+
+    song = state.create("Talviuni", per_system=False)
+    song.data.setdefault("sources", {})["pdf"] = "page.pdf"
+    song.save()
+    Path(song.path("page.pdf")).write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(pdf_systems, "load_bounds", lambda _d: [object()])
+    monkeypatch.setattr(scan, "pages_without_bands", lambda _s: [])
+    return song
+
+
+def test_a_read_token_and_an_install_exclude_each_other(host) -> None:
+    reader = homr_install.begin_read()
+    try:
+        with pytest.raises(homr_install.Refused, match="reading"):
+            homr_install.start(_inline)
+    finally:
+        reader.release()
+    reader.release()                       # releasing twice counts once
+    assert homr_install._readers == 0
+
+    host.script(f"while [ ! -e {host.tmp}/go ]; do sleep 0.05; done\n")
+    thread = threading.Thread(target=lambda: homr_install.start(_inline))
+    thread.start()
+    try:
+        deadline = time.time() + 5
+        while not homr_install.busy() and time.time() < deadline:
+            time.sleep(0.01)
+        with pytest.raises(homr_install.Refused, match="being updated"):
+            homr_install.begin_read()
+    finally:
+        (host.tmp / "go").touch()
+        thread.join(timeout=10)
+
+
+def test_no_install_can_start_while_ask_homr_is_reading(host, monkeypatch) -> None:
+    """Paused inside the homr read, after the route's check: the install must wait."""
+    from src.song_app import system_finder
+
+    song = _scannable_song(monkeypatch)
+    entered, go = threading.Event(), threading.Event()
+
+    def reading(*_a, **_k):
+        entered.set()
+        assert go.wait(10)
+        return []
+
+    monkeypatch.setattr(system_finder, "find_bands", reading)
+    client = TestClient(server.app)
+    answers = []
+    thread = threading.Thread(target=lambda: answers.append(client.post(
+        f"/api/songs/{song.slug}/find-systems", json={"method": "homr"})))
+    thread.start()
+    try:
+        assert entered.wait(10)
+        refused = client.post("/api/homr/install")
+        assert refused.status_code == 409 and "reading" in refused.json()["detail"]
+        assert not os.path.exists(homr_install._lock_path())
+    finally:
+        go.set()
+        thread.join(timeout=10)
+    assert answers[0].status_code == 200
+    assert homr_install._readers == 0      # the read let go of its token
+
+
+def test_no_install_can_start_while_a_scan_is_reading(host, monkeypatch) -> None:
+    from src.song_app import scan
+
+    song = _scannable_song(monkeypatch)
+    entered, go = threading.Event(), threading.Event()
+
+    def reading(*_a, **_k):
+        entered.set()
+        assert go.wait(10)
+        return {"holes": [1], "read": 0, "systems": 1}
+
+    monkeypatch.setattr(scan, "run", reading)
+    # One portal for the whole test: a bare TestClient closes its event loop after
+    # each request and waits for the scan's worker, which is the thing paused here.
+    with TestClient(server.app) as client:
+        started = client.post(f"/api/songs/{song.slug}/scan", json={})
+        assert started.json() == {"started": True}
+        try:
+            assert entered.wait(10)
+            with pytest.raises(homr_install.Refused, match="reading"):
+                homr_install.start(_inline)
+        finally:
+            go.set()
+        deadline = time.time() + 10
+        while homr_install._readers and time.time() < deadline:
+            time.sleep(0.02)
+    assert homr_install._readers == 0      # released when the scan's worker ended

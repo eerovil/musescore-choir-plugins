@@ -12,7 +12,10 @@ Three rules, each for a reason:
   keeps that; a timer would not.
 - **Not under a running job.** The script replaces files inside the venv a scan
   is running out of, so it is refused while any song is scanning, cleaning,
-  rendering or uploading, and scans are refused while it runs (:func:`busy`).
+  rendering or uploading, and scans are refused while it runs. Every homr read
+  (a scan, *Ask homr*) holds a :func:`begin_read` token for as long as it runs,
+  and taking one and starting an install go through the same lock, so neither
+  can slip into the gap between the other's check and its start.
 - **One at a time, under one heavy slot.** An install is minutes of download and
   unpacking; a lock file holding the server pid makes a page refresh unable to
   start a second, the same way the recording and scan locks do.
@@ -65,13 +68,52 @@ LOG_LINES = 200
 SONG_JOBS = ("scan", "clean", "render", "upload")
 
 _guard = threading.Lock()
+_readers = 0  # homr reads in flight in this server; guarded by _guard
 _log: "collections.deque[str]" = collections.deque(maxlen=LOG_LINES)
 _result: Dict[str, object] = {}
 _latest: Dict[str, object] = {"at": 0.0, "commit": None, "repo": None}
 
 
 class Refused(RuntimeError):
-    """The install cannot start now; the message says why."""
+    """The install (or a homr read) cannot start now; the message says why."""
+
+
+UPDATING = "homr is being updated — try again when it finishes."
+
+
+class Reader:
+    """A homr read in flight. While one is held, an install cannot start."""
+
+    def __init__(self) -> None:
+        self._held = True
+
+    def release(self) -> None:
+        global _readers
+        with _guard:
+            if self._held:
+                self._held = False
+                _readers -= 1
+
+    def __enter__(self) -> "Reader":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+
+def begin_read() -> Reader:
+    """Take a read token for a scan or a find-systems run, or refuse.
+
+    The check that no install is running and the registration of this read are
+    one step under the install's own lock, so an install can never start in
+    between. Release the token when homr is no longer being run.
+    """
+    global _readers
+    with _guard:
+        if busy():
+            raise Refused(UPDATING)
+        _readers += 1
+    return Reader()
 
 
 def _lock_path() -> str:
@@ -182,6 +224,9 @@ def start(run_in_background: Callable[[Callable[[], None]], object]) -> None:
     with _guard:
         if busy():
             raise Refused("homr is already being installed.")
+        if _readers:
+            raise Refused("homr is reading a page right now; installing would replace "
+                          "it underneath that read. Try again when it finishes.")
         jobs = _running_song_jobs()
         if jobs:
             raise Refused("Wait for " + ", ".join(jobs) + " to finish: a scan, clean, "
