@@ -348,6 +348,39 @@
         "notes": "checked against the page: staves, voices and words match"
       }
     },
+    "talviuni": {
+      "pdf": "Talviuni.pdf",
+      "cleaned": "scanned_cleaned.mscx",
+      "pdf_sha256": "f2c79a76595f577c",
+      "cleaned_sha256": "1d53204899bd6758",
+      "video": {
+        "videos": 5,
+        "uploads": 5,
+        "stage": "scan"
+      },
+      "grouping": {
+        "source": "staff map",
+        "inferred": false,
+        "printed": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "labels": [
+          "T1/T2",
+          "B1/B2"
+        ]
+      },
+      "review": {
+        "status": "ok",
+        "notes": "scanned with homr 7652330 on 2026-09-22, then fixed by hand in MuseScore by Eero; the cleaned score is his corrected reading of the page, which is what the practice videos were rendered from"
+      }
+    },
     "virta-scratch": {
       "pdf": "Virta venhettä vie.pdf",
       "cleaned": "Virta-venhetta-vie_cleaned.mscx",
