@@ -36,11 +36,6 @@ def test_supported_option_in_usage_does_not_hide_an_unrelated_error(monkeypatch,
         stderr="usage: homr [--find-system-bounds] input\n" + diagnostic,
     )
     monkeypatch.setattr(system_finder.pdf_systems, "page_count", lambda _pdf: 1)
-
-    def no_fallback(*args, **kwargs):
-        pytest.fail("a supported CLI failure must not trigger the compatibility helper")
-
-    monkeypatch.setattr(system_finder.legacy, "find_bands", no_fallback)
     with pytest.raises(omr.HomrError, match="could not propose systems"):
         system_finder.find_bands("score.pdf", engine=engine(), queue=False)
 
@@ -49,11 +44,12 @@ def test_supported_option_in_usage_does_not_hide_an_unrelated_error(monkeypatch,
     "homr: error: unrecognized arguments: --find-system-bounds --system-page 1",
     "Error: No such option: --find-system-bounds",
 ])
-def test_explicitly_unsupported_proposal_flag_still_permits_fallback(monkeypatch, diagnostic):
+def test_explicitly_unsupported_proposal_flag_says_homr_is_too_old(monkeypatch, diagnostic):
     response(monkeypatch, stderr=diagnostic, returncode=2)
-    assert system_finder._page_from_homr(
-        "score.pdf", 1, engine=engine(), dpi=200, log=lambda _line: None
-    ) is None
+    with pytest.raises(omr.HomrError, match="too old"):
+        system_finder._page_from_homr(
+            "score.pdf", 1, engine=engine(), dpi=200, log=lambda _line: None
+        )
 
 
 @pytest.mark.parametrize("payload", [

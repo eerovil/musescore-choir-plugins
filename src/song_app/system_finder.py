@@ -1,13 +1,14 @@
-"""Ask homr to propose printed-system bounds, with the pre-#213 path as fallback.
+"""Ask homr to propose printed-system bounds.
 
-The supported implementation now belongs to the homr fork.  This adapter keeps the
-song app's one-heavy-slot-per-page scheduling and turns homr's machine-readable JSON
-into the existing :class:`SystemBounds` values.  It never saves a proposal.
+The grouping rule belongs to the homr fork (``homr/system_finder.py``,
+eerovil/homr#65).  This adapter keeps the song app's one-heavy-slot-per-page
+scheduling and turns homr's machine-readable JSON into the existing
+:class:`SystemBounds` values.  It never saves a proposal.
 
-Until the merged fork has been installed and re-measured on the host, an older homr
-that does not know ``--find-system-bounds`` falls back to the previous app-side helper.
-That fallback is deliberately isolated in :mod:`system_finder_legacy`; new grouping
-work belongs in homr, not here.
+A homr older than that fork does not know ``--find-system-bounds``.  The app-side
+copy of the rule that used to stand in for it was removed by #144, once the fork was
+installed and re-measured, so such a homr is told to update rather than quietly
+answered by a second implementation.
 """
 
 from __future__ import annotations
@@ -19,28 +20,13 @@ import subprocess
 from contextlib import nullcontext
 from typing import Callable, List, Optional
 
-from . import heavy_slot, omr, pdf_systems, system_finder_legacy as legacy
+from . import heavy_slot, omr, pdf_systems
 from .omr import Engine, HomrError, HomrMissing
 from .pdf_systems import SystemBounds
 
 Logger = Callable[[str], None]
 FIND_DPI = int(os.getenv("SYSTEM_FIND_DPI", "200"))
 DEFAULT_TIMEOUT = 300
-
-# Compatibility exports for callers/tests written before #213.  Production proposal
-# work below does not use these; they stay only while the old installed homr may need
-# the fallback implementation.
-TOL_X = legacy.TOL_X
-EDGE_X = legacy.EDGE_X
-AGREE = legacy.AGREE
-SLACK = legacy.SLACK
-group_staves = legacy.group_staves
-bands_for_page = legacy.bands_for_page
-_interior_barlines = legacy._interior_barlines
-_agreement = legacy._agreement
-_gap_threshold = legacy._gap_threshold
-staves_on_page = legacy.staves_on_page
-
 
 def _noop(_message: str) -> None:
     pass
@@ -57,9 +43,9 @@ def _engine_command(engine: Engine) -> List[str]:
 
 
 def _unsupported(stderr: str) -> bool:
-    """Only an explicit rejection of the proposal flag permits legacy fallback."""
+    """Whether homr rejected the proposal flag itself, i.e. is too old to have it."""
     # argparse also prints supported options in its usage text. Finding the flag
-    # there must not turn an unrelated CLI error into a successful legacy result.
+    # there must not turn an unrelated CLI error into "update homr".
     return re.search(
         r"(?:unrecognized arguments|no such option):[^\r\n]*"
         r"(?<![\w-])--find-system-bounds(?![\w-])",
@@ -76,8 +62,8 @@ def _page_from_homr(
     dpi: int,
     log: Logger,
     timeout: int = DEFAULT_TIMEOUT,
-) -> Optional[List[SystemBounds]]:
-    """Ask supported homr for one page; return ``None`` only for an older CLI."""
+) -> List[SystemBounds]:
+    """Ask homr for one page's proposal."""
     command = _engine_command(engine) + [
         pdf_path,
         "--gpu",
@@ -106,7 +92,11 @@ def _page_from_homr(
             log(line.rstrip())
     if result.returncode != 0:
         if _unsupported(result.stderr or ""):
-            return None
+            raise HomrError(
+                f"This homr ({engine.label}) is too old to propose systems: it has no "
+                "--find-system-bounds. Update it (scripts/install-homr.sh, or git pull "
+                "in a working copy) or draw the bands by hand."
+            )
         raise HomrError(
             f"homr could not propose systems for page {page}.\n"
             + "\n".join((result.stderr or "").splitlines()[-20:])
@@ -146,7 +136,7 @@ def find_bands(
     dpi: int = FIND_DPI,
     queue: bool = True,
 ) -> List[SystemBounds]:
-    """Request homr's proposal page by page, unsaved, falling back only for old homr."""
+    """Request homr's proposal page by page, unsaved."""
     engine = engine or omr.default_engine()
     if not engine:
         raise HomrMissing(
@@ -173,16 +163,6 @@ def find_bands(
                 log=watched,
             )
             slot.check()
-        if found is None:
-            log("Installed homr has no supported system-bound proposal; using compatibility fallback")
-            return legacy.find_bands(
-                pdf_path,
-                out_dir=out_dir,
-                engine=engine,
-                log=log,
-                dpi=dpi,
-                queue=queue,
-            )
         log(f"Page {page}: {len(found)} system(s)")
         for bound in found:
             proposed.append(

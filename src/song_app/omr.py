@@ -24,14 +24,12 @@ Three things about homr that this module exists to absorb:
   *registered* and not whether it can run. This host's card is below
   onnxruntime's floor (issue #93), so auto would pick CUDA and die on the
   first segnet node without falling back. Every call passes ``no``.
-* Its **slurs are not paired**. ``slurStart`` and ``slurStop`` are predicted one
-  note at a time, and the MusicXML ``number`` they would pair by is the staff
-  number, the same for every slur on the staff — so a dropped stop leaves its
-  start open to be closed by whatever stop comes next, and the slur that
-  results swallows the syllable slots of everything under it. Every parse this
-  module returns has been through :func:`resolve_slurs`, which is where that is
-  argued out. It is a property of the tool, not of a page or a crop, so it is
-  normalised once, here.
+* Its **slurs used to come out unpaired**, so a dropped stop let one slur run
+  away over bars nobody engraved and swallow their syllable slots. That repair
+  lived here until #144 and is now homr's own (``homr/slur_resolution.py``,
+  eerovil/homr#62): under #141's rule a slur that is not on the page is homr's
+  not to emit. Re-measured on the installed fork, the old pass dropped nothing
+  on 21 systems. A homr older than that fork is not repaired here any more.
 * Its **whole-measure rests are not given a voice of their own**. A whole rest
   and a sung voice's notes come out sharing one ``<voice>``, which overfills
   the bar by a whole note by construction. :func:`split_measure_rests` moves
@@ -83,10 +81,6 @@ DEFAULT_VENV = os.path.join(
 DEFAULT_TIMEOUT = 600
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg")
-
-#: How many barlines a slur may cross before it is read as a pairing accident
-#: rather than music. See :func:`resolve_slurs`.
-MAX_SLUR_BARS = int(os.getenv("OMR_MAX_SLUR_BARS", "1"))
 
 #: How much of homr's output an error carries. Its stderr is chatty and the
 #: line that explains the failure is at the end.
@@ -546,8 +540,8 @@ def read_page(
     reads the page with a homr other than the installed one (:func:`engines`) —
     a working copy of the fork, run from its own source.
 
-    The MusicXML that comes back has had its slurs resolved (:func:`resolve_slurs`)
-    and its shared whole-measure rests moved out (:func:`split_measure_rests`),
+    The MusicXML that comes back has had its shared whole-measure rests moved
+    out (:func:`split_measure_rests`),
     and it carries one comment line saying which homr read it
     (:func:`stamp_provenance`), so a parse read off disk on its own still says
     where it came from.
@@ -600,7 +594,6 @@ def read_page(
                 + _tail(output)
             )
 
-        resolve_slurs_in(produced, log=watched)
         was_moved = split_measure_rests_in(produced, log=watched)
         if repairs is not None:
             repairs.extend(was_moved)
@@ -612,117 +605,6 @@ def read_page(
         shutil.move(produced, destination)
 
     return destination
-
-
-def resolve_slurs_in(musicxml_path: str, log: Logger = _noop) -> int:
-    """Resolve the slurs of every part in a MusicXML file, in place.
-
-    A parse with nothing to change is left untouched rather than rewritten, so
-    a page homr got right comes back exactly as homr wrote it.
-    """
-    tree = etree.parse(musicxml_path)
-    root = tree.getroot()
-    before = len(root.findall(".//slur"))
-    dropped = sum(resolve_slurs(part) for part in root.findall("part"))
-    if len(root.findall(".//slur")) != before:
-        tree.write(musicxml_path, xml_declaration=True, encoding="UTF-8")
-    if dropped:
-        log(f"Dropped {dropped} slur{'s' if dropped > 1 else ''} homr never engraved")
-    return dropped
-
-
-def resolve_slurs(part: etree._Element, max_bars: int = MAX_SLUR_BARS) -> int:
-    """Pair up homr's slur tokens, and drop the pairs that run away.
-
-    homr predicts ``slurStart`` / ``slurStop`` as **per-note tokens, one at a
-    time** (``music_xml_generator.build_slurs``), and there is no pairing pass
-    anywhere. The MusicXML ``number`` that pairing depends on is set to the
-    *staff* number, so it is identical for every slur on that staff. Two things
-    follow, and the second is the damaging one: homr cannot express two
-    overlapping slurs, and a dropped stop does not merely lose its own slur --
-    it leaves the start open to be closed by whatever stop comes next.
-
-    On B5's whole-page parse, 42 starts and 37 stops import as 21 slurs, two of
-    them runaway: one spanning 5 1/4 bars from m46, one spanning 3 bars from
-    m54. Between them they cover 21 notes, and a slur continuation takes no
-    syllable, so the page offers 91 lyric slots for 132 notes. **Sixteen
-    syllable slots swallowed by two slurs nobody engraved** -- and they surface
-    as ``too_few``, which the reading playbook teaches a reader to attribute to
-    a voice sharing another staff's words. The failure points at a wrong
-    diagnosis rather than at itself.
-
-    So: walk the tokens in order, pair them, and keep only the pairs whose ends
-    are at most ``max_bars`` barlines apart. Everything else goes -- the runaway
-    pairs, a start made while one is already open, and a stop with nothing open.
-    What is written back is one unambiguous alternating stream, which is the
-    point: it says what we mean and leaves the importer nothing to guess at.
-    Returns how many runaway pairs were dropped.
-
-    **This belongs here and not further downstream**, because the ``number``
-    the mis-pairing turns on is the staff number and nothing about it is
-    per-page or per-crop. A whole-page parse has it, and so does one system cut
-    out of the same page. It is a property of the tool, so it is normalised
-    once at the boundary where the app meets the tool -- next to the missing
-    ``--output``, the teaser litter and the MusicXML homr deletes when parsing
-    raises.
-
-    **The threshold was measured, not assumed.** Across all seven homr parses of
-    the benchmark, every pair spans nought or one bar apart from those two
-    runaways; on the very page they come from, the human-corrected ``Lemmen
-    nosto`` has no slur crossing more than one barline in its first 68 bars, and
-    the hand-verified fixture has none at all. One barline is what a genuine
-    melisma crosses (``il-man il-ki-rii-vi-`` is the worked example in the lyric
-    tests), so the rule leaves real music alone. It is not a claim about
-    engraving in general -- modern choral scores in ``songs/`` do print phrase
-    marks over four bars. It is a claim about *this input*, where a long slur
-    cannot be told from an accident because homr has no way to write one
-    deliberately.
-
-    **Taking the unmatched tokens out is not tidiness, and this is the part that
-    cost the most to find.** Issue #112 measured a lone dangler as cosmetic --
-    MuseScore drops it, silently -- and it is, in isolation. It is not cosmetic
-    in a stream. Put four quarter-note bars through the CLI with a stop that
-    closes nothing, and *every later slur of that number is lost too*; and
-    leaving the redundant starts in means that removing a runaway pair merely
-    promotes one, which closes on a stop further away still. Removing the
-    runaway pairs alone left B5 with a fresh 2-bar runaway at m51. Removing the
-    redundant starts alone dropped B5 from 21 slurs to 6. Doing all of it in one
-    pass gives 24 slurs, none of them spanning more than a bar -- exactly the
-    pairing computed here, so what the score says and what this function decided
-    cannot drift apart. Five of those 24 are short slurs homr got right and the
-    unmatched tokens were costing it.
-    """
-    doomed: List[etree._Element] = []
-    dropped = 0
-    open_slurs: dict = {}
-
-    for bar, measure in enumerate(part.findall("measure")):
-        for note in measure.findall("note"):
-            for slur in note.findall("notations/slur"):
-                number = slur.get("number", "1")
-                kind = slur.get("type")
-                if kind == "start":
-                    if number in open_slurs:
-                        # MuseScore keeps the first of two starts sharing a
-                        # number and discards this one; so do we, explicitly.
-                        doomed.append(slur)
-                    else:
-                        open_slurs[number] = (bar, slur)
-                elif kind == "stop":
-                    began = open_slurs.pop(number, None)
-                    if began is None:
-                        doomed.append(slur)
-                    elif bar - began[0] > max_bars:
-                        doomed.extend((began[1], slur))
-                        dropped += 1
-
-    doomed.extend(slur for _, slur in open_slurs.values())
-    for slur in doomed:
-        notations = slur.getparent()
-        notations.remove(slur)
-        if len(notations) == 0:
-            notations.getparent().remove(notations)
-    return dropped
 
 
 @dataclass(frozen=True)
@@ -797,8 +679,7 @@ def split_measure_rests(part: etree._Element) -> List[MovedRest]:
     cursor arithmetic redone around it. It needs **no meter**, which is what
     makes it a boundary repair rather than a job for ``clean_score``: a
     per-system crop usually declares no time signature at all, so a rule that
-    had to know the bar length could not run here. That is the same property
-    that put :func:`resolve_slurs` here.
+    had to know the bar length could not run here.
 
     **What it does not fix.** The voice the rest was sharing is left however
     homr read it -- in the diagnosed bar, three quarters of music in a bar of
