@@ -211,6 +211,24 @@ def _has_tie_start(chord: etree._Element) -> bool:
     return False
 
 
+def _after_continuation(chord: etree._Element, slur_active: bool, tie_active: bool):
+    """(slur_active, tie_active) after a continuation chord, which takes no syllable.
+
+    It closes the slur or tie it ends, and opens any it starts: a melisma can begin on
+    the note a tie carries over the barline, or on the note another slur ends on.
+    Checking only the close lost the new slur, and the notes under it took syllables.
+    """
+    if _is_slur_continuation(chord):
+        slur_active = False
+    if _is_tie_continuation(chord):
+        tie_active = False
+    if _has_slur_start(chord):
+        slur_active = True
+    if _has_tie_start(chord):
+        tie_active = True
+    return slur_active, tie_active
+
+
 def _is_verse1(no_el: Optional[etree._Element]) -> bool:
     """Verse 1 = omit <no> (no element or empty). <no>1</no> = verse 2."""
     if no_el is None:
@@ -323,10 +341,7 @@ def _eligibility_per_measure(score: etree._Element) -> Dict[int, Dict[int, List[
             for el in voice:
                 if el.tag == "Chord":
                     if _is_continuation_no_lyric(el):
-                        if _is_slur_continuation(el):
-                            slur_active = False
-                        if _is_tie_continuation(el):
-                            tie_active = False
+                        slur_active, tie_active = _after_continuation(el, slur_active, tie_active)
                         flags.append(False)
                         continue
                     if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
@@ -768,10 +783,7 @@ def _lyrics_by_measure_staff(score_root: etree._Element) -> Dict[int, Dict[int, 
             for el in voice:
                 if el.tag == "Chord":
                     if _is_continuation_no_lyric(el):
-                        if _is_slur_continuation(el):
-                            slur_active = False
-                        if _is_tie_continuation(el):
-                            tie_active = False
+                        slur_active, tie_active = _after_continuation(el, slur_active, tie_active)
                         continue
                     if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
                         continue  # middle of slur: ineligible, no token
@@ -974,10 +986,7 @@ def _count_remaining_eligible_chords(
         if el.tag != "Chord":
             continue
         if _is_continuation_no_lyric(el):
-            if _is_slur_continuation(el):
-                sa = False
-            if _is_tie_continuation(el):
-                ta = False
+            sa, ta = _after_continuation(el, sa, ta)
             continue
         if sa and not _has_slur_start(el) and not _is_slur_continuation(el):
             continue
@@ -1071,10 +1080,7 @@ def _import_txt_into_mscx(
                 if _is_continuation_no_lyric(el):
                     if placing:
                         _clear_verse1_lyrics(el)
-                    if _is_slur_continuation(el):
-                        slur_active = False
-                    if _is_tie_continuation(el):
-                        tie_active = False
+                    slur_active, tie_active = _after_continuation(el, slur_active, tie_active)
                     continue
                 if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
                     if placing:

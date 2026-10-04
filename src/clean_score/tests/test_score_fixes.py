@@ -210,3 +210,53 @@ def test_a_sentence_that_says_nothing_is_an_error():
 
 def test_free_text_ignores_the_kinds_that_do_apply():
     assert free_text([{"kind": "undot", "staff": 3, "measure": 1, "index": 0}]) == []
+
+
+def _tie(chord_from, chord_to):
+    """Tie the first note of one chord to the first note of the next, as MuseScore writes it."""
+    head = etree.SubElement(chord_from.find("Note"), "Spanner", type="Tie")
+    etree.SubElement(head, "Tie")
+    etree.SubElement(etree.SubElement(head, "next"), "location")
+    tail = etree.SubElement(chord_to.find("Note"), "Spanner", type="Tie")
+    etree.SubElement(etree.SubElement(tail, "prev"), "location")
+
+
+def test_a_slur_starting_on_a_tied_into_note_silences_the_notes_after_it():
+    """#251: m99's last note tied into m100, then slurred on. The tied note is
+    already silent; the slur it opens must still silence the notes under it."""
+    root = _score([("quarter", 0, 69)] * 4)
+    staff = root.find(".//Staff[Measure]")
+    staff.append(etree.fromstring(etree.tostring(staff.find("Measure"))))
+    m1, m2 = staff.findall("Measure")
+    _tie(m1.findall(".//Chord")[-1], m2.findall(".//Chord")[0])
+    assert lyric_txt.slot_counts(root)[3][2] == 3       # the tied-into note only
+    apply_fixes(root, [{"kind": "slur", "staff": 3, "measure": 2,
+                        "index": 0, "span": 2, "why": "x"}])
+    assert lyric_txt.slot_counts(root)[3] == {1: 4, 2: 1}
+    assert lyric_txt.syllable_slots(root, 3, 2) == [False, False, False, True]
+
+
+def test_a_slur_starting_where_another_ends_silences_the_notes_after_it():
+    """#251: two slurs meeting on one note, as on Ketun joululaulu m77."""
+    root = _score([("quarter", 0, 60)] * 4)
+    apply_fixes(root, [{"kind": "slur", "staff": 3, "measure": 1,
+                        "index": 0, "span": 1, "why": "x"},
+                       {"kind": "slur", "staff": 3, "measure": 1,
+                        "index": 1, "span": 2, "why": "x"}])
+    assert lyric_txt.syllable_slots(root, 3, 1) == [True, False, False, False]
+
+
+def test_lyrics_placed_over_a_slur_from_a_tied_note_round_trip():
+    """Import and export agree on the new rule: the slurred notes get no syllable."""
+    root = _score([("quarter", 0, 69)] * 4)
+    staff = root.find(".//Staff[Measure]")
+    staff.append(etree.fromstring(etree.tostring(staff.find("Measure"))))
+    m1, m2 = staff.findall("Measure")
+    _tie(m1.findall(".//Chord")[-1], m2.findall(".//Chord")[0])
+    apply_fixes(root, [{"kind": "slur", "staff": 3, "measure": 2,
+                        "index": 0, "span": 2, "why": "x"}])
+    txt = "# Measure 1\n3: a b c vä\n# Measure 2\n3: lo\n"
+    lyric_txt.place_lyrics(root, txt, fmt="txt", replace=True)
+    chords = m2.findall(".//Chord")
+    assert [c.findtext(".//Lyrics/text") for c in chords] == [None, None, None, "lo"]
+    assert "3 [1]: lo" in lyric_txt.export_lyrics(root)
