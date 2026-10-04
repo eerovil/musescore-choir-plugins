@@ -517,12 +517,14 @@ Scanning is split across two repositories — `eerovil/homr` (the fork) and this
 and until this pull request there was no written rule saying which gets a given fix.
 One was being followed consistently enough to be real and inconsistently enough that
 "why is this here?" had a different answer per case. This section is that rule,
-proposed by this pull request and settled on #141. **This file is the only place it is
-written down.** A short statement of it for the fork's `README.md` exists but is not
-merged — it is sitting on `eerovil/homr#22`, opened for #141 and now well behind that
-fork's `main` — so anybody reading `eerovil/homr` today finds nothing about which
-repository a fix belongs in. It stays that way until a person merges that pull request:
-`/merge` releases work in this repository and cannot release a fork's.
+proposed by this pull request and settled on #141. This file carries the full
+reasoning; the fork's `README.md` carries a short statement of the rule ("About this
+fork", merged as `eerovil/homr#22`).
+
+`/merge` on a card here releases a fork pull request too, as long as its description
+names the card in full (`eerovil/musescore-choir-plugins#<n>` or the issue URL; a bare
+`#<n>` does not count). It goes through the same review and test gates and is not
+merged by hand.
 
 **The fork is a permanent home we own.** Not a staging area, not a waiting room on the
 way upstream. `scripts/install-homr.sh` installs it and a second host reproduces it by
