@@ -15,7 +15,9 @@ Three rules, each for a reason:
   rendering or uploading, and scans are refused while it runs. Every homr read
   (a scan, *Ask homr*) holds a :func:`begin_read` token for as long as it runs,
   and taking one and starting an install go through the same lock, so neither
-  can slip into the gap between the other's check and its start.
+  can slip into the gap between the other's check and its start. Both are files
+  beside the songs under an ``flock``, not memory: during a restart the old
+  server and the new one overlap, and each has to see the other's reads.
 - **One at a time, under one heavy slot.** An install is minutes of download and
   unpacking; a lock file holding the server pid makes a page refresh unable to
   start a second, the same way the recording and scan locks do.
@@ -27,11 +29,14 @@ WebSocket is per song and this belongs to the host.
 from __future__ import annotations
 
 import collections
+import contextlib
+import fcntl
 import os
 import signal
 import subprocess
 import threading
 import time
+import uuid
 from typing import Callable, Dict, List, Optional
 
 from . import heavy_slot, job_state, omr, state
@@ -67,8 +72,6 @@ LOG_LINES = 200
 #: Song jobs that run homr or would be read half-written by one being replaced.
 SONG_JOBS = ("scan", "clean", "render", "upload")
 
-_guard = threading.Lock()
-_readers = 0  # homr reads in flight in this server; guarded by _guard
 _log: "collections.deque[str]" = collections.deque(maxlen=LOG_LINES)
 _result: Dict[str, object] = {}
 _latest: Dict[str, object] = {"at": 0.0, "commit": None, "repo": None}
@@ -81,18 +84,59 @@ class Refused(RuntimeError):
 UPDATING = "homr is being updated — try again when it finishes."
 
 
+@contextlib.contextmanager
+def _gate():
+    """The one cross-process lock every check-then-start here goes through.
+
+    An ``flock`` rather than a thread lock: an old server finishing a request
+    while the new one starts is two processes sharing one venv.
+    """
+    os.makedirs(state.SONGS_DIR, exist_ok=True)
+    with open(os.path.join(state.SONGS_DIR, ".homr-gate.lock"), "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _readers_dir() -> str:
+    return os.path.join(state.SONGS_DIR, ".homr-readers")
+
+
+def readers() -> int:
+    """homr reads in flight in any live process. A dead process's are cleared."""
+    try:
+        names = os.listdir(_readers_dir())
+    except FileNotFoundError:
+        return 0
+    live = 0
+    for name in names:
+        try:
+            pid = int(name.split("-", 1)[0])
+        except ValueError:
+            pid = 0
+        if pid == os.getpid() or _alive(pid):
+            live += 1
+        else:
+            try:
+                os.remove(os.path.join(_readers_dir(), name))
+            except OSError:
+                pass
+    return live
+
+
 class Reader:
     """A homr read in flight. While one is held, an install cannot start."""
 
-    def __init__(self) -> None:
-        self._held = True
+    def __init__(self, path: str) -> None:
+        self.path = path
 
     def release(self) -> None:
-        global _readers
-        with _guard:
-            if self._held:
-                self._held = False
-                _readers -= 1
+        try:
+            os.remove(self.path)
+        except FileNotFoundError:
+            pass
 
     def __enter__(self) -> "Reader":
         return self
@@ -108,12 +152,14 @@ def begin_read() -> Reader:
     one step under the install's own lock, so an install can never start in
     between. Release the token when homr is no longer being run.
     """
-    global _readers
-    with _guard:
+    with _gate():
         if busy():
             raise Refused(UPDATING)
-        _readers += 1
-    return Reader()
+        os.makedirs(_readers_dir(), exist_ok=True)
+        path = os.path.join(_readers_dir(), f"{os.getpid()}-{uuid.uuid4().hex}")
+        with open(path, "w", encoding="utf-8"):
+            pass
+    return Reader(path)
 
 
 def _lock_path() -> str:
@@ -221,10 +267,10 @@ def start(run_in_background: Callable[[Callable[[], None]], object]) -> None:
 
     Raises :class:`Refused` with a sentence for the person who pressed.
     """
-    with _guard:
+    with _gate():
         if busy():
             raise Refused("homr is already being installed.")
-        if _readers:
+        if readers():
             raise Refused("homr is reading a page right now; installing would replace "
                           "it underneath that read. Try again when it finishes.")
         jobs = _running_song_jobs()

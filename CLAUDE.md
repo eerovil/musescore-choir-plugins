@@ -1148,7 +1148,7 @@ state model are in `DESIGN.md`.
   never automatic — the deploy does not touch homr, so the day a parse changes is a
   day somebody chose. It runs under one heavy slot, is refused while any song job
   runs (it replaces files inside the venv a scan reads from), and scans and *Ask
-  homr* answer 409 while it runs — each read holds a token taken under the install's own lock, so neither can start in the gap after the other's check; a pid lock file beside the songs keeps it to one
+  homr* answer 409 while it runs — each read holds a token file taken under the same `flock` as the install, so neither can start in the gap after the other's check, even across the old and new server during a restart; a pid lock file beside the songs keeps it to one
   at a time. The button always installs `main` (an explicit `HOMR_SOURCE` is a
   shell's business), and the script now fetches `uv` into `~/.local/bin` when a
   host has none, which was the one step that stopped a fresh install cold.

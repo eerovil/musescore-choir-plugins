@@ -286,7 +286,7 @@ def test_a_read_token_and_an_install_exclude_each_other(host) -> None:
     finally:
         reader.release()
     reader.release()                       # releasing twice counts once
-    assert homr_install._readers == 0
+    assert homr_install.readers() == 0
 
     host.script(f"while [ ! -e {host.tmp}/go ]; do sleep 0.05; done\n")
     thread = threading.Thread(target=lambda: homr_install.start(_inline))
@@ -329,7 +329,7 @@ def test_no_install_can_start_while_ask_homr_is_reading(host, monkeypatch) -> No
         go.set()
         thread.join(timeout=10)
     assert answers[0].status_code == 200
-    assert homr_install._readers == 0      # the read let go of its token
+    assert homr_install.readers() == 0      # the read let go of its token
 
 
 def test_no_install_can_start_while_a_scan_is_reading(host, monkeypatch) -> None:
@@ -356,6 +356,95 @@ def test_no_install_can_start_while_a_scan_is_reading(host, monkeypatch) -> None
         finally:
             go.set()
         deadline = time.time() + 10
-        while homr_install._readers and time.time() < deadline:
+        while homr_install.readers() and time.time() < deadline:
             time.sleep(0.02)
-    assert homr_install._readers == 0      # released when the scan's worker ended
+    assert homr_install.readers() == 0      # released when the scan's worker ended
+
+
+# The restart window: the old server and the new one are two processes sharing a
+# venv, so the read/install exclusion has to hold between processes, not threads.
+_OTHER_SERVER = """
+import sys
+from src.song_app import homr_install, state
+state.SONGS_DIR = sys.argv[1]
+mode = sys.argv[2]
+if mode == "read":
+    reader = homr_install.begin_read()
+    print("held", flush=True)
+    if sys.stdin.readline().strip() == "release":
+        reader.release()
+    print("done", flush=True)
+elif mode == "install":
+    try:
+        homr_install.start(lambda work: None)   # holds the install lock, runs nothing
+        print("started", flush=True)
+    except homr_install.Refused as exc:
+        print("refused: " + str(exc), flush=True)
+    sys.stdin.readline()
+"""
+
+
+@pytest.fixture
+def other_server(host, tmp_path):
+    import subprocess
+    import sys
+
+    script = tmp_path / "other_server.py"
+    script.write_text(_OTHER_SERVER, encoding="utf-8")
+    procs = []
+
+    def spawn(mode: str):
+        proc = subprocess.Popen(
+            [sys.executable, str(script), state.SONGS_DIR, mode],
+            cwd=homr_install.REPO_ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            text=True, env=dict(os.environ, PYTHONPATH=homr_install.REPO_ROOT))
+        procs.append(proc)
+        return proc
+
+    yield spawn
+    for proc in procs:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_an_install_waits_for_a_read_in_another_server(other_server) -> None:
+    old = other_server("read")
+    assert old.stdout.readline().strip() == "held"
+    with pytest.raises(homr_install.Refused, match="reading"):
+        homr_install.start(_inline)
+    assert not os.path.exists(homr_install._lock_path())
+
+    old.stdin.write("release\n")
+    old.stdin.flush()
+    assert old.stdout.readline().strip() == "done"
+    assert homr_install.readers() == 0
+
+
+def test_a_read_left_by_a_dead_server_does_not_block_installs(other_server) -> None:
+    old = other_server("read")
+    assert old.stdout.readline().strip() == "held"
+    assert homr_install.readers() == 1
+    old.kill()
+    old.wait(timeout=10)
+    assert homr_install.readers() == 0       # its token is cleared as stale
+    homr_install.start(_inline)
+    assert homr_install.status()["result"]["ok"] is True
+
+
+def test_another_server_cannot_install_under_a_read_here(other_server) -> None:
+    reader = homr_install.begin_read()
+    try:
+        new = other_server("install")
+        line = new.stdout.readline().strip()
+        assert line.startswith("refused:") and "reading" in line
+    finally:
+        reader.release()
+
+
+def test_a_read_here_waits_for_an_install_in_another_server(other_server) -> None:
+    new = other_server("install")
+    assert new.stdout.readline().strip() == "started"
+    with pytest.raises(homr_install.Refused, match="being updated"):
+        homr_install.begin_read()
+    assert homr_install.readers() == 0
