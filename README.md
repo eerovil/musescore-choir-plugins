@@ -55,8 +55,9 @@ into two panes to compare any two of them.
 
 ## On a phone
 
-Below tablet width the three panes become one at a time, with a bar at the bottom
-to switch between the stage list, the current stage and the score. The app can
+Below tablet width the stage panel and the score are shown one at a time, with a
+bar at the bottom to switch between them. The stage list slides in from the ☰ in
+the header, and the score zooms with a pinch or its − / + / Fit buttons. The app can
 be installed to the home screen (see [docs/PWA.md](docs/PWA.md)).
 
 <img src="docs/images/phone.png" width="260" alt="Record stage on a phone">
@@ -72,7 +73,7 @@ be installed to the home screen (see [docs/PWA.md](docs/PWA.md)).
 `song.py` uses the project's virtualenv (`.venv/bin/python song.py` if `.venv` is
 not active). Setting up a machine — Python, MuseScore 3, ffmpeg, poppler, and the
 optional homr install — is in **[SETUP.md](SETUP.md)**. homr can also be installed
-or updated from the Library page.
+or updated from the Scan stage, in its *homr* box.
 
 Each song is a folder under `songs/` with its state in `songs/<song>/.song.json`.
 The songs are copyrighted sheet music, so they live in a separate private

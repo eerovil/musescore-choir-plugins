@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-04
 
+- On a phone, the stage list moves into a ☰ drawer, the bottom bar stays on
+  screen, and the score zooms itself (pinch, or − / + / Fit). (#263)
+- The homr install box moved from the Library page to the Scan panel, where homr
+  is used. (#262)
 - The header has an always-visible **Reload** button. (#259)
 - Page images cut from a PDF follow the PDF they came from, so a replaced PDF is
   not shown with old pictures. (#256)
