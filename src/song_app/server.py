@@ -407,6 +407,8 @@ def _run_scan(slug: str, opts: Dict) -> None:
         result = scan.run(song, log=log, only=opts.get("systems"),
                           engine=opts.get("engine"))
         holes = result["holes"]
+        if not holes:
+            _label_bounds(song, _bounds_score(_require(slug)))
         log(f"Read {result['read']} of {result['systems']} system(s)."
             + (f" Still to read: {', '.join(str(i) for i in holes)}." if holes
                else " Check it against the page, then say it is right."))
@@ -566,6 +568,9 @@ def _run_clean(slug: str) -> None:
             xml, song.dir, per_system=(song.mode == "per-system"), log=log,
             voicing=song.data.get("voicing") or None, check=opens,
         )
+        # A song scanned before the scan stage labelled its bands gets them here,
+        # off the same converted input.
+        _label_bounds(song, source_mscx)
         rel = os.path.relpath(cleaned, song.dir)
         song.data["cleaned"] = rel
         song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
@@ -917,6 +922,14 @@ def _bounds_score(song) -> str:
         return pipeline.convert_to_mscx(xml, song.dir)
     except Exception:
         return ""
+
+
+def _label_bounds(song, mscx_path: str) -> None:
+    """Give the stored bands their bars, now there is a score to read them off."""
+    try:
+        pipeline.label_system_bounds(song.dir, mscx_path)
+    except Exception:  # a label is a convenience; never fail a scan or clean on it
+        traceback.print_exc()
 
 
 @app.get("/api/songs/{slug}/bounds")

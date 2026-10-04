@@ -842,6 +842,26 @@ def save_system_bounds(song_dir: str, bands: List[Dict], mscx_path: str = "") ->
     return [b.to_dict() for b in bounds]
 
 
+def label_system_bounds(song_dir: str, mscx_path: str) -> bool:
+    """Label the stored bands with their bars, from a score that has line breaks.
+
+    A song started from a PDF has its bands drawn before there is any score to
+    label them against, so they are saved with no bars; nothing else labels them
+    once the scan has assembled one, and the comparison and the by-system lyric
+    editor skip a band with no bars (#243). Only the labels change: the band stamp
+    is geometry, so no fragment, crop or answer is touched. Returns whether the
+    file was written -- a count that disagrees leaves it as it was.
+    """
+    stored = pdf_systems.load_bounds(song_dir)
+    if not stored or not mscx_path:
+        return False
+    labelled = pdf_systems.label(stored, mscx_path)
+    if labelled == stored:
+        return False
+    pdf_systems.save_bounds(song_dir, labelled)
+    return True
+
+
 def declared_system_count(mscx_path: str) -> int:
     """How many printed systems the score itself declares (0 if unknown)."""
     if not mscx_path or not os.path.exists(mscx_path):

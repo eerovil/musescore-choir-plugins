@@ -1124,3 +1124,73 @@ def test_nothing_is_attributed_from_a_health_record_about_an_older_score(songs, 
     assert scan.status(song)["findings"] is None
     # ...and the two stages agree about why.
     assert verification.summary(song, systems=3)["health"]["status"] == "stale"
+
+
+# --- bars on the bands (#243) ---------------------------------------------
+#
+# A PDF-only song has its bands drawn before any score exists, so they are saved
+# with no bars, and the comparison and the by-system lyric editor skip a band with
+# none. The scan and the clean are where a score with line breaks first exists.
+# Converting the assembled MusicXML needs MuseScore, so a real converted score with
+# seven printed systems stands in for its output.
+
+LAULUN_AIKA = os.path.join(os.path.dirname(__file__), "..", "..", "clean_score",
+                           "tests", "test_files", "laulun_aika.mscx")
+LAULUN_AIKA_BARS = [(1, 6), (7, 11), (12, 15), (16, 19), (20, 25), (26, 29), (30, 35)]
+
+
+def _bars_on_bands(song):
+    return [(b.measure_start, b.measure_end) for b in pdf_systems.load_bounds(song.dir)]
+
+
+def test_a_finished_scan_labels_the_bands_with_their_bars(songs, reader, monkeypatch):
+    song = _song(songs, bands=7)
+    assert _bars_on_bands(song) == [(0, 0)] * 7
+    converted = []
+    monkeypatch.setattr(pipeline, "convert_to_mscx",
+                        lambda path, out_dir, log=None: converted.append(path) or LAULUN_AIKA)
+    server._run_scan(song.slug, {})
+    song = _reload(song)
+    assert converted and converted[-1] == song.path(scan.ASSEMBLED_NAME)
+    assert _bars_on_bands(song) == LAULUN_AIKA_BARS
+    # Geometry is the band stamp, so labelling throws nothing away.
+    assert scan.reconcile(song) == []
+    assert scan.status(song)["holes"] == []
+
+
+def test_a_scan_with_a_hole_labels_nothing(songs, reader, monkeypatch):
+    song = _song(songs, bands=7)
+    reader.fail[3] = omr.HomrError("could not read it")
+    monkeypatch.setattr(pipeline, "convert_to_mscx",
+                        lambda path, out_dir, log=None: LAULUN_AIKA)
+    server._run_scan(song.slug, {})
+    assert _bars_on_bands(_reload(song)) == [(0, 0)] * 7
+
+
+def test_labelling_keeps_the_geometry_and_refuses_a_count_that_disagrees(songs):
+    song = _song(songs, bands=7)
+    before = pdf_systems.load_bounds(song.dir)
+    assert pipeline.label_system_bounds(song.dir, LAULUN_AIKA)
+    after = pdf_systems.load_bounds(song.dir)
+    assert [(b.index, b.page, b.top, b.bottom) for b in after] == \
+        [(b.index, b.page, b.top, b.bottom) for b in before]
+    assert not pipeline.label_system_bounds(song.dir, LAULUN_AIKA)  # nothing new
+
+    other = _song(songs, bands=3)
+    assert not pipeline.label_system_bounds(other.dir, LAULUN_AIKA)
+    assert _bars_on_bands(other) == [(0, 0)] * 3
+
+
+def test_a_clean_labels_the_bands_of_a_song_scanned_before_this(songs, monkeypatch, tmp_path):
+    song = _song(songs, bands=7)
+    import shutil
+    cleaned = song.path("score_cleaned.mscx")
+    shutil.copy(LAULUN_AIKA, cleaned)
+    song.data["sources"]["xml"] = "scanned.musicxml"
+    song.save()
+    monkeypatch.setattr(pipeline, "run_clean",
+                        lambda *a, **k: (cleaned, LAULUN_AIKA))
+    server._run_clean(song.slug)
+    song = _reload(song)
+    assert song.data.get("cleaned") == "score_cleaned.mscx"
+    assert _bars_on_bands(song) == LAULUN_AIKA_BARS
