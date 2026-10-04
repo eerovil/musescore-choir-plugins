@@ -161,3 +161,19 @@ def test_offline_reload_shows_reconnecting_shell_then_returns_to_live_app(live_a
     page.wait_for_selector(".brand", timeout=15_000)
     expect(page.locator(".brand")).to_have_text("♪ song")
     assert page.url.endswith("/#/"), "the reconnecting shell must return to the requested SPA URL"
+
+@pytest.mark.parametrize("size", [(1280, 800), (390, 844)])
+def test_reload_button_is_always_in_the_header_and_reloads(live_app, page, size):
+    # The installed app has no browser toolbar, so this is its only reload (#257).
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(live_app + "/#/")
+    button = page.locator("header #reload-page")
+    expect(button).to_be_visible()
+    box = button.bounding_box()
+    assert box["x"] + box["width"] <= size[0], "the button runs off the screen"
+
+    page.evaluate("window.__beforeReload = true")
+    with page.expect_navigation():
+        button.click()
+    assert page.evaluate("window.__beforeReload") is None
+    expect(page.locator("header #reload-page")).to_be_visible()
