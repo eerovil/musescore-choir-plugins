@@ -38,7 +38,21 @@ note's **spelling** (MuseScore's tpc) is derived from the pitch and is deliberat
 not part of the token: the first fixes to carry one by hand got three of four wrong,
 which puts a note on the wrong line while it still sounds right.
 
-Most edits are none of those three kinds, and the shapes that are missing are not
+A fifth kind, `rhythm`, gives every note and rest of a bar a new length and leaves
+the notes themselves alone. It is how a person's pick among the readings homr weighed
+for an unsure bar is recorded (#269), so its lengths are homr's own spelling, one per
+note or rest in order: `note_4` a quarter, `note_12` a triplet eighth, `note_4.` a
+dotted quarter. `from` is the bar as it reads now, as above. Triplet brackets are
+written again around the new lengths, ties and slurs in or into the bar are moved to
+the notes they joined, and the red `⚠` mark on the bar goes: a person has read it
+against the page.
+
+    {"kind": "rhythm", "staff": 9, "measure": 25,
+     "from": ["[tuplet", "eighth:43", "eighth:48", "eighth:50", "tuplet]", ...],
+     "to": ["note_12", "note_12", "note_12", "note_6", "note_12", "note_4", ...],
+     "why": "picked reading c against the page"}
+
+Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
 a **sentence**:
@@ -225,6 +239,242 @@ def _append_bar(measure: etree._Element, expect: List[str], add: List[str],
     return f"{dropped}added {list(add)} to the end of the bar"
 
 
+# A bar's lengths rewritten, for `rhythm`. The lengths come in homr's spelling,
+# because that is where the readings a person picks between come from.
+
+_TYPES = {1: "whole", 2: "half", 4: "quarter", 8: "eighth", 16: "16th", 32: "32nd",
+          64: "64th"}
+_TYPE_NUMBER = {name: number for number, name in _TYPES.items()}
+
+
+def _parse_value(value: str):
+    """`note_12.` -> ("note", 12, 1): kind, homr's denominator, dots."""
+    kind, _, rest = (value or "").partition("_")
+    number = rest.rstrip(".")
+    if kind not in ("note", "rest") or not number.isdigit() or int(number) < 1:
+        raise FixError(f"not a length: {value!r}")
+    return kind, int(number), len(rest) - len(number)
+
+
+def value_length(value: str) -> Fraction:
+    """How long a homr length lasts, as a fraction of a whole note."""
+    _, number, dots = _parse_value(value)
+    return Fraction(1, number) * _DOT.get(dots, Fraction(1))
+
+
+def is_triplet(value: str) -> bool:
+    return _parse_value(value)[1] % 3 == 0
+
+
+def triplet_groups(values: List[str]) -> List[tuple]:
+    """Where the triplet brackets go: `(first, last)` index pairs, last inclusive.
+
+    A bracket opens at the first triplet length and closes as soon as it has run a
+    whole number of quarters and lands on a quarter, which is how a run of triplet
+    eighths is bracketed three by three and three triplet quarters as one. Raises
+    when a run cannot be bracketed so: a plain note inside it, or the bar ending first.
+    """
+    groups = []
+    start, total, at = None, Fraction(0), Fraction(0)
+    quarter = Fraction(1, 4)
+    for index, value in enumerate(values):
+        length = value_length(value)
+        if is_triplet(value):
+            if start is None:
+                start, total = index, Fraction(0)
+            total += length
+            if (total / quarter).denominator == 1 and ((at + length) / quarter).denominator == 1:
+                groups.append((start, index))
+                start = None
+        elif start is not None:
+            raise FixError("a triplet would not close on a beat")
+        at += length
+    if start is not None:
+        raise FixError("a triplet would run past the end of the bar")
+    return groups
+
+
+def element_value(el: etree._Element, in_tuplet: bool) -> Optional[str]:
+    """A Chord or Rest's length in homr's spelling, or None when it has none."""
+    number = _TYPE_NUMBER.get((el.findtext("durationType") or "").strip())
+    if number is None:
+        return None
+    dots = int((el.findtext("dots") or "0").strip() or 0)
+    if in_tuplet:
+        number = number * 3 // 2 if (number * 3) % 2 == 0 else None
+        if number is None:
+            return None
+    return f"{'rest' if el.tag == 'Rest' else 'note'}_{number}" + "." * dots
+
+
+def _timeline(body: etree._Element) -> List:
+    """The voice's Chords and Rests with where each starts in the bar.
+
+    Raises for what this cannot account for: a gap (`location`), or a tuplet that is
+    not a plain triplet, because then an onset here would be a guess.
+    """
+    out = []
+    at = Fraction(0)
+    ratio = None
+    for el in body:
+        if el.tag == "location":
+            raise FixError("the bar has a gap in it; rewrite it in MuseScore")
+        if el.tag == "Tuplet":
+            normal, actual = el.findtext("normalNotes"), el.findtext("actualNotes")
+            if (normal, actual) != ("2", "3"):
+                raise FixError("the bar has a tuplet that is not a triplet")
+            ratio = Fraction(2, 3)
+        elif el.tag == "endTuplet":
+            ratio = None
+        elif el.tag in ("Chord", "Rest"):
+            if (el.findtext("durationType") or "").strip() == "measure":
+                raise FixError("the bar holds a whole-bar rest")
+            length = _length(el) * (ratio or 1)
+            out.append((el, at, length))
+            at += length
+    return out
+
+
+def _spanner_ends(staff: etree._Element):
+    """Every tie or slur end in the staff's first voice: (location, measure, onset).
+
+    A `location` is relative: `measures` bars on and `fractions` along from the bar
+    position of the element it hangs off, which is what has to move when the notes
+    of a bar change length.
+    """
+    for mi, measure in enumerate(staff.findall("Measure")):
+        body = measure.find("voice") if measure.find("voice") is not None else measure
+        at = Fraction(0)
+        ratio = None
+        for el in body:
+            if el.tag == "Tuplet":
+                ratio = Fraction(2, 3)
+            elif el.tag == "endTuplet":
+                ratio = None
+            spanners = ([el] if el.tag == "Spanner" else
+                        list(el.iter("Spanner")) if el.tag in ("Chord", "Rest") else [])
+            for spanner in spanners:
+                for side in ("next", "prev"):
+                    location = spanner.find(f"{side}/location")
+                    if location is not None:
+                        yield location, mi, at
+            if el.tag in ("Chord", "Rest"):
+                at += _length(el) * (ratio or 1)
+
+
+def _relative(location: etree._Element):
+    measures = int((location.findtext("measures") or "0").strip() or 0)
+    fractions = Fraction((location.findtext("fractions") or "0").strip() or 0)
+    return measures, fractions
+
+
+def _set_fractions(location: etree._Element, value: Fraction) -> None:
+    node = location.find("fractions")
+    if value == 0:
+        if node is not None:
+            location.remove(node)
+        return
+    if node is None:
+        node = etree.SubElement(location, "fractions")
+    node.text = f"{value.numerator}/{value.denominator}"
+
+
+def _rewrite_rhythm(root: etree._Element, staff_id: int, measure_no: int,
+                    expect: List[str], values: List[str]) -> str:
+    """Give each Chord and Rest of a bar the length `values` names, in order."""
+    measure = _measure(root, staff_id, measure_no)
+    found = _bar_tokens(measure)
+    if found != list(expect):
+        raise FixError(f"bar reads {found} now, but the fix was recorded against {list(expect)}")
+    body = measure.find("voice") if measure.find("voice") is not None else measure
+    timeline = _timeline(body)
+    if len(timeline) != len(values):
+        raise FixError(f"the bar has {len(timeline)} notes and rests, the fix names "
+                       f"{len(values)} lengths")
+    for (el, _, _), value in zip(timeline, values):
+        kind = _parse_value(value)[0]
+        if (kind == "rest") != (el.tag == "Rest"):
+            raise FixError(f"{value!r} is a {kind}, but that is a {el.tag.lower()}")
+    total = sum((length for _, _, length in timeline), Fraction(0))
+    new_total = sum((value_length(v) for v in values), Fraction(0))
+    if new_total != total:
+        raise FixError(f"the new lengths add up to {new_total} of a whole note, the bar "
+                       f"to {total}")
+
+    # Where every note starts before and after, so ties and slurs can be moved.
+    onsets = {}
+    at = Fraction(0)
+    for (el, old, _), value in zip(timeline, values):
+        onsets[old] = at
+        at += value_length(value)
+    staff = measure.getparent()
+    measure_index = staff.findall("Measure").index(measure)
+    moves = []
+    for location, mi, own in list(_spanner_ends(staff)):
+        bars, along = _relative(location)
+        target_bar, target = mi + bars, own + along
+        new_own = onsets[own] if mi == measure_index and own in onsets else own
+        new_target = target
+        if target_bar == measure_index:
+            if target not in onsets:
+                raise FixError("a tie or slur ends inside a note of this bar")
+            new_target = onsets[target]
+        if mi == measure_index and own not in onsets:
+            raise FixError("a tie or slur starts inside a note of this bar")
+        if new_target - new_own != along:
+            moves.append((location, new_target - new_own))
+
+    # The old brackets and beams go; triplet brackets are written again around the
+    # new lengths, and beams are left to MuseScore.
+    for el in list(body):
+        if el.tag in ("Tuplet", "endTuplet", "Beam"):
+            body.remove(el)
+    groups = triplet_groups(values)
+    for (el, _, _), value in zip(timeline, values):
+        for mode in el.findall("BeamMode"):
+            el.remove(mode)
+        _, number, dots = _parse_value(value)
+        written = number * 2 // 3 if number % 3 == 0 else number
+        if written not in _TYPES:
+            raise FixError(f"cannot write {value!r}")
+        # Where the length was written, so the new one lands in MuseScore's own order.
+        olds = el.findall("dots") + el.findall("durationType")
+        position = min(el.index(old) for old in olds) if olds else 0
+        for old in olds:
+            el.remove(old)
+        head = etree.Element("durationType")
+        head.text = _TYPES[written]
+        el.insert(position, head)
+        if dots:
+            dot = etree.Element("dots")
+            dot.text = str(dots)
+            el.insert(position, dot)
+    for first, last in groups:
+        total = sum((value_length(v) for v in values[first:last + 1]), Fraction(0))
+        base = total / 2
+        if base.numerator != 1 or base.denominator not in _TYPES:
+            raise FixError("a triplet group of that length cannot be written")
+        tuplet = etree.Element("Tuplet")
+        etree.SubElement(tuplet, "normalNotes").text = "2"
+        etree.SubElement(tuplet, "actualNotes").text = "3"
+        etree.SubElement(tuplet, "baseNote").text = _TYPES[base.denominator]
+        number_el = etree.SubElement(tuplet, "Number")
+        etree.SubElement(number_el, "style").text = "Tuplet"
+        etree.SubElement(number_el, "text").text = "3"
+        start_el = timeline[first][0]
+        body.insert(body.index(start_el), tuplet)
+        timeline[last][0].addnext(etree.Element("endTuplet"))
+    for location, fractions in moves:
+        _set_fractions(location, fractions)
+    unmarked = 0
+    for el in list(body):
+        if el.tag == "StaffText" and (el.findtext("text") or "").startswith("⚠ "):
+            body.remove(el)
+            unmarked += 1
+    said = f"set the lengths to {list(values)}"
+    return said + (" and took the red mark off" if unmarked else "")
+
+
 # Reading a bar back out, so a fix can be *picked* rather than typed. The indexing
 # and the token grammar are this module's, and a caller that worked them out for
 # itself would be a second implementation of both — which is exactly how a fix ends
@@ -327,6 +577,9 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 # No chord index: a bar this fix repairs may have no chords at all yet.
                 what = _append_bar(_measure(root, staff, measure), fix.get("from", []),
                                    fix.get("add", []), int(fix.get("drop", 0)))
+            elif kind == "rhythm":
+                what = _rewrite_rhythm(root, staff, measure, fix.get("from", []),
+                                       fix.get("to", []))
             elif kind in ("undot", "slur"):
                 index = int(fix.get("index", 0))
                 chords = _chords(root, staff, measure)

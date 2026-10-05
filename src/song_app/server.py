@@ -11,12 +11,13 @@ import traceback
 from typing import Dict, List, Optional, Set
 
 import dotenv
+from lxml import etree
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import (agentdeck, health, heavy_slot, homr_install, job_state, omr,
+from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_state, omr,
                pdf_systems, pipeline, pwa_assets, scan, state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
@@ -607,6 +608,9 @@ def _run_clean(slug: str) -> None:
     xml = song.source_path("xml")
     log = lambda m: _job_emit(slug, "clean", m)
     try:
+        # A pick made on a reading the scan has since replaced is about a bar that is
+        # not there any more; replaying it would fail the clean, or worse, fit.
+        bar_readings.drop_stale_picks(song, log)
         opens: Dict = {}
         cleaned, source_mscx = pipeline.run_clean(
             xml, song.dir, per_system=(song.mode == "per-system"), log=log,
@@ -785,6 +789,62 @@ def api_record_slur(slug: str, body: Dict) -> Dict:
     hub.emit(slug, {"type": "log", "line": f"Recorded a missing slur — {done['applied']}"})
     # Our own write, so claim it: otherwise the file watcher reads the score as
     # edited in MuseScore and re-checks it a second time.
+    _rescan(song)
+    return _derived(song)
+
+
+@app.get("/api/songs/{slug}/readings")
+def api_readings(slug: str) -> Dict:
+    """The unsure bars homr offered other readings of, matched to the cleaned score.
+
+    Its own route rather than part of the song state: finding them parses every
+    fragment and the cleaned score, which only the Fix panel needs.
+    """
+    song = _require(slug)
+    cleaned = _cleaned_or_400(song)
+    try:
+        found = bar_readings.offers(song, cleaned)
+    except (OSError, RuntimeError, etree.XMLSyntaxError) as exc:
+        raise HTTPException(500, str(exc))
+    return {"offers": found}
+
+
+@app.get("/api/songs/{slug}/readings/{offer}/{letter}.svg")
+def api_reading_svg(slug: str, offer: str, letter: str):
+    """One reading of one bar, engraved."""
+    song = _require(slug)
+    _cleaned_or_400(song)
+    try:
+        svg = bar_readings.option_svg(song, offer, letter)
+    except FixError as exc:
+        raise HTTPException(404, str(exc))
+    except (OSError, RuntimeError, StopIteration) as exc:
+        raise HTTPException(500, str(exc))
+    return Response(svg, media_type="image/svg+xml", headers=dict(REVALIDATE))
+
+
+@app.post("/api/songs/{slug}/readings/pick")
+def api_pick_reading(slug: str, body: Dict) -> Dict:
+    """Apply the reading a person picked against the page, or record that none fits."""
+    song = _require(slug)
+    _cleaned_or_400(song)
+    body = body or {}
+    offer, choice = str(body.get("offer") or ""), str(body.get("choice") or "")
+    if not offer or not choice:
+        raise HTTPException(400, "say which bar (offer) and which reading (choice)")
+    # A clean or render reads the score this rewrites.
+    if is_scanning(song) or any(
+            job_state.is_running(song.dir, kind) for kind in ("clean", "render", "upload")):
+        raise HTTPException(409, "A scan, clean, render, or upload is running for this "
+                                 "song — wait for it to finish, then pick again.")
+    try:
+        done = bar_readings.record_pick(song, offer, choice)
+    except FixError as exc:
+        raise HTTPException(400, str(exc))
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(500, str(exc))
+    hub.emit(slug, {"type": "log", "line": f"Picked a reading — {done['applied']}"})
+    # Our own write, as with a recorded slur: claim it, or the watcher re-checks it.
     _rescan(song)
     return _derived(song)
 
