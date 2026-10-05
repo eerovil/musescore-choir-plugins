@@ -145,7 +145,7 @@ AnswerSource = Callable[[List[SystemLayout]], Answers]
 # --------------------------------------------------------------------------- #
 
 # Answers for every score live in one JSON file at the repo root, keyed by the input
-# score's file name. That is what lets you re-run a score without retyping, and lets
+# score's folder and file name. That is what lets you re-run a score without retyping, and lets
 # the song app clean headless after its grid is submitted.
 _ANSWER_FILE = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", ".persystem_cache.json")
@@ -175,7 +175,22 @@ def _read_answer_file() -> Dict[str, Dict[str, Dict[str, str]]]:
 
 
 def _key_for(input_path: Optional[str]) -> str:
-    """Answers are keyed by the input score's file name, without extension."""
+    """Answers are keyed by the score's folder and file name, without extension.
+
+    The file name alone was the key, and every scanned song's input is called
+    `scanned`, so they all shared one answer set: answering one song's grid
+    silently replaced another's, and a re-clean then rebuilt it from the wrong
+    song's staves.
+    """
+    if not input_path:
+        return ""
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    folder = os.path.basename(os.path.dirname(os.path.abspath(input_path)))
+    return f"{folder}/{stem}" if folder else stem
+
+
+def _legacy_key_for(input_path: Optional[str]) -> str:
+    """The file-name-only key answers were recorded under before the folder was."""
     if not input_path:
         return ""
     return os.path.splitext(os.path.basename(input_path))[0]
@@ -184,7 +199,10 @@ def _key_for(input_path: Optional[str]) -> str:
 def saved_answers(input_path: Optional[str]) -> Optional[Answers]:
     """Return the answers previously recorded for this input score, or None."""
     key = _key_for(input_path)
-    entry = _read_answer_file().get(key) if key else None
+    if not key:
+        return None
+    raw = _read_answer_file()
+    entry = raw.get(key) or raw.get(_legacy_key_for(input_path))
     if not entry:
         return None
     return {int(sidx): {int(sid): ans for sid, ans in staves.items()}
@@ -376,6 +394,32 @@ def _set_clef(staff: etree._Element, letter: str) -> None:
                 child.text = clef_type
 
 
+def _clefs_by_measure(staff: etree._Element, default: str = "G") -> List[str]:
+    """The clef in force at the start of each measure of a source staff."""
+    current = default
+    out: List[str] = []
+    for measure in staff.findall("Measure"):
+        first = measure.find("voice")
+        if first is not None:
+            for el in first:
+                if el.tag == "Clef":
+                    current = el.findtext("concertClefType") or current
+                elif el.tag in ("Chord", "Rest"):
+                    break
+        out.append(current)
+        for clef in measure.iter("Clef"):
+            current = clef.findtext("concertClefType") or current
+    return out
+
+
+def _lower_octave(elements: List[etree._Element]) -> None:
+    """Move every notehead in these elements down twelve semitones."""
+    for el in elements:
+        for pitch in el.iter("pitch"):
+            if pitch.text and pitch.text.strip().isdigit():
+                pitch.text = str(int(pitch.text.strip()) - 12)
+
+
 def _has_chord_stack(voice: etree._Element) -> bool:
     """True if any chord here stacks more than one notehead (divisi in one voice)."""
     return any(len(ch.findall("Note")) > 1 for ch in voice.findall("Chord"))
@@ -416,6 +460,10 @@ def _build_parts(
     """
     score = _score_of(root)
     source_staves = {int(s.get("id", "0")): s for s in score.findall("Staff")}
+    defaults = {int(st.get("id", "0")): st.findtext("defaultClef") or "G"
+                for st in score.findall("Part/Staff")}
+    source_clefs = {sid: _clefs_by_measure(s, defaults.get(sid, "G"))
+                    for sid, s in source_staves.items()}
     template_part = score.find("Part")
     ref_staff = score.find("Staff")
 
@@ -462,6 +510,7 @@ def _build_parts(
                     src = (sid, vidx)
                     break
             placed = False
+            filled_from = len(voice)
             if src is not None:
                 src_staff = source_staves.get(src[0])
                 if src_staff is not None:
@@ -493,6 +542,13 @@ def _build_parts(
                             if el.tag not in _SKELETON_KEEP:
                                 voice.append(deepcopy(el))
                         placed = True
+            # A tenor read off a plain treble staff was read an octave high: the
+            # notes sit where an 8vb clef puts them but were taken at face value.
+            # The staff is about to be marked G8vb, so the pitches have to move
+            # too, or the practice track sings the line an octave above the men.
+            if (placed and _PART_CLEF.get(part[0].upper()) == "G8vb"
+                    and source_clefs.get(src[0], [])[mi:mi + 1] == ["G"]):
+                _lower_octave(list(voice)[filled_from:])
             if not placed:
                 voice.append(_measure_rest(sig_n, sig_d))
         _set_clef(staff, part[0] if part else "")
