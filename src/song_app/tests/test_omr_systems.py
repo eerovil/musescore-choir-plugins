@@ -923,3 +923,22 @@ def test_the_per_system_grid_sees_the_systems_the_page_has(tmp_path):
     assert [(s.start, s.end) for s in layout] == [(1, 2), (3, 4), (5, 6)]
     assert [[row.staff_id for row in s.staves] for s in layout] == [
         [1, 2], [1, 2, 3], [1, 2]]
+
+
+def test_a_mark_homr_put_on_a_bar_stays_with_its_staff():
+    """homr marks the bars it is probably wrong about (``--mark-doubt``, #245) with
+    a red ``⚠`` direction naming its staff. Splitting a fused two-staff part must
+    keep each mark on the staff it was written for, or a doubt about the basses
+    would be checked against the tenors."""
+    part = etree.fromstring(a_part("P1", "Piano", 2)[1])
+    second_bar = part.findall("measure")[1]
+    second_bar.insert(0, etree.fromstring(
+        '<direction placement="above"><direction-type><words color="#FF0000">'
+        "⚠ check against the page: a second reading came out different"
+        "</words></direction-type><staff>2</staff></direction>"))
+    upper, lower = omr_systems.flatten_part(part)
+    marks = lambda staff: [  # noqa: E731
+        (bar, words.text) for bar, measure in enumerate(staff.measures, start=1)
+        for words in measure.iter("words")]
+    assert marks(upper) == []
+    assert marks(lower) == [(2, "⚠ check against the page: a second reading came out different")]

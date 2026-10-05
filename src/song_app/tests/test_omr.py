@@ -898,12 +898,12 @@ def test_a_page_comes_back_with_its_shared_rests_moved(monkeypatch, tmp_path):
 
 # --- the bar length of the music before the page (#245) ------------------
 
-def _engine_with_source(tmp_path, binary, knows_flag):
-    """An installed-style engine whose homr source does or does not have --bar-length."""
+def _engine_with_source(tmp_path, binary, knows_flag, flag="--bar-length"):
+    """An installed-style engine whose homr source does or does not have ``flag``."""
     venv = tmp_path / "venv"
     package = venv / "lib" / "python3.12" / "site-packages" / "homr"
     package.mkdir(parents=True)
-    (package / "main.py").write_text('parser.add_argument("--bar-length")\n' if knows_flag
+    (package / "main.py").write_text(f'parser.add_argument("{flag}")\n' if knows_flag
                                      else 'parser.add_argument("--no-title")\n')
     (venv / "bin").mkdir()
     target = venv / "bin" / "homr"
@@ -936,3 +936,25 @@ def test_no_bar_length_means_no_flag(tmp_path):
     engine = _engine_with_source(tmp_path, binary, knows_flag=True)
     omr.read_page(a_page(tmp_path), engine=engine, queue=False)
     assert "--bar-length" not in open(tmp_path / "args").read()
+
+
+# --- marking the bars homr is unsure of (#245) ----------------------------
+
+def test_a_homr_that_can_mark_doubtful_bars_is_asked_to(tmp_path):
+    binary = stub_homr(tmp_path, 'echo "$@" > ' + str(tmp_path / "args") + '\n'
+                                 'echo "<score/>" > "${!#%.*}.musicxml"\n')
+    engine = _engine_with_source(tmp_path, binary, knows_flag=True, flag="--mark-doubt")
+    omr.read_page(a_page(tmp_path), engine=engine, queue=False)
+    args = open(tmp_path / "args").read().split()
+    assert "--mark-doubt" in args
+    assert args[-1].endswith("page-1.png")
+
+
+def test_a_homr_too_old_to_mark_reads_unmarked_and_says_so(tmp_path):
+    binary = stub_homr(tmp_path, 'echo "$@" > ' + str(tmp_path / "args") + '\n'
+                                 'echo "<score/>" > "${!#%.*}.musicxml"\n')
+    engine = _engine_with_source(tmp_path, binary, knows_flag=False)
+    lines = []
+    omr.read_page(a_page(tmp_path), engine=engine, queue=False, log=lines.append)
+    assert "--mark-doubt" not in open(tmp_path / "args").read()
+    assert any("cannot mark" in line for line in lines), lines
