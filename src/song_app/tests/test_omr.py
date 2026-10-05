@@ -13,6 +13,7 @@ homr installed (scripts/install-homr.sh) and poppler, and skips without them.
 import contextlib
 import json
 import os
+from fractions import Fraction
 import shutil
 import stat
 import subprocess
@@ -893,3 +894,45 @@ def test_a_page_comes_back_with_its_shared_rests_moved(monkeypatch, tmp_path):
     assert voice_lengths(etree.parse(produced).getroot().find("part"), "2") == {
         "5": 12, "1": 16, "7": 16}
     assert any("whole-measure rest" in line for line in lines), lines
+
+
+# --- the bar length of the music before the page (#245) ------------------
+
+def _engine_with_source(tmp_path, binary, knows_flag):
+    """An installed-style engine whose homr source does or does not have --bar-length."""
+    venv = tmp_path / "venv"
+    package = venv / "lib" / "python3.12" / "site-packages" / "homr"
+    package.mkdir(parents=True)
+    (package / "main.py").write_text('parser.add_argument("--bar-length")\n' if knows_flag
+                                     else 'parser.add_argument("--no-title")\n')
+    (venv / "bin").mkdir()
+    target = venv / "bin" / "homr"
+    os.symlink(binary, target)
+    return omr.Engine(key="default", label="installed", command=[str(target)], default=True)
+
+
+def test_the_bar_length_is_passed_to_a_homr_that_takes_it(tmp_path):
+    binary = stub_homr(tmp_path, 'echo "$@" > ' + str(tmp_path / "args") + '\n'
+                                 'echo "<score/>" > "${!#%.*}.musicxml"\n')
+    engine = _engine_with_source(tmp_path, binary, knows_flag=True)
+    omr.read_page(a_page(tmp_path), engine=engine, bar_length=Fraction(3, 4), queue=False)
+    args = open(tmp_path / "args").read().split()
+    assert args[args.index("--bar-length") + 1] == "3/4"
+    # And the image is still the last argument, where homr expects it.
+    assert args[-1].endswith("page-1.png")
+
+
+def test_the_bar_length_is_not_passed_to_a_homr_that_would_refuse_it(tmp_path):
+    binary = stub_homr(tmp_path, 'echo "$@" > ' + str(tmp_path / "args") + '\n'
+                                 'echo "<score/>" > "${!#%.*}.musicxml"\n')
+    engine = _engine_with_source(tmp_path, binary, knows_flag=False)
+    omr.read_page(a_page(tmp_path), engine=engine, bar_length=Fraction(1), queue=False)
+    assert "--bar-length" not in open(tmp_path / "args").read()
+
+
+def test_no_bar_length_means_no_flag(tmp_path):
+    binary = stub_homr(tmp_path, 'echo "$@" > ' + str(tmp_path / "args") + '\n'
+                                 'echo "<score/>" > "${!#%.*}.musicxml"\n')
+    engine = _engine_with_source(tmp_path, binary, knows_flag=True)
+    omr.read_page(a_page(tmp_path), engine=engine, queue=False)
+    assert "--bar-length" not in open(tmp_path / "args").read()

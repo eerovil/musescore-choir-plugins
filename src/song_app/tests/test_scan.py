@@ -13,6 +13,7 @@ assembled score untested, which is where a hole would go unnoticed.
 
 import json
 import os
+from fractions import Fraction
 import time
 
 import pytest
@@ -62,6 +63,7 @@ class Reader:
         self.cropped = []
         self.read = []
         self.engines = []
+        self.bar_lengths = []
         self.fail = {}
         self.staves, self.bars = staves, bars
         # What `read_page` would stamp the parse with when the caller named no
@@ -79,9 +81,11 @@ class Reader:
             images.append(pdf_systems.SystemImage(bounds=band, path=path))
         return images
 
-    def read_system(self, image, out_dir, log=None, queue=True, engine=None):
+    def read_system(self, image, out_dir, log=None, queue=True, engine=None,
+                    bar_length=None):
         self.read.append(image.index)
         self.engines.append(engine)
+        self.bar_lengths.append(bar_length)
         boom = self.fail.get(image.index)
         if boom:
             raise boom
@@ -913,7 +917,7 @@ def _moved(reader, **by_system):
     """Make the stub report moved rests for the named systems."""
     original = reader.read_system
 
-    def read_system(image, out_dir, log=None, queue=True, engine=None):
+    def read_system(image, out_dir, log=None, queue=True, engine=None, bar_length=None):
         produced = original(image, out_dir, log=log, queue=queue, engine=engine)
         produced.moved_rests = [
             omr.MovedRest(measure=str(bar), staff="2", was="5", now="7")
@@ -1194,3 +1198,39 @@ def test_a_clean_labels_the_bands_of_a_song_scanned_before_this(songs, monkeypat
     song = _reload(song)
     assert song.data.get("cleaned") == "score_cleaned.mscx"
     assert _bars_on_bands(song) == LAULUN_AIKA_BARS
+
+
+# --- the bar length a system is read in (#245) ---------------------------
+
+def test_each_system_is_read_knowing_the_bar_length_the_one_before_ended_in(songs, reader):
+    song = _song(songs, bands=3)
+
+    scan.run(song)
+
+    # The first system has nothing before it; the stub's fragments are in 4/4.
+    assert reader.bar_lengths == [None, Fraction(1), Fraction(1)]
+
+
+def test_the_bar_length_is_the_meter_in_force_at_the_end_of_the_previous_system(songs, reader):
+    song = _song(songs, bands=2)
+    scan.run(song)
+    fresh = _reload(song)
+    path = fresh.path(fresh.data["scan"]["systems"]["1"]["musicxml"])
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    # A change to 3/4 in the last bar is what the next system starts in.
+    text = text.replace('<measure number="2">', '<measure number="2"><attributes><time>'
+                        '<beats>3</beats><beat-type>4</beat-type></time></attributes>', 1)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    assert scan.bar_length_before(fresh, 2) == Fraction(3, 4)
+    assert scan.bar_length_before(fresh, 1) is None
+
+
+def test_no_bar_length_without_a_readable_previous_fragment(songs, reader):
+    song = _song(songs, bands=2)
+    scan.run(song)
+    fresh = _reload(song)
+    os.remove(fresh.path(fresh.data["scan"]["systems"]["1"]["musicxml"]))
+    assert scan.bar_length_before(fresh, 2) is None
