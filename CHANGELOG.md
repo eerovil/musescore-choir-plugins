@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-05
 
+- When homr is unsure how long a bar's notes are, the Fix stage shows its likeliest
+  readings drawn under the page; tap the one the page prints and it goes onto the
+  score and survives a re-clean. Needs an updated homr (Install / Update homr).
+  (#271)
 - Scanning marks in red every bar homr is probably wrong about, so it gets checked
   against the page; a scan takes twice as long for it. (#270)
 - Per-system cleaning no longer leaves tenors read off a plain treble staff an

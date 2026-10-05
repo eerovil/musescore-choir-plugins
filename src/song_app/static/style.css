@@ -158,6 +158,20 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); }
 .slureffect { margin: 4px 0 8px; }
 .slurcropimg { display: block; width: 100%; margin: 8px 0; background: #fff; }
 
+/* Picking between homr's readings of an unsure bar: the page above, the options
+   engraved below it, one tap each. */
+.readings { margin: 12px 0; }
+.readpick { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  background: var(--panel); margin-bottom: 10px; }
+.readpick .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.readpick .m { font-weight: 700; color: var(--accent); }
+.readcrop { display: block; width: 100%; margin: 8px 0; background: #fff; }
+.readopts { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.readopt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; text-align: left; }
+.readletter { font-weight: 700; min-width: 1.2em; }
+.readsvg { background: #fff; border-radius: 4px; max-width: 100%; height: auto; flex: 1 1 auto;
+  min-width: 0; }
+
 /* grid form */
 table.grid { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
 table.grid th, table.grid td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }

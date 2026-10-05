@@ -1697,7 +1697,75 @@ function panelFix(panel, song, P, refresh) {
     el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
     el("button", { onclick: async () => { await postJSON(`${P}/rescan`); refresh(); } }, "Re-check now")));
   panel.append(scoreFileTransfer(song, P, refresh));
+  readingPicker(panel, song, P, refresh);
   slurRecorder(panel, song, P, refresh);
+}
+
+// Bars homr was unsure how long the notes are (#269). It wrote down the few readings
+// that fill the bar; the person looks at the page and taps the one it prints. The
+// pick goes onto the score where it stands and into fixes.json, so a re-clean keeps
+// it. Nothing shows when homr offered nothing.
+function readingPicker(panel, song, P, refresh) {
+  if (!song.has_cleaned) return;
+  const box = el("div", { className: "readings", hidden: true });
+  panel.append(box);
+  const problem = el("p", { className: "lyerr readerr" });
+  const pick = async (offer, choice, buttons) => {
+    problem.textContent = "";
+    buttons.forEach((b) => { b.disabled = true; });
+    try {
+      const fresh = await postJSON(`${P}/readings/pick`, { offer: offer.id, choice });
+      Object.assign(song, fresh);
+      refresh();
+    } catch (e) {
+      problem.textContent = e.message;
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  };
+  getJSON(`${P}/readings`).then(({ offers }) => {
+    if (!offers?.length) return;
+    const open = offers.filter((o) => !o.decision);
+    const done = offers.filter((o) => o.decision);
+    box.hidden = false;
+    box.append(el("h3", {}, "Unsure bars"),
+      el("p", { className: "sub" },
+        "homr was not sure how long these notes are. Compare each bar with the page and tap the reading the page prints. It is applied to the score and kept in fixes.json, so a re-clean keeps it."));
+    for (const offer of open) {
+      const buttons = [];
+      const options = offer.options.map((o) => {
+        const b = el("button", { className: "readopt", onclick: () => pick(offer, o.letter, buttons) },
+          el("span", { className: "readletter" }, o.letter),
+          o.current ? el("span", { className: "hint" }, " as read now") : "",
+          el("img", { className: "readsvg", loading: "lazy", alt: `reading ${o.letter}`,
+            src: `${P}/readings/${encodeURIComponent(offer.id)}/${o.letter}.svg` }));
+        buttons.push(b);
+        return b;
+      });
+      const none = el("button", { className: "readnone", onclick: () => pick(offer, "none", buttons) },
+        "None of these");
+      buttons.push(none);
+      box.append(el("div", { className: "readpick", "data-offer": offer.id },
+        el("div", { className: "top" },
+          el("span", {}, el("span", { className: "m" }, `m${offer.measure}`), "  ", offer.part),
+          el("span", { className: "hint" }, `bar ${offer.bar_in_system} of system ${offer.system}`)),
+        el("img", { className: "readcrop", loading: "lazy", alt: `printed system ${offer.system}`,
+          src: `${P}/system/${offer.system}?dpi=200` }),
+        el("div", { className: "readopts" }, ...options),
+        el("div", { className: "row" }, none,
+          el("span", { className: "hint" }, "keeps homr's reading and the red mark; fix the bar in MuseScore"))));
+    }
+    if (done.length) {
+      box.append(el("div", { className: "issue readdone" },
+        el("div", { className: "top" }, el("span", {}, el("span", { className: "kind" }, `${done.length} decided`))),
+        ...done.map((o) => el("div", { className: "detail" },
+          `Bar ${o.measure}, ${o.part}: ` + (o.decision.picked
+            ? `reading ${o.decision.picked}` : "none of these — fix it in MuseScore")))));
+    }
+    box.append(problem);
+  }).catch((e) => {
+    box.hidden = false;
+    box.append(el("p", { className: "lyerr readerr" }, `Could not load homr's readings: ${e.message}`));
+  });
 }
 
 // Taking the score away and bringing it back. "Open in MuseScore" only opens it on

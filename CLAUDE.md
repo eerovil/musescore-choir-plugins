@@ -520,6 +520,14 @@ Key test modules:
   refusal (no reason, a span past the bar, a slur already there) writes neither. The
   third is the browser: the bar shown as its own notes, the cost said before the
   write, the warning when lyrics are already imported, and that it fits a phone.
+- `test_rhythm_fix.py` / `src/song_app/tests/test_bar_readings.py` /
+  `test_reading_picker_ui.py` — added for #269. The first pins the `rhythm` fix on
+  Legenda bar 25's bass: the picked lengths and triplet brackets, pitches and lyrics
+  untouched, ties following their notes, the red mark gone, refusals. The second pins
+  where an offer lands (bar number across systems, an octave-shifted tenor, doubled
+  voices one staff each, a changed bar not offered), the pick and its replay, "none of
+  these", and a pick lapsing when its system is read again. The third is the browser:
+  options drawn, one tap picks, and it fits a phone.
 - `src/song_app/tests/test_state_race.py` — added for #252. The file watcher used to
   save the whole song state it had loaded, so a lyric import that saved while the
   watcher was checking health was silently undone. It drives both interleavings (a
@@ -1124,6 +1132,18 @@ state model are in `DESIGN.md`.
   one syllable too long. The cleaned system crop is shown alongside where one is
   available (`/compare` + `/cleaned-system/{index}`); it needs a MuseScore render, so
   not having it costs a picture rather than the feature.
+- **The Fix panel offers homr's other readings of an unsure bar** (#269,
+  `bar_readings.py`). For each bar homr doubted, homr writes the three likeliest
+  readings that fill it (note lengths only) into the fragment's MusicXML
+  (`identification/miscellaneous`, field `homr-bar-readings`, eerovil/homr
+  `homr/bar_readings.py`). An offer is placed on the cleaned staff whose bar holds those
+  notes at those lengths — matched by content, since cleaning renumbers parts, staves and
+  voices — and shown under the page crop, each option engraved by verovio. A pick is a
+  `rhythm` entry in `fixes.json`, applied in place (a re-clean would lose lyrics), which
+  rewrites the lengths, re-brackets the triplets, moves ties and slurs with their notes
+  and takes the red mark off. It carries the fragment's content stamp, and
+  `drop_stale_picks` removes it before a clean once that system has been read again
+  differently. "None of these" is kept in `.song.json` (`readings.declined`).
 - **The score can be taken away and brought back**, which this pull request proposes
   (#216). Both editing routes the app had assumed MuseScore was on *this* host:
   `open-score` shells out to `open -a`, and the file watcher re-checks a score saved
