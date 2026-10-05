@@ -721,7 +721,12 @@ state model are in `DESIGN.md`.
   fractions of page height, so they survive any change of resolution, and the app
   and an agent read the same file. `crop_systems` rasterises **only the band**
   (`pdftoppm -x -y -W -H`): a page at 400 dpi takes ~7s, one system 0.9s, and this
-  is on the path where someone clicks a lyric cell and waits. `label()` attaches
+  is on the path where someone clicks a lyric cell and waits. A page's pixel size
+  is read **with its rotation flag applied** (`_page_info`), because `pdfinfo` reports
+  the stored size and `pdftoppm` renders the turned page: a landscape-stored page
+  flagged 90° was cropped by the wrong height and homr read half of two systems
+  (#272). `crop_version` adds a suffix to the crop and scan stamps of such a PDF only,
+  so its old crops and fragments are discarded while every other song's stay. `label()` attaches
   each band's measure range from a score that still has its line breaks — the
   converted input, since normal-mode cleaning strips them — and **refuses when the
   counts disagree**, because a silently wrong alignment puts lyrics on the wrong

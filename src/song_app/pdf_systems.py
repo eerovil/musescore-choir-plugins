@@ -21,9 +21,9 @@ them be dragged, and an agent reads the same crops off disk.
 """
 import hashlib
 import json
-import hashlib
 import math
 import os
+import re
 import subprocess
 import threading
 from dataclasses import dataclass, asdict, replace
@@ -163,17 +163,73 @@ def _with_grid(page_png: str) -> str:
     return out
 
 
-def _page_size_px(pdf_path: str, dpi: int) -> Tuple[int, int]:
-    """Page size in pixels at `dpi`, from the PDF's own point size."""
-    out = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True)
+_PAGE_INFO: Dict[Tuple[str, str], Dict[int, Tuple[float, float, int]]] = {}
+
+
+def _page_info(pdf_path: str) -> Dict[int, Tuple[float, float, int]]:
+    """Every page's point size and rotation, as `pdfinfo` reports them.
+
+    `Page size` is the page as stored, *before* its rotation flag is applied,
+    while `pdftoppm` renders the page turned. A page stored landscape and flagged
+    90 or 270 degrees therefore renders portrait, and cropping it by the stored
+    height cut every band from the wrong strip of the page (#272). Kept per page,
+    because nothing says every page of a PDF is stored the same way.
+
+    Cached on the file's version, since the scan asks on every read of a song.
+    """
+    key = (pdf_path, file_version(pdf_path))
+    if key in _PAGE_INFO:
+        return _PAGE_INFO[key]
+    out = subprocess.run(["pdfinfo", "-f", "1", "-l", str(page_count(pdf_path)),
+                          pdf_path], capture_output=True, text=True)
+    pages: Dict[int, Tuple[float, float, int]] = {}
+    sizes: Dict[int, Tuple[float, float]] = {}
     for line in out.stdout.splitlines():
-        if line.startswith("Page size:"):
-            parts = line.split()
-            w_pt, h_pt = float(parts[2]), float(parts[4])
-            # ceil, to match how pdftoppm itself sizes the raster: truncating
-            # loses a pixel and the crop no longer matches the rendered page.
-            return math.ceil(w_pt * dpi / 72), math.ceil(h_pt * dpi / 72)
-    raise RuntimeError(f"Could not read the page size of {pdf_path}")
+        m = re.match(r"Page\s+(\d+)\s+size:\s+([\d.]+)\s+x\s+([\d.]+)", line)
+        if m:
+            sizes[int(m.group(1))] = (float(m.group(2)), float(m.group(3)))
+            continue
+        m = re.match(r"Page\s+(\d+)\s+rot:\s+(-?\d+)", line)
+        if m and int(m.group(1)) in sizes:
+            w, h = sizes[int(m.group(1))]
+            pages[int(m.group(1))] = (w, h, int(m.group(2)) % 360)
+    for n, (w, h) in sizes.items():
+        pages.setdefault(n, (w, h, 0))
+    if not pages:
+        raise RuntimeError(f"Could not read the page size of {pdf_path}")
+    _PAGE_INFO[key] = pages
+    return pages
+
+
+def _page_size_px(pdf_path: str, dpi: int, page: int = 1) -> Tuple[int, int]:
+    """Page `page` in pixels at `dpi`, as `pdftoppm` renders it: rotation applied."""
+    pages = _page_info(pdf_path)
+    if page not in pages:
+        raise RuntimeError(f"Could not read the size of page {page} of {pdf_path}")
+    w_pt, h_pt, rot = pages[page]
+    if rot in (90, 270):
+        w_pt, h_pt = h_pt, w_pt
+    # ceil, to match how pdftoppm itself sizes the raster: truncating
+    # loses a pixel and the crop no longer matches the rendered page.
+    return math.ceil(w_pt * dpi / 72), math.ceil(h_pt * dpi / 72)
+
+
+def crop_version(pdf_path: str) -> str:
+    """What a crop of this PDF is cut from: its version, plus how its pages turn.
+
+    For a PDF with no rotated page this is exactly :func:`file_version`, so the
+    crops and scans of every such song keep their names and stamps. A PDF with a
+    page turned 90 or 270 degrees gets a suffix, because crops of those pages were
+    cut by the wrong height before #272 -- the suffix is what makes the old crops,
+    and the scan read off them, stop matching instead of being served again.
+    """
+    version = file_version(pdf_path)
+    try:
+        turned = sorted(n for n, (_w, _h, rot) in _page_info(pdf_path).items()
+                        if rot in (90, 270))
+    except (OSError, RuntimeError, ValueError):
+        return version
+    return version + (":turned" if turned else "")
 
 
 def _staff_rows(page: "Image.Image", ink: int = 250, run: float = 0.35) -> List[List[int]]:
@@ -282,10 +338,10 @@ def crop_systems(
     in the file and in the render. The page said the fix had not applied.
     """
     os.makedirs(out_dir, exist_ok=True)
-    width, height = _page_size_px(pdf_path, dpi)
-    source = file_version(pdf_path)
+    source = crop_version(pdf_path)
     images = []
     for b in bounds:
+        width, height = _page_size_px(pdf_path, dpi, b.page)
         top = max(0, min(height - 1, int(height * b.top)))
         band = max(1, min(height - top, int(height * b.bottom) - top))
         geometry = f"{source}:{b.page}:{b.top:.9f}:{b.bottom:.9f}".encode()
