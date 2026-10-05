@@ -7,6 +7,8 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-05
 
+- Scanning marks in red every bar homr is probably wrong about, so it gets checked
+  against the page; a scan takes twice as long for it. (#270)
 - Per-system cleaning no longer leaves tenors read off a plain treble staff an
   octave too high, and scanned songs no longer share one set of grid answers. (#266)
 

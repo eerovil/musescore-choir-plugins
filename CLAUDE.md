@@ -1186,6 +1186,23 @@ state model are in `DESIGN.md`.
   fix belongs" above, which also says which side of the line a new fix falls on).
   The app passes homr **`--no-title`**: it never uses the title homr reads, and since
   upstream's 9ec3a78 reading one means fetching OCR weights first.
+  It also passes **`--mark-doubt`** (#245), to a homr whose source has it
+  (`engine_supports`): homr reads each image a second time, at 80% size, and puts a
+  red `⚠` text on every bar it is probably wrong about — a near-tie between two
+  readings that both fill the bar, an unsure pitch, accidental or voice line, two
+  voices giving one shared notehead different lengths, the second reading
+  disagreeing, or a note starting off every sixteenth and triplet sixteenth
+  (`homr/doubt.py` in the fork). The owner asked that **no wrong bar go unmarked**,
+  false alarms second: measured on 38 systems read in the cluster pod, all 9 wrong
+  bars with owner-checked references are marked (with 39 of 117 right ones — most of
+  Legenda, where homr really is unsure of nearly every triplet), and 26 of 27 on four
+  songs whose references are less certain. Confidence alone could not do it: some
+  readings are wrong with the decoder sure of every note, and the second reading is
+  what catches those. A read takes twice as long. The marks are the same as
+  cleaning's (`problem_marks`), so they survive the clean on the first part the
+  staff becomes, are listed by health and the Fix panel until deleted, and never
+  reach the video. A homr too old to mark says so in the scan log, because no marks
+  then means "not checked".
   What following a branch costs is worth saying rather than skipping: an install is no
   longer reproducible from the checkout alone, so two hosts set up a month apart get
   different OMR and so does one host reinstalled. What buys it back is that **nothing

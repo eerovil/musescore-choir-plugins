@@ -320,6 +320,10 @@ def _package_dir(root: str) -> str:
 #: The bar length the music before an image was in; see `read_page`'s ``bar_length``.
 BAR_LENGTH_FLAG = "--bar-length"
 
+#: Asks homr to read each image twice and put a red ``⚠`` text on every bar it is
+#: probably wrong about (#245). A homr without it reads as before, unmarked.
+MARK_DOUBT_FLAG = "--mark-doubt"
+
 
 def _engine_source(engine: Engine) -> Optional[str]:
     """The ``homr/main.py`` an engine runs: its checkout's, or the installed venv's."""
@@ -596,6 +600,15 @@ def read_page(
     4/4 and 6/4, and system 7 before it is in 4/4 -- this is what chooses. It is
     passed only to a homr that takes it (:func:`engine_supports`).
 
+    Every read asks homr to mark the bars it is probably wrong about
+    (``--mark-doubt``, #245): homr reads the image a second time and puts a red
+    ``⚠`` text, naming what it doubted, at the head of each such bar. Those are
+    the same marks cleaning leaves, so the health check and the Fix panel list
+    them until somebody deletes them in MuseScore, and the video never shows
+    them. The owner asked that no wrong bar go unmarked; a read takes twice as
+    long for it. A homr too old to mark is said so in the log, because a score
+    with no marks then means "not checked" rather than "nothing doubted".
+
     The MusicXML that comes back has had its shared whole-measure rests moved
     out (:func:`split_measure_rests`),
     and it carries one comment line saying which homr read it
@@ -642,6 +655,11 @@ def read_page(
             argv = list(engine.command) + ["--gpu", "no", "--no-title"]
             if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
                 argv += [BAR_LENGTH_FLAG, str(bar_length)]
+            if engine_supports(engine, MARK_DOUBT_FLAG):
+                argv.append(MARK_DOUBT_FLAG)
+            else:
+                watched("This homr cannot mark the bars it is unsure of, so none are "
+                        "marked: update homr to have them checked")
             output = _run(argv + [scratch_image], watched, timeout, engine.env)
             slot.check()
 
