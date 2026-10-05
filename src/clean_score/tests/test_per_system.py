@@ -330,10 +330,26 @@ def test_prompt_offers_the_recorded_answer_as_the_default():
 def test_answers_are_recorded_per_input_score():
     save_answers("/somewhere/song-x.mscx", {0: {1: "T1,T2", 2: "B"}, 1: {1: "T3"}})
     save_answers("/elsewhere/song-y.mscz", {0: {1: "S"}})  # a second score coexists
-    assert saved_answers("songs/song-x.mscx") == {0: {1: "T1,T2", 2: "B"}, 1: {1: "T3"}}
-    assert saved_answers("song-y.mscx") == {0: {1: "S"}}
-    assert saved_answers("missing.mscx") is None
-    assert has_answers("song-y.mscx") and not has_answers("missing.mscx")
+    assert saved_answers("/somewhere/song-x.mscx") == {0: {1: "T1,T2", 2: "B"}, 1: {1: "T3"}}
+    assert saved_answers("/elsewhere/song-y.mscx") == {0: {1: "S"}}
+    assert saved_answers("/somewhere/missing.mscx") is None
+    assert has_answers("/elsewhere/song-y.mscx") and not has_answers("/somewhere/missing.mscx")
+
+
+def test_two_songs_with_the_same_file_name_keep_their_own_answers():
+    """Every scanned song's input is called `scanned`; answering one must not
+    replace another's."""
+    save_answers("/songs/a/scanned.mscx", {0: {1: "S1"}})
+    save_answers("/songs/b/scanned.mscx", {0: {1: "T1"}})
+    assert saved_answers("/songs/a/scanned.mscx") == {0: {1: "S1"}}
+    assert saved_answers("/songs/b/scanned.mscx") == {0: {1: "T1"}}
+
+
+def test_answers_recorded_under_the_file_name_alone_are_still_read(tmp_path):
+    path = tmp_path / "answers.json"
+    path.write_text(json.dumps({"old-song": {"0": {"1": "B"}}}))
+    with use_answer_file(str(path)):
+        assert saved_answers("/songs/old/old-song.mscx") == {0: {1: "B"}}
 
 
 def test_prompted_answers_are_recorded_for_the_next_run():
@@ -428,3 +444,37 @@ def test_a_staff_with_its_own_second_voice_is_left_alone():
     staves = _by_part(root)
     assert _pitches(staves["B1"], 0) == ["43", "50"]   # voice 1, both noteheads
     assert _pitches(staves["B2"], 0) == ["38"]         # voice 2
+
+
+# --------------------------------------------------------------------------- #
+# A tenor read off a plain treble staff
+# --------------------------------------------------------------------------- #
+
+def _treble_score(clef):
+    root = _stacked_score(pitches=("69",))
+    voice = root.find(".//Score/Staff/Measure/voice")
+    mark = etree.Element("Clef")
+    etree.SubElement(mark, "concertClefType").text = clef
+    etree.SubElement(mark, "transposingClefType").text = clef
+    voice.insert(0, mark)
+    return root
+
+
+def test_a_tenor_off_a_plain_treble_staff_moves_down_an_octave():
+    """The staff becomes G8vb, so notes taken at treble pitch have to move with it,
+    or the practice track sings the tenor line an octave above the men."""
+    root = _treble_score("G")
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "T1"}})
+    assert _pitches(_by_part(root)["T1"], 0) == ["57"]
+
+
+def test_a_tenor_off_an_8vb_staff_keeps_its_pitch():
+    root = _treble_score("G8vb")
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "T1"}})
+    assert _pitches(_by_part(root)["T1"], 0) == ["69"]
+
+
+def test_a_soprano_off_a_treble_staff_keeps_its_pitch():
+    root = _treble_score("G")
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}})
+    assert _pitches(_by_part(root)["S1"], 0) == ["69"]
