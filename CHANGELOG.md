@@ -7,6 +7,8 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-05
 
+- Scanning a PDF whose pages are stored sideways and turned upright now reads each
+  printed system instead of the bottom of one and the top of the next. (#273)
 - When homr is unsure how long a bar's notes are, the Fix stage shows its likeliest
   readings drawn under the page; tap the one the page prints and it goes onto the
   score and survives a re-clean. Needs an updated homr (Install / Update homr).

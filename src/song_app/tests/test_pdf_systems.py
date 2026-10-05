@@ -194,3 +194,66 @@ def test_a_page_rewritten_in_place_is_rasterised_again(tmp_path):
     # The old render's pages are gone rather than left to pile up.
     pages = sorted(n for n in os.listdir(cache) if n.startswith("page-"))
     assert len(pages) == 2, pages
+
+
+def _turned_pdf(path, rotate):
+    """One A4 page stored landscape and flagged to turn by `rotate` degrees.
+
+    The stripes run across the *stored* width, so once the page is turned they
+    run down it, each at its own depth -- a crop from the wrong height shows
+    different stripes rather than more white paper.
+    """
+    w, h = 841.68, 595.2
+    stripes = "".join(f"{x} 0 {width} {h} re f\n"
+                      for x, width in ((60, 8), (180, 30), (330, 4), (470, 60),
+                                       (620, 16), (760, 40)))
+    content = stripes.encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] "
+         f"/Rotate {rotate} /Contents 4 0 R >>").encode(),
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"endstream",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for n, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % n + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += (b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+            % (len(objects) + 1, xref))
+    with open(path, "wb") as f:
+        f.write(bytes(out))
+
+
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270])
+def test_a_crop_of_a_turned_page_is_the_band_the_preview_shows(rotate, tmp_path):
+    """#272: a landscape-stored page flagged to turn was cropped by its stored size.
+
+    `pdfinfo` reports the page before its rotation and `pdftoppm` renders it after,
+    so every band was cut from a strip of the page above the one the preview
+    showed -- and homr read half of one system and half of the next.
+    """
+    pdf = str(tmp_path / "turned.pdf")
+    _turned_pdf(pdf, rotate)
+    band = pdf_systems.SystemBounds(index=2, page=1, top=0.41, bottom=0.67)
+    crop = Image.open(pdf_systems.crop_systems(pdf, [band], str(tmp_path / "c"), dpi=DPI)[0].path)
+    page = Image.open(pdf_systems.render_page(pdf, 1, DPI, str(tmp_path / "p")))
+    assert (page.width < page.height) == (rotate in (90, 270))
+    expected = page.crop((0, int(page.height * band.top), page.width,
+                          int(page.height * band.bottom)))
+    assert crop.size == expected.size
+    assert crop.convert("L").tobytes() == expected.convert("L").tobytes()
+
+
+def test_a_turned_page_changes_what_its_crops_are_stamped_with(tmp_path):
+    """Crops and scans cut before #272 must not be served again for a turned PDF,
+    while an unturned one keeps the stamps its songs already carry."""
+    flat, turned = str(tmp_path / "flat.pdf"), str(tmp_path / "turned.pdf")
+    _turned_pdf(flat, 0)
+    _turned_pdf(turned, 90)
+    assert pdf_systems.crop_version(flat) == pdf_systems.file_version(flat)
+    assert pdf_systems.crop_version(turned) != pdf_systems.file_version(turned)

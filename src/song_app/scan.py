@@ -475,7 +475,7 @@ def reconcile(song: state.Song) -> List[str]:
     if "scan" not in song.data:
         return []
     bands = pdf_systems.load_bounds(song.dir)
-    source = pdf_systems.file_version(song.source_path("pdf") or "")
+    source = pdf_systems.crop_version(song.source_path("pdf") or "")
     dropped: List[str] = []
     for row in _chain(song, bands, source):
         recorded = row.recorded(song)
@@ -586,7 +586,7 @@ def run(
             "systems marked. Mark every page in the Systems viewer before scanning."
         )
 
-    source = pdf_systems.file_version(pdf)
+    source = pdf_systems.crop_version(pdf)
     out_dir = song.path(FRAGMENT_DIR)
     os.makedirs(out_dir, exist_ok=True)
     forced = {int(i) for i in (only or ())}
