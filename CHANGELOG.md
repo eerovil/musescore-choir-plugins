@@ -5,6 +5,11 @@ grouped by the day they were merged, and each line names its pull request
 (`#123`) on GitHub. Changes that only touch tests, measurements or the notes for
 developers are listed under *Behind the scenes*.
 
+## 2026-10-05
+
+- Per-system cleaning no longer leaves tenors read off a plain treble staff an
+  octave too high, and scanned songs no longer share one set of grid answers. (#266)
+
 ## 2026-10-04
 
 - The README is now about the web app, with screenshots; the command-line tools
