@@ -64,6 +64,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Callable, Dict, List, Optional
 
 from lxml import etree
@@ -316,6 +317,39 @@ def _package_dir(root: str) -> str:
     return os.path.join(root, "homr")
 
 
+#: The bar length the music before an image was in; see `read_page`'s ``bar_length``.
+BAR_LENGTH_FLAG = "--bar-length"
+
+
+def _engine_source(engine: Engine) -> Optional[str]:
+    """The ``homr/main.py`` an engine runs: its checkout's, or the installed venv's."""
+    checkout = engine.env.get("PYTHONPATH")
+    if checkout:
+        return os.path.join(_package_dir(checkout), "main.py")
+    binary = engine.command[0] if engine.command else homr_binary()
+    if os.path.sep not in binary:
+        return None
+    venv = os.path.dirname(os.path.dirname(binary))
+    found = sorted(glob.glob(os.path.join(venv, "lib", "python3.*", "site-packages",
+                                          "homr", "main.py")))
+    return found[-1] if found else None
+
+
+def engine_supports(engine: Engine, flag: str) -> bool:
+    """Whether this engine's homr takes an option, read off its own source.
+
+    Asked rather than tried: an older homr refuses an option it does not know
+    and the page is lost, while a missing hint only costs the reading it would
+    have helped choose. So an engine whose source cannot be found is taken not
+    to have it.
+    """
+    source = _engine_source(engine)
+    if not source or not os.path.exists(source):
+        return False
+    with open(source, encoding="utf-8") as handle:
+        return f'"{flag}"' in handle.read()
+
+
 def link_weights(checkout: str) -> int:
     """Point a checkout at the installed venv's model weights.
 
@@ -536,6 +570,7 @@ def read_page(
     queue: bool = True,
     engine: Optional[Engine] = None,
     repairs: Optional[List["MovedRest"]] = None,
+    bar_length: Optional[Fraction] = None,
 ) -> str:
     """Read one page image and return the path of the MusicXML written for it.
 
@@ -553,6 +588,13 @@ def read_page(
     without asking for a slot, for a caller already holding one. ``engine``
     reads the page with a homr other than the installed one (:func:`engines`) —
     a working copy of the fork, run from its own source.
+
+    ``bar_length`` is the bar length the music before this image was in, as a
+    fraction of a whole note. homr reads one printed system at a time and knows
+    nothing of the one before it, so where a bar's rhythm reads equally well at
+    two lengths -- Legenda system 8 (eerovil/musescore-choir-plugins#245) fits
+    4/4 and 6/4, and system 7 before it is in 4/4 -- this is what chooses. It is
+    passed only to a homr that takes it (:func:`engine_supports`).
 
     The MusicXML that comes back has had its shared whole-measure rests moved
     out (:func:`split_measure_rests`),
@@ -597,8 +639,10 @@ def read_page(
             # that is where the lease is checked (heavy_slot.Slot.guard).
             watched = slot.guard(log)
             watched(f"Reading {os.path.basename(image_path)} with homr")
-            output = _run(list(engine.command) + ["--gpu", "no", "--no-title", scratch_image],
-                          watched, timeout, engine.env)
+            argv = list(engine.command) + ["--gpu", "no", "--no-title"]
+            if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
+                argv += [BAR_LENGTH_FLAG, str(bar_length)]
+            output = _run(argv + [scratch_image], watched, timeout, engine.env)
             slot.check()
 
         if not os.path.exists(produced):

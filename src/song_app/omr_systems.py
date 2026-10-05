@@ -68,6 +68,8 @@ sees the same systems the page has.
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import copy
 import math
 import os
@@ -214,6 +216,7 @@ def read_system(
     log: Logger = _noop,
     queue: bool = True,
     engine: Optional[omr.Engine] = None,
+    bar_length: Optional[Fraction] = None,
 ) -> SystemScan:
     """Read one cropped system and flatten what comes back into staves.
 
@@ -229,6 +232,7 @@ def read_system(
         queue=queue,
         engine=engine,
         repairs=moved,
+        bar_length=bar_length,
     )
     staves = flatten(produced)
     if not staves:
