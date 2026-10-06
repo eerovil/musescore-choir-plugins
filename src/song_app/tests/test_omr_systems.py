@@ -1033,3 +1033,45 @@ def test_a_different_note_after_the_break_is_no_mark(tmp_path):
          _one_bar_system(2, [("E", 5, -1, 1), ("C", 4, 0, 3)])],
         str(tmp_path / "a.musicxml"))
     assert _marks(out) == []
+
+
+def _key_change_system(index, first_bar, second_bar, fifths, new_fifths):
+    """A one-staff system of two 4/4 bars whose second bar changes key."""
+
+    def bar(notes):
+        return "".join(
+            f"<note><pitch><step>{step}</step>"
+            + (f"<alter>{alter}</alter>" if alter else "")
+            + f"<octave>{octave}</octave></pitch><duration>{quarters * 4}</duration>"
+            "<voice>1</voice><type>quarter</type></note>"
+            for step, octave, alter, quarters in notes)
+
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1"><attributes><divisions>4</divisions>'
+        f"<key><fifths>{fifths}</fifths></key><time><beats>4</beats><beat-type>4</beat-type>"
+        '</time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        f'{bar(first_bar)}</measure><measure number="2"><attributes><key><fifths>{new_fifths}'
+        f"</fifths></key></attributes>{bar(second_bar)}</measure></part>")
+    return omr_systems.SystemScan(index=index, musicxml="", staves=omr_systems.flatten_part(part))
+
+
+def test_a_key_changed_inside_the_system_is_the_key_at_the_break(tmp_path):
+    """The previous system changes from four flats to none in its last bar and the
+    next goes back to four flats: the E natural ending the first is the key's own
+    note there, nothing was printed to carry, and the E flat after the break is
+    no mark. Read against the opening key it would have looked printed."""
+    out = omr_systems.assemble(
+        [_key_change_system(1, [("C", 4, 0, 4)], [("C", 4, 0, 3), ("E", 4, 0, 1)], -4, 0),
+         _one_bar_system(2, [("E", 4, -1, 1), ("C", 4, 0, 3)], fifths=-4)],
+        str(tmp_path / "a.musicxml"))
+    assert _marks(out) == []
+
+
+def test_a_key_changed_inside_the_system_still_marks_a_printed_accidental(tmp_path):
+    """The other way round: none to four flats in the last bar, so the E natural
+    ending the system was printed, and an E flat after the break is marked."""
+    out = omr_systems.assemble(
+        [_key_change_system(1, [("C", 4, 0, 4)], [("C", 4, 0, 3), ("E", 4, 0, 1)], 0, -4),
+         _one_bar_system(2, [("E", 4, -1, 1), ("C", 4, 0, 3)], fifths=-4)],
+        str(tmp_path / "a.musicxml"))
+    assert [bar for bar, _ in _marks(out)] == [3]

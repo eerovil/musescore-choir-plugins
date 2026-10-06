@@ -633,6 +633,11 @@ def _fill_column(
             if source is None:
                 measure = _rest_measure(number, meter.ticks)
             else:
+                # The key in force at this bar, for the line-break check below: a
+                # system may change key part-way, and its last bar is in the new one.
+                declared_key = source.find("attributes/key")
+                if declared_key is not None:
+                    fifths = _fifths(declared_key)
                 measure = _scaled(source, staff.divisions, divisions)
                 measure.set("number", str(number))
 
