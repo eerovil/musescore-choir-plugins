@@ -1008,7 +1008,13 @@ def test_a_printed_natural_before_the_break_marks_the_key_note_after_it(tmp_path
         [_one_bar_system(1, [("C", 4, 0, 3), ("E", 4, 0, 1)]),
          _one_bar_system(2, [("E", 4, -1, 1), ("C", 4, 0, 3)])],
         str(tmp_path / "a.musicxml"))
-    assert [(bar, text.split(":")[1].split()[0]) for bar, text in _marks(out)] == [(2, "E4")]
+    assert _marks(out) == [(2, "⚠ accidental?")]
+    second = [m for m in etree.parse(out).getroot().iter("measure") if m.get("number") == "2"][0]
+    notes = second.findall("note")
+    assert notes[0].get("color") == "#FF0000"  # the note carried over the break
+    assert notes[1].get("color") is None
+    children = list(second)
+    assert children.index(second.find("direction")) == children.index(notes[0]) - 1
 
 
 def test_nothing_printed_before_the_break_is_no_mark(tmp_path):

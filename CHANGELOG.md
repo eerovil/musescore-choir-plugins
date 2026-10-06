@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-06
 
+- A warning on a scanned bar is one short word ("⚠ accidental?"), and the note it is
+  about is red, so the spot is easy to find in MuseScore. A red note left behind is
+  played black in the practice video. (#280)
 - A scanned song marks the first bar of a system for checking when a note the
   previous system ended with a printed accidental starts it again without one: a
   note tied over the line break keeps its accidental, and the scan cannot tell.

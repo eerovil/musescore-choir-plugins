@@ -682,6 +682,7 @@ class _Sounding:
     step: str
     octave: str
     alter: int
+    note: Optional[etree._Element] = field(default=None, compare=False)
 
 
 def _key_alter(step: str, fifths: int) -> int:
@@ -713,10 +714,32 @@ def _sounding(measure: etree._Element) -> Tuple[List[_Sounding], List[_Sounding]
             if pitch is not None:
                 placed.append((last, last + duration, _Sounding(
                     pitch.findtext("step") or "", pitch.findtext("octave") or "",
-                    _int(pitch.findtext("alter")))))
+                    _int(pitch.findtext("alter")), element)))
     end = max((stop for _, stop, _ in placed), default=0)
     return ([note for start, _, note in placed if start == 0],
             [note for _, stop, note in placed if stop == end])
+
+
+#: Where <notehead> goes among a note's children (MusicXML's own order).
+_BEFORE_NOTEHEAD = {
+    "grace", "cue", "chord", "pitch", "unpitched", "rest", "tie", "duration",
+    "instrument", "footnote", "level", "voice", "type", "dot", "accidental",
+    "time-modification", "stem",
+}
+
+
+def _colour_red(note: etree._Element) -> None:
+    note.set("color", "#FF0000")
+    head = note.find("notehead")
+    if head is None:
+        head = etree.Element("notehead")
+        head.text = "normal"
+        index = 0
+        for i, child in enumerate(note):
+            if isinstance(child.tag, str) and child.tag in _BEFORE_NOTEHEAD:
+                index = i + 1
+        note.insert(index, head)
+    head.set("color", "#FF0000")
 
 
 def _mark_lost_accidental(
@@ -742,14 +765,20 @@ def _mark_lost_accidental(
                 continue  # nothing printed beside it to carry
             if opening.alter == held.alter or opening.alter != _key_alter(opening.step, after):
                 continue
-            text = (f"⚠ check against the page: {held.step}{opening.octave} tied over the "
-                    "line break may keep the accidental it had before the break")
             direction = etree.Element("direction", placement="above")
             words = etree.SubElement(etree.SubElement(direction, "direction-type"), "words")
             words.set("color", "#FF0000")
-            words.text = text
+            words.text = "⚠ accidental?"
             at = next((i for i, el in enumerate(measure)
                        if el.tag not in ("print", "attributes")), len(measure))
+            if opening.note is not None:
+                # The note itself goes red and the word stands above it, the way
+                # homr marks its own doubts.
+                _colour_red(opening.note)
+                children = list(measure)
+                at = children.index(opening.note)
+                while at > 0 and children[at].find("chord") is not None:
+                    at -= 1
             measure.insert(at, direction)
             return
 
