@@ -8,7 +8,7 @@ developers are listed under *Behind the scenes*.
 ## 2026-10-06
 
 - The health check no longer counts a grace note's length into its bar, so a bar
-  with grace notes is not reported as overfull. (#PR)
+  with grace notes is not reported as overfull. (#283)
 - A warning on a scanned bar is one short word ("⚠ accidental?"), and the note it is
   about is red, so the spot is easy to find in MuseScore. A red note left behind is
   played black in the practice video. (#280)
