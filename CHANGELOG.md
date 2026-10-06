@@ -9,7 +9,10 @@ developers are listed under *Behind the scenes*.
 
 - A scanned song moves on to Clean as soon as every system is read; there is no
   longer a "This reading is right" button to press. Reading a system again no
-  longer sends a song that is further along back to Scan. (#281)
+  longer sends a song that is further along back to Scan. (#282)
+- A warning on a scanned bar is one short word ("⚠ accidental?"), and the note it is
+  about is red, so the spot is easy to find in MuseScore. A red note left behind is
+  played black in the practice video. (#280)
 - A scanned song marks the first bar of a system for checking when a note the
   previous system ended with a printed accidental starts it again without one: a
   note tied over the line break keeps its accidental, and the scan cannot tell.

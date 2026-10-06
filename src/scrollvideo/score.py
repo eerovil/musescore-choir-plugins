@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from lxml import etree
 
-from src.clean_score.utils.problem_marks import strip_marks
+from src.clean_score.utils.problem_marks import strip_marks, strip_red_notes
 from src.clean_score.utils.utils import starts_new_system
 
 
@@ -153,6 +153,7 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     # The red marks cleaning leaves for a person fixing the score (#238) are not
     # part of the music; a forgotten one must not end up in a practice track.
     changed = bool(strip_marks(root)) or changed
+    changed = bool(strip_red_notes(root)) or changed
     if initial_bpm is not None:
         changed = add_opening_tempo(root, initial_bpm) or changed
     if not changed:
