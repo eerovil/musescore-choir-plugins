@@ -232,3 +232,18 @@ def test_the_verification_summary_reports_the_underlying_count(tmp_path, monkeyp
 
     # The library badge is the other place two songs are compared by a number.
     assert song.to_summary()["open_issues"] == 4
+
+
+def test_a_grace_note_takes_no_time_in_the_bar(tmp_path):
+    """Lempilintu (eerovil/musescore-choir-plugins#274): a solo bar with two grace
+    eighths before its half note was reported as 7/4 of a 6/4 bar."""
+    path = _score(tmp_path, [[8], [8]])
+    root = etree.parse(path).getroot()
+    voice = root.find(".//Staff/Measure[2]/voice")
+    grace = etree.Element("Chord")
+    etree.SubElement(grace, "appoggiatura")
+    etree.SubElement(grace, "durationType").text = "eighth"
+    etree.SubElement(etree.SubElement(grace, "Note"), "pitch").text = "62"
+    voice.insert(0, grace)
+    etree.ElementTree(root).write(path, encoding="UTF-8", xml_declaration=True)
+    assert _kinds(path, "malformed-measure") == []
