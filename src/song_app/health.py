@@ -91,7 +91,14 @@ def _parse_fraction(text: Optional[str]) -> Optional[Fraction]:
         return None
 
 
+#: A chord carrying one of these is a grace note: it takes no time in the bar.
+_GRACE = {"acciaccatura", "appoggiatura", "grace4", "grace8", "grace16", "grace32",
+          "grace8after", "grace16after", "grace32after"}
+
+
 def _chord_rest_len(el: etree._Element, tuplet_scale: Fraction) -> Optional[Fraction]:
+    if el.tag == "Chord" and any(child.tag in _GRACE for child in el):
+        return Fraction(0)
     dt = el.findtext("durationType")
     if dt == "measure":
         return None  # measure-length rest; handled by caller as the full bar
