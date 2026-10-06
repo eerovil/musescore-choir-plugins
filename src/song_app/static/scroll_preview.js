@@ -267,9 +267,15 @@
       if (time < audio.duration) {
         tail = false;
         audio.currentTime = time;
+        const token = request;
         try {
           await audio.play();
         } catch (_err) {
+          // Switching audio off (or to another mix) pauses this element, and a
+          // play() still pending then rejects. That is not the browser refusing
+          // to play: the silent clock or the new mix has already taken over, so
+          // its status and its playback are not this rejection's to undo.
+          if (token !== request) return;
           wantedPlay = false;
           audioStatus.textContent = "Audio is ready — press Play again.";
           show();
