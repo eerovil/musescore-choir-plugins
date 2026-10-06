@@ -506,6 +506,9 @@ Key test modules:
   listed by health until deleted, one Fix-panel sentence each replaced on every clean
   (a typed one never touched), put on a bar MuseScore rejected, and absent from the
   video.
+- `test_missing_ties.py` — a tie is copied onto a voice singing the donor's rhythm,
+  not onto an ostinato on the same pitch (#284), not past a rhythm that differs
+  before the tie ends, and not between two pitches; any matching donor will do.
 - `test_missing_tuplets.py` — the dropped-tuplet cross-voice auto-fix (mirror
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` — the re-voicing plan and the
@@ -2040,8 +2043,16 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    the recording spacer is one, and counting it shifts the split. With no voicing
    recorded the old guess still runs, so existing songs clean as before.
 6. `add_missing_ties` recovers OCR-dropped ties by mirroring them from a parallel
-   voice that kept the tie at the same tick span (requires **same pitch**, so it's
-   safe). Slurs are **not** auto-mirrored: a slur connects different pitches, so it
+   voice that kept the tie at the same tick span. Same pitch is **not** enough on its
+   own: an ostinato strikes the pitch a held line ties on the same beats, as separate
+   notes (Vieläkö huvittaisi's A1 got 23 ties the page does not print, #284). So the
+   target must also sing the donor's rhythm across the bar the tie starts in, and in
+   the next bar up to the note it ends on — not after it, since voices that move
+   together into a held note often part straight after. Measured over `songs/`: 117
+   ties added before, 73 after — 52 stopped and 8 gained (every matching donor is
+   tried now, not only the last). Of the 52, 31 are wrong by the page or the lyrics,
+   9 were probably real (an overfull bar, a pickup voice) and 12 are unclear.
+   Slurs are **not** auto-mirrored: a slur connects different pitches, so it
    can't be pitch-checked, and mirroring one voice's slur onto another produces false
    positives (e.g. copying a bass melisma onto the tenors) — slurs are fixed by hand in
    the score. Then `detect_part_types` (clef + pitch-range heuristics name parts
