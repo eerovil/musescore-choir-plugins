@@ -5,6 +5,11 @@ grouped by the day they were merged, and each line names its pull request
 (`#123`) on GitHub. Changes that only touch tests, measurements or the notes for
 developers are listed under *Behind the scenes*.
 
+## 2026-10-06
+
+- A scanned song no longer shows a meter change at every system break when the
+  page prints its meter once and carries it (2/2 read back as 4/4). (#277)
+
 ## 2026-10-05
 
 - Scanning a PDF whose pages are stored sideways and turned upright now reads each
