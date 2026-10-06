@@ -825,7 +825,8 @@ def _meter_plan(
                    for over in range(bar, stop)]
         meter = _reconcile(declared, running,
                            [length for length in lengths if length], divisions,
-                           seam=bar == 0 and system > 0)
+                           seam=bar == 0 and system > 0
+                           and _time_is_guessed(scans[system], bar))
         ticks = meter.ticks(divisions)
         plan[system][bar] = _BarMeter(meter, running is None or meter != running, ticks)
         for over in range(bar + 1, stop):
@@ -850,13 +851,14 @@ def _reconcile(
 
     ``lengths`` is one entry per **bar** of the span, not one per staff.
 
-    At a ``seam`` -- the head of a system after the first -- a span measuring
-    exactly the meter already in force carries that meter, whatever the crop
-    declares. A system rarely prints its meter again, so what homr wrote at the
-    crop's head is its own guess, and it guesses in quarters: Vieläkö huvittaisi
-    carries 2/2 into three systems and each came back 4/4, which the score then
-    wrote as a meter change at every seam (eerovil/musescore-choir-plugins#274).
-    A span of a different length is still a change and is written as one.
+    At a ``seam`` -- the head of a system after the first whose signature homr
+    guessed rather than read (:func:`_time_is_guessed`) -- a span measuring
+    exactly the meter already in force carries that meter. homr guesses in
+    quarters: Vieläkö huvittaisi carries 2/2 into three systems and each came
+    back 4/4, which the score then wrote as a meter change at every seam
+    (eerovil/musescore-choir-plugins#274). A signature homr read off the page is
+    a change even at the same length -- the same song's 4/4 at bar 26 -- and a
+    span of a different length is a change whatever was declared.
     """
     if seam and running is not None and _agreed(lengths) == running.ticks(divisions):
         return running
@@ -886,6 +888,27 @@ def _agreed(values: Sequence[int], least: int = 1) -> Optional[int]:
         counts[value] = counts.get(value, 0) + 1
     value, count = max(counts.items(), key=lambda item: (item[1], item[0]))
     return value if count * 2 > len(values) else None
+
+
+def _time_is_guessed(scan: SystemScan, bar: int) -> bool:
+    """Whether every signature this bar declares is homr's own fallback.
+
+    homr writes a signature it decoded off the page into the attributes it opens
+    with the clef and key, and one it had to make up -- a crop that prints none --
+    into the first attributes of the measure, beside ``<divisions>``. A bar with
+    no signature at all has nothing guessed about it.
+    """
+    found = False
+    for staff in scan.staves:
+        if bar >= staff.bars:
+            continue
+        for attributes in staff.measures[bar].findall("attributes"):
+            if attributes.find("time") is None:
+                continue
+            found = True
+            if attributes.find("divisions") is None or attributes.find("clef") is not None:
+                return False
+    return found
 
 
 def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:

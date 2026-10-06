@@ -637,19 +637,27 @@ def test_a_resting_column_inherits_the_system_meter(tmp_path):
 # see why -- and, just as much, the cases where it must keep its hands off.
 
 
-def a_staff(lengths, divisions=4, time=(4, 4), changes=None):
+def a_staff(lengths, divisions=4, time=(4, 4), changes=None, guessed=False):
     """One ``<part>`` of one staff: bar N holds ``lengths[N]`` quarter notes.
 
     ``None`` in place of a length is a whole-measure rest. ``time`` is what the
     crop declares at its head -- every crop declares one, because every crop is a
     document that has just begun -- and ``changes`` (``{bar: (beats, type)}``) is
     a signature it declares later, which is the shape of one the page prints.
+    ``guessed`` writes the head signature the way homr writes one it made up --
+    beside ``<divisions>``, apart from the clef -- rather than one it read.
     """
     changes = changes or {}
     body = []
     for n, quarters in enumerate(lengths):
         declared = ""
-        if n == 0:
+        if n == 0 and guessed:
+            declared = (f"<attributes><divisions>{divisions}</divisions>"
+                        f"<time><beats>{time[0]}</beats>"
+                        f"<beat-type>{time[1]}</beat-type></time></attributes>"
+                        "<attributes><key><fifths>0</fifths></key>"
+                        "<clef><sign>G</sign><line>2</line></clef></attributes>")
+        elif n == 0:
             declared = (f"<attributes><divisions>{divisions}</divisions>"
                         "<key><fifths>0</fifths></key>"
                         f"<time><beats>{time[0]}</beats>"
@@ -713,9 +721,21 @@ def test_a_seam_carries_a_half_note_meter_the_crop_guessed_in_quarters(tmp_path)
     score = assembled(
         tmp_path,
         a_scan(1, [a_staff([4, 4], time=(2, 2)), a_staff([4, 4], time=(2, 2))]),
-        a_scan(2, [a_staff([4, 4], time=(4, 4)), a_staff([4, 4], time=(4, 4))]),
+        a_scan(2, [a_staff([4, 4], time=(4, 4), guessed=True),
+                   a_staff([4, 4], time=(4, 4), guessed=True)]),
     )
     assert declared_meters(score.findall("part")[0]) == [("1", "2/2")]
+
+
+def test_a_signature_read_off_the_page_at_a_seam_is_a_change(tmp_path):
+    """The same song prints 4/4 at bar 26, the head of a system: the same length
+    as the 2/2 in force, and still a change the page makes."""
+    score = assembled(
+        tmp_path,
+        a_scan(1, [a_staff([4, 4], time=(2, 2)), a_staff([4, 4], time=(2, 2))]),
+        a_scan(2, [a_staff([4, 4], time=(4, 4)), a_staff([4, 4], time=(4, 4))]),
+    )
+    assert declared_meters(score.findall("part")[0]) == [("1", "2/2"), ("3", "4/4")]
 
 
 def test_a_meter_the_page_really_changes_at_a_seam_is_written(tmp_path):

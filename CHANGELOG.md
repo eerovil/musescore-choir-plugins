@@ -9,6 +9,8 @@ developers are listed under *Behind the scenes*.
 
 - A scanned song no longer shows a meter change at every system break when the
   page prints its meter once and carries it (2/2 read back as 4/4). (#277)
+- A meter change printed at the start of a system is kept even when the new bars
+  are the same length as the old ones (2/2 to 4/4). (#278)
 
 ## 2026-10-05
 
