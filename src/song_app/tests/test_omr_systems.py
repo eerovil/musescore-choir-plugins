@@ -707,6 +707,17 @@ def test_a_printed_signature_gets_the_numerator_its_bars_have(tmp_path):
     assert declared_meters(score.findall("part")[0]) == [("1", "3/4"), ("3", "4/4")]
 
 
+def test_a_seam_carries_a_half_note_meter_the_crop_guessed_in_quarters(tmp_path):
+    """Vieläkö huvittaisi (eerovil/musescore-choir-plugins#274): 2/2 printed once,
+    carried into the next systems, each read back as 4/4 -- the same length."""
+    score = assembled(
+        tmp_path,
+        a_scan(1, [a_staff([4, 4], time=(2, 2)), a_staff([4, 4], time=(2, 2))]),
+        a_scan(2, [a_staff([4, 4], time=(4, 4)), a_staff([4, 4], time=(4, 4))]),
+    )
+    assert declared_meters(score.findall("part")[0]) == [("1", "2/2")]
+
+
 def test_a_meter_the_page_really_changes_at_a_seam_is_written(tmp_path):
     score = assembled(
         tmp_path,
