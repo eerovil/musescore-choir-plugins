@@ -973,3 +973,63 @@ def test_a_mark_homr_put_on_a_bar_stays_with_its_staff():
         for words in measure.iter("words")]
     assert marks(upper) == []
     assert marks(lower) == [(2, "⚠ check against the page: a second reading came out different")]
+
+
+# --- a note carried over the line break --------------------------------------
+
+
+def _one_bar_system(index, notes, fifths=-4):
+    """One flattened one-staff system of one 4/4 bar holding ``notes`` --
+    ``[(step, octave, alter, quarters), ...]``."""
+    body = "".join(
+        f"<note><pitch><step>{step}</step>"
+        + (f"<alter>{alter}</alter>" if alter else "")
+        + f"<octave>{octave}</octave></pitch><duration>{quarters * 4}</duration>"
+        "<voice>1</voice><type>quarter</type></note>"
+        for step, octave, alter, quarters in notes)
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1"><attributes><divisions>4</divisions>'
+        f"<key><fifths>{fifths}</fifths></key><time><beats>4</beats><beat-type>4</beat-type>"
+        '</time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        f"{body}</measure></part>")
+    return omr_systems.SystemScan(index=index, musicxml="", staves=omr_systems.flatten_part(part))
+
+
+def _marks(path):
+    root = etree.parse(path).getroot()
+    return [(int(m.get("number")), w.text) for m in root.iter("measure") for w in m.iter("words")]
+
+
+def test_a_printed_natural_before_the_break_marks_the_key_note_after_it(tmp_path):
+    """Shakkitarina system 3 (eerovil/musescore-choir-plugins#274), in made-up
+    notes: the previous system ends on an E natural under four flats, the next
+    opens on E flat. The tied note may have kept its natural; the bar is marked."""
+    out = omr_systems.assemble(
+        [_one_bar_system(1, [("C", 4, 0, 3), ("E", 4, 0, 1)]),
+         _one_bar_system(2, [("E", 4, -1, 1), ("C", 4, 0, 3)])],
+        str(tmp_path / "a.musicxml"))
+    assert [(bar, text.split(":")[1].split()[0]) for bar, text in _marks(out)] == [(2, "E4")]
+
+
+def test_nothing_printed_before_the_break_is_no_mark(tmp_path):
+    out = omr_systems.assemble(
+        [_one_bar_system(1, [("C", 4, 0, 3), ("E", 4, -1, 1)]),
+         _one_bar_system(2, [("E", 4, -1, 1), ("C", 4, 0, 3)])],
+        str(tmp_path / "a.musicxml"))
+    assert _marks(out) == []
+
+
+def test_a_note_that_already_kept_its_accidental_is_no_mark(tmp_path):
+    out = omr_systems.assemble(
+        [_one_bar_system(1, [("C", 4, 0, 3), ("E", 4, 0, 1)]),
+         _one_bar_system(2, [("E", 4, 0, 1), ("C", 4, 0, 3)])],
+        str(tmp_path / "a.musicxml"))
+    assert _marks(out) == []
+
+
+def test_a_different_note_after_the_break_is_no_mark(tmp_path):
+    out = omr_systems.assemble(
+        [_one_bar_system(1, [("C", 4, 0, 3), ("E", 4, 0, 1)]),
+         _one_bar_system(2, [("E", 5, -1, 1), ("C", 4, 0, 3)])],
+        str(tmp_path / "a.musicxml"))
+    assert _marks(out) == []

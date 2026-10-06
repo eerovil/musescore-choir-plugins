@@ -74,7 +74,7 @@ import copy
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from lxml import etree
 
@@ -618,9 +618,13 @@ def _fill_column(
     prevailing_key: Optional[str] = None
     prevailing_clef: Optional[str] = None
     first = True
+    # The notes sounding at the end of the previous system, and its key there.
+    ending: List[_Sounding] = []
+    ending_fifths = 0
 
     for system, scan in enumerate(scans):
         staff = scan.staves[column] if column < scan.width else None
+        fifths = _fifths(staff.key) if staff is not None and staff.key is not None else ending_fifths
 
         for bar in range(scan.bars):
             number += 1
@@ -654,8 +658,95 @@ def _fill_column(
                 if declared is not None:
                     prevailing_key = _canonical(declared.find("key")) or prevailing_key
                     prevailing_clef = _canonical(declared.find("clef")) or prevailing_clef
+            if system and bar == 0 and source is not None:
+                _mark_lost_accidental(measure, ending, ending_fifths, fifths)
             first = False
             part.append(measure)
+            if bar == scan.bars - 1:
+                ending = _sounding(measure)[1] if source is not None else []
+                ending_fifths = fifths
+
+
+#: Order the key signature adds accidentals in: sharps from the left, flats from
+#: the right.
+_SHARP_ORDER = "FCGDAEB"
+
+
+@dataclass
+class _Sounding:
+    step: str
+    octave: str
+    alter: int
+
+
+def _key_alter(step: str, fifths: int) -> int:
+    if fifths > 0 and step in _SHARP_ORDER[:fifths]:
+        return 1
+    if fifths < 0 and step in _SHARP_ORDER[::-1][:-fifths]:
+        return -1
+    return 0
+
+
+def _fifths(key: etree._Element) -> int:
+    return _int(key.findtext("fifths"))
+
+
+def _sounding(measure: etree._Element) -> Tuple[List[_Sounding], List[_Sounding]]:
+    """The pitched notes that open the bar and the ones still sounding at its end."""
+    cursor = last = 0
+    placed: List[Tuple[int, int, _Sounding]] = []
+    for element in measure:
+        if element.tag == "backup":
+            cursor -= _duration(element)
+        elif element.tag == "forward":
+            cursor += _duration(element)
+        elif element.tag == "note":
+            duration = 0 if element.find("grace") is not None else _duration(element)
+            if element.find("chord") is None:
+                last, cursor = cursor, cursor + duration
+            pitch = element.find("pitch")
+            if pitch is not None:
+                placed.append((last, last + duration, _Sounding(
+                    pitch.findtext("step") or "", pitch.findtext("octave") or "",
+                    _int(pitch.findtext("alter")))))
+    end = max((stop for _, stop, _ in placed), default=0)
+    return ([note for start, _, note in placed if start == 0],
+            [note for _, stop, note in placed if stop == end])
+
+
+def _mark_lost_accidental(
+    measure: etree._Element, ending: Sequence[_Sounding], before: int, after: int
+) -> None:
+    """Mark a system's first bar where a note carried over the line break may have
+    lost the accidental it was printed with.
+
+    A note tied over a line break keeps its accidental and the page does not print
+    it again. Each system is read on its own, so homr gives the continuation the
+    key's pitch: on Shakkitarina system 3 (eerovil/musescore-choir-plugins#274)
+    three staves end system 2 on a printed E♮ tied over, and system 3 opens on an
+    E♭. homr drops the tie at the page edge, so nothing here can tell such a note
+    from a new bar that really starts on the key's E♭ -- this only puts the red
+    check-against-the-page mark on the bar, the way homr marks its own doubts,
+    and changes no note.
+    """
+    for opening in _sounding(measure)[0]:
+        for held in ending:
+            if (held.step, held.octave) != (opening.step, opening.octave):
+                continue
+            if held.alter == _key_alter(held.step, before):
+                continue  # nothing printed beside it to carry
+            if opening.alter == held.alter or opening.alter != _key_alter(opening.step, after):
+                continue
+            text = (f"⚠ check against the page: {held.step}{opening.octave} tied over the "
+                    "line break may keep the accidental it had before the break")
+            direction = etree.Element("direction", placement="above")
+            words = etree.SubElement(etree.SubElement(direction, "direction-type"), "words")
+            words.set("color", "#FF0000")
+            words.text = text
+            at = next((i for i, el in enumerate(measure)
+                       if el.tag not in ("print", "attributes")), len(measure))
+            measure.insert(at, direction)
+            return
 
 
 def _signature(scan: SystemScan, staff: Optional[Staff]):
