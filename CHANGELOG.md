@@ -10,7 +10,7 @@ developers are listed under *Behind the scenes*.
 - A scanned song marks the first bar of a system for checking when a note the
   previous system ended with a printed accidental starts it again without one: a
   note tied over the line break keeps its accidental, and the scan cannot tell.
-  (#PR)
+  (#279)
 - A scanned song no longer shows a meter change at every system break when the
   page prints its meter once and carries it (2/2 read back as 4/4). (#277)
 - A meter change printed at the start of a system is kept even when the new bars
