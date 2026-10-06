@@ -124,3 +124,16 @@ def test_the_video_never_shows_a_mark(tmp_path):
     assert marks(etree.parse(rendered).getroot()) == []
     # The source keeps it: the mark is for the person, only the render drops it.
     assert len(marks(etree.parse(path).getroot())) == 1
+
+
+def test_the_video_never_shows_a_red_note(tmp_path):
+    """A note a warning coloured red (#274) and nobody turned back stays red in the
+    score, and plays black in the practice video."""
+    root = _score()
+    note = root.find(".//Note")
+    etree.SubElement(note, "color", r="255", g="0", b="0", a="255")
+    path = _write(root, tmp_path / "s_cleaned.mscx")
+    rendered, _ = score_mod.prepare(path, str(tmp_path), keep_silent=True)
+    assert rendered != path
+    assert etree.parse(rendered).getroot().find(".//Note/color") is None
+    assert etree.parse(path).getroot().find(".//Note/color") is not None

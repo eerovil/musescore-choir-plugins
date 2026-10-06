@@ -58,3 +58,20 @@ def strip_marks(root: etree._Element) -> int:
     for el in found:
         el.getparent().remove(el)
     return len(found)
+
+
+def strip_red_notes(root: etree._Element) -> int:
+    """Turn every red note back to black. Returns how many.
+
+    homr and the app colour the notes a warning is about red (#274), and a person
+    turns them back once the bar is right. One forgotten must not end up in a
+    practice track.
+    """
+    found = [
+        color for note in root.iter("Note") for color in note.findall("color")
+        if color.get("r") == "255" and color.get("g") == "0" and color.get("b") == "0"
+    ]
+    for color in found:
+        color.getparent().remove(color)
+    return len(found)
+
