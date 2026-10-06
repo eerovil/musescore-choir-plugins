@@ -54,15 +54,16 @@ the fragments, and the reviewer's approval from all of it. When an input changes
 everything downstream of it stops being true -- see :func:`reconcile`, which is
 the only place that idea is written down.
 
-**The stage does not advance on its own.** Assembling a score does not move the
-song to ``clean``; :func:`approve` does, and only a person calls it. This is the
-opposite of how ``clean`` behaves and it is deliberate (#99): the dangerous parse
-is the *tidy* one, so advancing automatically on a parse that looks fine would
-skip exactly the parses most worth looking at. The OK is a claim about a
-particular reading of the page, so it is recorded against :func:`revision` and
-lapses the moment any system is read again -- and the content stamps it was given
-are kept, so the panel can say **which** systems have changed since anybody
-looked.
+**A finished scan moves the song on to Clean by itself** (#281). It used to wait
+for a person to say the whole reading was right (#99, #116), on the argument that
+the dangerous parse is the tidy one. That check could not really be made on this
+screen, so in practice it was pressed without looking, and a re-read sent songs
+that were already cleaned and lyricked back to ``scan``. The tidy-but-wrong parse
+is now caught later and bar by bar: homr's ``⚠`` doubt marks, the Fix panel's
+other readings of an unsure bar, the health verdict, and Review's approval -- the
+one approval left, which still lapses when a re-read changes a system. Only a
+hole keeps or puts a song back on ``scan``, because a score missing a system must
+not be cleaned.
 """
 
 from __future__ import annotations
@@ -226,14 +227,12 @@ def status(song: state.Song) -> Dict:
     """What the scan stage has and has not got, for the app to show and act on.
 
     ``complete`` is the gate on assembling: every printed band read, at least one
-    band, and an assembled score that matches what was read. ``approved`` is the
-    gate on *leaving* the stage, and it is a separate thing: complete says the app
-    has a score, approved says a person has looked at it.
+    band, and an assembled score that matches what was read. A complete scan is
+    also what moves a song off the stage (#281).
 
     ``homr`` says which homr read each system and ``homr_now`` which one this host
     would use today, so the panel can show both. Neither gates anything: a system
-    read by an older homr is still read, and an approval made under one is still
-    an approval (#154).
+    read by an older homr is still read (#154).
     """
     bands = pdf_systems.load_bounds(song.dir)
     fragments = _fragments(song)
@@ -242,11 +241,6 @@ def status(song: state.Song) -> Dict:
     scan = song.data.get("scan", {})
     assembled = scan.get("assembled")
     current = revision(song)
-    ok = scan.get("ok") or {}
-    # What each system read as when it was last approved. A system missing from
-    # it, or reading differently now, is one nobody has looked at -- which is a
-    # hint about where to look, not a second gate.
-    seen = ok.get("systems") or {}
     return {
         "systems": len(bands),
         "read": sum(1 for f in fragments.values() if not f.get("error")),
@@ -258,15 +252,9 @@ def status(song: state.Song) -> Dict:
         and scan.get("assembled_revision") == current,
         "revision": current,
         "pages_without_bands": pages_without_bands(song, bands),
-        "approved": bool(ok.get("revision")) and ok["revision"] == current,
-        "ever_approved": bool(ok),
         "homr": {str(i): fragments[i].get("homr") for i in sorted(fragments)
                  if not fragments[i].get("error")},
         "homr_now": current_homr(),
-        "new_since_ok": [i for i in sorted(fragments)
-                         if not fragments[i].get("error")
-                         and seen.get(str(i)) != fragments[i].get("content")]
-        if ok else [],
         "findings": findings_by_system(song),
     }
 
@@ -371,30 +359,6 @@ def fragment_path(song: state.Song, index: int) -> Optional[str]:
     return path if os.path.exists(path) else None
 
 
-def approve(song: state.Song) -> Dict:
-    """Record that a person looked at this reading of the page, and move on.
-
-    The one explicit OK per song. It is recorded against the revision it approved
-    and against each system's content, so re-reading a system both lapses it and
-    says which system did it.
-    """
-    result = status(song)
-    if not result["complete"]:
-        raise ScanError(
-            "This scan is not finished: system(s) "
-            f"{', '.join(str(i) for i in result['holes']) or 'none'} still need "
-            "reading, so there is nothing whole to approve."
-        )
-    fragments = _fragments(song)
-    _scan(song)["ok"] = {
-        "revision": result["revision"],
-        "systems": {str(i): f.get("content") for i, f in sorted(fragments.items())},
-    }
-    song.set_stage("clean")
-    song.save()
-    return status(song)
-
-
 # --- the invalidation rule -----------------------------------------------
 #
 # There is one idea here and it is worth stating before the code: **when an
@@ -484,7 +448,12 @@ def reconcile(song: state.Song) -> List[str]:
         if recorded != row.made_from(song):
             row.discard(song)
             dropped.append(row.what)
-    if dropped:
+    moved = song.stage == "scan" and status(song)["complete"]
+    if moved:
+        # A song the old OK left waiting (#281): there is a whole score, so it is
+        # past scanning. Not a discard, so it is not in what this returns.
+        song.set_stage("clean")
+    if dropped or moved:
         song.save()
     return dropped
 
@@ -533,10 +502,13 @@ def _drop_answers(song: state.Song, index: int) -> None:
 def _drop_assembled(song: state.Song) -> None:
     _scan(song).pop("assembled_revision", None)
     # The file is left where it is -- the previews read it, and it is about to be
-    # written over by the next scan -- but the song is back on the stage that
-    # produces it, because what the rest of the app would build from it now is a
-    # score that is missing a system.
-    song.set_stage("scan")
+    # written over by the next scan. Only a hole sends the song back to the stage
+    # that produces it, because then what the rest of the app would build is a
+    # score missing a system. A system read again and come back different is not
+    # that: it is assembled again in the same run, and moving a song on Lyrics
+    # back to Scan for it is what left finished songs stranded there (#281).
+    if status(song)["holes"]:
+        song.set_stage("scan")
 
 
 def _drop_approval(song: state.Song) -> None:
@@ -748,10 +720,10 @@ def _assemble(song: state.Song, log: Logger) -> Dict:
     song.data.setdefault("sources", {})["xml"] = ASSEMBLED_NAME
     _scan(song)["assembled"] = ASSEMBLED_NAME
     _scan(song)["assembled_revision"] = revision(song)
-    # The stage deliberately stays where it is. A finished scan is a score the app
-    # has, not a score anybody has looked at, and `approve` is the only thing that
-    # moves a song out of `scan` (#99). The lapse in the other direction needs no
-    # code of its own: re-reading a system moves `revision`, which is what both the
-    # assembly and the OK are recorded against.
+    # A whole score is what being past scanning means (#281). A song further on
+    # stays where it is: a re-read is an edit, not a reason to start over.
+    if song.stage == "scan":
+        song.set_stage("clean")
+        log("Every system is read: the song is on Clean.")
     song.save()
     return status(song)

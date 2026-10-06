@@ -531,28 +531,6 @@ def api_homr_engines() -> Dict:
                         for e in omr.engines()]}
 
 
-@app.post("/api/songs/{slug}/approve-scan")
-def api_approve_scan(slug: str, body: Dict = None) -> Dict:
-    """The one explicit OK: a person looked at this parse, so the song may leave.
-
-    The revision comes back from the browser and has to match what is on disk. A
-    scan that finished while the panel was open would otherwise be approved by a
-    click aimed at the reading it replaced.
-    """
-    song = _require(slug)
-    expected = (body or {}).get("revision")
-    current = scan.revision(song)
-    if expected and expected != current:
-        raise HTTPException(
-            409, "The scan changed while you were looking at it; check the new "
-                 "systems before saying it is right.")
-    try:
-        scan.approve(song)
-    except scan.ScanError as exc:
-        raise HTTPException(400, str(exc)) from None
-    return _derived(_require(slug))
-
-
 @app.get("/api/songs/{slug}/scan-system/{index}")
 def api_scan_system(slug: str, index: int, dpi: int = 200):
     """One scanned system, engraved — the parse as a picture, beside its band.

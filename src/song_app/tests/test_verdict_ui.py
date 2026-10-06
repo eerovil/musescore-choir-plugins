@@ -231,7 +231,7 @@ def test_the_scan_panel_says_which_systems_to_read_again(live, page):
     song.save()
 
     errors = _open(page, base, song, "Scan")
-    page.wait_for_selector(".scanok")
+    page.wait_for_selector(".scandone")
 
     hint = page.locator(".scanfindings").first
     hint.scroll_into_view_if_needed()

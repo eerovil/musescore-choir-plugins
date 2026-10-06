@@ -412,12 +412,12 @@ Key test modules:
   re-read that came out the same discarding nothing, and a song that never scanned
   deriving nothing from any of it. Flattening and assembling are *not* stubbed: they are
   cheap, need no binary, and stubbing them would leave the seam a hole slips through.
-  This pull request adds the **gate** to it: a finished scan waits on `scan` rather than
-  advancing, there is nothing to approve while a system is a hole, a re-read that came out
-  different lapses the OK and names the system while one that came out the same costs
-  nothing, an unmarked page is refused before any band is read while a missing poppler is
-  not, the route refuses a click aimed at an older reading, and a hole has no fragment to
-  render.
+  It also pins **leaving the stage** (#281, which removed the approval gate #116 added): a
+  finished scan moves the song to Clean, a hole keeps it on Scan, a re-read that came out
+  different leaves a song further on where it is (while still lapsing Review's approval),
+  a re-read that leaves a hole sends it back, a song the old gate left on Scan moves on
+  when read, an unmarked page is refused before any band is read while a missing poppler
+  is not, and a hole has no fragment to render.
   It also gains the **record of a moved whole-measure rest** (#164): one is written down
   as an outstanding free-text fix naming the system, the bar and the voices; re-reading the
   same system does not say it twice; a re-read that moved nothing takes the sentence away;
@@ -429,8 +429,8 @@ Key test modules:
 - `src/song_app/tests/test_scan_panel_ui.py` — added by this pull request: the Scan panel
   in a real browser, which is where most of #116 actually lives. It opens on the Systems
   editor with the Scan button waiting for the bands; a hole shows what homr said, offers a
-  retry of its own and withholds the OK; the OK is a wall that has to be pressed and moves
-  the song to Clean; a lapsed OK says which system changed; and it all fits 390x844.
+  retry of its own and keeps the song on Scan; a whole reading moves the song to Clean with
+  nothing to approve; and it all fits 390x844.
   Nothing here runs homr, poppler or MuseScore — the fragments are written into the song
   the way a scan would leave them, **with real band stamps**, or the app discards them all
   on the next read, which is the invalidation rule working rather than a test detail.
@@ -1810,17 +1810,18 @@ state model are in `DESIGN.md`.
   Measured end to end on the fixture, real crops and real homr: **15 systems, 201s, no
   holes, 52 bars** — the same bar count as the fixture's own cleaned score — every system
   finding the 2 staves the page prints.
-  **The stage does not advance on its own, and this pull request is what makes that
-  true.** Assembling used to set the song to `clean`; now only `scan.approve` does, and
-  only a person calls it (#99). The reasoning is worth keeping because it is the opposite
-  of how `clean` behaves: the dangerous parse is the **tidy** one, so advancing on a parse
-  that looks fine would skip exactly the parses most worth looking at. The OK is a claim
-  about one reading of the page, so it is recorded against `revision` — every fragment's
-  content in order — and lapses the moment any system is read again. It also keeps the
-  **content stamp each system had when it was approved**, which is the only reason the
-  panel can say *which* systems have changed since anybody looked; the lapse itself needs
-  no code of its own, because the assembly and the OK are recorded against the same
-  revision, so `reconcile` already puts the song back on `scan`.
+  **A whole reading moves the song on by itself** (#281). From #99 to #281 it did not:
+  only a person's OK (`scan.approve`) moved a song off `scan`, on the argument that the
+  dangerous parse is the **tidy** one. The owner removed that gate. Checking a whole
+  reading against the page could not really be done on that screen, so the OK was
+  pressed without looking, and since re-reading a system lapsed it, songs already cleaned
+  and lyricked were sent back to `scan` and stayed there. The tidy-but-wrong parse is now
+  caught later and bar by bar — homr's `⚠` doubt marks (#245), the Fix panel's other
+  readings of an unsure bar (#269), the health verdict (#170) and Review's approval, the one
+  approval left, which still lapses when a re-read changes a system. So `_assemble` moves a
+  song on `scan` to `clean`, a re-read never moves a song backwards, and only a **hole**
+  keeps or puts a song back on `scan` (`_drop_assembled`), because a score missing a system
+  must not be cleaned. `reconcile` also moves on a song the old gate left waiting.
   **A page nobody marked is refused, not scanned.** `pages_without_bands` is a
   precondition rather than a hole to fill later: the scan reads the bands and nothing
   else, so an unmarked page is music that would never be read at all and the assembled
@@ -1905,7 +1906,7 @@ state model are in `DESIGN.md`.
   provoke a side effect, which then also invalidated the band stamp for a reason that
   was a lie. The cost is said on the row rather than in a dialog, because it is only a
   cost when the reading actually changes: `reconcile` discards that system's answers and
-  lapses the OK when the content stamp moves, and a re-read that came out the same costs
+  lapses Review's approval when the content stamp moves, and a re-read that came out the same costs
   nothing. The panel owns the run (it has the engine picker and the log) and publishes
   it as `scanRerun`, so the compare rows re-read through the same call rather than a
   second copy of it — carrying its slug, since a closure from another song would
@@ -1930,13 +1931,9 @@ state model are in `DESIGN.md`.
   its reason **in its own row**, so the sequence stays intact instead of the comparison
   quietly skipping a system: that is what "a refused parse is kept and shown" comes to
   here, since nothing in the app refuses a parse on its shape today.
-  **One explicit OK**, offered only when there is a whole score to approve, sending the
-  revision it was looking at so a scan that finished under the operator's cursor cannot be
-  approved by a click aimed at the reading it replaced (409). No per-system ticking: 20
-  taps is a gate people learn to click through blind, and friction that produces false
-  diligence is worse than trusting the operator to have looked.
-  **After a re-scan the OK is gone and the panel says where to look** — "Changed since it:
-  system(s) 7" — a hint, not per-system bookkeeping.
+  **There is nothing to approve** (#281; #116 had one explicit OK here). Once every system
+  is read the panel says so, says the song is on Clean and that unsure bars are marked `⚠`
+  and listed in Fix, and offers a **Go to Clean** button that only changes the view.
   The comparison is redrawn when the scan moves and not otherwise (`_refreshScan`), since
   redrawing reloads every crop; a system read while it is open therefore appears in it.
   On a phone it is the existing pane switcher and the compare rows, both already built

@@ -150,10 +150,8 @@ def test_scan_reads_every_band_and_assembles_one_score(songs, reader):
     assert reader.read == [1, 2, 3]
     assert result["complete"] and result["holes"] == []
     fresh = _reload(song)
-    # Complete is not approved: a finished scan is a score the app has, not one
-    # anybody has looked at, and only `approve` moves a song off this stage.
-    assert fresh.stage == "scan"
-    assert not result["approved"]
+    # A whole score is what being past scanning means (#281).
+    assert fresh.stage == "clean"
     assert fresh.data["sources"]["xml"] == scan.ASSEMBLED_NAME
     assert os.path.isfile(fresh.path(scan.ASSEMBLED_NAME))
     # Fragments are kept: the assembled score is derived from them, so they are
@@ -234,7 +232,7 @@ def test_filling_the_hole_reads_only_the_hole_and_then_assembles(songs, reader):
 
     assert reader.read == [2], "a band already read at its current geometry is not re-read"
     assert result["complete"]
-    assert _reload(song).stage == "scan", "filling a hole does not approve the scan"
+    assert _reload(song).stage == "clean", "filling the last hole moves the song on"
 
 
 def test_a_song_with_no_bounds_refuses_rather_than_guessing(songs, reader):
@@ -350,7 +348,7 @@ def test_re_reading_a_system_to_the_same_answer_changes_nothing(songs, reader, t
     assert song.data["review"]["approved_against"] == "sha1:whatever"
 
 
-def test_a_re_scan_that_reads_differently_clears_the_song_s_explicit_ok(songs, reader):
+def test_a_re_scan_that_reads_differently_clears_the_review_approval(songs, reader):
     song = _song(songs)
     scan.run(song)
     song = _reload(song)
@@ -494,66 +492,73 @@ def test_saving_bounds_says_what_it_threw_away(client, songs, reader):
     assert "the scan of system 2" in r.json()["discarded"]
 
 
-# --- the gate: one explicit OK per song ------------------------------------
+# --- leaving the stage ------------------------------------------------------
 #
-# The scan stage is the one stage that must not advance on its own. Everything
-# below is about that: what the OK records, what lapses it, and what it says
-# afterwards about where to look.
+# There is no gate (#281): a whole score moves the song to Clean, a re-read never
+# moves a song backwards, and only a hole keeps or puts it back on Scan.
 
 
-def test_a_finished_scan_waits_for_a_person_and_then_moves(songs, reader):
+def test_a_finished_scan_moves_the_song_to_clean(songs, reader):
     song = _song(songs)
     scan.run(song)
-    song = _reload(song)
-    assert song.stage == "scan"
 
-    result = scan.approve(song)
-
-    assert result["approved"] is True
     assert _reload(song).stage == "clean"
-    assert song.data["scan"]["ok"]["revision"] == scan.revision(song)
 
 
-def test_there_is_nothing_to_approve_while_a_system_is_a_hole(songs, reader):
+def test_a_scan_with_a_hole_stays_on_scan(songs, reader):
     song = _song(songs)
     reader.fail[2] = omr.HomrError("homr fell over")
     scan.run(song)
-    song = _reload(song)
 
-    with pytest.raises(scan.ScanError, match="2"):
-        scan.approve(song)
-    assert song.stage == "scan"
+    assert _reload(song).stage == "scan"
 
 
-def test_re_reading_a_system_lapses_the_ok_and_says_which_one(songs, reader):
+def test_a_re_read_that_comes_out_different_leaves_a_later_song_where_it_is(songs, reader):
     song = _song(songs)
     scan.run(song)
     song = _reload(song)
-    scan.approve(song)
+    song.set_stage("lyrics")
+    song.data["review"] = {"approved_against": "sha1:whatever",
+                           "scan_revision": scan.revision(song)}
+    song.save()
 
-    # The same band, read again and coming back different: this is the case the
-    # OK exists for, since what was approved is no longer what would be cleaned.
     reader.staves = 3
     scan.run(_reload(song), only=[2])
-    st = scan.status(_reload(song))
+    fresh = _reload(song)
 
-    assert st["approved"] is False
-    assert st["ever_approved"] is True
-    assert st["new_since_ok"] == [2]
-    assert _reload(song).stage == "scan", "a lapsed OK puts the song back on Scan"
+    assert fresh.stage == "lyrics", "a re-read is an edit, not a reason to start over"
+    assert "review" not in fresh.data, "the Review approval still lapses"
 
 
-def test_a_re_read_that_came_out_the_same_costs_the_operator_nothing(songs, reader):
+def test_a_re_read_that_leaves_a_hole_sends_the_song_back_to_scan(songs, reader):
     song = _song(songs)
     scan.run(song)
     song = _reload(song)
-    scan.approve(song)
+    song.set_stage("lyrics")
+    song.save()
 
+    reader.fail[2] = omr.HomrError("homr fell over")
     scan.run(_reload(song), only=[2])
-    st = scan.status(_reload(song))
 
-    assert st["approved"] is True and st["new_since_ok"] == []
+    assert _reload(song).stage == "scan", "the score is missing a system now"
+
+
+def test_a_song_left_waiting_on_the_old_ok_moves_on_when_read(songs, reader):
+    song = _song(songs)
+    scan.run(song)
+    song = _reload(song)
+    song.set_stage("scan")                       # where the old gate left it
+    song.save()
+
+    assert scan.reconcile(_reload(song)) == [], "moving on is not a discard"
     assert _reload(song).stage == "clean"
+
+
+def test_the_ok_route_is_gone(client, songs, reader):
+    song = _song(songs)
+    scan.run(song)
+
+    assert client.post(f"/api/songs/{song.slug}/approve-scan").status_code in (404, 405)
 
 
 def test_a_page_with_no_bands_on_it_is_refused_rather_than_left_out(songs, reader, monkeypatch):
@@ -577,40 +582,6 @@ def test_no_poppler_is_not_the_same_as_no_bands(songs, reader, monkeypatch):
     assert scan.pages_without_bands(song) == []
     scan.run(song)
     assert reader.read == [1, 2]
-
-
-def test_the_ok_route_advances_the_song(client, songs, reader):
-    song = _song(songs)
-    scan.run(song)
-    revision = scan.status(_reload(song))["revision"]
-
-    r = client.post(f"/api/songs/{song.slug}/approve-scan", json={"revision": revision})
-
-    assert r.status_code == 200
-    assert r.json()["stage"] == "clean"
-    assert r.json()["scan_status"]["approved"] is True
-
-
-def test_the_ok_route_refuses_a_click_aimed_at_an_older_reading(client, songs, reader):
-    song = _song(songs)
-    scan.run(song)
-
-    r = client.post(f"/api/songs/{song.slug}/approve-scan",
-                    json={"revision": "not-what-is-on-disk"})
-
-    assert r.status_code == 409
-    assert _reload(song).stage == "scan"
-
-
-def test_the_ok_route_refuses_an_unfinished_scan(client, songs, reader):
-    song = _song(songs)
-    reader.fail[2] = omr.HomrError("homr fell over")
-    scan.run(song)
-
-    r = client.post(f"/api/songs/{song.slug}/approve-scan")
-
-    assert r.status_code == 400
-    assert _reload(song).stage == "scan"
 
 
 def test_scanning_a_song_whose_pages_are_not_all_marked_is_refused_at_the_door(
@@ -822,14 +793,13 @@ def test_upgrading_homr_discards_nothing(songs, reader, monkeypatch, tmp_path):
         scan.run(song)
         song = _reload(song)
         _answer(song, 1, 2)
-        scan.approve(song)
         song = _reload(song)
 
         monkeypatch.setattr(omr, "default_engine", lambda: HOMR_B)
         assert scan.reconcile(song) == []
 
         st = scan.status(_reload(song))
-        assert st["approved"] is True and st["complete"] is True
+        assert st["complete"] is True
         assert _reload(song).stage == "clean", "nobody is sent back to Scan for it"
         assert per_system.saved_answers(
             song.path(song.data["scan"]["assembled"])) == {1: {1: "T1", 2: "T2"},
@@ -842,7 +812,7 @@ def test_another_homr_reading_the_same_music_costs_nothing(songs, reader, monkey
     This is what stops the record behaving like a stamp by the back door: the
     provenance line lives *in* the fragment, so hashing the file raw would move
     the content stamp on every re-read with another engine and take the answers
-    and the OK with it.
+    with it.
     """
     with per_system.use_answer_file(str(tmp_path / "answers.json")):
         song = _song(songs, bands=2)
@@ -850,7 +820,6 @@ def test_another_homr_reading_the_same_music_costs_nothing(songs, reader, monkey
         scan.run(song)
         song = _reload(song)
         _answer(song, 1, 2)
-        scan.approve(song)
         before = _reload(song).data["scan"]["systems"]["2"]["content"]
 
         scan.run(_reload(song), only=[2], engine=HOMR_B)
@@ -859,8 +828,8 @@ def test_another_homr_reading_the_same_music_costs_nothing(songs, reader, monkey
         entry = fresh.data["scan"]["systems"]["2"]
         assert entry["content"] == before, "the same music read again is the same reading"
         assert entry["homr"]["commit"] == "b" * 40, "but it says who read it this time"
-        st = scan.status(fresh)
-        assert st["approved"] is True and st["new_since_ok"] == []
+        assert sorted(per_system.saved_answers(
+            fresh.path(fresh.data["scan"]["assembled"]))) == [1, 2]
         assert fresh.stage == "clean"
 
 
@@ -895,14 +864,14 @@ def test_a_different_reading_still_costs_what_it_always_did(songs, reader, tmp_p
         scan.run(song)
         song = _reload(song)
         _answer(song, 1, 2)
-        scan.approve(song)
 
         reader.staves = 3                        # the new homr reads it differently
         scan.run(_reload(song), only=[2], engine=HOMR_B)
 
-        st = scan.status(_reload(song))
-        assert st["approved"] is False and st["new_since_ok"] == [2]
-        assert _reload(song).stage == "scan"
+        fresh = _reload(song)
+        assert sorted(per_system.saved_answers(
+            fresh.path(fresh.data["scan"]["assembled"])) or {}) == [1]
+        assert fresh.stage == "clean", "a different reading is an edit, not a hole"
 
 
 # --- the record of a moved whole-measure rest (#164) ----------------------

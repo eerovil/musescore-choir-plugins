@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-06
 
+- A scanned song moves on to Clean as soon as every system is read; there is no
+  longer a "This reading is right" button to press. Reading a system again no
+  longer sends a song that is further along back to Scan. (#281)
 - A scanned song marks the first bar of a system for checking when a note the
   previous system ended with a printed accidental starts it again without one: a
   note tied over the line break keeps its accidental, and the scan cannot tell.
