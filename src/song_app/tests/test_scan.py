@@ -550,8 +550,22 @@ def test_a_song_left_waiting_on_the_old_ok_moves_on_when_read(songs, reader):
     song.set_stage("scan")                       # where the old gate left it
     song.save()
 
-    assert scan.reconcile(_reload(song)) == [], "moving on is not a discard"
+    assert scan.reconcile(_reload(song)) == [scan.MOVED_ON], "the move is said"
     assert _reload(song).stage == "clean"
+    assert scan.reconcile(_reload(song)) == [], "once, not on every read"
+
+
+def test_the_app_says_it_moved_a_waiting_song_on(client, songs, reader):
+    song = _song(songs)
+    scan.run(song)
+    song = _reload(song)
+    song.set_stage("scan")                       # where the old gate left it
+    song.save()
+
+    body = client.get(f"/api/songs/{song.slug}").json()
+
+    assert body["stage"] == "clean"
+    assert body["scan_discarded"] == [scan.MOVED_ON], "said as it stands, not as a discard"
 
 
 def test_the_ok_route_is_gone(client, songs, reader):

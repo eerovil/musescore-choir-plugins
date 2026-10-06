@@ -430,8 +430,9 @@ def reconcile(song: state.Song) -> List[str]:
     """Discard everything this song derived from an input that has since changed.
 
     Returns what was discarded, in words, so the app can say it rather than
-    quietly doing it. Saves the song only when something actually changed, so
-    this is safe to call on every read.
+    quietly doing it -- plus :data:`MOVED_ON`, a whole sentence, when a song the
+    old approval gate left on Scan is moved on to Clean (#281). Saves the song
+    only when something actually changed, so this is safe to call on every read.
 
     A song with no scan derives nothing from any of this, which is what keeps the
     48 songs that predate the stage out of it entirely.
@@ -451,11 +452,23 @@ def reconcile(song: state.Song) -> List[str]:
     moved = song.stage == "scan" and status(song)["complete"]
     if moved:
         # A song the old OK left waiting (#281): there is a whole score, so it is
-        # past scanning. Not a discard, so it is not in what this returns.
+        # past scanning. Said, because the app moving a song is not quiet.
         song.set_stage("clean")
+        dropped.append(MOVED_ON)
     if dropped or moved:
         song.save()
     return dropped
+
+
+# Not a discard, so it is a whole sentence rather than a "the X" phrase -- the
+# callers say it as it stands (`said`).
+MOVED_ON = "Every system is read, so the song moved on from Scan to Clean."
+
+
+def said(line: str) -> str:
+    """One line of :func:`reconcile` as a sentence a person reads."""
+    return line if line == MOVED_ON else \
+        f"Discarded {line}: what it was made from has changed."
 
 
 def _answered(song: state.Song) -> Dict[str, str]:
@@ -579,7 +592,7 @@ def run(
     # Everything downstream of a fragment that just changed goes here, through
     # the same rule a bounds edit goes through. There is no separate re-scan case.
     for gone in reconcile(song):
-        log(f"Discarded {gone}: what it was made from has changed.")
+        log(said(gone))
     return _assemble(song, log)
 
 

@@ -1821,7 +1821,8 @@ state model are in `DESIGN.md`.
   approval left, which still lapses when a re-read changes a system. So `_assemble` moves a
   song on `scan` to `clean`, a re-read never moves a song backwards, and only a **hole**
   keeps or puts a song back on `scan` (`_drop_assembled`), because a score missing a system
-  must not be cleaned. `reconcile` also moves on a song the old gate left waiting.
+  must not be cleaned. `reconcile` also moves on a song the old gate left waiting, and
+  says so (`scan.MOVED_ON`, shown and logged as it stands rather than as a discard).
   **A page nobody marked is refused, not scanned.** `pages_without_bands` is a
   precondition rather than a hole to fill later: the scan reads the bands and nothing
   else, so an unmarked page is music that would never be read at all and the assembled

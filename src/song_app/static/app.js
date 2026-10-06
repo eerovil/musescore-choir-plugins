@@ -1286,9 +1286,9 @@ function panelScan(panel, song, P, refresh, actions) {
   if (st.systems)
     panel.append(el("p", {}, `${st.read} of ${st.systems} system(s) read.`
       + (st.holes?.length ? ` Still to read: ${st.holes.join(", ")}.` : "")));
-  for (const gone of song.scan_discarded || [])
-    panel.append(el("div", { className: "banner" },
-      `Discarded ${gone}: what it was made from has changed.`));
+  // Already sentences: the server words them (`scan.said`).
+  for (const line of song.scan_discarded || [])
+    panel.append(el("div", { className: "banner" }, line));
 
   // Which homr reads the page. Only offered when this host has more than one
   // installed (HOMR_BRANCH=... scripts/install-homr.sh) — a picker with a single

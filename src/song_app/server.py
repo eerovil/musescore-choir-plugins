@@ -214,7 +214,7 @@ def _derived(song: state.Song) -> Dict:
         # What the scan stage has read, what is still a hole, and what the app
         # threw away this read because its input had moved under it.
         "scan_status": scan.status(song),
-        "scan_discarded": discarded,
+        "scan_discarded": [scan.said(line) for line in discarded],
         "media": _media_list(song),
         "jobs": job_state.load(song.dir),
         "verification_summary": verification.summary(song, systems),
