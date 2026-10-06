@@ -824,7 +824,8 @@ def _meter_plan(
         lengths = [_bar_length_agreed(scans[system], over, divisions)
                    for over in range(bar, stop)]
         meter = _reconcile(declared, running,
-                           [length for length in lengths if length], divisions)
+                           [length for length in lengths if length], divisions,
+                           seam=bar == 0 and system > 0)
         ticks = meter.ticks(divisions)
         plan[system][bar] = _BarMeter(meter, running is None or meter != running, ticks)
         for over in range(bar + 1, stop):
@@ -843,11 +844,22 @@ def _reconcile(
     running: Optional[_Meter],
     lengths: Sequence[int],
     divisions: int,
+    seam: bool = False,
 ) -> _Meter:
     """The meter a span is really in: its own length, in homr's denominator.
 
     ``lengths`` is one entry per **bar** of the span, not one per staff.
+
+    At a ``seam`` -- the head of a system after the first -- a span measuring
+    exactly the meter already in force carries that meter, whatever the crop
+    declares. A system rarely prints its meter again, so what homr wrote at the
+    crop's head is its own guess, and it guesses in quarters: Vieläkö huvittaisi
+    carries 2/2 into three systems and each came back 4/4, which the score then
+    wrote as a meter change at every seam (eerovil/musescore-choir-plugins#274).
+    A span of a different length is still a change and is written as one.
     """
+    if seam and running is not None and _agreed(lengths) == running.ticks(divisions):
+        return running
     beat_type = (declared or running or _Meter(*_FALLBACK_TIME)).beat_type
     # A signature that restates the meter already in force carries no numerator
     # of its own -- homr writes one at the head of every crop and again wherever
