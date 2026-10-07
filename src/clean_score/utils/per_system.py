@@ -43,6 +43,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from lxml import etree
 
 from .missing_ties import add_missing_ties
+from .rejected_bars import cut_spanners_between
 from .revoice import _voice_summary
 from .utils import delete_all_elements_by_selector, starts_new_system
 
@@ -340,6 +341,18 @@ def _part_sort_key(name: str) -> Tuple[int, int, str]:
     return (rank, int(digits) if digits else 0, name)
 
 
+def _fallback_of(parts: List[str]) -> Dict[str, str]:
+    """{child: base} for each part named as another part plus one lowercase letter.
+
+    `S1b` sings `S1` wherever it has no notes of its own: the name is how a person
+    says the two are one line split in places (a divisi), so where the page prints one
+    line — or the system names only `S1` — that line is S1b's too. Only one level.
+    """
+    names = set(parts)
+    return {name: name[:-1] for name in parts
+            if len(name) > 1 and name[-1].islower() and name[:-1] in names}
+
+
 def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls:
     """Resolve answer strings ("T1,T2") into {(staff_id, voice_index): part} per system.
 
@@ -473,6 +486,8 @@ def _build_parts(
 
     new_staves: List[etree._Element] = []
     new_parts: List[etree._Element] = []
+    # Per part, per bar: the (staff, voice) its notes came from, or None for a filler rest.
+    sources: Dict[str, List[Optional[Tuple[int, int]]]] = {}
     for out_idx, part in enumerate(parts, start=1):
         staff = deepcopy(ref_staff)
         staff.set("id", str(out_idx))
@@ -551,6 +566,7 @@ def _build_parts(
                 _lower_octave(list(voice)[filled_from:])
             if not placed:
                 voice.append(_measure_rest(sig_n, sig_d))
+            sources.setdefault(part, []).append(src if placed else None)
         _set_clef(staff, part[0] if part else "")
         new_staves.append(staff)
 
@@ -566,6 +582,8 @@ def _build_parts(
             if el is not None:
                 el.text = val
         new_parts.append(new_part)
+
+    _fill_from_fallbacks(parts, new_staves, sources)
 
     # Re-add a line break at the end of each system (except the last) on the top staff,
     # so the rebuilt score keeps the original system layout.
@@ -588,6 +606,44 @@ def _build_parts(
     return parts
 
 
+def _fill_from_fallbacks(
+    parts: List[str],
+    staves: List[etree._Element],
+    sources: Dict[str, List[Optional[Tuple[int, int]]]],
+) -> None:
+    """Give a `S1b` the notes of `S1` in every bar it was handed a filler rest.
+
+    The rebuild leaves a bar with one unstacked line to rest in the lower part, since
+    unison and a tacit voice look alike on the page. Naming the part `S1b` is a person
+    saying which it is, so here the filler becomes the base part's bar. A rest the
+    scan wrote in the part's own voice is not a filler and stays.
+    """
+    by_name = dict(zip(parts, staves))
+    for child, base in _fallback_of(parts).items():
+        child_bars = by_name[child].findall("Measure")
+        base_bars = by_name[base].findall("Measure")
+        # Only the seams this adds are cut: own bar against borrowed bar. Seams between
+        # systems are the rebuild's as before, on both staves alike.
+        origin: List[object] = ["own"] * len(child_bars)
+        borrowed = False
+        for mi, src in enumerate(sources.get(child, [])):
+            if src is not None or mi >= len(base_bars):
+                continue
+            voice = child_bars[mi].find("voice")
+            for el in list(voice):
+                if el.tag not in _SKELETON_KEEP:
+                    voice.remove(el)
+            base_voice = base_bars[mi].find("voice")
+            for el in (base_voice if base_voice is not None else []):
+                if el.tag not in _SKELETON_KEEP:
+                    voice.append(deepcopy(el))
+            origin[mi] = "borrowed"
+            borrowed = True
+        if borrowed:
+            logger.info("Per-system: %s sings %s where it has no notes of its own", child, base)
+            cut_spanners_between(by_name[child], origin)
+
+
 # --------------------------------------------------------------------------- #
 # Lyric routing metadata
 # --------------------------------------------------------------------------- #
@@ -605,12 +661,14 @@ def _build_lyric_map(
         printed staff (voice 0 -> 'above', voice 1 -> 'below');
       - printed staves are ordered by musical rank (S<A<T<B, then number), NOT by the
         OCR's source-staff order, which can be shuffled;
-      - omitted/undeclared parts simply don't appear (so they're "missing").
+      - omitted/undeclared parts simply don't appear (so they're "missing"), except
+        that a `S1b` left out of a system rides along with `S1` (`_fallback_of`).
 
     Returns a list of {"start", "end", "map": {printed_no: [output_ids]}} with 1-based
     inclusive measure ranges.
     """
     part_id = {name: i + 1 for i, name in enumerate(parts)}
+    fallbacks = _fallback_of(parts)
     out: List[Dict] = []
     for sidx, (a, b) in enumerate(bounds):
         groups: Dict[int, List[Tuple[int, str]]] = {}
@@ -620,9 +678,16 @@ def _build_lyric_map(
             groups.values(),
             key=lambda items: min(_part_sort_key(n) for _, n in items),
         )
+        declared = {n for items in groups.values() for _, n in items}
         pmap: Dict[int, List[int]] = {}
         for printed_no, items in enumerate(ordered, start=1):
             ids = [part_id[n] for _, n in sorted(items) if n in part_id]
+            # A `S1b` not named here sings `S1`'s notes, so it sings its words too —
+            # when `S1` has the printed staff to itself. Beside another part the
+            # staff's above/below split is that pair's, and a third entry would break it.
+            if len(ids) == 1:
+                ids += [part_id[child] for child, base in fallbacks.items()
+                        if part_id.get(base) == ids[0] and child not in declared]
             if ids:
                 pmap[printed_no] = ids
         out.append({"start": a + 1, "end": b + 1, "map": pmap})

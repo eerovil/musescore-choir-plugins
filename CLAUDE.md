@@ -2109,7 +2109,15 @@ by either of two **adapters at the same seam**: the terminal prompt
 `save_system_answers`, after which the rebuild reads them back from the store).
 A staff left blank in a system inherits its previous system's answer (`-` =
 `per_system.CLEARED` declares nothing and stops that inheritance); the
-prompt offers the recorded answer as a `[default]` (Enter reuses it). Answers are
+prompt offers the recorded answer as a `[default]` (Enter reuses it). A part named as
+another part plus one lowercase letter (`S1b`, `A1b`) **falls back** to it (#293):
+every bar the rebuild would fill with a rest because nothing feeds it — the system
+does not name it, or names it on a staff that prints one unstacked line there — gets
+the base part's bar instead, and in a system that leaves it out the lyric map sends
+the base part's words to it too (only when the base has its printed staff to itself).
+A rest the scan wrote in its own voice or staff stays. Naming the part that way is the
+person's reading that the single line is unison, which is what the rebuild otherwise
+refuses to guess. Answers are
 recorded per input file (basename, no extension) in `.persystem_cache.json` at the repo
 root (gitignored) via `save_answers`/`saved_answers`/`has_answers`; the file itself is
 internal (swap it in tests with `use_answer_file(path)`). A complete

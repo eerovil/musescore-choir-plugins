@@ -233,6 +233,21 @@ def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
     assert "staff 1 · system 4" in dropped[0], dropped[0]
 
 
+def test_grid_says_a_b_part_sings_its_base_part(live_app, own_answers, page):
+    """The S1b -> S1 fallback (#293) is only usable if the grid says it exists."""
+    _new_song(page, live_app, "Fallback hint")
+    hint = page.locator(".fallbackhint")
+    expect(hint).to_be_visible()
+    expect(hint).to_contain_text("S1b sings S1's notes")
+    staff1 = lambda system: page.locator(f'input[data-sys="{system}"][data-staff="1"]')
+    staff1(0).fill("S1")
+    staff1(1).fill("S1, S1b")
+    staff1(1).blur()
+    if evidence := os.getenv("EVIDENCE_DIR"):
+        os.makedirs(evidence, exist_ok=True)
+        page.screenshot(path=os.path.join(evidence, "fallback-hint.png"))
+
+
 def test_one_confirmation_reuses_assignments_only_through_matching_systems(
         live_app, own_answers, page):
     _new_song(page, live_app, "Reuse matching systems")
