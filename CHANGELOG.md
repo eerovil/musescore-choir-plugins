@@ -17,6 +17,11 @@ developers are listed under *Behind the scenes*.
   (the one behind a `notes?` mark) is always one of them, labelled "second
   reading". Six show first and the rest are behind "More". (#295)
 
+## 2026-10-07
+
+- In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
+  words) in every bar where it has none of its own, instead of resting. (#293)
+
 ## 2026-10-06
 
 - A scanned song moves on to Clean as soon as every system is read; there is no
