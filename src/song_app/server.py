@@ -214,7 +214,7 @@ def _derived(song: state.Song) -> Dict:
         # What the scan stage has read, what is still a hole, and what the app
         # threw away this read because its input had moved under it.
         "scan_status": scan.status(song),
-        "scan_discarded": discarded,
+        "scan_discarded": [scan.said(line) for line in discarded],
         "media": _media_list(song),
         "jobs": job_state.load(song.dir),
         "verification_summary": verification.summary(song, systems),
@@ -529,28 +529,6 @@ def api_homr_engines() -> Dict:
     return {"engines": [{"key": e.key, "label": e.label, "default": e.default,
                          "commit": e.commit or "", "dirty": bool(e.dirty)}
                         for e in omr.engines()]}
-
-
-@app.post("/api/songs/{slug}/approve-scan")
-def api_approve_scan(slug: str, body: Dict = None) -> Dict:
-    """The one explicit OK: a person looked at this parse, so the song may leave.
-
-    The revision comes back from the browser and has to match what is on disk. A
-    scan that finished while the panel was open would otherwise be approved by a
-    click aimed at the reading it replaced.
-    """
-    song = _require(slug)
-    expected = (body or {}).get("revision")
-    current = scan.revision(song)
-    if expected and expected != current:
-        raise HTTPException(
-            409, "The scan changed while you were looking at it; check the new "
-                 "systems before saying it is right.")
-    try:
-        scan.approve(song)
-    except scan.ScanError as exc:
-        raise HTTPException(400, str(exc)) from None
-    return _derived(_require(slug))
 
 
 @app.get("/api/songs/{slug}/scan-system/{index}")

@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-06
 
+- A scanned song moves on to Clean as soon as every system is read; there is no
+  longer a "This reading is right" button to press. Reading a system again no
+  longer sends a song that is further along back to Scan. (#282)
 - Cleaning no longer ties notes the page prints separately. A tie was copied from
   another voice whenever it held the same pitch on the same beats; now that voice
   must also sing the same rhythm, so a repeated figure under a held note keeps its
