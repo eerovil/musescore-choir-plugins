@@ -10,7 +10,7 @@ developers are listed under *Behind the scenes*.
 - A start-repeat sign homr read on only some staves of a printed system is now kept:
   it used to vanish from the score, so the practice track repeated the wrong bars.
   When a repeat ends and the scan found no start for it, the Fix stage asks where
-  the page prints the start, with one tap per printed system. (#PR)
+  the page prints the start, with one tap per printed system. (#316)
 - A problem card in the Fix stage says which bar of the printed line it is
   about ("Bar 2 of 4 in this line"), so the bar no longer has to be counted off
   the picture. (#311)
