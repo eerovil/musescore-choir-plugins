@@ -107,6 +107,29 @@ i.e. if your song is in songs/MySong, run
 
 media files should appear in song folder. To re-record, delete files
 
+### The staff line in YouTube descriptions
+
+Every uploaded part video carries one line in its description that the
+stemmanauhat site reads to zoom a phone to that part's staff:
+
+    stemmanauha-staff: <staff>/<staves>
+
+Counted from the top starting at 1, as the video draws the staves: a click or
+spacer staff does not count, and parts sharing a staff (the Record stage's
+*Shared staves*) get the same number. The ALL video has no line. The uploader
+works it out from the song's cleaned score (`src/stemmanauha/staff_lines.py`).
+
+Videos uploaded before that get the line with a one-off command, run from the
+repo root with your YouTube login (`token.pickle` / `client_secrets.json`):
+
+    .venv/bin/python backfill_staff_lines.py --dry-run   # print title → line
+    .venv/bin/python backfill_staff_lines.py             # write them
+    .venv/bin/python backfill_staff_lines.py lempilintu  # only these song folders
+
+It covers every song in `songs/` whose `.song.json` records uploads, keeps the
+rest of each description, and replaces an old line rather than adding a second.
+The site picks the lines up on its next "update videos" run.
+
 ## scroll_video.py — practice videos without the GUI
 
 An alternative to `record_stemmanauha`: instead of screen-recording MuseScore's

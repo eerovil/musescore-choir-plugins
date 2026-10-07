@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Each part video uploaded to YouTube says in its description which staff the part
+  is sung from (`stemmanauha-staff: 2/5`), so the practice site can zoom a phone to
+  the right staff even when two parts share one. `backfill_staff_lines.py` adds the
+  line to videos uploaded before this. (#323)
 - Scrolling videos follow D.C. and D.S. jumps (al Fine, al Coda) instead of refusing
   the score: the bars play in MuseScore's order and the scroll jumps back to the
   segno or the start and forward to the coda. (#314)

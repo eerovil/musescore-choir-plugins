@@ -12,6 +12,8 @@ import datetime
 import logging
 from google.auth.transport.requests import Request
 
+from . import staff_lines
+
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
           "https://www.googleapis.com/auth/youtube"]
 
@@ -172,6 +174,14 @@ def upload_to_youtube(song_dir, video_paths, extra_playlist_id=None, log=None,
     basename = os.path.basename(song_dir)
     nice = display_name or basename
 
+    # Which staff each part is sung from, for the site's phone zoom (#323). A song
+    # whose score cannot be read still uploads, just without the line.
+    try:
+        staves = staff_lines.song_part_staves(song_dir)
+    except Exception as e:
+        log(f"Could not work out the parts' staves ({e}); uploading without them.")
+        staves = {}
+
     log("Authenticating with YouTube…")
     youtube = get_authenticated_service()
 
@@ -187,7 +197,10 @@ def upload_to_youtube(song_dir, video_paths, extra_playlist_id=None, log=None,
         part = stem[len(basename) + 1:] if stem.startswith(basename + " ") else stem
         title = f"{nice} {part}".strip()
         log(f"Uploading {i}/{total}: {title}…")
-        video_id = upload_video(youtube, video_path, title, description="Practice track", progress=progress, log=log)
+        description = staff_lines.with_line(staff_lines.DESCRIPTION,
+                                            staff_lines.line_for(part, staves))
+        video_id = upload_video(youtube, video_path, title, description=description,
+                                progress=progress, log=log)
         url = f"https://youtu.be/{video_id}"
         log(f"Uploaded {title}: {url}")
         if playlist_id:
@@ -211,6 +224,23 @@ def _update_video_title(youtube, video_id, title, log=None):
     snippet["title"] = title
     _execute(youtube.videos().update(part="snippet", body={"id": video_id, "snippet": snippet}), log=log)
     return True
+
+
+def _update_video_description(youtube, video_id, line, log=None):
+    """Put this staff line into a video's description, keeping the rest of it (and
+    the categoryId the snippet update needs). Returns the new description, or None
+    when the video is gone or already says exactly this."""
+    resp = _execute(youtube.videos().list(part="snippet", id=video_id), log=log)
+    items = resp.get("items", [])
+    if not items:
+        return None
+    snippet = items[0]["snippet"]
+    description = staff_lines.with_line(snippet.get("description", ""), line)
+    if description == snippet.get("description", ""):
+        return None
+    snippet["description"] = description
+    _execute(youtube.videos().update(part="snippet", body={"id": video_id, "snippet": snippet}), log=log)
+    return description
 
 
 def _update_playlist_title(youtube, playlist_id, title, log=None):
