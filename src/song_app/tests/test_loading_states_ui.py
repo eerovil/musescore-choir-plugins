@@ -236,11 +236,17 @@ def test_a_refused_build_says_why_instead_of_staying_blank(live, page):
     # The real server, with no MuseScore behind it: /render answers 500.
     page.set_viewport_size(DESKTOP)
     _dress_song(page, live[1])
+    renders = []
+    page.on("request", lambda r: "/render?doc=cleaned_nolyrics" in r.url and renders.append(r))
     _open(page, live, "Cleaned MSCX")
     error = page.locator(".pdfview .pdferr", has_text="MuseScore could not build this score:")
     error.wait_for()
     assert len(error.first.text_content()) > len("MuseScore could not build this score: ")
     assert page.locator(".pdfview iframe").count() == 0
+    # The reason comes off the failed response: asking again would be a second
+    # MuseScore run that fails the same way.
+    page.wait_for_timeout(500)
+    assert len(renders) == 1, f"the failed render was asked for {len(renders)} times"
     _shot(page, "refused-desktop.png")
 
 
@@ -284,8 +290,11 @@ def test_a_system_that_cannot_be_engraved_says_so_and_the_rest_still_load(live, 
     page.set_viewport_size(DESKTOP)
     _dress_song(page, live[1])
 
+    asked = []
+
     def engrave(route):
         if route.request.url.split("?")[0].endswith("/scan-system/3"):
+            asked.append(route.request.url)
             route.fulfill(status=500, content_type="application/json",
                           body=json.dumps({"detail": "MuseScore CLI could not engrave it"}))
         else:
@@ -297,6 +306,7 @@ def test_a_system_that_cannot_be_engraved_says_so_and_the_rest_still_load(live, 
                           has_text="Could not engrave system 3: MuseScore CLI could not engrave it")
     failed.wait_for()
     _wait_for(page, lambda: page.locator(".cmpimg[alt^='scanned system']").count() == SYSTEMS - 1)
+    assert len(asked) == 1, f"the failed system was engraved {len(asked)} times"
     failed.scroll_into_view_if_needed()
     _shot(page, "engrave-failed-desktop.png")
 

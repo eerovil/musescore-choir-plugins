@@ -609,15 +609,15 @@ function busyNote(text, className = "busynote") {
   return note;
 }
 
-// Why a URL failed, in the server's own words when it gave any.
-async function failureDetail(url, fallback = "") {
-  try {
-    const r = await fetch(url);
-    if (r.ok) return fallback;
-    return (await r.json().catch(() => ({}))).detail || r.statusText || fallback;
-  } catch {
-    return fallback;
+// Fetch `url` once; a refusal throws with the server's own words. These URLs are
+// MuseScore runs, so the reason is read off the response that failed rather than
+// by asking again, which would run the same failing render a second time.
+async function fetchOrSay(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    throw new Error((await r.json().catch(() => ({}))).detail || r.statusText || "");
   }
+  return r;
 }
 
 // Render with pdf.js; fall back to a native iframe only if pdf.js itself can't
@@ -648,12 +648,14 @@ async function mountPdf(view, url) {
     return;
   }
   try {
-    await renderPdf(view, url);
+    // Fetched here and handed to pdf.js as bytes, so a refusal's reason is in hand.
+    const data = new Uint8Array(await (await fetchOrSay(url)).arrayBuffer());
+    if (!latest()) return;
+    await renderPdf(view, { data });
     if (latest()) view._renderedUrl = url;
   } catch (e) {
     if (!latest()) return;
-    const why = await failureDetail(url, e.message || "");
-    if (!latest()) return;
+    const why = e.message || "";
     view.replaceChildren(el("p", { className: "warn pdferr" },
       `${view._failText || "Could not load this document"}${why ? ": " + why : "."}`));
     view._renderedUrl = url;               // no retry loop; a new score retries
@@ -716,16 +718,28 @@ function slowImage(view, src, alt, n) {
   }
   const slot = el("div", { className: "cmpslot" },
     busyNote(`Engraving system ${n}…`, "busynote small"));
-  slot._start = (done) => {
-    const img = el("img", { className: "cmpimg fresh", alt });
-    img.onload = () => { seen.add(src); slot.replaceWith(img); done(); };
-    img.onerror = async () => {
-      const why = await failureDetail(src);
+  // Fetched rather than left to <img>, which cannot read why a request failed.
+  slot._start = async (done) => {
+    const fail = (why) => {
       slot.className = "cmpslot err";
       slot.replaceChildren(`Could not engrave system ${n}${why ? ": " + why : "."}`);
       done();
     };
-    img.src = src;
+    let blob;
+    try {
+      blob = await (await fetchOrSay(src)).blob();
+    } catch (e) {
+      fail(e.message);
+      return;
+    }
+    const img = el("img", { className: "cmpimg fresh", alt });
+    const local = URL.createObjectURL(blob);
+    img.onload = () => {
+      URL.revokeObjectURL(local);
+      seen.add(src); slot.replaceWith(img); done();
+    };
+    img.onerror = () => { URL.revokeObjectURL(local); fail("the picture could not be shown"); };
+    img.src = local;
   };
   return slot;
 }
