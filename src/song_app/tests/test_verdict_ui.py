@@ -191,6 +191,7 @@ def test_the_fix_panel_says_it_above_the_rows(live, page):
     _health(song, ROUGH, "fix")
     errors = _open(page, base, song, "Fix")
     page.wait_for_selector("text=Open in MuseScore")
+    page.wait_for_selector(".problems[data-loaded]", state="attached")
 
     verdict = page.locator(".verdict").first
     assert verdict.is_visible()

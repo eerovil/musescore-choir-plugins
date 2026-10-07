@@ -1663,6 +1663,7 @@ function problemList(panel, song, P, refresh) {
   panel.append(box);
   if (!song.has_cleaned) {
     box.append(el("p", { className: "empty" }, "Clean the score first."));
+    box.dataset.loaded = "1";
     return;
   }
   box.append(el("p", { className: "hint" }, "Reading the score…"));
@@ -1712,8 +1713,12 @@ function problemList(panel, song, P, refresh) {
     }
     return block;
   };
+  // Said once the rows are in, so whoever reads the panel (a test, say) can tell an
+  // empty list from one still on its way.
+  const loaded = () => { box.dataset.loaded = "1"; };
   getJSON(`${P}/problems`).then(({ rows }) => {
     box.replaceChildren();
+    loaded();
     const open = rows.filter((r) => r.notes.length || r.choices.some((c) => !c.decision));
     const decided = rows.flatMap((r) => r.choices.filter((c) => c.decision).map((c) => decidedText(r, c)));
     if (!open.length) box.append(el("p", { className: "empty" }, "✓ No issues. Ready for lyrics."));
@@ -1747,6 +1752,7 @@ function problemList(panel, song, P, refresh) {
     box.append(problem);
   }).catch((e) => {
     box.replaceChildren(el("p", { className: "lyerr readerr" }, `Could not list the problems: ${e.message}`));
+    loaded();
   });
 }
 
