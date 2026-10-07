@@ -75,8 +75,12 @@ def compare_notes(source_mscx: str, cleaned_mscx: str) -> Dict:
     from src.clean_score.utils.per_system import _fallback_of
 
     fallbacks = _fallback_of(singing_parts(cleaned_mscx))
-    copies = (_note_events(cleaned_mscx, only=fallbacks)
-              & _note_events(cleaned_mscx, only=fallbacks.values()))
+    # Each b-part copies its base on its own, so S1b and S1c borrowing one note of
+    # S1's are two copies of it: count per pair, then add up.
+    copies = Counter()
+    for child, base in fallbacks.items():
+        copies += (_note_events(cleaned_mscx, only=[child])
+                   & _note_events(cleaned_mscx, only=[base]))
     if fallbacks and not (source - cleaned) and not ((cleaned - source) - copies):
         borrowed = cleaned_count - source_count
         return _result("passed", f"All {source_count} source note events are preserved by measure "

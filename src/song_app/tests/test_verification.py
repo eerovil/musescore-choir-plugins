@@ -71,6 +71,17 @@ def test_notes_a_b_part_borrows_from_its_base_part_are_not_a_difference(tmp_path
     cleaned.write_text(two.format(name="S1b", pitch=74))     # a note the source never had
     assert verification.compare_notes(str(source), str(cleaned))["status"] == "warning"
 
+    # Two b-parts borrowing the same note of S1 are two copies, not one.
+    three = two.format(name="S1b", pitch=72).replace(
+        '<Staff id="1"><Measure>',
+        '<Part><trackName>S1c</trackName><Staff id="3"/></Part>\n<Staff id="1"><Measure>', 1
+    ).replace("</Score>", '<Staff id="3"><Measure><voice><Chord><Note><pitch>72</pitch>'
+              "</Note></Chord></voice></Measure></Staff>\n</Score>")
+    cleaned.write_text(three)
+    result = verification.compare_notes(str(source), str(cleaned))
+    assert result["status"] == "passed", result
+    assert "2 more" in result["detail"]
+
 
 def test_probe_requires_picture_sound_duration_and_reports_metadata(tmp_path, monkeypatch):
     media = tmp_path / "voice.mp4"
