@@ -18,7 +18,7 @@ from src.clean_score.utils.cross_voice_slurs import (
     _bar_lengths, _resolve, drop_cross_voice_slurs, removed_slurs, store_removed)
 from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.score_fixes import FixError
-from src.song_app import bar_readings, pipeline, problems, state
+from src.song_app import bar_readings, pdf_systems, pipeline, problems, state
 from src.song_app.tests.test_bar_readings import (  # noqa: F401 - make_song is a fixture
     READINGS, _fixes, _score, _tokens, make_song)
 
@@ -55,6 +55,46 @@ def test_one_row_per_bar_and_part_with_whole_bars_to_pick(make_song):
     assert [o["letter"] for o in choice["options"]] == list("abcdefghi")
     assert choice["options"][0]["current"]
     assert all(o["svg"].endswith(f"/{o['letter']}.svg") for o in choice["options"])
+
+
+def _bands(song, *ranges):
+    pdf_systems.save_bounds(song.dir, [
+        pdf_systems.SystemBounds(index=i, page=1, top=0.1 * i, bottom=0.1 * i + 0.08,
+                                 measure_start=start, measure_end=end)
+        for i, (start, end) in enumerate(ranges, start=1)])
+
+
+def test_a_row_says_which_bar_of_its_printed_line_it_is(make_song):
+    """The crop is the whole line, so the row says which of its bars is meant (#310)."""
+    song = make_song(readings=NOTES)
+    _bands(song, (1, 1), (2, 5))
+    [row] = problems.problems(song)
+    assert (row["measure"], row["system"]) == (3, 2)
+    assert (row["bar_in_system"], row["bars_in_system"]) == (2, 4)
+
+
+@pytest.mark.parametrize("ranges, position", [
+    (((1, 2), (3, 6)), (1, 4)),   # the first bar of its line
+    (((1, 3), (4, 6)), (3, 3)),   # the last
+])
+def test_the_ends_of_a_line_count_from_one(make_song, ranges, position):
+    song = make_song(readings=None)
+    root = etree.parse(song.cleaned_path()).getroot()
+    mark_bar(root.findall(".//Score/Staff")[0].findall("Measure")[2], "pitch?")
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+    _bands(song, *ranges)
+    [row] = problems.problems(song)
+    assert (row["bar_in_system"], row["bars_in_system"]) == position
+
+
+def test_without_bar_ranges_the_position_is_not_guessed(make_song):
+    song = make_song(readings=NOTES)
+    [row] = problems.problems(song)
+    assert row["system"] == 2   # still known, from the scan
+    assert (row["bar_in_system"], row["bars_in_system"]) == (None, None)
+    _bands(song, (0, 0), (0, 0))   # bands drawn but never labelled with bars
+    [row] = problems.problems(song)
+    assert (row["bar_in_system"], row["bars_in_system"]) == (None, None)
 
 
 def test_a_mark_and_its_health_row_are_said_once(make_song):

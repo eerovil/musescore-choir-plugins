@@ -166,6 +166,7 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); }
 .readtitle { font-weight: 600; margin-bottom: 4px; }
 .readtext { white-space: normal; }
 .readcrop { display: block; width: 100%; margin: 8px 0; background: #fff; }
+.problem .barpos { margin: 8px 0 0; font-weight: 600; }
 .readopts { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 .readopt[hidden] { display: none; }
 .readopt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; text-align: left; }
