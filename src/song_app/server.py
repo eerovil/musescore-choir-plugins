@@ -1472,8 +1472,8 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
     having to render before it would stick lost it every time.
 
     It also fails where a render would, and that is half its value: a D.C./D.S.
-    jump or margins that leave no picture come back here as an ordinary error
-    message, seconds in, instead of after minutes of engraving and encoding.
+    jump that cannot be matched to the page or margins that leave no picture come
+    back here as an ordinary error message, seconds in, instead of after minutes of engraving and encoding.
     """
     song = _require(slug)
     cleaned = song.cleaned_path()

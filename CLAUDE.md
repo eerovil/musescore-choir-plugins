@@ -2404,8 +2404,8 @@ Everything before rasterisation lives in `build.prepare(mscx_path, tmp, ...) ->
 Prepared`: the prepared score, the MusicXML and MIDI, the verovio engraving with its
 timemap and drawn-id map, `TempoMap.from_midi`, the note and rest events,
 `scroll_anchors` + `smooth_scroll`, the spacer-staff crop, the margin viewport, the
-duration — and the refusals, which is the part worth naming. A D.C./D.S. jump,
-margins that leave no picture and a timeline that misses more than 2% of the played
+duration — and the refusals, which is the part worth naming. A D.C./D.S. jump whose
+bars cannot be matched to the engraving, margins that leave no picture and a timeline that misses more than 2% of the played
 notes all fail in `prepare`, so **the preview refuses exactly what the render
 refuses**, seconds in rather than minutes.
 
@@ -2709,10 +2709,24 @@ Three behaviours worth knowing:
   whole-bar rest in the bar a repeat jumps back to is timed in the meter in force *at
   the jump* (a 7/4 bar repeating to a 4/4 one where a part rests made Kantajani's
   highlights 2.25s late and the render was refused, #313), so `engrave.retime_repeats` puts every bar of the played
-  timeline back at its MusicXML length. **D.C./D.S. jumps are still refused** —
-  verovio does not follow them (on Jouluriemua it plays 181 quarters where MuseScore
-  plays 257.5), so `build.unsupported_repeats` looks for `Jump` only (a `Marker` — segno, coda,
-  fine — is just a label and changes nothing on its own).
+  timeline back at its MusicXML length.
+- **D.C./D.S. jumps are followed in MuseScore's own bar order** (#314; `playorder.py`).
+  They were refused until then, because verovio follows them only sometimes: it gets
+  Illan viimeinen tango's D.S. al Coda right, and plays Jouluriemua's two D.C.s as
+  two passes (181 quarters) where MuseScore plays three (257.5). So a score with a
+  `Jump` (a `Marker` alone is only a label) asks MuseScore which bars it plays, in
+  order — the `.mpos` export, written off the same repeat list playback uses — rather
+  than keeping a second copy of the segno/coda/Fine rules here. Each printed bar's
+  timing is taken from the first time verovio's timemap plays it, and the bars are
+  laid end to end in that order into a new timemap, which everything downstream reads
+  as it would verovio's. A note held into a bar the jump skips stops at the barline.
+  Where the next bar played is not the next one printed is a **cut**
+  (`Prepared.cuts`): `timing.cut_anchors` holds the scroll until the jump and lands it
+  on the far side, and `smooth_scroll` starts a fresh stretch there, because a jump
+  *forward* to a coda is no bigger a step than ordinary music on a long page. A bar
+  count that differs between MuseScore and the engraving, or a bar MuseScore plays
+  that verovio never timed, is refused by name; the 98% alignment check below still
+  has the last word. A score without a `Jump` takes exactly the old path.
 - **Every render is verified against the audio before it ships.** `build.alignment`
   checks what fraction of highlights land within 200ms of a note MuseScore actually
   strikes, and refuses below 98%. That is the real property, so it catches timeline
@@ -2746,6 +2760,15 @@ without it, like the browser tests:
   staff — and, the one that pins the lot, a frame composed out of the payload the way
   `scroll_preview.js` composes it, against real frames from `video.render` written as
   raw pixels so the comparison is not arguing with a codec.
+- `test_playorder.py` — following a D.C./D.S. jump (#314). On hand-written timemaps:
+  bars laid out in the given order with continuous time, a D.S. al Coda giving one cut
+  back and one forward, a held note stopping at the barline of a skipped bar, a bar
+  first timed in a repeat pass mapping back to the page, and the two refusals. Then,
+  with MuseScore, on `dal_segno.mscx` and `da_capo.mscx` (five bars made from
+  `fermata.mscx`): every highlight within 20ms of a note MuseScore plays, the last one
+  ending with the audio, and the scroll landing at each jump within a frame with time
+  never stepping backwards. `test_preview.py` adds that the preview follows the jump
+  with `prepare`'s own curve.
 - `test_geometry.py` — the ancestor-translate offset, the definition-scale viewBox,
   and that tiled rasterisation matches single-shot (alignment pinned; antialiasing
   along a seam is allowed to differ by a pixel). This pull request adds the
