@@ -560,24 +560,54 @@ def test_a_fallback_is_one_level_only():
     assert _pitches(staves["S1b"], 0) == ["72"]     # S1b still borrows from S1
     assert _pitches(staves["S1bc"], 0) == []        # ...but S1bc does not borrow that
     by_start = {e["start"]: e["map"] for e in result.lyric_map}
-    assert by_start[1] == {1: [1, 2]}               # S1's words reach S1b, not S1bc
+    follow = {e["start"]: e.get("follow") for e in result.lyric_map}
+    assert by_start[1] == {1: [1]}
+    assert follow[1] == {1: [2]}                    # S1's words reach S1b, not S1bc
 
 
 def test_lyrics_follow_the_notes_a_b_part_borrows():
     root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
     result = clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
     assert result.parts == ["S1", "S1b"]
-    by_start = {e["start"]: e["map"] for e in result.lyric_map}
-    assert by_start[1] == {1: [1, 2]}               # S1's words go to S1b too
-    assert by_start[2] == {1: [1, 2]}               # divisi, as before
+    by_start = {e["start"]: e for e in result.lyric_map}
+    assert by_start[1]["map"] == {1: [1]}           # the printed staff is S1's alone
+    assert by_start[1]["follow"] == {1: [2]}        # ...and S1's words go to S1b too
+    assert by_start[2]["map"] == {1: [1, 2]}        # divisi, as before
+    assert "follow" not in by_start[2]
 
 
-def test_lyrics_do_not_break_a_staff_the_base_part_shares():
+def test_a_b_part_takes_its_base_words_on_a_staff_the_base_shares():
+    """S1 above and S2 below one printed staff: S1b follows S1's lane, not both."""
+    from src.clean_score.lyric_txt import place_lyrics
+    from src.clean_score.tests.scorebuilder import placed_lyrics
+
     root = _score({1: [[[("72", "67")]], [[("72", "67")]]]}, breaks=(0,))
     result = clean_per_system(root, answers_from=lambda _l: {0: {1: "S1, S2"},
                                                              1: {1: "S1, S1b"}})
-    by_start = {e["start"]: e["map"] for e in result.lyric_map}
-    assert by_start[1] == {1: [1, 3]}               # S1 above, S2 below; S1b left out
+    assert result.parts == ["S1", "S1b", "S2"]
+    first = result.lyric_map[0]
+    assert first["map"] == {1: [1, 3]}              # the above/below pair is untouched
+    assert first["follow"] == {1: [2]}
+
+    block = {"measure_start": 1, "lyrics": [
+        {"text": "la", "staff_number": 1, "position": "above", "verse": 1},
+        {"text": "lo", "staff_number": 1, "position": "below", "verse": 1}]}
+    root = etree.fromstring(etree.tostring(root))   # read the metaTags back as import does
+    place_lyrics(root, json.dumps([block]), fmt="json", replace=True)
+    assert placed_lyrics(root) == {1: "la", 2: "la", 3: "lo"}
+
+
+def test_a_b_part_with_words_of_its_own_keeps_them():
+    from src.clean_score.lyric_txt import place_lyrics
+    from src.clean_score.tests.scorebuilder import placed_lyrics
+
+    root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
+    block = {"measure_start": 1, "lyrics": [
+        {"text": "la", "staff_number": 1, "verse": 1},
+        {"text": "lu", "parts": ["S1b"], "verse": 1}]}
+    place_lyrics(root, json.dumps([block]), fmt="json", replace=True)
+    assert placed_lyrics(root) == {1: "la", 2: "lu"}
 
 
 def _tie(note, side, measures):

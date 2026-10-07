@@ -663,11 +663,14 @@ def _build_lyric_map(
         printed staff (voice 0 -> 'above', voice 1 -> 'below');
       - printed staves are ordered by musical rank (S<A<T<B, then number), NOT by the
         OCR's source-staff order, which can be shuffled;
-      - omitted/undeclared parts simply don't appear (so they're "missing"), except
-        that a `S1b` left out of a system rides along with `S1` (`_fallback_of`).
+      - omitted/undeclared parts simply don't appear (so they're "missing").
 
     Returns a list of {"start", "end", "map": {printed_no: [output_ids]}} with 1-based
-    inclusive measure ranges.
+    inclusive measure ranges. A system where a `S1b` is left out and sings `S1`'s notes
+    (`_fallback_of`) also carries "follow": {S1's id: [S1b's id]}, so S1b takes S1's
+    words whichever lane of the printed staff S1 is on. It is kept out of "map" because
+    "map" is the printed grouping: S1b is not on that staff, and a third id beside a
+    divisi pair would break its above/below split.
     """
     part_id = {name: i + 1 for i, name in enumerate(parts)}
     fallbacks = _fallback_of(parts)
@@ -684,15 +687,16 @@ def _build_lyric_map(
         pmap: Dict[int, List[int]] = {}
         for printed_no, items in enumerate(ordered, start=1):
             ids = [part_id[n] for _, n in sorted(items) if n in part_id]
-            # A `S1b` not named here sings `S1`'s notes, so it sings its words too —
-            # when `S1` has the printed staff to itself. Beside another part the
-            # staff's above/below split is that pair's, and a third entry would break it.
-            if len(ids) == 1:
-                ids += [part_id[child] for child, base in fallbacks.items()
-                        if part_id.get(base) == ids[0] and child not in declared]
             if ids:
                 pmap[printed_no] = ids
-        out.append({"start": a + 1, "end": b + 1, "map": pmap})
+        entry: Dict = {"start": a + 1, "end": b + 1, "map": pmap}
+        follow: Dict[int, List[int]] = {}
+        for child, base in fallbacks.items():
+            if child not in declared and base in declared:
+                follow.setdefault(part_id[base], []).append(part_id[child])
+        if follow:
+            entry["follow"] = follow
+        out.append(entry)
     return out
 
 

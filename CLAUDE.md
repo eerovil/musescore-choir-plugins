@@ -2114,7 +2114,9 @@ another part plus one lowercase letter (`S1b`, `A1b`) **falls back** to it (#293
 every bar the rebuild would fill with a rest because nothing feeds it — the system
 does not name it, or names it on a staff that prints one unstacked line there — gets
 the base part's bar instead, and in a system that leaves it out the lyric map sends
-the base part's words to it too (only when the base has its printed staff to itself).
+the base part's words to it too, whichever lane of the printed staff the base is on
+(a per-system `follow` entry beside `map`, so the printed grouping is untouched), unless
+the lyric block gives the b-part words of its own.
 A rest the scan wrote in its own voice or staff stays. Naming the part that way is the
 person's reading that the single line is unison, which is what the rebuild otherwise
 refuses to guess. Answers are
