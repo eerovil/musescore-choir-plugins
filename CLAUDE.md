@@ -32,6 +32,7 @@ clean_score.py           CLI wrapper → src/clean_score/main.py (split voices i
 lyric_txt.py             CLI wrapper → src/clean_score/lyric_txt.py (lyrics <-> txt/json)
 rename_parts.py          Standalone CLI: rename Part/Instrument names + add click staff
 record_stemmanauha.py    CLI wrapper → src/stemmanauha (record practice video)
+backfill_staff_lines.py  One-off: add `stemmanauha-staff: N/M` to uploaded videos' descriptions
 scroll_video.py          CLI wrapper → src/scrollvideo (render scrolling practice video)
 src/song_app/            Local web app tying the workflow together (see DESIGN.md)
   state.py               Song state machine (.song.json), slug, stages
@@ -60,6 +61,7 @@ src/scrollvideo/         Scrolling practice video rendered from the score (no GU
 src/stemmanauha/         Audio/video recording automation (macOS, AppleScript + OBS/ffmpeg)
   create_video.py        Orchestrates mp3 export -> video record -> merge -> upload
   upload_to_youtube.py   YouTube Data API upload
+  staff_lines.py         Each part's staff, written into its video's description (#323)
   *.scpt                 AppleScript files driving MuseScore + QuickRecorder
 fixtures/                In-repo prototyping song + the OMR benchmark's PD slice
                          (see fixtures/*/README.md, STEPS.md)

@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Each part video uploaded to YouTube says in its description which staff the part
+  is sung from (`stemmanauha-staff: 2/5`), so the practice site can zoom a phone to
+  the right staff even when two parts share one. `backfill_staff_lines.py` adds the
+  line to videos uploaded before this. (#323)
 - After a YouTube upload, or deleting the uploaded videos, the app asks the
   stemmanauhat site to refresh its video list straight away, so a new song shows
   there within minutes instead of hours. Needs `STEMMANAUHAT_DISPATCH_TOKEN` in
