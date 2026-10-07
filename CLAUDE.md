@@ -1753,6 +1753,14 @@ state model are in `DESIGN.md`.
   instead of bar 1 five times over, a key or time signature written only where it says
   something that was not already true, and a `<print new-system="yes"/>` at each join so
   the grid cuts the score where the page is cut.
+  **A slur or tie over a line break is joined here** (#318). Each crop is read alone, so
+  homr writes it as a start in the system's last bar and a stop in the next one's first
+  bar, and keeps exactly those loose ends (eerovil/homr, `resolve_slurs(keep_edges=)`).
+  `_join_slurs` pairs them within one staff column when both systems print the same
+  number of staves; last note to first note at the same written pitch is a tie (22 of
+  30 joins on the six songs of #274 were), and a half with no partner is dropped
+  quietly if it looks like a tie half and otherwise marked `⚠ slur?`. Measured on those
+  songs' 71 systems: 11 slurs and 18 ties restored over breaks, 7 marks.
   **The meter is decided here, and this pull request proposes that** (#177). homr has no
   token for a numerator — its vocabulary holds only `timeSignature/<denominator>` — so the
   number of beats does not exist in what the model can emit and is inferred afterwards

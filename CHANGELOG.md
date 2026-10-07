@@ -10,6 +10,11 @@ developers are listed under *Behind the scenes*.
 - Scrolling videos follow D.C. and D.S. jumps (al Fine, al Coda) instead of refusing
   the score: the bars play in MuseScore's order and the scroll jumps back to the
   segno or the start and forward to the coda. (#314)
+- A slur or tie that runs over a line break is kept when the scan joins the
+  systems, instead of being lost. When only one half of a slur was read, or the
+  next line prints a different number of staves, the note is marked `⚠ slur?` to
+  check against the page. Needs a homr that keeps slur ends at the system edge.
+  (#318)
 - A scrolling video whose repeat jumps back across a time-signature change
   (a 7/4 bar repeating to a 4/4 one where a part rests) renders in time instead
   of being refused as out of sync. (#313)

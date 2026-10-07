@@ -606,6 +606,7 @@ def assemble(scans: Sequence[SystemScan], out_path: str,
     for column in range(width):
         part = etree.SubElement(score, "part", id=f"P{column + 1}")
         _fill_column(part, scans, column, divisions, meters, barlines)
+    _join_slurs(score, scans)
 
     tree = etree.ElementTree(score)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -768,6 +769,213 @@ def _set_barlines(measure: etree._Element, wanted: Dict[str, etree._Element]) ->
             else:
                 break
         measure.insert(at, barline)
+
+@dataclass
+class _LooseEnd:
+    note: etree._Element
+    slur: etree._Element
+    voice: str
+
+
+def _join_slurs(score: etree._Element, scans: Sequence[SystemScan]) -> None:
+    """Join the two halves of a slur the page carries over a system break.
+
+    Each system is read on its own, so a slur crossing a break comes back as a
+    start in the last bar of one crop with no stop, and a stop in the first bar
+    of the next with no start: homr keeps exactly those loose ends and drops
+    every other (eerovil/musescore-choir-plugins#318). Here, where both systems
+    are in view, they are paired and given a slur number no other slur in those
+    two bars uses, so the stream stays unambiguous.
+
+    **Paired only within one column of two systems that print the same number
+    of staves.** Where the count changes, column N is not the same printed staff
+    on both sides of the break -- Illan viimeinen tango's lower staff of system 6
+    is staff 3 of system 7 -- and a slur from one part into another cannot be
+    written. Within a column the halves pair in order when the two sides hold
+    the same number of halves, and otherwise voice to voice, a start taking the
+    first stop in its voice.
+
+    **A tie over the break comes back the same way**, because homr's model
+    reads ties and slurs as one kind of arc and only turns a pair into a tie
+    once it sees both ends. Measured on the six songs of #274, 22 of the 30
+    pairs joined here were a held note tied over the line, so a pair from the
+    system's last note to the next system's first note at the same pitch is
+    written as a tie (the whole written pitch: Shakkitarina's B natural slurred
+    to B flat over the break is a slur). A loose half that looks like one -- on the edge note,
+    with the same pitch at the other side of the break in any staff -- is a tie
+    that cannot be joined because the staff count changes; it is dropped
+    quietly, which is what happened to every such tie before.
+
+    Any other half without a partner is taken out and its note marked red under
+    `⚠ slur?`, the way homr marks its own doubts: either the page carries a slur
+    across the break that the other side lost, or homr read a slur that is not
+    there, and only a person looking at the page can say which.
+    """
+    parts = score.findall("part")
+    starts_at: List[int] = []
+    at = 0
+    for scan in scans:
+        starts_at.append(at)
+        at += scan.bars
+    # The pitches each system ends and starts on, over every staff: what a loose
+    # tie half is recognised by when its partner is in another column.
+    ending: Dict[int, set] = {}
+    opening: Dict[int, set] = {}
+    for part in parts:
+        measures = part.findall("measure")
+        for system, first in enumerate(starts_at):
+            last = first + scans[system].bars - 1
+            if last < len(measures):
+                ending.setdefault(system, set()).update(
+                    _step_octave(n) for n in _edge_notes(measures[last], last=True))
+            if first < len(measures):
+                opening.setdefault(system, set()).update(
+                    _step_octave(n) for n in _edge_notes(measures[first], last=False))
+    for column, part in enumerate(parts):
+        _join_column(part, scans, column, starts_at, ending, opening)
+
+
+def _join_column(part, scans, column, starts_at, ending, opening) -> None:
+    measures = part.findall("measure")
+    loose_starts: Dict[int, List[_LooseEnd]] = {}
+    loose_stops: Dict[int, List[_LooseEnd]] = {}
+    for system, first in enumerate(starts_at):
+        block = measures[first:first + scans[system].bars]
+        open_: Dict[str, List[_LooseEnd]] = {}
+        for index, measure in enumerate(block):
+            for note in measure.findall("note"):
+                for slur in note.findall("notations/slur"):
+                    number = slur.get("number", "1")
+                    end = _LooseEnd(note, slur, note.findtext("voice") or "1")
+                    if slur.get("type") == "start":
+                        open_.setdefault(number, []).append(end)
+                    elif slur.get("type") == "stop":
+                        if open_.get(number):
+                            open_[number].pop()
+                        elif index == 0:
+                            loose_stops.setdefault(system, []).append(end)
+        # Only the edge bars: homr keeps a loose end nowhere else, and a pair
+        # inside one bar that flattening put out of document order (a slur
+        # from one voice into the other) is not a half of anything.
+        last = block[-1] if block else None
+        loose_starts[system] = [end for ends in open_.values() for end in ends
+                                if end.note.getparent() is last]
+
+    for system in range(-1, len(scans)):
+        starts = loose_starts.get(system, [])
+        stops = loose_stops.get(system + 1, [])
+        same_shape = (0 <= system < len(scans) - 1 and column < scans[system].width
+                      and scans[system].width == scans[system + 1].width)
+        pairs: List[Tuple[_LooseEnd, _LooseEnd]] = []
+        if same_shape and starts and stops:
+            if len(starts) == len(stops):
+                pairs = list(zip(starts, stops))
+            else:
+                taken = set()
+                for start in starts:
+                    # The first stop in the voice, as homr's own pairing and
+                    # MuseScore's would close it.
+                    match = [stop for stop in stops
+                             if stop.voice == start.voice and id(stop) not in taken]
+                    if match:
+                        taken.add(id(match[0]))
+                        pairs.append((start, match[0]))
+        paired = {id(end) for pair in pairs for end in pair}
+        for start, stop in pairs:
+            if (_on_edge(start.note, last=True) and _on_edge(stop.note, last=False)
+                    and _written_pitch(start.note) == _written_pitch(stop.note)):
+                _remove_slur(start)
+                _remove_slur(stop)
+                _tie(start.note, "start")
+                _tie(stop.note, "stop")
+                continue
+            used = {slur.get("number") for measure in (start.note.getparent(),
+                                                        stop.note.getparent())
+                    for slur in measure.iter("slur")
+                    if slur is not start.slur and slur is not stop.slur}
+            number = next(str(n) for n in range(1, 17) if str(n) not in used)
+            start.slur.set("number", number)
+            stop.slur.set("number", number)
+        for end in starts:
+            if id(end) not in paired:
+                _drop_loose_end(end, tie_half=_on_edge(end.note, last=True)
+                                and _step_octave(end.note) in opening.get(system + 1, set()))
+        for end in stops:
+            if id(end) not in paired:
+                _drop_loose_end(end, tie_half=_on_edge(end.note, last=False)
+                                and _step_octave(end.note) in ending.get(system, set()))
+
+
+def _written_pitch(note: etree._Element) -> Tuple[str, str, int]:
+    """Step, octave and alteration: a slur from B natural to B flat is a slur."""
+    return (*_step_octave(note), _int(note.findtext("pitch/alter")))
+
+
+def _step_octave(note: etree._Element) -> Tuple[str, str]:
+    return note.findtext("pitch/step") or "", note.findtext("pitch/octave") or ""
+
+
+def _edge_notes(measure: etree._Element, last: bool) -> List[etree._Element]:
+    """The pitched notes that end (or open) each voice of the bar."""
+    per_voice: Dict[str, List[etree._Element]] = {}
+    for note in measure.findall("note"):
+        if note.find("pitch") is None or note.find("grace") is not None:
+            continue
+        group = per_voice.setdefault(note.findtext("voice") or "1", [])
+        if note.find("chord") is not None and group:
+            group[-1].append(note)
+        else:
+            group.append([note])
+    picked = [groups[-1 if last else 0] for groups in per_voice.values() if groups]
+    return [note for chord in picked for note in chord]
+
+
+def _on_edge(note: etree._Element, last: bool) -> bool:
+    return any(note is other for other in _edge_notes(note.getparent(), last))
+
+
+#: Where <tie> goes among a note's children (MusicXML's own order).
+_BEFORE_TIE = {"grace", "cue", "chord", "pitch", "unpitched", "rest", "duration"}
+
+
+def _tie(note: etree._Element, kind: str) -> None:
+    index = 0
+    for i, child in enumerate(note):
+        if isinstance(child.tag, str) and child.tag in _BEFORE_TIE:
+            index = i + 1
+    note.insert(index, etree.Element("tie", type=kind))
+    notations = note.find("notations")
+    if notations is None:
+        notations = etree.SubElement(note, "notations")
+    etree.SubElement(notations, "tied", type=kind)
+
+
+def _remove_slur(end: _LooseEnd) -> None:
+    notations = end.slur.getparent()
+    notations.remove(end.slur)
+    if len(notations) == 0:
+        end.note.remove(notations)
+
+
+def _drop_loose_end(end: _LooseEnd, tie_half: bool = False) -> None:
+    _remove_slur(end)
+    if not tie_half:
+        _mark_note(end.note, "slur?")
+
+
+def _mark_note(note: etree._Element, word: str) -> None:
+    """The note goes red and `⚠ <word>` stands above it, as homr marks a doubt."""
+    measure = note.getparent()
+    _colour_red(note)
+    children = list(measure)
+    at = children.index(note)
+    while at > 0 and children[at].find("chord") is not None:
+        at -= 1
+    direction = etree.Element("direction", placement="above")
+    words = etree.SubElement(etree.SubElement(direction, "direction-type"), "words")
+    words.set("color", "#FF0000")
+    words.text = f"⚠ {word}"
+    measure.insert(at, direction)
 
 
 #: Order the key signature adds accidentals in: sharps from the left, flats from
