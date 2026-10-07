@@ -10,11 +10,11 @@ from __future__ import annotations
 import os
 import re
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import lru_cache
 from importlib.resources import files
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import verovio
 from lxml import etree
@@ -59,6 +59,11 @@ class Engraving:
     layout: Layout
     timemap: List[dict]       # qstamp/tstamp plus timed note and rest ids
     drawn_id: Dict[str, str]  # timed id -> the symbol id actually engraved
+    # The bars as printed, left to right, and each timed bar id (a repeat pass
+    # times a bar again as ``xyz-rend2``) mapped back to the printed one. What a
+    # D.C./D.S. score needs to lay the bars out in MuseScore's played order.
+    measures: Tuple[str, ...] = ()
+    measure_of: Dict[str, str] = field(default_factory=dict)
 
     @property
     def notes(self) -> Dict[str, object]:
@@ -85,7 +90,9 @@ def engrave(musicxml_path: str, options: Dict | None = None,
     layout = parse_layout(svg)
     timemap = tk.renderToTimemap({"includeMeasures": True, "includeRests": True})
     timemap = retime_repeats(timemap, measure_durations(musicxml_path))
-    return Engraving(svg, layout, timemap, _drawn_ids(tk, timemap, layout))
+    measures = printed_measures(svg)
+    return Engraving(svg, layout, timemap, _drawn_ids(tk, timemap, layout),
+                     measures, _measure_ids(tk, timemap, set(measures)))
 
 
 # Music symbols that appear inside a piece of text — the quarter note in a
@@ -304,3 +311,27 @@ def _drawn_ids(tk, timemap: List[dict], layout: Layout) -> Dict[str, str]:
             if layout.playing(notated) is not None:
                 drawn[element_id] = notated
     return drawn
+
+
+def printed_measures(svg: str) -> Tuple[str, ...]:
+    """The ids of the engraved bars, in the order they are printed."""
+    root = etree.fromstring(svg.encode())
+    return tuple(g.get("id") for g in root.iter(_tag("g"))
+                 if _has_class(g, MEASURE_CLASS) and g.get("id"))
+
+
+def _measure_ids(tk, timemap: List[dict], printed: set) -> Dict[str, str]:
+    """Map every timed bar id to the bar printed on the page.
+
+    The same expansion as `_drawn_ids`: a bar timed again in a repeat pass
+    carries a suffixed id that is not drawn.
+    """
+    found: Dict[str, str] = {}
+    for entry in timemap:
+        timed = entry.get("measureOn")
+        if not timed or timed in found:
+            continue
+        notated = timed if timed in printed else tk.getNotatedIdForElement(timed)
+        if notated in printed:
+            found[timed] = notated
+    return found

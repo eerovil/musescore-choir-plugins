@@ -12,7 +12,7 @@ MIDI tempo map, and audio and video cannot drift.
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from typing import List, Mapping, Sequence, Tuple
 
@@ -121,9 +121,35 @@ SMOOTH_SECONDS = 2.0
 JUMP_FRACTION = 0.25
 
 
+# How long before a cut the scroll is held still, in seconds. A cut is drawn as
+# two anchors this far apart, which is far less than a frame.
+CUT_GAP = 1e-4
+
+
+def cut_anchors(times: Sequence[float], xs: Sequence[float],
+                cuts: Sequence[float]) -> Tuple[List[float], List[float]]:
+    """Make the scroll land at each cut instead of sliding into it.
+
+    A D.C./D.S. jump goes from one place on the page to another, and between the
+    last note before it and the first note after it there is nothing to follow:
+    interpolating there would sweep the page across every bar in between. So the
+    scroll holds where it was until the moment of the cut and starts again from
+    where the music picks up.
+    """
+    out_t, out_x = list(times), list(xs)
+    for cut in sorted(cuts, reverse=True):
+        i = bisect_left(out_t, cut)
+        if i == 0 or i >= len(out_t):
+            continue
+        out_t[i:i] = [cut - CUT_GAP, cut]
+        out_x[i:i] = [out_x[i - 1], out_x[i]]
+    return out_t, out_x
+
+
 def smooth_scroll(times: Sequence[float], xs: Sequence[float], *, fps: int,
                   seconds: float = SMOOTH_SECONDS,
-                  page_width: float = 0.0) -> Tuple[List[float], List[float]]:
+                  page_width: float = 0.0,
+                  cuts: Sequence[float] = ()) -> Tuple[List[float], List[float]]:
     """Even out the scroll speed without letting the sung note wander off station.
 
     The engraving decides where a note sits, so following note positions exactly
@@ -141,7 +167,9 @@ def smooth_scroll(times: Sequence[float], xs: Sequence[float], *, fps: int,
 
     Repeats stay sharp: a jump back to a repeated section is real motion, and each
     stretch between jumps is smoothed on its own. Jumps are found in the anchors,
-    before resampling smears them across frames.
+    before resampling smears them across frames. `cuts` names further places to
+    start a stretch (seconds, from `cut_anchors`): a jump forward to a coda is as
+    real as one back to a repeat, but no size of step says so.
     """
     if len(times) < 2 or seconds <= 0:
         return list(times), list(xs)
@@ -150,6 +178,9 @@ def smooth_scroll(times: Sequence[float], xs: Sequence[float], *, fps: int,
     ax = np.asarray(xs, dtype=float)
     threshold = JUMP_FRACTION * page_width if page_width > 0 else float("inf")
     starts = [0] + [i + 1 for i, step in enumerate(np.diff(ax)) if step < -threshold]
+    if cuts:
+        starts = sorted(set(starts) | {i for i in (bisect_left(at.tolist(), c)
+                                                   for c in cuts) if 0 < i < len(at)})
     bounds = starts + [len(at)]
 
     width = max(1, int(round(seconds * fps)) | 1)
@@ -164,6 +195,10 @@ def smooth_scroll(times: Sequence[float], xs: Sequence[float], *, fps: int,
             continue
 
         grid = np.arange(seg_t[0], seg_t[-1] + 0.5 / fps, 1.0 / fps)
+        if last < len(at):
+            # The grid may round past this stretch's end; it must not run into
+            # the next one, or time would step backwards at the join.
+            grid = grid[grid < at[last]]
         curve = np.interp(grid, seg_t, seg_x)
         if len(curve) > width + 1:
             speed = np.diff(curve)

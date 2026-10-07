@@ -136,8 +136,8 @@ def preview(mscx_path: str, out_dir: str, *, width: int = 3840, height: int = 21
     `width`/`height` are the video's, not the preview's: they set the shape of the
     frame, and the preview is that shape drawn `preview_height` tall.
 
-    Raises what a render would raise, and for the same reasons: a D.C./D.S. jump the
-    engraving cannot follow, margins that leave no picture, a timeline too far out of
+    Raises what a render would raise, and for the same reasons: a D.C./D.S. jump
+    whose bars cannot be matched to the engraving, margins that leave no picture, a timeline too far out of
     step with the audio. Failing here is the point — it costs seconds instead of the
     minutes it takes to discover the same thing from a finished file.
     """

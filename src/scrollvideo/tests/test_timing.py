@@ -4,8 +4,9 @@ import mido
 import pytest
 
 from src.scrollvideo.geometry import Layout, NoteGeom, RestGeom
-from src.scrollvideo.timing import (DEFAULT_TEMPO, NoteEvent, TempoMap,
-                                    note_events, rest_events, scroll_anchors)
+from src.scrollvideo.timing import (CUT_GAP, DEFAULT_TEMPO, NoteEvent, TempoMap,
+                                    cut_anchors, note_events, rest_events,
+                                    scroll_anchors, smooth_scroll)
 
 
 def test_constant_tempo_is_linear():
@@ -163,3 +164,25 @@ def test_smoothing_can_be_turned_off():
     from src.scrollvideo.timing import smooth_scroll
     times, xs = [0.0, 1.0, 2.0], [0.0, 10.0, 100.0]
     assert smooth_scroll(times, xs, fps=30, seconds=0) == (times, xs)
+
+
+def test_a_cut_holds_the_scroll_and_then_lands():
+    """Between the last note before a jump and the first after it there is
+    nothing to follow, so the scroll waits for the jump and does not sweep."""
+    times, xs = cut_anchors([0.0, 1.0, 3.0, 4.0], [0.0, 10.0, 500.0, 510.0], [2.0])
+    assert times == [0.0, 1.0, 2.0 - CUT_GAP, 2.0, 3.0, 4.0]
+    assert xs == [0.0, 10.0, 10.0, 500.0, 500.0, 510.0]
+
+
+def test_smoothing_keeps_a_forward_cut_sharp():
+    """A jump forward to a coda is no bigger a step than ordinary music on a long
+    page, so only being told where it is keeps it a cut rather than a ramp."""
+    times = [float(t) for t in range(10)]
+    xs = [t * 10.0 for t in range(5)] + [1000.0 + t * 10.0 for t in range(5)]
+    times, xs = cut_anchors(times, xs, [5.0])
+    out_t, out_x = smooth_scroll(times, xs, fps=10, seconds=2.0,
+                                 page_width=1e9, cuts=[5.0])
+    assert all(b > a for a, b in zip(out_t, out_t[1:]))
+    steps = [(b - a, tb - ta) for a, b, ta, tb in zip(out_x, out_x[1:], out_t, out_t[1:])
+             if abs(b - a) > 100]
+    assert len(steps) == 1 and steps[0][1] < 0.1
