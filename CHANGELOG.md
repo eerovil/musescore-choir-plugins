@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-07
 
+- The score viewer says when it is waiting: a score being built shows a running
+  count, a rebuilt one keeps the old picture under "Updating…", and a failed build
+  says why. In Compare and Scan vs page the engraved systems wait in their place
+  and arrive top to bottom instead of popping in at random. (#303)
 - In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
   words) in every bar where it has none of its own, instead of resting. (#293)
 

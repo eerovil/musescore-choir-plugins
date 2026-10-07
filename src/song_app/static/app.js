@@ -596,15 +596,69 @@ function pinchZoom(view) {
   view.addEventListener("touchcancel", end);
 }
 
-// Render with pdf.js; fall back to a native iframe if pdf.js can't load (offline).
-async function mountPdf(view, url) {
+// "Still working", with the seconds counting up. A MuseScore render can take a
+// minute, and a line that never changes reads as a page that has frozen (#303).
+// The counter stops by itself once the note has left the page.
+function busyNote(text, className = "busynote") {
+  const note = el("p", { className }, text);
+  const started = Date.now();
+  const timer = setInterval(() => {
+    if (!note.isConnected) { clearInterval(timer); return; }
+    note.textContent = `${text} ${Math.round((Date.now() - started) / 1000)} s`;
+  }, 1000);
+  return note;
+}
+
+// Why a URL failed, in the server's own words when it gave any.
+async function failureDetail(url, fallback = "") {
   try {
-    await renderPdf(view, url);
-    view._renderedUrl = url;
+    const r = await fetch(url);
+    if (r.ok) return fallback;
+    return (await r.json().catch(() => ({}))).detail || r.statusText || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// Render with pdf.js; fall back to a native iframe only if pdf.js itself can't
+// load (offline). While it renders the pane says so: a first build shows a note
+// in place of the score, a rebuild keeps the old score up under an "Updating…"
+// badge, since blanking a score somebody is reading is worse than a few seconds
+// of the previous one. A render the server refused says why, rather than leaving
+// the pane empty, which looked the same as waiting forever.
+async function mountPdf(view, url) {
+  const mine = (view._mountTok = (view._mountTok || 0) + 1);
+  const latest = () => view._mountTok === mine;
+  const busy = view._busyText || "Loading…";
+  const shown = view.querySelector("canvas.pdfpage");
+  let badge = null;
+  if (shown) {
+    badge = view.querySelector(".vupdating")
+      || el("div", { className: "vupdating" }, "Updating…");
+    if (!badge.isConnected) view.prepend(badge);
+  } else if (!view.querySelector(".busynote")) {
+    view.replaceChildren(busyNote(busy));
+  }
+  try {
+    await ensurePdfjs();
   } catch {
     view.replaceChildren(el("iframe", { className: "pdffallback",
       src: url + "#navpanes=0&view=FitH" }));
     view._renderedUrl = url;
+    return;
+  }
+  try {
+    await renderPdf(view, url);
+    if (latest()) view._renderedUrl = url;
+  } catch (e) {
+    if (!latest()) return;
+    const why = await failureDetail(url, e.message || "");
+    if (!latest()) return;
+    view.replaceChildren(el("p", { className: "warn pdferr" },
+      `${view._failText || "Could not load this document"}${why ? ": " + why : "."}`));
+    view._renderedUrl = url;               // no retry loop; a new score retries
+  } finally {
+    if (latest() && badge) badge.remove();
   }
 }
 
@@ -615,18 +669,84 @@ const SYSTEM_EVENT = "song-system";
 const showSystem = (index) =>
   window.dispatchEvent(new CustomEvent(SYSTEM_EVENT, { detail: { index } }));
 
+// ---- slow pictures: the engraved systems in Compare and Scan vs page -----------
+// Each one is a MuseScore run on the server. Asked for all at once they started a
+// MuseScore per system on a four-core host and arrived in whatever order those
+// finished, popping in at random under an empty row (#303). So each waits in a
+// placeholder that holds its place and says what it is waiting for, and they are
+// fetched in reading order, two at a time. One per view: redrawing the view stops
+// the old queue, so a stale row does not keep the server busy.
+const SLOW_AT_ONCE = 2;
+
+function slowQueue(view) {
+  view._slowQueue?.stop();
+  const waiting = [];
+  let running = 0, stopped = false;
+  const pump = () => {
+    while (!stopped && running < SLOW_AT_ONCE && waiting.length) {
+      const slot = waiting.shift();
+      running++;
+      slot._start(() => { running--; pump(); });
+    }
+  };
+  const queue = {
+    push(slot) {
+      if (slot._ready) return;                   // already seen: shown at once
+      waiting.push(slot); pump();
+    },
+    // The system somebody asked to look at goes next.
+    front(slot) {
+      const i = waiting.indexOf(slot);
+      if (i > 0) { waiting.splice(i, 1); waiting.unshift(slot); }
+    },
+    stop() { stopped = true; waiting.length = 0; },
+  };
+  view._slowQueue = queue;
+  return queue;
+}
+
+// A picture already shown in this view is drawn straight away when the view is
+// redrawn (a scan redraws it after every system it reads); only new ones wait.
+function slowImage(view, src, alt, n) {
+  const seen = (view._slowSeen = view._slowSeen || new Set());
+  if (seen.has(src)) {
+    const img = el("img", { className: "cmpimg", src, alt });
+    img._ready = true;
+    return img;
+  }
+  const slot = el("div", { className: "cmpslot" },
+    busyNote(`Engraving system ${n}…`, "busynote small"));
+  slot._start = (done) => {
+    const img = el("img", { className: "cmpimg fresh", alt });
+    img.onload = () => { seen.add(src); slot.replaceWith(img); done(); };
+    img.onerror = async () => {
+      const why = await failureDetail(src);
+      slot.className = "cmpslot err";
+      slot.replaceChildren(`Could not engrave system ${n}${why ? ": " + why : "."}`);
+      done();
+    };
+    img.src = src;
+  };
+  return slot;
+}
+
 // ---- Compare: each printed system above the same system of the cleaned score ----
 // Reviewing means checking one against the other, and they cannot simply be laid
 // side by side: the cleaned score has twice the staves, so its systems are far
 // taller. Cut both into systems and pair them up and the comparison is per line.
 async function compareView(view, slug) {
   const P = `/api/songs/${encodeURIComponent(slug)}`;
-  view.replaceChildren(el("p", { className: "muted" }, "Pairing systems…"));
+  // Pairing renders the whole cleaned score first, which is the slow part.
+  view.replaceChildren(busyNote(
+    "Building the cleaned score with MuseScore to cut it into systems…"));
   let data;
   try {
-    data = await (await fetch(`${P}/compare`)).json();
-  } catch {
-    view.replaceChildren(el("p", { className: "warn" }, "Could not pair the systems."));
+    const res = await fetch(`${P}/compare`);
+    data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+  } catch (e) {
+    view.replaceChildren(el("p", { className: "warn" },
+      "Could not pair the systems" + (e.message ? ": " + e.message : ".")));
     return;
   }
   const rows = data.systems || [];
@@ -637,16 +757,23 @@ async function compareView(view, slug) {
     return;
   }
   const byIndex = {};
-  view.replaceChildren(...rows.map((r) => byIndex[r.index] = el("div", { className: "cmprow" },
-    el("div", { className: "cmphead" },
-      `System ${r.index} — measures ${r.measure_start}–${r.measure_end}`),
-    el("div", { className: "cmplabel" }, "scan"),
-    el("img", { className: "cmpimg", loading: "lazy",
-                src: `${P}/system/${r.index}?dpi=300`, alt: `printed system ${r.index}` }),
-    el("div", { className: "cmplabel" }, "cleaned"),
-    el("img", { className: "cmpimg", loading: "lazy",
-                src: `${P}/cleaned-system/${r.index}?dpi=300`, alt: `cleaned system ${r.index}` }),
-  )));
+  const queue = slowQueue(view);
+  view.replaceChildren(...rows.map((r) => {
+    const slow = slowImage(view, `${P}/cleaned-system/${r.index}?dpi=300`,
+      `cleaned system ${r.index}`, r.index);
+    const row = byIndex[r.index] = el("div", { className: "cmprow" },
+      el("div", { className: "cmphead" },
+        `System ${r.index} — measures ${r.measure_start}–${r.measure_end}`),
+      el("div", { className: "cmplabel" }, "scan"),
+      el("img", { className: "cmpimg", loading: "lazy",
+                  src: `${P}/system/${r.index}?dpi=300`, alt: `printed system ${r.index}` }),
+      el("div", { className: "cmplabel" }, "cleaned"),
+      slow,
+    );
+    row._slow = slow;
+    return row;
+  }));
+  for (const r of rows) queue.push(byIndex[r.index]._slow);
 
   // Typing lyrics for a system should put that system in front of you, scan and
   // result together — that is the pair you are checking the words against.
@@ -655,6 +782,7 @@ async function compareView(view, slug) {
     if (!row) return;
     for (const el_ of Object.values(byIndex)) el_.classList.remove("cmpon");
     row.classList.add("cmpon");
+    queue.front(row._slow);
     row.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 }
@@ -732,8 +860,11 @@ function scannedView(view, song, slug) {
   const errors = st.errors || {};
   const rows = [];
   const byIndex = {};
+  const queue = slowQueue(view);
   for (let i = 1; i <= (st.systems || 0); i++) {
     const bad = errors[String(i)];
+    const slow = bad ? null : slowImage(view, `${P}/scan-system/${i}?dpi=200`,
+      `scanned system ${i}`, i);
     rows.push(byIndex[i] = el("div", { className: "cmprow" },
       el("div", { className: "cmphead" }, `System ${i}`),
       el("div", { className: "cmplabel" }, "page"),
@@ -742,10 +873,7 @@ function scannedView(view, song, slug) {
       el("div", { className: "cmplabel" }, "scan"),
       // A hole shows its reason where its music would be. Leaving the row out
       // instead is how a score quietly short of a system reads as complete.
-      bad ? el("div", { className: "cmperr" }, "Could not be read: " + bad)
-          : el("img", { className: "cmpimg", loading: "lazy",
-                        src: `${P}/scan-system/${i}?dpi=200`,
-                        alt: `scanned system ${i}` }),
+      bad ? el("div", { className: "cmperr" }, "Could not be read: " + bad) : slow,
       // Which homr read this one, where the reading is being judged. It says so
       // and does nothing about it.
       // What the last clean made of this system, beside the picture of it. It is a
@@ -759,14 +887,17 @@ function scannedView(view, song, slug) {
            ? " — not the homr installed now" : "")),
       rereadRow(slug, i, bad),
     ));
+    byIndex[i]._slow = slow;
   }
   view.replaceChildren(...(rows.length ? rows
     : [el("p", { className: "warn" }, "Nothing has been read yet.")]));
+  for (const row of rows) if (row._slow) queue.push(row._slow);
   view._focusSystem = (n) => {
     const row = byIndex[n];
     if (!row) return;
     for (const other of Object.values(byIndex)) other.classList.remove("cmpon");
     row.classList.add("cmpon");
+    if (row._slow) queue.front(row._slow);
     row.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 }
@@ -1038,7 +1169,14 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
           v._sync = () => preview._syncPreview?.();
           v.append(preview);
         }
-        else { v._url = docUrl(slug, doc, song.cleaned_fingerprint); pinchZoom(v); }
+        else {
+          v._url = docUrl(slug, doc, song.cleaned_fingerprint);
+          if (doc !== "pdf") {
+            v._busyText = "Building this score with MuseScore…";
+            v._failText = "MuseScore could not build this score";
+          }
+          pinchZoom(v);
+        }
       }
       for (const d in frames) frames[d].style.display = d === doc ? "" : "none";
       for (const k in btns) btns[k].className = k === doc ? "vtab active" : "vtab";
