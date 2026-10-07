@@ -281,6 +281,20 @@ you have touched something with reach (`lyric_txt.py`, `main.py`, `build.py`):
 #                           a MuseScore CLI the scrollvideo sync tests skip too
 ```
 
+**A poller verification job leaves the browser tests to CI** (agentdeck#2709). Submit
+the full run with `-m "not browser and not omr"` and let it run on this host:
+
+```bash
+agentdeck job submit --verification ... -- .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q -m "not browser and not omr"
+```
+
+The Playwright tests are the slow part, and CI's `Browser tests` job already runs them
+on the same commit. The poller's release waits for every GitHub check on the head it
+merges, and a red one gets a repair turn, so CI covers them; the local job does not
+need to.
+`not omr` keeps homr off this host: the `omr` tests run it on real scans, and CI,
+which has no homr, skips them too.
+
 One trap when timing or trusting it: the scrollvideo tests call the MuseScore CLI
 under a timeout, so anything else heavy running on the host at the same time makes
 them fail for no reason of their own. Two `test_preview.py` failures chased in this
@@ -2142,7 +2156,8 @@ does not name it, or names it on a staff that prints one unstacked line there â€
 the base part's bar instead, and in a system that leaves it out the lyric map sends
 the base part's words to it too, whichever lane of the printed staff the base is on
 (a per-system `follow` entry beside `map`, so the printed grouping is untouched), unless
-the lyric block gives the b-part words of its own.
+the lyric block gives the b-part words of its own. The Review stage's note check (`verification.compare_notes`)
+counts those borrowed bars as copies of the base part's notes, not as a difference.
 A rest the scan wrote in its own voice or staff stays. Naming the part that way is the
 person's reading that the single line is unison, which is what the rebuild otherwise
 refuses to guess. Answers are
