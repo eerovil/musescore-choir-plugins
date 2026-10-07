@@ -379,7 +379,11 @@ async function renderWorkspace(slug) {
         if (target) target.click();
         else selectStage(stage);
       },
-      openPreview: () => { viewerEl._showFirst("preview"); showPane("viewer"); },
+      openPreview: ({ start } = {}) => {
+        viewerEl._showFirst("preview");
+        showPane("viewer");
+        if (start) viewerEl._startPreview();
+      },
       // The panel is a task screen and the score is a full-screen visual, so a
       // panel that says "look at this" has to be able to put it in front of you.
       openDoc: (doc) => { viewerEl._showFirst(doc); showPane("viewer"); },
@@ -1129,6 +1133,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
   const previewPausers = [];
   const previewDestroyers = [];
   const previewSyncers = [];
+  const previewStarters = [];
 
   const slot = (i) => {
     const frames = {};                  // doc -> scrollable pdfview div (kept alive)
@@ -1181,6 +1186,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
           v._pause = () => preview._pausePreview?.();
           v._destroy = () => preview._stopPreview?.();
           v._sync = () => preview._syncPreview?.();
+          v._start = () => preview._startPreview?.();
           v.append(preview);
         }
         else {
@@ -1248,6 +1254,7 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
     previewPausers.push(() => frames.preview?._pause?.());
     previewDestroyers.push(() => frames.preview?._destroy?.());
     previewSyncers.push(() => frames.preview?._sync?.());
+    previewStarters.push(() => frames.preview?._start?.());
     wakers.push(() => ensureRendered(panes[i]));
     scanRefreshers.push(() => { if (frames.scanned) scannedView(frames.scanned, song, slug); });
     // Re-render only the cleaned previews; their scroll is preserved by renderPdf.
@@ -1277,6 +1284,9 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
   root._pausePreview = () => previewPausers.forEach((pause) => pause());
   root._destroyPreview = () => previewDestroyers.forEach((destroy) => destroy());
   root._syncPreview = () => previewSyncers.forEach((sync) => sync());
+  // Only the first pane: it is the one the panel's Preview button brings forward,
+  // and a split showing the preview twice should not prepare it twice.
+  root._startPreview = () => previewStarters[0]?.();
   root._showFirst = (doc) => {
     if (keys.includes(doc) && selectors[0]) selectors[0](doc);
   };
@@ -2361,7 +2371,7 @@ function panelRecord(panel, song, P, refresh, actions) {
     style: "width:220px", "data-staff-groups": ""
   });
   const hardwareEncoding = el("input", {
-    type: "checkbox", checked: rec.hardware_encoding !== false
+    type: "checkbox", checked: rec.hardware_encoding !== false, "data-hardware-encoding": ""
   });
   const bpm = el("input", {
     type: "number", value: rec.bpm ?? 80, min: 20, max: 300, step: 1,
@@ -2433,17 +2443,47 @@ function panelRecord(panel, song, P, refresh, actions) {
   const advanced = el("details", { className: "record-advanced" },
     el("summary", {}, "Framing & advanced settings"),
     scrollAdvanced, screenAdvanced);
-  const previewBtn = el("button", { className: "preview-action", onclick: actions.openPreview }, "Preview");
-
-  actions.setPreviewSettings(() => ({
+  const previewSettings = () => ({
     quality: quality.value,
     top_margin: Number(topMargin.value) || 0,
     bottom_margin: Number(bottomMargin.value) || 0,
     staff_groups: staffGroups.value.trim(),
     ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
-  }));
+  });
+  // Saved on Preview and on Save settings (#301), not only once a preview or a
+  // render has come out: opening the preview is when the choice is made, and a
+  // preview nobody pressed "Preview scroll" for used to keep nothing.
+  const saveNote = el("span", { className: "hint save-note", "data-save-note": "" }, "");
+  const saveSettings = async () => {
+    try {
+      const saved = await postJSON(`${P}/record-settings`,
+        { ...previewSettings(), hardware_encoding: hardwareEncoding.checked });
+      Object.assign(rec, saved.record || {});
+      song.record = rec;
+      saveNote.className = "hint save-note";
+      saveNote.textContent = "Saved";
+      return true;
+    } catch (e) {
+      // Said beside the button that was pressed: the log is below the fold.
+      saveNote.className = "hint save-note err";
+      saveNote.textContent = e.message;
+      return false;
+    }
+  };
+  const saveBtn = el("button", { onclick: saveSettings }, "Save settings");
+  const previewBtn = el("button", { className: "preview-action", onclick: async () => {
+    if (await saveSettings()) actions.openPreview({ start: true });
+  } }, "Preview");
+
+  actions.setPreviewSettings(previewSettings);
   for (const control of [quality, topMargin, bottomMargin, bpm, staffGroups]) {
     control.addEventListener("input", actions.previewInputsChanged);
+  }
+  for (const control of [quality, topMargin, bottomMargin, bpm, staffGroups, hardwareEncoding]) {
+    control.addEventListener("input", () => {
+      saveNote.className = "hint save-note";
+      saveNote.textContent = "Unsaved changes";
+    });
   }
 
   const applyRenderer = () => {
@@ -2455,6 +2495,8 @@ function panelRecord(panel, song, P, refresh, actions) {
     scrollAdvanced.style.display = renderer === "scroll" ? "" : "none";
     screenAdvanced.style.display = renderer === "screen" ? "" : "none";
     previewBtn.style.display = renderer === "scroll" ? "" : "none";
+    saveBtn.style.display = renderer === "scroll" ? "" : "none";
+    saveNote.style.display = renderer === "scroll" ? "" : "none";
     if (renderer === "screen") actions.pausePreview();
     previewBtn.parentElement?.classList.toggle("screen", renderer === "screen");
     const count = parts.length ? ` all ${parts.length} parts` : " videos";
@@ -2470,7 +2512,8 @@ function panelRecord(panel, song, P, refresh, actions) {
     el("div", { className: "renderer-choices" }, scrollCard, screenCard),
     scrollCommon,
     advanced,
-    el("div", { className: "record-actions" }, previewBtn, runBtn),
+    el("div", { className: "record-actions" }, saveBtn, previewBtn, runBtn),
+    saveNote,
     makeLog(song.jobs?.render));
 
   scrollRadio.onclick = () => choose("scroll");

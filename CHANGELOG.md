@@ -11,6 +11,10 @@ developers are listed under *Behind the scenes*.
   count, a rebuilt one keeps the old picture under "Updating…", and a failed build
   says why. In Compare and Scan vs page the engraved systems wait in their place
   and arrive top to bottom instead of popping in at random. (#303)
+- The Record panel's Preview button now saves every setting (tempo, quality,
+  margins, shared staves, NVIDIA encoding) and starts drawing the preview at once,
+  with a progress bar and a seconds counter. A new Save settings button saves them
+  without previewing. (#302)
 - Re-cleaning no longer fails after the per-system grid is answered again. A
   reading picked in the Fix panel now follows its notes to whichever part they
   land in, and is dropped (with a line in the log) if no part sings them any
