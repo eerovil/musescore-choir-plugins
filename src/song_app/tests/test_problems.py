@@ -273,3 +273,35 @@ def test_unmark_is_content_when_the_mark_is_already_gone():
     done = score_fixes.apply_fixes(root, [
         {"kind": "unmark", "staff": 1, "measure": 1, "text": "nothing here", "why": "x"}])
     assert "no red mark left" in done[0]
+
+
+def _marked_bar(song, *texts):
+    """Bar 3 of B1 with these red marks on it, written back to the cleaned score."""
+    root = etree.parse(song.cleaned_path()).getroot()
+    bar = root.findall(".//Score/Staff")[0].findall("Measure")[2]
+    for text in texts:
+        mark_bar(bar, text)
+    return root
+
+
+def _pitch_entry(song):
+    """A recorded `pitch` pick (kept in fixes.json from before whole-bar choices)."""
+    return {"kind": "pitch", "staff": 1, "measure": 3, "index": 1,
+            "from": _tokens(song), "was": 50, "to": 51, "tpc": 11, "why": "test"}
+
+
+def test_a_pitch_pick_leaves_the_rest_of_the_bars_marks(make_song):
+    """A bar homr doubted for two things is still marked for the one not answered."""
+    song = make_song(readings=None)
+    root = _marked_bar(song, "pitch? rhythm?", "slur to B2 bar 4 removed; check the page")
+    [done] = score_fixes.apply_fixes(root, [_pitch_entry(song)])
+    assert "took pitch? off" in done
+    assert sorted(m["text"] for m in marks(root)) == [
+        "rhythm?", "slur to B2 bar 4 removed; check the page"]
+
+
+def test_a_pitch_pick_answering_the_whole_mark_takes_it_off(make_song):
+    song = make_song(readings=None)
+    root = _marked_bar(song, "pitch? accidental?")
+    score_fixes.apply_fixes(root, [_pitch_entry(song)])
+    assert marks(root) == []

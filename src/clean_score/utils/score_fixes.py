@@ -44,8 +44,9 @@ for an unsure bar is recorded (#269), so its lengths are homr's own spelling, on
 note or rest in order: `note_4` a quarter, `note_12` a triplet eighth, `note_4.` a
 dotted quarter. `from` is the bar as it reads now, as above. Triplet brackets are
 written again around the new lengths, ties and slurs in or into the bar are moved to
-the notes they joined, and the red `⚠` mark on the bar goes: a person has read it
-against the page.
+the notes they joined, and `rhythm?` comes off the bar's red `⚠` mark: a person has
+read the lengths against the page. Whatever else the mark says, and cleaning's own
+marks on the bar, stay (#290).
 
     {"kind": "rhythm", "staff": 9, "measure": 25,
      "from": ["[tuplet", "eighth:43", "eighth:48", "eighth:50", "tuplet]", ...],
@@ -56,7 +57,8 @@ Three more kinds are how a person's answer to a problem listed on the Fix stage 
 recorded (#290). `pitch` gives one note of a chord another pitch, picked among the
 pitches homr weighed for it; `from` is the bar as it reads now, `was` the MIDI pitch
 the note has, and `to` / `tpc` what it gets — the spelling is homr's, read off the
-page, rather than derived. Its red note and the bar's red mark go with it. A `slur`
+page, rather than derived. Its red note goes, and so do the words `pitch?` and
+`accidental?` on the bar's red mark; anything else the mark says stays. A `slur`
 may reach into a later bar with `end_measure` and `end_index` instead of `span`,
 because a slur the scan ran from one singer into another usually crosses a barline.
 And `unmark` takes one red mark off a bar — the answer "the page prints no slur here"
@@ -245,11 +247,56 @@ def _set_pitch(root: etree._Element, staff: int, measure: int, index: int,
         etree.SubElement(note, "tpc").text = str(tpc)
     for color in note.findall("color"):
         note.remove(color)
-    for el in list(bar.iter("StaffText")):
-        if (el.findtext("text") or "").startswith("⚠ "):
-            el.getparent().remove(el)
     return (f"set chord {index}'s {note_name(was)} to {note_name(to, tpc)}"
-            " and took the red mark off")
+            + _answered(_strike_words(bar, _PITCH_WORDS)))
+
+
+#: The words of homr's red mark each kind of pick answers. A pitch answers the note's
+#: pitch and accidental; new lengths answer the rhythm; a whole bar read against the
+#: page answers everything about its notes. `voice?` (which singer a note is) and
+#: cleaning's own marks — a slur taken out, a bar cut back, a bar MuseScore refused —
+#: are about something else in the bar and stay until that is answered too (#290).
+_PITCH_WORDS = ("pitch?", "accidental?")
+_RHYTHM_WORDS = ("rhythm?",)
+_BAR_WORDS = ("rhythm?", "pitch?", "accidental?", "notes?", "unchecked?")
+
+#: How homr worded a mark before its marks became short words (#280).
+_OLD_HOMR_MARK = "check against the page"
+
+
+def _strike_words(bar: etree._Element, words) -> List[str]:
+    """Take `words` out of homr's red marks on the bar. Returns what was answered.
+
+    A mark left with nothing to say goes. homr's older one-sentence mark is answered
+    whole, as it always was. Any other sentence is cleaning's, about another problem,
+    and is left alone.
+    """
+    struck: List[str] = []
+    for el in list(bar.iter("StaffText")):
+        node = el.find("text")
+        text = node.text if node is not None and node.text else ""
+        if not text.startswith("⚠ "):
+            continue
+        if text[2:].startswith(_OLD_HOMR_MARK):
+            el.getparent().remove(el)
+            struck.append(text[2:])
+            continue
+        said = text[2:].split(" ")
+        if not all(w.endswith("?") for w in said):
+            continue
+        left = [w for w in said if w not in words]
+        struck.extend(w for w in said if w in words and w not in struck)
+        if len(left) == len(said):
+            continue
+        if left:
+            node.text = "⚠ " + " ".join(left)
+        else:
+            el.getparent().remove(el)
+    return struck
+
+
+def _answered(struck: List[str]) -> str:
+    return f" and took {' '.join(struck)} off the red mark" if struck else ""
 
 
 # A bar as tokens, so a recorded fix can say what it expects to find and what it
@@ -581,13 +628,7 @@ def _rewrite_rhythm(root: etree._Element, staff_id: int, measure_no: int,
         timeline[last][0].addnext(etree.Element("endTuplet"))
     for location, fractions in moves:
         _set_fractions(location, fractions)
-    unmarked = 0
-    for el in list(body):
-        if el.tag == "StaffText" and (el.findtext("text") or "").startswith("⚠ "):
-            body.remove(el)
-            unmarked += 1
-    said = f"set the lengths to {list(values)}"
-    return said + (" and took the red mark off" if unmarked else "")
+    return f"set the lengths to {list(values)}" + _answered(_strike_words(measure, _RHYTHM_WORDS))
 
 
 def _same_shape(timeline: List, to: List[Dict]) -> bool:
@@ -677,7 +718,9 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
         for (el, _, _), new in zip(timeline, to):
             if el.tag == "Chord":
                 _set_pitches(el, new.get("pitches") or [], new.get("tpcs") or [])
-        return said.replace("set the lengths to", "set the bar to") + f" {_bar_tokens(measure)}"
+        said = said.replace("set the lengths to", "set the bar to").split(" and took ")[0]
+        return (f"{said} {_bar_tokens(measure)}"
+                + _answered(_strike_words(measure, _BAR_WORDS)))
 
     from .rejected_bars import _bar_lengths, _cut_spanners_into  # noqa: PLC0415 - a cycle
 
@@ -690,8 +733,7 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     at = list(body).index(first)
     gone = ("Chord", "Rest", "Tuplet", "endTuplet", "Beam", "Spanner")
     for el in list(body):
-        if el.tag in gone or (el.tag == "StaffText"
-                              and (el.findtext("text") or "").startswith("⚠ ")):
+        if el.tag in gone:
             if list(body).index(el) < at:
                 at -= 1
             body.remove(el)
@@ -715,7 +757,8 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     for chord, lyric in zip(chords, words):
         chord.insert(list(chord).index(chord.find("Note")), lyric)
     _cut_spanners_into(measures, lengths, measures.index(measure))
-    return f"wrote the bar afresh as {_bar_tokens(measure)} and took the red mark off"
+    return (f"wrote the bar afresh as {_bar_tokens(measure)}"
+            + _answered(_strike_words(measure, _BAR_WORDS)))
 
 
 # Reading a bar back out, so a fix can be *picked* rather than typed. The indexing
