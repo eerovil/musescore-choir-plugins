@@ -303,6 +303,28 @@ def test_disabling_audio_returns_active_playback_to_the_silent_clock(player):
     assert page.locator('[data-preview="audio"]').is_hidden()
 
 
+def test_a_play_interrupted_by_switching_audio_off_does_not_undo_it(player):
+    """A slow browser can still be starting the sound when audio is switched off.
+
+    Pausing interrupts that play(), and its rejection used to write "press Play
+    again" over "Audio off" and stop the picture -- CI met it once.
+    """
+    page, _ = player
+    _enable_audio(page)
+    page.locator('[data-preview="audio"]').evaluate(
+        "a => { a.play = () => new Promise((_, no) => { window.__rejectPlay = "
+        "() => no(new DOMException('interrupted', 'AbortError')); }); }")
+    page.locator('[data-preview="play"]').click()
+    page.wait_for_timeout(100)
+
+    page.locator('[data-preview="audio-enabled"]').uncheck()
+    page.evaluate("window.__rejectPlay()")
+    page.wait_for_timeout(250)
+
+    assert page.locator('[data-preview="audio-status"]').inner_text() == "Audio off"
+    assert page.locator('[data-preview="play"]').inner_text() == "Pause"
+
+
 def test_past_the_end_of_the_strip_is_white_as_the_renderer_leaves_it(player):
     """The frame starts before the music does, so its left edge is off the strip."""
     page, _ = player

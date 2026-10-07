@@ -730,15 +730,12 @@ function scannedView(view, song, slug) {
   const P = `/api/songs/${encodeURIComponent(slug)}`;
   const st = song.scan_status || {};
   const errors = st.errors || {};
-  const fresh = new Set(st.new_since_ok || []);
   const rows = [];
   const byIndex = {};
   for (let i = 1; i <= (st.systems || 0); i++) {
     const bad = errors[String(i)];
-    const label = fresh.has(i) && st.ever_approved
-      ? el("span", { className: "newbadge" }, "new since your OK") : "";
     rows.push(byIndex[i] = el("div", { className: "cmprow" },
-      el("div", { className: "cmphead" }, `System ${i}`, label),
+      el("div", { className: "cmphead" }, `System ${i}`),
       el("div", { className: "cmplabel" }, "page"),
       el("img", { className: "cmpimg", loading: "lazy",
                   src: `${P}/system/${i}?dpi=300`, alt: `printed system ${i}` }),
@@ -786,8 +783,8 @@ function rereadRow(slug, index, failed) {
       `Read system ${index} again`),
     el("span", { className: "muted" },
       failed ? "It has not been read yet."
-        : "A reading that comes out different discards this system's answers and "
-          + "lapses your OK; one that comes out the same costs nothing."));
+        : "A reading that comes out different discards this system's grid answers "
+          + "and lapses the Review approval; one that comes out the same costs nothing."));
 }
 
 // ---- Systems: the printed-system boundaries, drawn over the page and draggable ----
@@ -1116,9 +1113,9 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
   // A system read while the comparison is open must appear in it, and nothing
   // else must: redrawing reloads every crop, so it happens only when the scan
   // itself moved.
-  let builtScan = `${song.scan_status?.revision}:${song.scan_status?.approved}`;
+  let builtScan = `${song.scan_status?.revision}`;
   root._refreshScan = () => {
-    const now = `${song.scan_status?.revision}:${song.scan_status?.approved}`;
+    const now = `${song.scan_status?.revision}`;
     if (now === builtScan) return;
     builtScan = now;
     scanRefreshers.forEach((f) => f());
@@ -1289,9 +1286,9 @@ function panelScan(panel, song, P, refresh, actions) {
   if (st.systems)
     panel.append(el("p", {}, `${st.read} of ${st.systems} system(s) read.`
       + (st.holes?.length ? ` Still to read: ${st.holes.join(", ")}.` : "")));
-  for (const gone of song.scan_discarded || [])
-    panel.append(el("div", { className: "banner" },
-      `Discarded ${gone}: what it was made from has changed.`));
+  // Already sentences: the server words them (`scan.said`).
+  for (const line of song.scan_discarded || [])
+    panel.append(el("div", { className: "banner" }, line));
 
   // Which homr reads the page. Only offered when this host has more than one
   // installed (HOMR_BRANCH=... scripts/install-homr.sh) — a picker with a single
@@ -1367,8 +1364,8 @@ function panelScan(panel, song, P, refresh, actions) {
       el("p", { className: "hint" },
         "Forces a re-read even though the band has not moved — for trying another "
         + "engine, or a system that came back wrong. A reading that comes out "
-        + "different discards that system's answers and lapses your OK; one that "
-        + "comes out the same costs nothing."),
+        + "different discards that system's grid answers and lapses the Review "
+        + "approval; one that comes out the same costs nothing."),
       el("div", { className: "row" }, ...done.map((i) =>
         el("button", { disabled: running, onclick: () => rerun([i]) }, String(i)))),
       // The whole score through the same per-system path, so each system still
@@ -1386,11 +1383,9 @@ function panelScan(panel, song, P, refresh, actions) {
   else if (job?.status === "failed")
     panel.append(el("div", { className: "banner err" }, "Last scan failed: " + job.error));
 
-  // The gate. One OK for the whole song, and only when there is a whole score to
-  // approve — per-system ticking was rejected as friction that produces false
-  // diligence rather than more looking.
-  if (st.complete && !running)
-    panel.append(scanApproval(st, song, P, refresh, actions, openScanned));
+  // No gate (#281): a whole score moves the song on by itself, and the bar-by-bar
+  // checking happens where it can be done — the ⚠ marks, Fix and Review.
+  if (st.complete && !running) panel.append(scanDone(st, actions));
 
   panel.append(makeLog(job));
 }
@@ -1436,43 +1431,13 @@ function scanFindingsHint(st) {
     + `in system(s) ${named} — read those against the page first.`);
 }
 
-function scanApproval(st, song, P, refresh, actions, openScanned) {
-  if (st.approved) {
-    const { stale, unknown } = homrDrift(st);
-    return el("div", { className: "banner good" },
-      "You have said this reading of the page is right. The song is on Clean.",
-      // An OK is about the printed page, and the page has not changed — so an
-      // upgrade says this and does not take the OK away.
-      stale || unknown ? el("div", { className: "hint" },
-        "Some of what you approved was read by "
-        + (stale ? "an older homr" : "a homr nobody recorded")
-        + ". Your OK stands; re-read a system if you want to look again.") : "");
-  }
-  const fresh = st.new_since_ok || [];
-  const okBtn = el("button", { className: "primary", onclick: async () => {
-    okBtn.disabled = true;
-    try {
-      Object.assign(song, await postJSON(`${P}/approve-scan`, { revision: st.revision }));
-      // Saying it is right is also saying "get on with it", so the panel follows
-      // the song to the stage it just unlocked rather than sitting on a done one.
-      if (actions?.selectStage) actions.selectStage("clean");
-      else refresh();
-    } catch (e) { okBtn.disabled = false; appendLog(e.message, true); }
-  }}, "This reading is right — continue to Clean");
-  return el("section", { className: "scanok" },
-    el("h3", {}, "Say it is right"),
-    el("p", { className: "hint" },
-      "Nothing checks this for you. The parse that hurts is the tidy-looking one, "
-      + "so compare each system against the page before you press it."),
-    // Re-reading a system lapses the OK, and the systems that changed are where
-    // to look. A hint, not per-system bookkeeping.
-    st.ever_approved
-      ? el("p", { className: "warn" }, fresh.length
-        ? `Your OK lapsed. Changed since it: system(s) ${fresh.join(", ")}.`
-        : "Your OK lapsed because the scan changed.")
-      : "",
-    el("div", { className: "row" }, okBtn,
-      el("button", { onclick: openScanned }, "Compare with the page")));
+function scanDone(st, actions) {
+  return el("div", { className: "banner good scandone" },
+    el("div", {}, `All ${st.systems} systems read — the song is on Clean. Bars homr `
+      + "was unsure of are marked ⚠ and listed in Fix."),
+    actions?.selectStage ? el("div", { className: "row" },
+      el("button", { className: "primary", onclick: () => actions.selectStage("clean") },
+        "Go to Clean")) : "");
 }
 
 function panelRegister(panel, song, P, refresh) {

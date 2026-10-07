@@ -3,8 +3,8 @@
 The Python tests pin what the stage records; this pins what the operator is
 actually shown, which is the whole point of the stage. Four things only exist
 here: the panel opens on the Systems editor and the Scan button waits for the
-bands; a hole is visible with a retry of its own; the OK is a wall that has to be
-pressed; and after it lapses the panel says which systems changed.
+bands; a hole is visible with a retry of its own; and a whole reading moves the
+song on to Clean by itself, with nothing to approve (#281).
 
 Nothing here runs homr, poppler or MuseScore. The fragments are written straight
 into the song the way a scan would leave them, and `MUSESCORE_CLI_PATH` points at
@@ -141,9 +141,11 @@ def _open(page, base, slug):
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(f"{base}/#/song/{slug}")
-    page.wait_for_selector(".panel h2:text('Scan')")
+    page.wait_for_selector(".panel h2")
     # A song at `scan` opens on the Scan panel already, and on a phone the stage
-    # rail is behind the pane switcher, so clicking it there is not the way in.
+    # rail is behind the pane switcher, so clicking it there is not the way in. A
+    # whole reading has moved the song on to Clean, so that one is reached from
+    # the rail.
     step = page.locator(".stagebar .step", has_text="Scan").first
     if step.is_visible():
         step.click()
@@ -171,39 +173,58 @@ def test_a_hole_is_visible_blocking_and_retried_on_its_own(live, page):
 
     assert page.get_by_text("homr could not read this band").is_visible()
     assert page.get_by_role("button", name="Read system 2 again").is_visible()
-    # Nothing whole to approve: the gate is not offered while a system is missing.
-    assert page.get_by_role(
-        "button", name="This reading is right — continue to Clean").count() == 0
+    # A score missing a system is not done, and the song stays on Scan.
+    assert page.locator(".scandone").count() == 0
+    assert state.load(song.slug).stage == "scan"
     assert not errors, f"the panel raised: {errors}"
 
 
-def test_the_ok_is_a_wall_the_operator_opens_by_hand(live, page):
+def _evidence(page, name):
+    """A screenshot for the pull request, only when the run names a folder."""
+    where = os.environ.get("EVIDENCE_DIR")
+    if where:
+        os.makedirs(where, exist_ok=True)
+        page.screenshot(path=os.path.join(where, name), full_page=True)
+
+
+def test_a_whole_reading_moves_on_with_nothing_to_approve(live, page):
     base, song = live
     _read(state.load(song.slug), 3)
     errors = _open(page, base, song.slug)
 
-    ok = page.get_by_role("button", name="This reading is right — continue to Clean")
-    assert ok.is_visible()
-    assert state.load(song.slug).stage == "scan", "nothing advanced on its own"
+    assert state.load(song.slug).stage == "clean", "a whole score is past scanning"
+    done = page.locator(".scandone")
+    assert "All 3 systems read" in done.inner_text()
+    assert page.get_by_role("button", name="This reading is right — continue to Clean").count() == 0
+    assert page.get_by_role("button", name="Compare with the page").first.is_visible()
+    done.scroll_into_view_if_needed()
+    _evidence(page, "issue-281-scan-done.png")
 
-    ok.click()
+    done.get_by_role("button", name="Go to Clean").click()
     page.wait_for_selector(".panel h2:text('Clean')")
-    assert state.load(song.slug).stage == "clean"
     assert not errors, f"the panel raised: {errors}"
 
 
-def test_after_a_re_read_the_ok_lapses_and_the_panel_says_where_to_look(live, page):
+def test_the_finished_panel_fits_a_phone(live, page):
     base, song = live
-    fresh = _read(state.load(song.slug), 3)
-    fresh.data["scan"]["ok"] = {
-        "revision": "an-older-reading",
-        "systems": {"1": "read1", "2": "something-else", "3": "read3"},
-    }
-    fresh.save()
-    errors = _open(page, base, song.slug)
-
-    assert page.get_by_text("Your OK lapsed").is_visible()
-    assert page.get_by_text("system(s) 2").is_visible()
+    _read(state.load(song.slug), 3)
+    page.set_viewport_size({"width": 390, "height": 844})
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/#/song/{song.slug}")
+    page.wait_for_selector(".panel h2:text('Clean')")
+    # On a phone the stage list is the drawer behind the ☰.
+    page.locator("#stagemenu").click()
+    page.locator(".stagebar .step", has_text="Scan").first.click()
+    page.wait_for_selector(".panel h2:text('Scan')")
+    page.wait_for_selector(".ws.drawer-open", state="detached")
+    page.wait_for_timeout(500)                   # the drawer slides out
+    done = page.locator(".scandone")
+    done.scroll_into_view_if_needed()
+    assert done.is_visible() and "the song is on Clean" in done.inner_text()
+    assert page.evaluate("document.body.scrollWidth <= window.innerWidth + 1")
+    _evidence(page, "issue-281-scan-done-phone.png")
+    page.set_viewport_size({"width": 1280, "height": 900})
     assert not errors, f"the panel raised: {errors}"
 
 
@@ -329,7 +350,7 @@ def test_the_compare_rows_re_read_the_system_being_looked_at(live, page, monkeyp
         page.wait_for_timeout(100)
 
     assert asked == [[3]]
-    assert "lapses your OK" in row.inner_text()
+    assert "lapses the Review approval" in row.inner_text()
     assert not errors, f"the panel raised: {errors}"
 
 
@@ -357,7 +378,6 @@ def test_the_panel_says_which_homr_read_each_system(live, page, monkeypatch):
     # It says the difference and then says it costs nothing, which is the
     # decision: an upgrade is not a reason to re-read 48 songs.
     assert page.get_by_text("Nothing has been discarded for it").is_visible()
-    assert state.load(song.slug).stage == "scan"
     assert not errors, f"the panel raised: {errors}"
 
 
@@ -370,31 +390,6 @@ def test_a_fragment_nobody_recorded_reads_as_unknown(live, page, monkeypatch):
 
     assert page.get_by_text("unknown — system(s) 1, 2").is_visible()
     assert page.get_by_text("before the app recorded which homr read them").is_visible()
-    assert not errors, f"the panel raised: {errors}"
-
-
-def test_an_ok_given_under_an_older_homr_is_not_taken_away(live, page, monkeypatch):
-    """The reviewer approved the printed page, and the page has not changed."""
-    base, song = live
-    fresh = _read(state.load(song.slug), 3, homr=OLD_HOMR)
-    fresh.data["scan"]["ok"] = {"revision": scan.revision(fresh),
-                                "systems": {"1": "read1", "2": "read2", "3": "read3"}}
-    fresh.set_stage("clean")
-    fresh.save()
-    monkeypatch.setattr(server.omr, "default_engine", lambda: NEW_HOMR)
-    # An approved song is on Clean, so the Scan panel is reached from the rail.
-    errors = []
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(f"{base}/#/song/{song.slug}")
-    page.wait_for_selector(".panel h2")
-    page.locator(".stagebar .step", has_text="Scan").first.click()
-    page.wait_for_selector(".panel h2:text('Scan')")
-
-    assert page.get_by_text("was read by an older homr").is_visible()
-    assert page.get_by_text("Your OK stands").is_visible()
-    assert page.get_by_role(
-        "button", name="This reading is right — continue to Clean").count() == 0
-    assert state.load(song.slug).stage == "clean", "nobody was sent back to Scan"
     assert not errors, f"the panel raised: {errors}"
 
 
