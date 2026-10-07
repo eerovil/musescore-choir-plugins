@@ -11,6 +11,8 @@ developers are listed under *Behind the scenes*.
   reading picked in the Fix panel now follows its notes to whichever part they
   land in, and is dropped (with a line in the log) if no part sings them any
   more. (#292)
+- In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
+  words) in every bar where it has none of its own, instead of resting. (#293)
 
 ## 2026-10-06
 
