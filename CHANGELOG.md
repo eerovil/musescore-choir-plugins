@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A scrolling video whose repeat jumps back across a time-signature change
+  (a 7/4 bar repeating to a 4/4 one where a part rests) renders in time instead
+  of being refused as out of sync. (#313)
 - A start-repeat sign homr read on only some staves of a printed system is now kept:
   it used to vanish from the score, so the practice track repeated the wrong bars.
   When a repeat ends and the scan found no start for it, the Fix stage asks where
