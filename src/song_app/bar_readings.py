@@ -512,7 +512,9 @@ def relocate_picks(root: etree._Element, entries: List[Dict],
     passed through untouched and stays strict.
     """
     staves = _staves(root)
-    picks = [fix for fix in entries if fix.get("source") == SOURCE and fix.get("kind") == "rhythm"]
+    # Every kind a pick can be: `bar` since #295, `rhythm` and `pitch` before it.
+    picks = [fix for fix in entries
+             if fix.get("source") == SOURCE and fix.get("kind") in ("bar", "rhythm", "pitch")]
     pick_ids = {id(fix) for fix in picks}
     taken: Dict[int, set] = {}
 
