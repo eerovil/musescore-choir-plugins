@@ -346,11 +346,13 @@ def _fallback_of(parts: List[str]) -> Dict[str, str]:
 
     `S1b` sings `S1` wherever it has no notes of its own: the name is how a person
     says the two are one line split in places (a divisi), so where the page prints one
-    line — or the system names only `S1` — that line is S1b's too. Only one level.
+    line — or the system names only `S1` — that line is S1b's too. Only one level:
+    `S1bc` does not sing `S1b`, since what `S1b` borrowed is not its own line.
     """
     names = set(parts)
-    return {name: name[:-1] for name in parts
-            if len(name) > 1 and name[-1].islower() and name[:-1] in names}
+    links = {name: name[:-1] for name in parts
+             if len(name) > 1 and name[-1].islower() and name[:-1] in names}
+    return {child: base for child, base in links.items() if base not in links}
 
 
 def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls:

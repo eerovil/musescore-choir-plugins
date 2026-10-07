@@ -551,6 +551,18 @@ def test_only_a_base_name_plus_one_lowercase_letter_falls_back():
     assert _pitches(staves["S1"], 1) == []
 
 
+def test_a_fallback_is_one_level_only():
+    """S1bc is not S1b's fallback: S1b's bar here is borrowed from S1, not its own."""
+    root = _score({1: [[["72"]], [["74"], ["67"]]], 2: [[["r"]], [["60"]]]}, breaks=(0,))
+    result = clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"},
+                                                             1: {1: "S1, S1b", 2: "S1bc"}})
+    staves = _by_part(root)
+    assert _pitches(staves["S1b"], 0) == ["72"]     # S1b still borrows from S1
+    assert _pitches(staves["S1bc"], 0) == []        # ...but S1bc does not borrow that
+    by_start = {e["start"]: e["map"] for e in result.lyric_map}
+    assert by_start[1] == {1: [1, 2]}               # S1's words reach S1b, not S1bc
+
+
 def test_lyrics_follow_the_notes_a_b_part_borrows():
     root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
     result = clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
