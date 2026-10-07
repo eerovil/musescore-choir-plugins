@@ -233,3 +233,31 @@ def test_unmark_is_content_when_the_mark_is_already_gone():
     done = score_fixes.apply_fixes(root, [
         {"kind": "unmark", "staff": 1, "measure": 1, "text": "nothing here", "why": "x"}])
     assert "no red mark left" in done[0]
+
+
+def test_a_pitch_pick_leaves_the_rest_of_the_bars_marks(make_song):
+    """A bar homr doubted for two things is still listed for the one not answered."""
+    song = make_song(readings=NOTES)
+    root = etree.parse(song.cleaned_path()).getroot()
+    bar = root.findall(".//Score/Staff")[0].findall("Measure")[2]
+    mark_bar(bar, "pitch? rhythm?")
+    mark_bar(bar, "slur to B2 bar 4 removed; check the page")
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+    pitch = next(o for o in bar_readings.offers(song) if o["kind"] == "pitch")
+    done = bar_readings.record_pick(song, pitch["id"], "b")
+    assert "took pitch? off" in done["applied"]
+    left = sorted(m["text"] for m in marks(etree.parse(song.cleaned_path()).getroot()))
+    assert left == ["rhythm?", "slur to B2 bar 4 removed; check the page"]
+    [row] = problems.problems(song)
+    assert sorted(n["text"] for n in row["notes"]) == left
+    assert next(c for c in row["choices"] if c["kind"] == "rhythm")["decision"] is None
+
+
+def test_a_pitch_pick_answering_the_whole_mark_takes_it_off(make_song):
+    song = make_song(readings=NOTES)
+    root = etree.parse(song.cleaned_path()).getroot()
+    mark_bar(root.findall(".//Score/Staff")[0].findall("Measure")[2], "pitch? accidental?")
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+    pitch = next(o for o in bar_readings.offers(song) if o["kind"] == "pitch")
+    bar_readings.record_pick(song, pitch["id"], "b")
+    assert marks(etree.parse(song.cleaned_path()).getroot()) == []

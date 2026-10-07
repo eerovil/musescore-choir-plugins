@@ -229,11 +229,39 @@ def _set_pitch(root: etree._Element, staff: int, measure: int, index: int,
         etree.SubElement(note, "tpc").text = str(tpc)
     for color in note.findall("color"):
         note.remove(color)
-    for el in list(bar.iter("StaffText")):
-        if (el.findtext("text") or "").startswith("⚠ "):
-            el.getparent().remove(el)
+    resolved = _strike_words(bar, _PITCH_WORDS)
     return (f"set chord {index}'s {note_name(was)} to {note_name(to, tpc)}"
-            " and took the red mark off")
+            + (f" and took {' '.join(resolved)} off the red mark" if resolved else ""))
+
+
+#: The words of homr's red mark a picked pitch answers. Its other words — `rhythm?`,
+#: `voice?`, `notes?` — and cleaning's own marks are about something else in the bar
+#: and stay until that is answered too.
+_PITCH_WORDS = ("pitch?", "accidental?")
+
+
+def _strike_words(bar: etree._Element, words) -> List[str]:
+    """Take `words` out of the bar's red marks; a mark left with nothing goes. Returns them."""
+    struck: List[str] = []
+    for el in list(bar.iter("StaffText")):
+        node = el.find("text")
+        text = node.text if node is not None and node.text else ""
+        if not text.startswith("⚠ "):
+            continue
+        said = text[2:].split(" ")
+        # Only a mark made of homr's short words is a list of words; a sentence
+        # (cleaning's own marks) is one problem and is not touched here.
+        if not all(w.endswith("?") for w in said):
+            continue
+        left = [w for w in said if w not in words]
+        struck.extend(w for w in said if w in words and w not in struck)
+        if len(left) == len(said):
+            continue
+        if left:
+            node.text = "⚠ " + " ".join(left)
+        else:
+            el.getparent().remove(el)
+    return struck
 
 
 # A bar as tokens, so a recorded fix can say what it expects to find and what it
