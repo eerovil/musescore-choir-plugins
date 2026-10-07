@@ -9,6 +9,7 @@ of it on a phone.
 """
 import json
 import os
+import shutil
 import socket
 import threading
 import time
@@ -41,7 +42,7 @@ from lxml import etree
 
 from src.clean_score.tests.test_cross_voice_slurs import _score as _slur_score
 from src.clean_score.utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
-from src.song_app import scan, server, state
+from src.song_app import pdf_systems, scan, server, state
 from src.song_app.tests.test_bar_readings import _fragment, _score
 from src.song_app.tests.test_problems import SECOND
 
@@ -167,6 +168,42 @@ def test_an_unsure_bar_offers_whole_bars(live, page):
     assert entry["kind"] == "bar" and [m["value"] for m in entry["to"]] == ["note_2"]
     _evidence(page, "whole-bar-picked.png")
     assert errors == []
+
+
+def test_the_card_says_which_bar_of_the_line_is_meant(live, page):
+    """The crop is a whole printed line; the card names the bar in it (#310)."""
+    base, song, _ = live
+    pdf = os.path.join(os.path.dirname(__file__), "..", "..", "..", "fixtures",
+                       "virta-venhetta-vie", "00-registered", "Virta venhettä vie.pdf")
+    shutil.copy(pdf, song.path("scan.pdf"))
+    song.data["sources"]["pdf"] = "scan.pdf"
+    song.save()
+    pdf_systems.save_bounds(song.dir, [
+        pdf_systems.SystemBounds(index=1, page=1, top=0.10, bottom=0.30,
+                                 measure_start=1, measure_end=1),
+        pdf_systems.SystemBounds(index=2, page=1, top=0.30, bottom=0.52,
+                                 measure_start=2, measure_end=5)])
+    page.set_viewport_size({"width": 390, "height": 844})
+    errors = _open_fix(page, base, song.slug)
+    card = page.locator(".problem")
+    assert "system 2 · bar 2/4" in card.locator(".top").inner_text()
+    assert card.locator(".barpos").inner_text() == "Bar 2 of 4 in this line"
+    # Said right above the crop it is about.
+    assert card.locator(".barpos + .readcrop").count() == 1
+    page.wait_for_function("() => { const i = document.querySelector('.readcrop');"
+                           " return i && i.complete && i.naturalWidth > 0; }")
+    out = os.environ.get("EVIDENCE_DIR")
+    if out:
+        card.screenshot(path=os.path.join(out, "bar-in-line-phone.png"))
+    assert errors == []
+
+
+def test_without_bar_ranges_the_card_says_only_the_system(live, page):
+    base, song, _ = live
+    _open_fix(page, base, song.slug)
+    top = page.locator(".problem .top").inner_text()
+    assert "system 2" in top and "bar" not in top
+    assert page.locator(".barpos").count() == 0
 
 
 def test_a_removed_slur_is_answered_in_words(live, page):

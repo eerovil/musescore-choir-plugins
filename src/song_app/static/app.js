@@ -1910,11 +1910,13 @@ function problemList(panel, song, P, refresh) {
     else box.append(el("p", { className: "sub problemcount" },
       `${open.length} place(s) to check against the page. Tap the letter the page prints; it is applied to the score and kept in fixes.json, so a re-clean keeps it.`));
     for (const row of open) {
+      // The crop is the whole printed line, so say which of its bars is meant (#310).
+      const barOf = row.bar_in_system ? `${row.bar_in_system}/${row.bars_in_system}` : "";
       const card = el("div", { className: "issue problem", "data-row": row.id },
         el("div", { className: "top" },
           el("span", {}, row.measure ? el("span", { className: "m" }, `m${row.measure}`) : "",
             row.measure ? "  " : "", row.part || (row.measure ? "" : "Note")),
-          row.system != null ? el("span", { className: "hint" }, `system ${row.system}`) : ""));
+          row.system != null ? el("span", { className: "hint" }, `system ${row.system}${barOf ? ` · bar ${barOf}` : ""}`) : ""));
       for (const n of row.notes) {
         const line = el("div", { className: "detail" },
           el("span", { className: "kind" }, NOTE_KIND[n.kind] || n.kind), " ", n.text);
@@ -1923,9 +1925,12 @@ function problemList(panel, song, P, refresh) {
         card.append(line);
       }
       const undecided = row.choices.filter((c) => !c.decision);
-      if (undecided.length && row.system != null && song.has_pdf)
+      if (undecided.length && row.system != null && song.has_pdf) {
+        if (barOf) card.append(el("p", { className: "sub barpos" },
+          `Bar ${row.bar_in_system} of ${row.bars_in_system} in this line`));
         card.append(el("img", { className: "readcrop", loading: "lazy", alt: `printed system ${row.system}`,
           src: `${P}/system/${row.system}?dpi=200` }));
+      }
       for (const c of undecided) card.append(choiceBlock(row, c));
       box.append(card);
     }

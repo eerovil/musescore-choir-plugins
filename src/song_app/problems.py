@@ -134,7 +134,11 @@ def problems(song: state.Song) -> List[Dict]:
     printed system to crop, or None), `notes` (each `{text, kind, dismiss}`: what is
     wrong, and the health row to dismiss when there is one) and `choices` (each `{id,
     kind, title, options, shown, decision}`, options `{letter, label, current, svg}`;
-    `shown` is how many to show before "More", absent when all are shown).
+    `shown` is how many to show before "More", absent when all are shown), plus
+    `bar_in_system` / `bars_in_system`: which bar of its printed system the row is
+    about, and how many that system holds (#310) — the crop shows the whole line, so
+    without them a person counts bars to find the one meant. Both are None when the
+    bar or the system's range is not known.
     """
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
@@ -236,6 +240,13 @@ def problems(song: state.Song) -> List[Dict]:
             "options": [{"letter": o["letter"], "label": o["label"], "current": False,
                          "svg": None} for o in options],
             "decision": decision, "can_decline": False})
+
+    ranges = {index: (start, end) for index, start, end in bounds}
+    for target in rows.values():
+        start, end = ranges.get(target["system"], (0, 0))
+        inside = bool(target["measure"]) and start <= target["measure"] <= end
+        target["bar_in_system"] = target["measure"] - start + 1 if inside else None
+        target["bars_in_system"] = end - start + 1 if inside else None
 
     return sorted(rows.values(), key=lambda r: (
         r["measure"] is None, r["measure"] or 0, order.get(r["part"], 99), r["part"]))

@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A problem card in the Fix stage says which bar of the printed line it is
+  about ("Bar 2 of 4 in this line"), so the bar no longer has to be counted off
+  the picture. (#311)
 - When a lyric line has more syllables than notes, every note still gets its own
   syllable and only the extra ones go on the last note; extra `_` are dropped. It
   used to pile the whole bar onto its first note. (#308)
