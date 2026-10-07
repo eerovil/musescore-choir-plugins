@@ -52,6 +52,39 @@ against the page.
      "to": ["note_12", "note_12", "note_12", "note_6", "note_12", "note_4", ...],
      "why": "picked reading c against the page"}
 
+Three more kinds are how a person's answer to a problem listed on the Fix stage is
+recorded (#290). `pitch` gives one note of a chord another pitch, picked among the
+pitches homr weighed for it; `from` is the bar as it reads now, `was` the MIDI pitch
+the note has, and `to` / `tpc` what it gets — the spelling is homr's, read off the
+page, rather than derived. Its red note and the bar's red mark go with it. A `slur`
+may reach into a later bar with `end_measure` and `end_index` instead of `span`,
+because a slur the scan ran from one singer into another usually crosses a barline.
+And `unmark` takes one red mark off a bar — the answer "the page prints no slur here"
+— and is content if the mark is already gone, because what it records is that
+nothing in that bar needs doing.
+
+    {"kind": "pitch", "staff": 3, "measure": 12, "index": 1, "from": [...],
+     "was": 62, "to": 63, "tpc": 11, "why": "picked homr's reading b ..."}
+    {"kind": "slur", "staff": 5, "measure": 19, "index": 3,
+     "end_measure": 20, "end_index": 0, "why": "..."}
+    {"kind": "unmark", "staff": 5, "measure": 19, "text": "slur to A2 bar 20 removed; ..."}
+
+`bar` (#295) puts a whole bar of one voice as a person picked it among homr's
+readings of it: lengths and pitches together, so one pick never undoes another. `to`
+is one entry per note or rest, its length in homr's spelling and its MIDI pitches
+with their spelling (`tpcs`), read off the page by homr rather than derived. When
+the new bar has the same notes and rests in the same places, the lengths are
+rewritten as `rhythm` does and the pitches set, so ties, slurs and words stay where
+they were — unless a note that changes pitch is tied, since the tie would then join
+two different pitches. Otherwise the bar is written afresh, as the second reading
+of the bar can be: ties and slurs reaching into it from outside are cut, as when
+MuseScore refuses a bar (`rejected_bars`), and its words are put back on its notes
+in order, the extra ones dropped.
+
+    {"kind": "bar", "staff": 3, "measure": 12, "from": [...],
+     "to": [{"value": "note_4.", "pitches": [62], "tpcs": [16]},
+            {"value": "note_8", "pitches": [64], "tpcs": [18]}], "why": "..."}
+
 Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
@@ -135,6 +168,88 @@ def _slur(chords: List[etree._Element], start: int, span: int) -> str:
     loc = etree.SubElement(etree.SubElement(tail, "prev"), "location")
     etree.SubElement(loc, "fractions").text = f"-{distance}"
     return f"slurred {span} note(s) from chord {start}"
+
+
+def _onset(body: etree._Element, chord: etree._Element) -> Fraction:
+    for el, at, _ in _timeline(body):
+        if el is chord:
+            return at
+    raise FixError("that chord is not in the bar")
+
+
+def _slur_across(root: etree._Element, staff: int, measure: int, index: int,
+                 end_measure: int, end_index: int) -> str:
+    """Slur one chord to a chord in the same or a later bar of the same staff."""
+    starts = _chords(root, staff, measure)
+    ends = _chords(root, staff, end_measure)
+    if not 0 <= index < len(starts):
+        raise FixError(f"m{measure} has {len(starts)} chords, no index {index}")
+    if not 0 <= end_index < len(ends):
+        raise FixError(f"m{end_measure} has {len(ends)} chords, no index {end_index}")
+    if (end_measure, end_index) <= (measure, index):
+        raise FixError("a slur has to end after it starts")
+    first, last = starts[index], ends[end_index]
+    along = _onset(last.getparent(), last) - _onset(first.getparent(), first)
+    bars = end_measure - measure
+
+    def location(parent: etree._Element, side: str, sign: int) -> None:
+        loc = etree.SubElement(etree.SubElement(parent, side), "location")
+        if bars:
+            etree.SubElement(loc, "measures").text = str(sign * bars)
+        value = sign * along
+        if value:
+            etree.SubElement(loc, "fractions").text = f"{value.numerator}/{value.denominator}"
+
+    head = etree.SubElement(first, "Spanner", type="Slur")
+    etree.SubElement(etree.SubElement(head, "Slur"), "up").text = "up"
+    location(head, "next", 1)
+    tail = etree.SubElement(last, "Spanner", type="Slur")
+    location(tail, "prev", -1)
+    return f"slurred chord {index} to chord {end_index} of m{end_measure}"
+
+
+def _unmark(root: etree._Element, staff: int, measure: int, text: str) -> str:
+    """Take the red mark saying `text` off a bar. Nothing to take off is fine."""
+    gone = 0
+    for el in list(_measure(root, staff, measure).iter("StaffText")):
+        if (el.findtext("text") or "") == "⚠ " + text:
+            el.getparent().remove(el)
+            gone += 1
+    return f"took the red mark off ({text})" if gone else f"no red mark left ({text})"
+
+
+def tpc_of(step: str, alter: int) -> int:
+    """MuseScore's tpc for a spelt note: F C G D A E B are 13..19, a sharp is +7."""
+    return 13 + _LETTERS.index(step) + 7 * int(alter)
+
+
+def _set_pitch(root: etree._Element, staff: int, measure: int, index: int,
+               expect: List[str], was: int, to: int, tpc: int) -> str:
+    bar = _measure(root, staff, measure)
+    found = _bar_tokens(bar)
+    if found != list(expect):
+        raise FixError(f"bar reads {found} now, but the fix was recorded against {list(expect)}")
+    chords = _chords(root, staff, measure)
+    if not 0 <= index < len(chords):
+        raise FixError(f"the bar has {len(chords)} chords, no index {index}")
+    note = next((n for n in chords[index].findall("Note")
+                 if (n.findtext("pitch") or "").strip() == str(was)), None)
+    if note is None:
+        raise FixError(f"chord {index} has no note at pitch {was}")
+    note.find("pitch").text = str(to)
+    for tag in ("tpc", "tpc2"):
+        node = note.find(tag)
+        if node is not None:
+            node.text = str(tpc)
+    if note.find("tpc") is None:
+        etree.SubElement(note, "tpc").text = str(tpc)
+    for color in note.findall("color"):
+        note.remove(color)
+    for el in list(bar.iter("StaffText")):
+        if (el.findtext("text") or "").startswith("⚠ "):
+            el.getparent().remove(el)
+    return (f"set chord {index}'s {note_name(was)} to {note_name(to, tpc)}"
+            " and took the red mark off")
 
 
 # A bar as tokens, so a recorded fix can say what it expects to find and what it
@@ -475,6 +590,134 @@ def _rewrite_rhythm(root: etree._Element, staff_id: int, measure_no: int,
     return said + (" and took the red mark off" if unmarked else "")
 
 
+def _same_shape(timeline: List, to: List[Dict]) -> bool:
+    """Whether `to` is the bar's notes and rests in the same order, chord for chord."""
+    if len(timeline) != len(to):
+        return False
+    for (el, _, _), new in zip(timeline, to):
+        if (el.tag == "Rest") != (_parse_value(new["value"])[0] == "rest"):
+            return False
+        if el.tag == "Chord" and len(el.findall("Note")) != len(new.get("pitches") or []):
+            return False
+    return True
+
+
+def _set_pitches(chord: etree._Element, pitches: List[int], tpcs: List[int]) -> bool:
+    """Give a chord's notes these pitches, low to high. True when one moved."""
+    notes = sorted(chord.findall("Note"), key=lambda n: int(n.findtext("pitch") or 0))
+    moved = False
+    for note, (pitch, tpc) in zip(notes, sorted(zip(pitches, tpcs))):
+        moved = moved or int(note.findtext("pitch") or 0) != pitch
+        note.find("pitch").text = str(pitch)
+        for tag in ("tpc", "tpc2"):
+            node = note.find(tag)
+            if node is not None:
+                node.text = str(tpc)
+        if note.find("tpc") is None:
+            etree.SubElement(note, "tpc").text = str(tpc)
+        for color in note.findall("color"):
+            note.remove(color)
+    return moved
+
+
+def _tied_and_moving(timeline: List, to: List[Dict]) -> bool:
+    for (el, _, _), new in zip(timeline, to):
+        if el.tag != "Chord":
+            continue
+        notes = sorted(el.findall("Note"), key=lambda n: int(n.findtext("pitch") or 0))
+        for note, pitch in zip(notes, sorted(new.get("pitches") or [])):
+            if int(note.findtext("pitch") or 0) != pitch and \
+                    note.find("Spanner[@type='Tie']") is not None:
+                return True
+    return False
+
+
+def _write_moment(new: Dict) -> etree._Element:
+    kind, number, dots = _parse_value(new["value"])
+    written = number * 2 // 3 if number % 3 == 0 else number
+    if written not in _TYPES:
+        raise FixError(f"cannot write {new['value']!r}")
+    el = etree.Element("Rest" if kind == "rest" else "Chord")
+    if dots:
+        etree.SubElement(el, "dots").text = str(dots)
+    etree.SubElement(el, "durationType").text = _TYPES[written]
+    if kind == "note":
+        pitches, tpcs = new.get("pitches") or [], new.get("tpcs") or []
+        if not pitches or len(tpcs) != len(pitches):
+            raise FixError("a note needs its pitches and their spellings")
+        for pitch, tpc in sorted(zip(pitches, tpcs)):
+            note = etree.SubElement(el, "Note")
+            etree.SubElement(note, "pitch").text = str(int(pitch))
+            etree.SubElement(note, "tpc").text = str(int(tpc))
+    return el
+
+
+def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
+                 expect: List[str], to: List[Dict]) -> str:
+    """Put a whole bar of one voice as `to` says: lengths and pitches together."""
+    measure = _measure(root, staff_id, measure_no)
+    found = _bar_tokens(measure)
+    if found != list(expect):
+        raise FixError(f"bar reads {found} now, but the fix was recorded against {list(expect)}")
+    if not to:
+        raise FixError("the fix names no notes")
+    values = [new["value"] for new in to]
+    # Everything that can refuse does so before the bar is touched.
+    written = [_write_moment(new) for new in to]
+    groups = triplet_groups(values)
+    body = measure.find("voice") if measure.find("voice") is not None else measure
+    timeline = _timeline(body)
+    total = sum((length for _, _, length in timeline), Fraction(0))
+    new_total = sum((value_length(v) for v in values), Fraction(0))
+    if new_total != total:
+        raise FixError(f"the new bar adds up to {new_total} of a whole note, the bar "
+                       f"to {total}")
+    if _same_shape(timeline, to) and not _tied_and_moving(timeline, to):
+        said = _rewrite_rhythm(root, staff_id, measure_no, expect, values)
+        for (el, _, _), new in zip(timeline, to):
+            if el.tag == "Chord":
+                _set_pitches(el, new.get("pitches") or [], new.get("tpcs") or [])
+        return said.replace("set the lengths to", "set the bar to") + f" {_bar_tokens(measure)}"
+
+    from .rejected_bars import _bar_lengths, _cut_spanners_into  # noqa: PLC0415 - a cycle
+
+    staff = measure.getparent()
+    measures = staff.findall("Measure")
+    lengths = _bar_lengths(staff)
+    words = [chord.find("Lyrics") for chord, _, _ in timeline if chord.tag == "Chord"]
+    words = [w for w in words if w is not None]
+    first = timeline[0][0]
+    at = list(body).index(first)
+    gone = ("Chord", "Rest", "Tuplet", "endTuplet", "Beam", "Spanner")
+    for el in list(body):
+        if el.tag in gone or (el.tag == "StaffText"
+                              and (el.findtext("text") or "").startswith("⚠ ")):
+            if list(body).index(el) < at:
+                at -= 1
+            body.remove(el)
+    for offset, el in enumerate(written):
+        body.insert(at + offset, el)
+    for first_i, last_i in groups:
+        length = sum((value_length(v) for v in values[first_i:last_i + 1]), Fraction(0))
+        base = length / 2
+        if base.numerator != 1 or base.denominator not in _TYPES:
+            raise FixError("a triplet group of that length cannot be written")
+        tuplet = etree.Element("Tuplet")
+        etree.SubElement(tuplet, "normalNotes").text = "2"
+        etree.SubElement(tuplet, "actualNotes").text = "3"
+        etree.SubElement(tuplet, "baseNote").text = _TYPES[base.denominator]
+        number_el = etree.SubElement(tuplet, "Number")
+        etree.SubElement(number_el, "style").text = "Tuplet"
+        etree.SubElement(number_el, "text").text = "3"
+        written[first_i].addprevious(tuplet)
+        written[last_i].addnext(etree.Element("endTuplet"))
+    chords = [el for el in written if el.tag == "Chord"]
+    for chord, lyric in zip(chords, words):
+        chord.insert(list(chord).index(chord.find("Note")), lyric)
+    _cut_spanners_into(measures, lengths, measures.index(measure))
+    return f"wrote the bar afresh as {_bar_tokens(measure)} and took the red mark off"
+
+
 # Reading a bar back out, so a fix can be *picked* rather than typed. The indexing
 # and the token grammar are this module's, and a caller that worked them out for
 # itself would be a second implementation of both — which is exactly how a fix ends
@@ -580,6 +823,18 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             elif kind == "rhythm":
                 what = _rewrite_rhythm(root, staff, measure, fix.get("from", []),
                                        fix.get("to", []))
+            elif kind == "bar":
+                what = _replace_bar(root, staff, measure, fix.get("from", []),
+                                    fix.get("to", []))
+            elif kind == "pitch":
+                what = _set_pitch(root, staff, measure, int(fix["index"]),
+                                  fix.get("from", []), int(fix["was"]), int(fix["to"]),
+                                  int(fix["tpc"]))
+            elif kind == "unmark":
+                what = _unmark(root, staff, measure, str(fix.get("text", "")))
+            elif kind == "slur" and "end_measure" in fix:
+                what = _slur_across(root, staff, measure, int(fix.get("index", 0)),
+                                    int(fix["end_measure"]), int(fix.get("end_index", 0)))
             elif kind in ("undot", "slur"):
                 index = int(fix.get("index", 0))
                 chords = _chords(root, staff, measure)

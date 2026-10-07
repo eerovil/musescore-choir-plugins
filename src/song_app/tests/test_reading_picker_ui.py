@@ -112,8 +112,9 @@ def _fixes(song):
 def test_the_options_are_drawn_and_one_tap_picks(live, page):
     base, song = live
     errors = _open_fix(page, base, song.slug)
+    row = page.locator(".problem")
+    assert "m3" in row.inner_text() and "B1" in row.inner_text()
     card = page.locator(".readpick")
-    assert "m3" in card.inner_text() and "B1" in card.inner_text()
     assert card.locator(".readopt").count() == 3
     assert "as read now" in card.locator(".readopt").first.inner_text()
     # Each option really is drawn, not a broken image.
@@ -125,7 +126,7 @@ def test_the_options_are_drawn_and_one_tap_picks(live, page):
     assert "Bar 3, B1: reading b" in page.locator(".readdone").inner_text()
     assert page.locator(".readpick").count() == 0
     [entry] = _fixes(song)
-    assert entry["kind"] == "rhythm" and entry["to"] == ["note_4.", "note_8"]
+    assert entry["kind"] == "bar" and [m["value"] for m in entry["to"]] == ["note_4.", "note_8"]
     assert errors == []
 
 

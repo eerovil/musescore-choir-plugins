@@ -92,6 +92,8 @@ def _open_fix(page, base, slug):
     page.wait_for_selector(".stagebar")
     page.locator(".stagebar .step", has_text="Fix").first.click()
     page.wait_for_selector("text=Open in MuseScore")
+    # The problem list is fetched after the panel is drawn (#290).
+    page.wait_for_selector(".problems[data-loaded]", state="attached")
     return errors
 
 
