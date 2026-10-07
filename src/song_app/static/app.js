@@ -680,39 +680,57 @@ const showSystem = (index) =>
 // MuseScore per system on a four-core host and arrived in whatever order those
 // finished, popping in at random under an empty row (#303). So each waits in a
 // placeholder that holds its place and says what it is waiting for, and they are
-// fetched in reading order, two at a time. One per view: redrawing the view stops
-// the old queue, so a stale row does not keep the server busy.
+// fetched in reading order, two at a time.
+//
+// The queue belongs to the view and outlives a redraw, and that is the point: a
+// scan redraws its view after every system it reads. A request already running is
+// not started again and not dropped either — when it lands it fills whichever
+// placeholder now stands for that picture. Stopping it instead would not stop the
+// MuseScore run behind it, which carries on on the server either way, so a fresh
+// pair per redraw would put four, then six, on the host.
 const SLOW_AT_ONCE = 2;
 
 function slowQueue(view) {
-  view._slowQueue?.stop();
-  const waiting = [];
-  let running = 0, stopped = false;
+  const queue = view._slowQueue || (view._slowQueue = makeSlowQueue());
+  queue.reset();
+  return queue;
+}
+
+function makeSlowQueue() {
+  let waiting = [];
+  let slots = new Map();                 // src -> the placeholder showing it now
+  const running = new Set();             // src of each request in flight
   const pump = () => {
-    while (!stopped && running < SLOW_AT_ONCE && waiting.length) {
-      const slot = waiting.shift();
-      running++;
-      slot._start(() => { running--; pump(); });
+    while (running.size < SLOW_AT_ONCE && waiting.length) {
+      const src = waiting.shift()._src;
+      if (running.has(src)) continue;
+      running.add(src);
+      fetchOrSay(src).then((r) => r.blob()).then(
+        (blob) => slots.get(src)?._show(blob),
+        (e) => slots.get(src)?._fail(e.message),
+      ).finally(() => { running.delete(src); pump(); });
     }
   };
-  const queue = {
+  return {
+    // A redraw: the placeholders waiting are the old view's, so they go; the
+    // requests running stay and land on the new placeholders.
+    reset() { waiting = []; slots = new Map(); },
     push(slot) {
       if (slot._ready) return;                   // already seen: shown at once
-      waiting.push(slot); pump();
+      slots.set(slot._src, slot);
+      if (!running.has(slot._src)) { waiting.push(slot); pump(); }
     },
     // The system somebody asked to look at goes next.
     front(slot) {
       const i = waiting.indexOf(slot);
       if (i > 0) { waiting.splice(i, 1); waiting.unshift(slot); }
     },
-    stop() { stopped = true; waiting.length = 0; },
   };
-  view._slowQueue = queue;
-  return queue;
 }
 
 // A picture already shown in this view is drawn straight away when the view is
-// redrawn (a scan redraws it after every system it reads); only new ones wait.
+// redrawn; only new ones wait. Fetched rather than left to <img>, which cannot
+// read why a request failed.
 function slowImage(view, src, alt, n) {
   const seen = (view._slowSeen = view._slowSeen || new Set());
   if (seen.has(src)) {
@@ -722,27 +740,16 @@ function slowImage(view, src, alt, n) {
   }
   const slot = el("div", { className: "cmpslot" },
     busyNote(`Engraving system ${n}…`, "busynote small"));
-  // Fetched rather than left to <img>, which cannot read why a request failed.
-  slot._start = async (done) => {
-    const fail = (why) => {
-      slot.className = "cmpslot err";
-      slot.replaceChildren(`Could not engrave system ${n}${why ? ": " + why : "."}`);
-      done();
-    };
-    let blob;
-    try {
-      blob = await (await fetchOrSay(src)).blob();
-    } catch (e) {
-      fail(e.message);
-      return;
-    }
+  slot._src = src;
+  slot._fail = (why) => {
+    slot.className = "cmpslot err";
+    slot.replaceChildren(`Could not engrave system ${n}${why ? ": " + why : "."}`);
+  };
+  slot._show = (blob) => {
     const img = el("img", { className: "cmpimg fresh", alt });
     const local = URL.createObjectURL(blob);
-    img.onload = () => {
-      URL.revokeObjectURL(local);
-      seen.add(src); slot.replaceWith(img); done();
-    };
-    img.onerror = () => { URL.revokeObjectURL(local); fail("the picture could not be shown"); };
+    img.onload = () => { URL.revokeObjectURL(local); seen.add(src); slot.replaceWith(img); };
+    img.onerror = () => { URL.revokeObjectURL(local); slot._fail("the picture could not be shown"); };
     img.src = local;
   };
   return slot;

@@ -137,12 +137,13 @@ def _shot(page, name):
         page.screenshot(path=os.path.join(where, name))
 
 
-def _dress_song(page, slug, fingerprint=None):
+def _dress_song(page, slug, fingerprint=None, revision=None):
     """Make the song look scanned and split into systems, as far as the page sees.
 
     Only the song's own JSON is touched; everything else is the real server or a
     route the test holds. `fingerprint` (a list, so a test can change it) stands in
-    for a re-clean.
+    for a re-clean, and `revision` (likewise) for the scan having read another
+    system, which is what makes Scan vs page redraw itself.
     """
     systems = [{"index": i, "page": 1, "top": (i - 1) / SYSTEMS, "bottom": i / SYSTEMS,
                 "measure_start": 4 * i - 3, "measure_end": 4 * i}
@@ -156,6 +157,8 @@ def _dress_song(page, slug, fingerprint=None):
                                  "read": SYSTEMS, "systems": SYSTEMS, "errors": {}})
         if fingerprint:
             data["cleaned_fingerprint"] = fingerprint[0]
+        if revision:
+            data["scan_status"]["revision"] = revision[0]
         route.fulfill(response=res, body=json.dumps(data))
 
     page.route(re.compile(rf"/api/songs/{re.escape(slug)}$"), handle)
@@ -331,3 +334,42 @@ def test_compare_says_the_cleaned_score_is_being_built(live, page):
     for route in list(cleaned):
         route.fulfill(body=PNG, content_type="image/png")
     _wait_for(page, lambda: len(cleaned) == 4)
+
+
+def test_a_redraw_reuses_the_engravings_in_flight_instead_of_starting_more(live, page):
+    """A scan redraws Scan vs page after every system it reads. The two requests
+    already running must carry on into the new placeholders: dropping them would
+    not stop the MuseScore runs behind them, and starting a fresh pair per redraw
+    would put four, then six, on the host."""
+    page.set_viewport_size(DESKTOP)
+    revision = ["r0"]
+    _dress_song(page, live[1], revision=revision)
+    held = _held(page, re.compile(r"/scan-system/\d+"))
+    _open(page, live, "Scan vs page")
+    _wait_for(page, lambda: len(held) == 2)
+
+    for n in range(1, 4):
+        revision[0] = f"r{n}"
+        # Mark the rows, ask for a redraw, and wait for the marked rows to go.
+        page.evaluate("() => document.querySelectorAll('.cmprow').forEach(r => r.dataset.old = '1')")
+        redrawn = ("() => document.querySelectorAll('.cmprow').length > 0"
+                   " && !document.querySelector('.cmprow[data-old]')")
+        # Sent again until it lands: the page's socket may still be connecting.
+        deadline = time.time() + 15
+        while not page.evaluate(redrawn):
+            assert time.time() < deadline, "the view was never redrawn"
+            server.hub.emit(live[1], {"type": "state"})
+            page.wait_for_timeout(300)
+        assert page.locator(".cmpslot", has_text="Engraving system").count() == SYSTEMS
+        page.wait_for_timeout(300)
+        assert len(held) == 2, f"{len(held)} engravings were asked for after a redraw"
+
+    # The request started before the redraws lands in the redrawn row, and only
+    # then does the next one start.
+    held[0].fulfill(body=PNG, content_type="image/png")
+    page.locator(".cmpimg[alt='scanned system 1']").wait_for()
+    _wait_for(page, lambda: len(held) == 3)
+    page.wait_for_timeout(300)
+    assert len(held) == 3, "more than two engravings in flight"
+    order = [int(re.search(r"/scan-system/(\d+)", r.request.url).group(1)) for r in held]
+    assert order == [1, 2, 3]

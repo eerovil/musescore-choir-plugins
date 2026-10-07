@@ -920,7 +920,10 @@ state model are in `DESIGN.md`.
   one MuseScore run each, so they wait in placeholders and are fetched by
   `slowQueue` in reading order, `SLOW_AT_ONCE` (2) at a time — asked for all at once
   they started a MuseScore per system and arrived at random. A system jumped to goes
-  next. `test_loading_states_ui.py` pins it.
+  next. The queue belongs to the view and outlives a redraw (a scan redraws Scan vs
+  page after every system it reads): a request in flight lands on the new placeholder
+  rather than being dropped or started again, since dropping it would not stop the
+  MuseScore run behind it. `test_loading_states_ui.py` pins it.
 - `static/` **layout**: the page never scrolls — `html, body` are fixed to the
   window and every panel scrolls inside itself. `#app` takes what the header leaves
   (`flex: 1 1 auto; min-height: 0`) and the workspace grid fills it. It used to be
