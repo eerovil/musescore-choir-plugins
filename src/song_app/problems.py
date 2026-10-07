@@ -27,6 +27,11 @@ Where each part comes from, and why:
   choices are the first bar of each printed system in between, and **a**, leaving it
   as it is — the right answer when the page prints no start sign, kept in
   `.song.json` (`repeats.kept`) so the question is asked once.
+- **A repeat with no brackets** (#319): every end repeat with no volta over it asks
+  whether a "1." bracket ends there, because homr does not read volta brackets and a
+  repeat without them looks the same in the score. **a** is no brackets (kept in
+  `.song.json`, `voltas.kept`); the others put "1." over the last 1-4 bars, and "2."
+  over the bar after.
 
 Nothing here decides anything about the music: the rows are what is already known,
 put side by side.
@@ -50,6 +55,10 @@ from . import bar_readings, pdf_systems, pipeline, state
 SLUR_SOURCE = "slur-choice"
 #: ...and as a repeat choice.
 REPEAT_SOURCE = "repeat-choice"
+#: ...and as a volta choice.
+VOLTA_SOURCE = "volta-choice"
+#: The longest "1." bracket offered.
+MAX_VOLTA_BARS = 4
 
 
 def _system_of(bounds: List[Tuple[int, int, int]], measure: Optional[int]) -> Optional[int]:
@@ -180,6 +189,50 @@ def _kept_repeats(song: state.Song) -> List[int]:
     return list(song.data.get("repeats", {}).get("kept", []))
 
 
+def _volta_id(end: int) -> str:
+    return f"volta-{end}"
+
+
+def volta_questions(root: etree._Element) -> List[Dict]:
+    """Each end repeat with no volta over it, and how long its "1." bracket could be.
+
+    Read off the first staff, where MuseScore keeps voltas. A question is `{id, end,
+    options}`, each option `{letter, label, bars}` -- `bars` None for **a**, no
+    brackets. A "1." bracket never reaches back to the bar the repeat starts on, or
+    the second pass would have nothing to play, and the "2." bracket needs a bar after
+    it to close on, so an end repeat in the last two bars is not asked about.
+    """
+    staff = next((s for s in root.findall(".//Score/Staff")
+                  if s.find("Measure") is not None), None)
+    if staff is None:
+        return []
+    measures = staff.findall("Measure")
+    spans = score_fixes.volta_spans(staff)
+    found: List[Dict] = []
+    start = 1
+    for number, measure in enumerate(measures, start=1):
+        if measure.find("startRepeat") is not None:
+            start = number
+        if measure.find("endRepeat") is None:
+            continue
+        longest = min(MAX_VOLTA_BARS, number - start)
+        covered = any(a <= number + 1 and b >= number for a, b in spans)
+        if longest >= 1 and number + 2 <= len(measures) and not covered:
+            options = [{"letter": "a", "bars": None,
+                        "label": "No brackets on the page — leave it as it is"}]
+            for letter, bars in zip(bar_readings.LETTERS[1:], range(1, longest + 1)):
+                over = f"bar {number}" if bars == 1 else f"bars {number - bars + 1}–{number}"
+                options.append({"letter": letter, "bars": bars,
+                                "label": f"1. over {over}, 2. over bar {number + 1}"})
+            found.append({"id": _volta_id(number), "end": number, "options": options})
+        start = number + 1
+    return found
+
+
+def _kept_voltas(song: state.Song) -> List[int]:
+    return list(song.data.get("voltas", {}).get("kept", []))
+
+
 def problems(song: state.Song) -> List[Dict]:
     """Every problem of the cleaned score, one row per bar and part, ordered by bar.
 
@@ -308,6 +361,19 @@ def problems(song: state.Song) -> List[Dict]:
                         for o in question["options"]],
             "decision": decision, "can_decline": False})
 
+    kept_voltas = _kept_voltas(song)
+    for question in volta_questions(root):
+        target = row(question["end"], "All parts")
+        decision = {"picked": "a"} if question["end"] in kept_voltas else None
+        target["choices"].append({
+            "id": question["id"], "kind": "volta",
+            "title": (f"A repeat ends at bar {question['end']}. Does the page print "
+                      "1. and 2. brackets there?"),
+            "options": [{"letter": o["letter"], "label": o["label"],
+                         "current": o["bars"] is None, "svg": None}
+                        for o in question["options"]],
+            "decision": decision, "can_decline": False})
+
     ranges = {index: (start, end) for index, start, end in bounds}
     for target in rows.values():
         start, end = ranges.get(target["system"], (0, 0))
@@ -399,6 +465,44 @@ def record_repeat_choice(song: state.Song, cid: str, letter: str) -> Dict:
              "measure": option["measure"],
              "why": f"the repeat ending at bar {question['end']} starts here: picked "
                     f"{letter} against the page"}
+    applied = score_fixes.apply_fixes(root, [entry])
+    recorded = pipeline._recorded_fixes(song.dir) + [entry]
+    with open(os.path.join(song.dir, "fixes.json"), "w", encoding="utf-8") as fh:
+        json.dump(recorded, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    etree.ElementTree(root).write(cleaned, encoding="UTF-8", xml_declaration=True)
+    return {"choice": cid, "applied": "; ".join(applied)}
+
+
+def record_volta_choice(song: state.Song, cid: str, letter: str) -> Dict:
+    """Apply a person's answer to whether a repeat has brackets.
+
+    **a** changes nothing in the score and is kept in `.song.json`, so the question
+    is not asked again after a re-clean. Any other letter is a `volta` entry in
+    `fixes.json`, applied to the cleaned score now and replayed by every later clean
+    -- after which the repeat has brackets and nothing to ask.
+    """
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise FixError("clean the score first")
+    root = etree.parse(cleaned).getroot()
+    question = next((q for q in volta_questions(root) if q["id"] == cid), None)
+    if question is None:
+        raise FixError("that repeat is not in question any more — the score has been "
+                       "cleaned or edited since the page was loaded")
+    if question["end"] in _kept_voltas(song):
+        raise FixError("that repeat has already been decided")
+    option = next((o for o in question["options"] if o["letter"] == letter), None)
+    if option is None:
+        raise FixError(f"there is no option {letter!r}")
+    if option["bars"] is None:
+        song.data.setdefault("voltas", {}).setdefault("kept", []).append(question["end"])
+        song.save()
+        return {"choice": cid, "applied": f"the repeat ending at bar {question['end']} "
+                                          "is left without brackets"}
+    entry = {"kind": "volta", "source": VOLTA_SOURCE, "offer": cid, "choice": letter,
+             "measure": question["end"], "bars": option["bars"],
+             "why": f"picked {letter} against the page: {option['label']}"}
     applied = score_fixes.apply_fixes(root, [entry])
     recorded = pipeline._recorded_fixes(song.dir) + [entry]
     with open(os.path.join(song.dir, "fixes.json"), "w", encoding="utf-8") as fh:

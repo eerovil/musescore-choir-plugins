@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- When a repeat ends, the Fix stage asks whether the page prints "1." and "2."
+  brackets there and how many bars the "1." covers, with one tap per length. homr
+  does not read the brackets, and without them the practice track played the "1."
+  bars on both passes. (#319)
 - Scrolling videos follow D.C. and D.S. jumps (al Fine, al Coda) instead of refusing
   the score: the bars play in MuseScore's order and the scroll jumps back to the
   segno or the start and forward to the coda. (#314)
