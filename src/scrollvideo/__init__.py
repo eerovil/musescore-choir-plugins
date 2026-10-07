@@ -15,6 +15,6 @@ preview`) rather than re-exported here — binding the function on the package w
 hide the module of the same name from anything that imports it.
 """
 
-from .build import build_videos, prepare, unsupported_repeats
+from .build import build_videos, prepare
 
-__all__ = ["build_videos", "prepare", "unsupported_repeats"]
+__all__ = ["build_videos", "prepare"]

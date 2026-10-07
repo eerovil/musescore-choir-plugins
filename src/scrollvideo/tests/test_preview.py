@@ -18,7 +18,6 @@ import tempfile
 
 import numpy as np
 import pytest
-from lxml import etree
 from PIL import Image
 
 from src.scrollvideo import build, preview as preview_mod, video as video_mod
@@ -297,16 +296,21 @@ def test_a_repeated_section_jumps_back_instead_of_sliding(repeat_mscx, tmp_path)
     assert len(ids) > len(set(ids))
 
 
+def test_a_jump_is_followed_as_the_render_follows_it(tmp_path):
+    """A D.S. al Coda plays in MuseScore's order in the preview too: the same
+    curve as `prepare`'s, landing back at the segno and forward at the coda."""
+    score = os.path.join(FILES, "dal_segno.mscx")
+    payload = preview(score, str(tmp_path / "jump"), **SIZE)
+    ready = _prepared(score)
+    drawn = build.raster(ready, PREVIEW_HEIGHT)
+    times, xs = ready.anchors
+    assert payload["scroll"]["times"] == pytest.approx(list(times))
+    assert payload["scroll"]["xs"] == pytest.approx([x * drawn.px_per_unit for x in xs])
+    assert len(ready.cuts) == 2
+
+
 def test_it_refuses_what_a_render_would_refuse(tmp_path, fermata_mscx):
     """Failing here is the point: seconds, rather than minutes into an encode."""
-    score = etree.parse(fermata_mscx)
-    measure = score.getroot().find(".//Staff/Measure")
-    etree.SubElement(etree.SubElement(measure, "Jump"), "jumpTo").text = "start"
-    path = tmp_path / "jump.mscx"
-    score.write(str(path))
-    with pytest.raises(NotImplementedError, match="Jump"):
-        preview(str(path), str(tmp_path / "out"), **SIZE)
-
     with pytest.raises(ValueError, match="margin"):
         preview(fermata_mscx, str(tmp_path / "out"), **SIZE, top_margin_percent=500.0)
 

@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Scrolling videos follow D.C. and D.S. jumps (al Fine, al Coda) instead of refusing
+  the score: the bars play in MuseScore's order and the scroll jumps back to the
+  segno or the start and forward to the coda. (#314)
 - A problem card in the Fix stage says which bar of the printed line it is
   about ("Bar 2 of 4 in this line"), so the bar no longer has to be counted off
   the picture. (#311)

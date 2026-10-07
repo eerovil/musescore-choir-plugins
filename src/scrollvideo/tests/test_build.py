@@ -3,52 +3,13 @@
 import mido
 import numpy as np
 import pytest
-from lxml import etree
 
 from src.scrollvideo.build import (ALIGNMENT_TOLERANCE, MAX_MARGIN_PERCENT,
                                    MIN_MARGIN_PERCENT, _margin_viewport,
-                                   _vertical_view, alignment, build_videos,
-                                   midi_onsets, unsupported_repeats, video_encoder)
+                                   _vertical_view, alignment, midi_onsets,
+                                   video_encoder)
 from src.scrollvideo.video import NVIDIA_ENCODER, SOFTWARE_ENCODER
 from src.scrollvideo.timing import NoteEvent
-
-PLAIN = "<museScore><Score><Staff id='1'><Measure/></Staff></Score></museScore>"
-WITH_VOLTA = ("<museScore><Score><Staff id='1'><Measure>"
-              "<Volta><endings>1</endings></Volta></Measure></Staff></Score></museScore>")
-WITH_REPEAT = ("<museScore><Score><Staff id='1'><Measure>"
-               "<startRepeat/></Measure></Staff></Score></museScore>")
-WITH_JUMP = ("<museScore><Score><Staff id='1'><Measure>"
-             "<Jump><jumpTo>start</jumpTo></Jump></Measure></Staff></Score></museScore>")
-
-
-def test_a_plain_score_has_nothing_to_refuse():
-    assert unsupported_repeats(etree.fromstring(PLAIN)) == []
-
-
-@pytest.mark.parametrize("xml", [WITH_VOLTA, WITH_REPEAT])
-def test_section_repeats_and_voltas_are_supported(xml):
-    """Verovio expands these itself, so they render — the repeat-pass notes are
-    mapped back to the notes drawn on the page."""
-    assert unsupported_repeats(etree.fromstring(xml)) == []
-
-
-WITH_MARKER = ("<museScore><Score><Staff id='1'><Measure>"
-               "<Marker><label>fine</label></Marker></Measure></Staff></Score></museScore>")
-
-
-def test_a_marker_without_a_jump_changes_nothing():
-    """Segno/coda/fine labels alone don't alter playback, so they don't block."""
-    assert unsupported_repeats(etree.fromstring(WITH_MARKER)) == []
-
-
-def test_a_dc_jump_is_refused(tmp_path):
-    """Verovio does not follow D.C./D.S., so the video would drift."""
-    assert unsupported_repeats(etree.fromstring(WITH_JUMP)) == ["Jump"]
-    score = tmp_path / "score.mscx"
-    score.write_text(WITH_JUMP)
-    with pytest.raises(NotImplementedError, match="Jump"):
-        build_videos(str(score), str(tmp_path / "out"))
-
 
 def test_zero_margin_adjustments_are_exactly_the_old_view():
     raw = np.arange(24, dtype=np.uint8).reshape(6, 4)

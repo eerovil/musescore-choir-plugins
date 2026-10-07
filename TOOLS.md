@@ -157,9 +157,9 @@ Needs `ffmpeg`/`ffprobe` on PATH and `MUSESCORE_CLI_PATH` set, plus the Python
 deps in `pip-requirements.txt` (verovio, cairosvg, mido, numpy).
 
 Repeats and voltas work: the section is drawn once and the scroll jumps back to
-play it again, the way your eyes do. **D.C./D.S. jumps are refused** — the
-engraving doesn't follow them, so the video would drift; write the jump out in
-full first. Every render is also checked against the exported audio before it is
+play it again, the way your eyes do. D.C./D.S. jumps work the same way: the
+video plays the bars in the order MuseScore plays them, and the scroll jumps back
+to the segno or the start and forward to the coda. Every render is also checked against the exported audio before it is
 written, and refused if the highlights don't line up, so a silently out-of-sync
 video is not a thing that can happen.
 
