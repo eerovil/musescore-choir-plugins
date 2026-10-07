@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- When a lyric line has more syllables than notes, every note still gets its own
+  syllable and only the extra ones go on the last note; extra `_` are dropped. It
+  used to pile the whole bar onto its first note. (#308)
 - The Fix stage lists every problem once, one card per bar and part, with its
   choices beside the page: homr's other lengths for an unsure bar, homr's other
   pitches for an unsure note, and for a slur the scan ran between two singers, the

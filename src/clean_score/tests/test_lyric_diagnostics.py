@@ -15,6 +15,8 @@ from src.clean_score.lyric_txt import (
     place_lyrics,
 )
 
+from lxml import etree
+
 from .scorebuilder import build_score, placed_lyrics
 
 
@@ -288,3 +290,56 @@ def test_an_empty_slot_is_never_glued_onto_the_syllable_before_it():
 
     assert _merge_tokens(["kär-", "_", "si-", "net"]) == "kär- _ si-net"
     assert _tokenize_line("kär- _ si-net") == ["kär-", "_", "si-net"]
+
+
+# --------------------------------------------------------------------------- #
+# Too many syllables: where the overflow goes (#307)
+# --------------------------------------------------------------------------- #
+
+def _chord_lyrics(root, staff_id=1):
+    """Every chord's verse-1 text in staff `staff_id`, in order ('' for none)."""
+    staff = [s for s in root.iter("Staff")
+             if s.get("id") == str(staff_id) and s.find("Measure") is not None][0]
+    return [c.findtext("Lyrics/text") or "" for c in staff.iter("Chord")]
+
+
+def _slurred_bar():
+    """Lempilintu A1 bar 25: mi (2 slurred), nul (3 slurred), la, sy- (3 slurred)."""
+    start = ('<Spanner type="Slur"><Slur/><next><location><fractions>1/8</fractions>'
+             '</location></next></Spanner>')
+    end = ('<Spanner type="Slur"><prev><location><fractions>-1/8</fractions>'
+           '</location></prev></Spanner>')
+    shape = [("eighth", start), ("eighth", end),
+             ("16th", start), ("16th", ""), ("eighth", end),
+             ("quarter", ""),
+             ("16th", start), ("16th", ""), ("eighth", end)]
+    chords = "".join(f"<Chord><durationType>{d}</durationType>{s}"
+                     f"<Note><pitch>60</pitch></Note></Chord>" for d, s in shape)
+    xml = ('<museScore><Score><Part><trackName>A1</trackName><Staff id="1"/></Part>'
+           f'<Staff id="1"><Measure><voice>{chords}</voice></Measure></Staff>'
+           "</Score></museScore>")
+    return etree.fromstring(xml.encode("utf-8"))
+
+
+def test_overflow_goes_on_the_last_note_and_every_earlier_note_keeps_its_own():
+    root = build_score(staff_ids=(1,), measures=1, chords=3)
+    result = place_lyrics(root, _line("a b c d e"), replace=True)
+    assert _chord_lyrics(root) == ["a", "b", "c d e"]
+    assert result.mismatches[0].kind == TOO_MANY
+
+
+def test_overflow_that_is_only_empty_slots_is_dropped_but_still_reported():
+    root = build_score(staff_ids=(1,), measures=1, chords=4)
+    result = place_lyrics(root, _line("mi nul-la sy- _ _"), replace=True)
+    assert _chord_lyrics(root) == ["mi", "nul", "la", "sy"]
+    m = result.mismatches[0]
+    assert m.kind == TOO_MANY and (m.syllables, m.slots) == (6, 4)
+    assert "extra _ are dropped" in m.message
+
+
+def test_lempilintu_bar_25_gets_one_syllable_per_singable_note():
+    """Two `_` too many used to put the whole bar on its first note (#307)."""
+    root = _slurred_bar()
+    place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["A1"], "text": "mi nul-la sy- _ _"}]}], replace=True)
+    assert _chord_lyrics(root) == ["mi", "", "nul", "", "", "la", "sy", "", ""]
