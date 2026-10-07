@@ -281,6 +281,20 @@ you have touched something with reach (`lyric_txt.py`, `main.py`, `build.py`):
 #                           a MuseScore CLI the scrollvideo sync tests skip too
 ```
 
+**A poller verification job leaves the browser tests to CI** (agentdeck#2709). Submit
+the full run with `-m "not browser and not omr"` and let it run on this host:
+
+```bash
+agentdeck job submit --verification ... -- .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q -m "not browser and not omr"
+```
+
+The Playwright tests are the slow part, and CI's `Browser tests` job already runs them
+on the same commit. The poller's release waits for every GitHub check on the head it
+merges, and a red one gets a repair turn, so CI covers them; the local job does not
+need to.
+`not omr` keeps homr off this host: the `omr` tests run it on real scans, and CI,
+which has no homr, skips them too.
+
 One trap when timing or trusting it: the scrollvideo tests call the MuseScore CLI
 under a timeout, so anything else heavy running on the host at the same time makes
 them fail for no reason of their own. Two `test_preview.py` failures chased in this
