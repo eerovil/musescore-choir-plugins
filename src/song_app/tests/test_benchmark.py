@@ -19,6 +19,7 @@ way the MuseScore-CLI and Playwright tests skip.
 """
 import os
 import shutil
+from fractions import Fraction
 
 import pytest
 from lxml import etree
@@ -80,9 +81,9 @@ def test_b2_is_the_song_fixtures_own_page_and_not_a_second_copy():
 def test_the_committed_slice_stays_small():
     """The card's own constraint: commit the PDFs and rasterise in the test.
     A 300 dpi PNG of one of these pages is 1.0-1.7 MB on its own."""
-    files = os.listdir(benchmark.BENCHMARK_DIR)
-    total = sum(os.path.getsize(os.path.join(benchmark.BENCHMARK_DIR, name))
-                for name in files)
+    files = [os.path.join(folder, name)
+             for folder, _, names in os.walk(benchmark.BENCHMARK_DIR) for name in names]
+    total = sum(os.path.getsize(path) for path in files)
 
     assert not [name for name in files if name.lower().endswith((".png", ".jpg", ".tif"))]
     assert total < 1_000_000, f"{total} bytes in fixtures/omr-benchmark"
@@ -165,6 +166,117 @@ def test_the_page_boundary_comes_from_the_transcriptions_own_breaks(page_id):
     system_ends = [n for n in sorted(marks) if start <= n <= end]
     assert [b.measure_end for b in page.systems] == system_ends
     assert page.systems[0].measure_start == start
+
+
+# --- the answer keys -----------------------------------------------------
+#
+# The truth table above says when each note starts. The keys say what it is:
+# every pitch, length, tie and slur, one MusicXML file per printed system, so
+# a reading can be scored note by note (#287). An agent drafts a key; only a
+# person who has held it against the page fills in ``checked``.
+
+KEYS = [key.name for key in benchmark.answer_keys()]
+
+#: ``(bar, staff, voice)`` where the key and the hand transcription disagree.
+#: Each time the transcription gave a bass the rhythm of the other bass, and
+#: the page prints otherwise; checks.json says what the page prints.
+KEY_DIFFERS_FROM_TRANSCRIPTION = {
+    (11, 2, 2): "B.II ends on a quarter C3, no flag",
+    (13, 2, 1): "B.I sings a quarter F3 under the B.II eighths",
+    (16, 2, 1): "B.I prints a dotted eighth and shares the B.II sixteenth",
+}
+
+
+def key_bars(path):
+    """``{(bar, staff, voice): [(onset, kind, duration)]}`` read off the cursor.
+
+    ``kind`` is ``"note"`` or ``"rest"``; a chord's extra heads are left out,
+    as the truth table counts chords rather than heads.
+    """
+    root = etree.parse(path).getroot()
+    found = {}
+    for staff_no, part in enumerate(root.findall("part"), start=1):
+        divisions = 1
+        for measure in part.findall("measure"):
+            divisions = int(measure.findtext("attributes/divisions") or divisions)
+            cursor = Fraction(0)
+            for element in measure:
+                length = Fraction(int(element.findtext("duration") or 0), divisions)
+                if element.tag == "backup":
+                    cursor -= length
+                elif element.tag == "forward":
+                    cursor += length
+                elif element.tag == "note" and element.find("chord") is None:
+                    kind = "rest" if element.find("rest") is not None else "note"
+                    found.setdefault(
+                        (int(measure.get("number")), staff_no, int(element.findtext("voice"))),
+                        []).append((cursor, kind, length))
+                    cursor += length
+    return found
+
+
+def test_every_key_on_disk_is_in_the_record_and_back():
+    on_disk = sorted(name[:-len(".musicxml")] for name in os.listdir(benchmark.KEYS_DIR)
+                     if name.endswith(".musicxml"))
+
+    assert on_disk == KEYS
+
+
+@pytest.mark.parametrize("name", KEYS)
+def test_a_key_says_who_drafted_it_and_whether_anybody_checked_it(name):
+    key = next(k for k in benchmark.answer_keys() if k.name == name)
+
+    assert {"by", "at", "from"} <= set(key.drafted)
+    assert key.checked is None or {"by", "at"} <= set(key.checked), (
+        "a check names the person and the date")
+
+
+@pytest.mark.parametrize("name", KEYS)
+def test_a_key_holds_the_bars_its_system_prints(name):
+    key = next(k for k in benchmark.answer_keys() if k.name == name)
+    band = benchmark.page("B1a").systems[key.system - 1]
+    root = etree.parse(key.path).getroot()
+
+    assert key.bars == (band.measure_start, band.measure_end)
+    assert len(root.findall("part")) == benchmark.page("B1a").staves
+    for part in root.findall("part"):
+        assert [int(m.get("number")) for m in part.findall("measure")] == list(
+            range(band.measure_start, band.measure_end + 1))
+
+
+@pytest.mark.parametrize("name", KEYS)
+def test_every_voice_of_a_key_fills_its_bar(name):
+    key = next(k for k in benchmark.answer_keys() if k.name == name)
+
+    for (bar, staff, voice), events in key_bars(key.path).items():
+        position = Fraction(0)
+        for onset, _, length in events:
+            assert onset == position, f"bar {bar}, staff {staff}, voice {voice}: gap"
+            position += length
+        assert position == 4, f"bar {bar}, staff {staff}, voice {voice}: {position} beats"
+
+
+def test_the_keys_agree_with_the_transcription_where_they_both_say_something():
+    """The transcription is an independent reading of the same page. Where the
+    two disagree it has to be written down, or one of them is wrong and nobody
+    noticed."""
+    keyed = {}
+    for key in benchmark.answer_keys():
+        keyed.update(key_bars(key.path))
+    truth = {(r.measure, r.staff, int(r.part.split("voice ")[1].rstrip(")"))): r
+             for r in benchmark.page("B1a").truth()}
+
+    differs = set()
+    for where, events in keyed.items():
+        chords = sum(1 for _, kind, _ in events if kind == "note")
+        rests = sum(1 for _, kind, _ in events if kind == "rest")
+        if where not in truth:
+            assert chords == 0, f"{where} sings in the key and not in the transcription"
+            continue
+        if (chords, rests) != (truth[where].chords, truth[where].rests):
+            differs.add(where)
+    assert set(truth) <= set(keyed)
+    assert differs == set(KEY_DIFFERS_FROM_TRANSCRIPTION)
 
 
 # --- cropping ------------------------------------------------------------

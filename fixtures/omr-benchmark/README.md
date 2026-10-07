@@ -49,6 +49,36 @@ page is bars 11–17, and why its systems are 11–13 / 14–15 / 16–17 — co
 transcription's own page and line breaks rather than from someone counting bars off a
 scan. The test asserts that, so the two cannot drift apart.
 
+## Answer keys
+
+The truth table records when each note starts and nothing else — the
+transcription writes every notehead as a C. `keys/` holds what a reading can be
+scored against note for note (#287): **one MusicXML file per printed system**,
+every pitch, length, tie and slur as printed, bars numbered as the page numbers
+them.
+
+- `keys/B1-s1.musicxml` … `B1-s3.musicxml` — B1's three systems, bars 11–13,
+  14–15 and 16–17. B1a and B1b share them.
+- `keys/checks.json` — for each key: who drafted it, from what, every place the
+  draft was changed to match the page, and **who checked it against the page
+  and when**. `checked` stays `null` until a person has done that; an agent
+  drafts and never fills it in.
+
+How a key is drafted: the reviewed cleaned score is imploded back to the
+page's shape and trimmed to the system (`scripts/make_stem_fixture.py`), then
+read bar by bar against a 400 dpi crop and corrected where the page says
+otherwise. The tenor staff is written as printed — a plain treble clef, an
+octave above where it sounds — and lyrics, dynamics and tempo words are left
+out.
+
+**The keys and the transcription disagree in three bars**, and the key follows
+the page each time: bar 11 B.II, bar 13 B.I and bar 16 B.I, where the
+transcription gave one bass the other's rhythm. `checks.json` says what the page
+prints there, and `test_the_keys_agree_with_the_transcription_where_they_both_say_something`
+fails if a new disagreement appears without being written down. Bar 15 in the
+bass is read differently too: the page prints a whole-bar rest below the one
+bass line, so the key has B.II resting rather than in unison.
+
 ## What the tests do with it
 
 `src/song_app/tests/test_benchmark.py`, in three tiers so each dependency buys

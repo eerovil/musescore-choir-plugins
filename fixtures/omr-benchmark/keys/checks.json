@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "Who drafted each answer key, what was changed against the page, and who checked it.",
+    "A key is checked only when a person has compared every bar of it with the printed",
+    "system and said so. 'checked' stays null until then; an agent never fills it in.",
+    "See README.md, 'Answer keys'."
+  ],
+  "keys": {
+    "B1-s1": {
+      "file": "B1-s1.musicxml",
+      "page": "Herää Suomi! printed p.420 (B1a, B1b)",
+      "system": 1,
+      "bars": [
+        11,
+        13
+      ],
+      "drafted": {
+        "by": "agent (Claude), eerovil/musescore-choir-plugins#287",
+        "at": "2026-10-07",
+        "from": "songs/heraa-suomi-final cleaned score, imploded and trimmed by scripts/make_stem_fixture.py, read against a 400 dpi crop of the page"
+      },
+      "corrections": [
+        "Bar 13, T.II, beat 3 and a half: D5, not C5. The two tenors swap B4 and D5 on the beamed eighths; the cleaned score had C5."
+      ],
+      "checked": null
+    },
+    "B1-s2": {
+      "file": "B1-s2.musicxml",
+      "page": "Herää Suomi! printed p.420 (B1a, B1b)",
+      "system": 2,
+      "bars": [
+        14,
+        15
+      ],
+      "drafted": {
+        "by": "agent (Claude), eerovil/musescore-choir-plugins#287",
+        "at": "2026-10-07",
+        "from": "songs/heraa-suomi-final cleaned score, imploded and trimmed by scripts/make_stem_fixture.py, read against a 400 dpi crop of the page"
+      },
+      "corrections": [
+        "Bar 15, B.II: a whole-bar rest. The page prints one bass line and a whole rest hanging below it; the cleaned score doubled B.I."
+      ],
+      "checked": null
+    },
+    "B1-s3": {
+      "file": "B1-s3.musicxml",
+      "page": "Herää Suomi! printed p.420 (B1a, B1b)",
+      "system": 3,
+      "bars": [
+        16,
+        17
+      ],
+      "drafted": {
+        "by": "agent (Claude), eerovil/musescore-choir-plugins#287",
+        "at": "2026-10-07",
+        "from": "songs/heraa-suomi-final cleaned score, imploded and trimmed by scripts/make_stem_fixture.py, read against a 400 dpi crop of the page"
+      },
+      "corrections": [
+        "Bar 16, B.I, beat 2: a dotted eighth G3 (flag and dot printed), then the Eb3 sixteenth whose one head both basses share. The cleaned score and the hand transcription both had a quarter."
+      ],
+      "checked": null
+    }
+  },
+  "all_keys": [
+    "The tenor staff is written as printed: a plain treble clef, pitches an octave above where they sound. The cleaned score uses a treble-8vb clef.",
+    "Each key opens with the clef, key and time signature in force, as every reference does; the page prints the clef and key at each system and the time signature only at the start of the piece.",
+    "Lyrics, dynamics and tempo words are left out. Beaming follows MuseScore, not the page."
+  ],
+  "transcription_differs": {
+    "_comment": "Bars where the key and B1-heraa-suomi-hand-transcription.mscx disagree on a voice's rhythm. Each time the transcription gave one bass the other bass's rhythm; the key follows the page.",
+    "11/B.II": "Beat 4: a quarter C3, no flag. The transcription has a dotted eighth and a sixteenth.",
+    "13/B.I": "Beat 3: a quarter F3, stem up, under the two B.II eighths. The transcription has two eighths.",
+    "16/B.I": "Beat 2: a dotted eighth G3, then the shared Eb3 sixteenth. The transcription has a quarter."
+  }
+}

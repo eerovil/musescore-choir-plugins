@@ -99,3 +99,41 @@ def _page(entry: dict) -> BenchmarkPage:
 
 def _abs(path: Optional[str]) -> Optional[str]:
     return os.path.join(REPO_ROOT, path) if path else None
+
+
+KEYS_DIR = os.path.join(BENCHMARK_DIR, "keys")
+KEYS_RECORD = os.path.join(KEYS_DIR, "checks.json")
+
+
+@dataclass(frozen=True)
+class AnswerKey:
+    """One printed system written out note for note, and who vouches for it.
+
+    ``checked`` is ``None`` until a person has compared every bar with the
+    page; then it holds ``{"by": ..., "at": ...}``.
+    """
+
+    name: str
+    path: str                      # absolute
+    system: int
+    bars: tuple
+    drafted: dict
+    corrections: List[str]
+    checked: Optional[dict]
+
+
+def answer_keys() -> List[AnswerKey]:
+    with open(KEYS_RECORD, encoding="utf-8") as f:
+        record = json.load(f)
+    return [
+        AnswerKey(
+            name=name,
+            path=os.path.join(KEYS_DIR, entry["file"]),
+            system=entry["system"],
+            bars=tuple(entry["bars"]),
+            drafted=entry["drafted"],
+            corrections=entry.get("corrections", []),
+            checked=entry["checked"],
+        )
+        for name, entry in sorted(record["keys"].items())
+    ]
