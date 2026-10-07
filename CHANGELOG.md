@@ -13,6 +13,11 @@ developers are listed under *Behind the scenes*.
   slur in either, both or neither. One tap applies the answer and keeps it for the
   next clean. (#290)
 
+## 2026-10-07
+
+- In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
+  words) in every bar where it has none of its own, instead of resting. (#293)
+
 ## 2026-10-06
 
 - A scanned song moves on to Clean as soon as every system is read; there is no

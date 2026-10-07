@@ -15,7 +15,7 @@ the caller to write down where a person will see them. Losing them quietly would
 worse than leaving the file broken; losing them loudly is what makes it openable.
 """
 from fractions import Fraction
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 from lxml import etree
 
@@ -96,16 +96,10 @@ def _target_bar(home: int, pos: Fraction, pointer: etree._Element,
     return index
 
 
-def _cut_spanners_into(measures: List[etree._Element], lengths: List[Fraction],
-                       cleared: int) -> None:
-    """Drop the half of any tie or slur on this staff whose other half was cleared.
-
-    Only a pointer that resolves to the cleared bar is cut: a slur that passes over it
-    on the way to a bar further along still has both of its ends.
-    """
+def _cut_spanners(measures: List[etree._Element], lengths: List[Fraction],
+                  cut: Callable[[int, int], bool]) -> None:
+    """Drop each tie or slur end on this staff whose other end `cut(home, target)` rejects."""
     for home, measure in enumerate(measures):
-        if home == cleared:
-            continue
         for voice in measure.findall("voice"):
             for pos, el in list(_walk(voice, lengths[home])):
                 holders = [(voice, el)] if el.tag == "Spanner" else (
@@ -114,10 +108,35 @@ def _cut_spanners_into(measures: List[etree._Element], lengths: List[Fraction],
                 for parent, spanner in holders:
                     for side in ("next", "prev"):
                         pointer = spanner.find(side)
-                        if pointer is not None and \
-                                _target_bar(home, pos, pointer, lengths) == cleared:
+                        if pointer is None:
+                            continue
+                        target = _target_bar(home, pos, pointer, lengths)
+                        if target is not None and cut(home, target):
                             parent.remove(spanner)
                             break
+
+
+def _cut_spanners_into(measures: List[etree._Element], lengths: List[Fraction],
+                       cleared: int) -> None:
+    """Drop the half of any tie or slur on this staff whose other half was cleared.
+
+    Only a pointer that resolves to the cleared bar is cut: a slur that passes over it
+    on the way to a bar further along still has both of its ends.
+    """
+    _cut_spanners(measures, lengths, lambda home, target: home != cleared and target == cleared)
+
+
+def cut_spanners_between(staff: etree._Element, source: List[object]) -> None:
+    """Drop each tie or slur end that reaches a bar filled from a different `source`.
+
+    `source` names, per bar of `staff`, where that bar's notes were copied from. A tie
+    from one source into a bar copied from another points at a note that is not its
+    partner, so both of its ends go.
+    """
+    measures = staff.findall("Measure")
+    _cut_spanners(measures, _bar_lengths(staff),
+                  lambda home, target: 0 <= target < len(source)
+                  and source[home] != source[target])
 
 
 def clear_bar(root: etree._Element, staff_index: int, measure_no: int) -> Optional[List[str]]:

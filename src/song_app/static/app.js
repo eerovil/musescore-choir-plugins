@@ -1497,7 +1497,10 @@ async function panelClean(panel, song, slug, P, refresh) {
     panel.append(holder);
     try {
       const { grid } = await getJSON(`${P}/systems`);
-      holder.replaceChildren(...grid.map((sys) => sysBlock(sys)));
+      holder.replaceChildren(
+        el("p", { className: "hint fallbackhint" },
+          "S1b sings S1's notes wherever it has none of its own; the same goes for any part name plus one small letter."),
+        ...grid.map((sys) => sysBlock(sys)));
 
       // Roll a staff's answer forward: an empty field shows the previous system's
       // answer for the same staff as a faint placeholder (and inherits it at clean).
