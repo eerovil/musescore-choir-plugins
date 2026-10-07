@@ -478,3 +478,153 @@ def test_a_soprano_off_a_treble_staff_keeps_its_pitch():
     root = _treble_score("G")
     clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}})
     assert _pitches(_by_part(root)["S1"], 0) == ["69"]
+
+
+# --------------------------------------------------------------------------- #
+# A "b" part falls back to its base part (S1b sings S1 where it has nothing)
+# --------------------------------------------------------------------------- #
+
+def _score(staves, breaks=()):
+    """{staff_id: [bar, ...]}, a bar a list of voices, a voice a list of whole notes:
+    a pitch string, "r" for a rest, or a tuple of pitches for a stacked chord.
+    `breaks` are 0-based bars that end a printed system."""
+    root = etree.Element("museScore")
+    score = etree.SubElement(root, "Score")
+    for sid in staves:
+        part = etree.SubElement(score, "Part")
+        etree.SubElement(part, "trackName").text = f"P{sid}"
+        etree.SubElement(part, "Staff", id=str(sid))
+    for sid, bars in staves.items():
+        staff = etree.SubElement(score, "Staff", id=str(sid))
+        for mi, bar in enumerate(bars):
+            measure = etree.SubElement(staff, "Measure")
+            for notes in bar:
+                voice = etree.SubElement(measure, "voice")
+                for note in notes:
+                    if note == "r":
+                        rest = etree.SubElement(voice, "Rest")
+                        etree.SubElement(rest, "durationType").text = "measure"
+                        continue
+                    chord = etree.SubElement(voice, "Chord")
+                    etree.SubElement(chord, "durationType").text = "whole"
+                    for pitch in (note if isinstance(note, tuple) else (note,)):
+                        etree.SubElement(etree.SubElement(chord, "Note"), "pitch").text = pitch
+            if mi in breaks and sid == min(staves):
+                lb = etree.SubElement(measure, "LayoutBreak")
+                etree.SubElement(lb, "subtype").text = "line"
+    return root
+
+
+def test_a_b_part_not_named_in_a_system_sings_its_base_part():
+    # System 0 (bar 0) names S1 alone; system 1 (bar 1) splits the stacked chord.
+    root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
+    staves = _by_part(root)
+    assert _pitches(staves["S1b"], 0) == ["72"]     # was a bar of silence
+    assert _pitches(staves["S1b"], 1) == ["67"]     # its own notehead, as before
+
+
+def test_a_b_part_on_one_unstacked_line_sings_its_base_part():
+    """The bar #293 was about: S1, S1b named, but the page prints a single line."""
+    root = _score({1: [[["72"], ["67"]], [["74"]]]})
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1, S1b"}})
+    staves = _by_part(root)
+    assert _pitches(staves["S1b"], 0) == ["67"]
+    assert _pitches(staves["S1b"], 1) == ["74"]     # unison, by the name's say-so
+
+
+def test_a_rest_the_scan_wrote_for_the_b_part_stays_a_rest():
+    root = _score({1: [[["72"]], [["74"]]], 2: [[["r"]], [["67"]]]})
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1", 2: "S1b"}})
+    staves = _by_part(root)
+    assert _pitches(staves["S1b"], 0) == []         # its own staff says it rests
+    assert _pitches(staves["S1b"], 1) == ["67"]
+
+
+def test_only_a_base_name_plus_one_lowercase_letter_falls_back():
+    root = _score({1: [[["72"]], [["74"]]], 2: [[["60"]], [["62"]]]}, breaks=(0,))
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1", 2: "A1"},
+                                                     1: {1: "S2", 2: "Ab"}})
+    staves = _by_part(root)
+    assert _pitches(staves["S2"], 0) == []          # S2 is not S1's fallback
+    assert _pitches(staves["Ab"], 0) == []          # no part named "A"
+    assert _pitches(staves["S1"], 1) == []
+
+
+def test_a_fallback_is_one_level_only():
+    """S1bc is not S1b's fallback: S1b's bar here is borrowed from S1, not its own."""
+    root = _score({1: [[["72"]], [["74"], ["67"]]], 2: [[["r"]], [["60"]]]}, breaks=(0,))
+    result = clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"},
+                                                             1: {1: "S1, S1b", 2: "S1bc"}})
+    staves = _by_part(root)
+    assert _pitches(staves["S1b"], 0) == ["72"]     # S1b still borrows from S1
+    assert _pitches(staves["S1bc"], 0) == []        # ...but S1bc does not borrow that
+    by_start = {e["start"]: e["map"] for e in result.lyric_map}
+    follow = {e["start"]: e.get("follow") for e in result.lyric_map}
+    assert by_start[1] == {1: [1]}
+    assert follow[1] == {1: [2]}                    # S1's words reach S1b, not S1bc
+
+
+def test_lyrics_follow_the_notes_a_b_part_borrows():
+    root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
+    result = clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
+    assert result.parts == ["S1", "S1b"]
+    by_start = {e["start"]: e for e in result.lyric_map}
+    assert by_start[1]["map"] == {1: [1]}           # the printed staff is S1's alone
+    assert by_start[1]["follow"] == {1: [2]}        # ...and S1's words go to S1b too
+    assert by_start[2]["map"] == {1: [1, 2]}        # divisi, as before
+    assert "follow" not in by_start[2]
+
+
+def test_a_b_part_takes_its_base_words_on_a_staff_the_base_shares():
+    """S1 above and S2 below one printed staff: S1b follows S1's lane, not both."""
+    from src.clean_score.lyric_txt import place_lyrics
+    from src.clean_score.tests.scorebuilder import placed_lyrics
+
+    root = _score({1: [[[("72", "67")]], [[("72", "67")]]]}, breaks=(0,))
+    result = clean_per_system(root, answers_from=lambda _l: {0: {1: "S1, S2"},
+                                                             1: {1: "S1, S1b"}})
+    assert result.parts == ["S1", "S1b", "S2"]
+    first = result.lyric_map[0]
+    assert first["map"] == {1: [1, 3]}              # the above/below pair is untouched
+    assert first["follow"] == {1: [2]}
+
+    block = {"measure_start": 1, "lyrics": [
+        {"text": "la", "staff_number": 1, "position": "above", "verse": 1},
+        {"text": "lo", "staff_number": 1, "position": "below", "verse": 1}]}
+    root = etree.fromstring(etree.tostring(root))   # read the metaTags back as import does
+    place_lyrics(root, json.dumps([block]), fmt="json", replace=True)
+    assert placed_lyrics(root) == {1: "la", 2: "la", 3: "lo"}
+
+
+def test_a_b_part_with_words_of_its_own_keeps_them():
+    from src.clean_score.lyric_txt import place_lyrics
+    from src.clean_score.tests.scorebuilder import placed_lyrics
+
+    root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
+    block = {"measure_start": 1, "lyrics": [
+        {"text": "la", "staff_number": 1, "verse": 1},
+        {"text": "lu", "parts": ["S1b"], "verse": 1}]}
+    place_lyrics(root, json.dumps([block]), fmt="json", replace=True)
+    assert placed_lyrics(root) == {1: "la", 2: "lu"}
+
+
+def _tie(note, side, measures):
+    spanner = etree.SubElement(note, "Spanner", type="Tie")
+    etree.SubElement(spanner, "Tie")
+    loc = etree.SubElement(etree.SubElement(spanner, side), "location")
+    etree.SubElement(loc, "measures").text = str(measures)
+
+
+def test_a_tie_from_a_borrowed_bar_into_an_own_bar_is_cut():
+    # Bar 0: one line (S1b borrows it), tied into bar 1 where S1b has its own voice.
+    root = _score({1: [[["67"]], [["67"], ["60"]], [["64"]]]})
+    notes = [m.find("voice/Chord/Note") for m in root.findall(".//Score/Staff/Measure")]
+    _tie(notes[0], "next", 1)
+    _tie(notes[1], "prev", -1)
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1, S1b"}})
+    staves = _by_part(root)
+    assert staves["S1"].findall(".//Spanner") and len(staves["S1"].findall(".//Spanner")) == 2
+    assert staves["S1b"].findall(".//Spanner") == []   # its bar 1 is a different note
+    assert _pitches(staves["S1b"], 0) == ["67"]
