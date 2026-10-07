@@ -29,6 +29,8 @@ developers are listed under *Behind the scenes*.
   more. (#292)
 - In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
   words) in every bar where it has none of its own, instead of resting. (#293)
+- A bar a part rests through shows its rest in the middle of the bar after cleaning,
+  as MuseScore draws a bar rest, instead of at the start of the bar. (#298)
 
 ## 2026-10-06
 
