@@ -56,7 +56,8 @@ Three more kinds are how a person's answer to a problem listed on the Fix stage 
 recorded (#290). `pitch` gives one note of a chord another pitch, picked among the
 pitches homr weighed for it; `from` is the bar as it reads now, `was` the MIDI pitch
 the note has, and `to` / `tpc` what it gets — the spelling is homr's, read off the
-page, rather than derived. Its red note and the bar's red mark go with it. A `slur`
+page, rather than derived. Its red note goes, and so do the words `pitch?` and
+`accidental?` on the bar's red mark; anything else the mark says stays. A `slur`
 may reach into a later bar with `end_measure` and `end_index` instead of `span`,
 because a slur the scan ran from one singer into another usually crosses a barline.
 And `unmark` takes one red mark off a bar — the answer "the page prints no slur here"
