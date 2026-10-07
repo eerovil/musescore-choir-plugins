@@ -492,6 +492,31 @@
     let preparedSignature = null;
     let loadingSignature = null;
     let preparing = false;
+    // Before anything is prepared the tab must not be blank (#301): it says what
+    // the button is for. While preparing, a bar and a clock say it is working —
+    // the server reports no progress for this step, so there is no percentage.
+    const IDLE = "Press Preview scroll to draw the score with the settings on the left.";
+    const progress = document.createElement("div");
+    progress.className = "pvprogress";
+    progress.hidden = true;
+    let clock = null;
+    const stopClock = () => {
+      if (clock) clearInterval(clock);
+      clock = null;
+      progress.hidden = true;
+    };
+    const startClock = () => {
+      stopClock();
+      const began = Date.now();
+      const tick = () => {
+        const seconds = Math.round((Date.now() - began) / 1000);
+        status.textContent =
+          `Drawing the score… ${seconds} s — usually 10–30 s`;
+      };
+      progress.hidden = false;
+      tick();
+      clock = setInterval(tick, 1000);
+    };
 
     const signature = () => JSON.stringify({
       cleaned_fingerprint: fingerprint ? fingerprint() : null,
@@ -506,8 +531,9 @@
       preparedSignature = null;
       loadingSignature = null;
       holder.replaceChildren();
+      stopClock();
       status.className = "pvstatus";
-      status.textContent = message && hadPreview ? message : "";
+      status.textContent = message && hadPreview ? message : IDLE;
       button.disabled = preparing;
     };
 
@@ -523,7 +549,7 @@
       }
     };
 
-    button.onclick = async () => {
+    const prepare = async () => {
       if (preparing) return;
       invalidate("");
       const token = request;
@@ -532,13 +558,14 @@
       preparing = true;
       button.disabled = true;
       status.className = "pvstatus";
-      status.textContent = "Preparing the preview (drawing the score)…";
+      startClock();
       try {
         const chosen = settings();
         const query = new URLSearchParams(chosen).toString();
         const data = await loadPreview(`${base}/scroll-preview?${query}`,
                                        (name) => `${base}/scroll-preview/${name}`);
         if (token !== request || requestedSignature !== signature()) return;
+        stopClock();
         status.textContent = "Preview ready — enable audio if you want a synchronized mix.";
         live = mount(holder, data, (mix) => {
           const audioQuery = new URLSearchParams({
@@ -550,6 +577,7 @@
         loadingSignature = null;
       } catch (err) {
         if (token !== request) return;
+        stopClock();
         loadingSignature = null;
         status.className = "pvstatus err";
         status.textContent = err.message;
@@ -558,11 +586,21 @@
         button.disabled = false;
       }
     };
+    button.onclick = prepare;
+    // The panel's Preview button: prepare now unless a preview of these exact
+    // settings is already showing or on its way, which is then simply shown.
+    box._startPreview = () => {
+      const current = signature();
+      if ((live && preparedSignature === current) || loadingSignature === current) return;
+      if (preparing) return;
+      prepare();
+    };
 
     const row = document.createElement("div");
     row.className = "row";
     row.append(button);
-    box.append(row, status, holder);
+    status.textContent = IDLE;
+    box.append(row, progress, status, holder);
     return box;
   };
 })();
