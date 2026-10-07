@@ -2123,7 +2123,8 @@ does not name it, or names it on a staff that prints one unstacked line there â€
 the base part's bar instead, and in a system that leaves it out the lyric map sends
 the base part's words to it too, whichever lane of the printed staff the base is on
 (a per-system `follow` entry beside `map`, so the printed grouping is untouched), unless
-the lyric block gives the b-part words of its own.
+the lyric block gives the b-part words of its own. The Review stage's note check (`verification.compare_notes`)
+counts those borrowed bars as copies of the base part's notes, not as a difference.
 A rest the scan wrote in its own voice or staff stays. Naming the part that way is the
 person's reading that the single line is unison, which is what the rebuild otherwise
 refuses to guess. Answers are
