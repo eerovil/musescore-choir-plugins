@@ -205,6 +205,15 @@ def live(tmp_path_factory):
             os.environ["MUSESCORE_CLI_PATH"] = previous_cli
 
 
+@pytest.fixture(autouse=True)
+def _fresh_settings(live):
+    """A preview remembers the settings it was asked for (#301), and this module
+    shares one song, so each test starts from the defaults again."""
+    song = state.load(live[1])
+    song.data.pop("record", None)
+    song.save()
+
+
 def _open_record(page, base, slug):
     page.goto(f"{base}/#/song/{slug}")
     page.wait_for_selector(".stagebar")
