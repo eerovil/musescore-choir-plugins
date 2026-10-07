@@ -1758,9 +1758,11 @@ state model are in `DESIGN.md`.
   bar, and keeps exactly those loose ends (eerovil/homr, `resolve_slurs(keep_edges=)`).
   `_join_slurs` pairs them within one staff column when both systems print the same
   number of staves; last note to first note at the same written pitch is a tie (22 of
-  30 joins on the six songs of #274 were), and a half with no partner is dropped
-  quietly if it looks like a tie half and otherwise marked `⚠ slur?`. Measured on those
-  songs' 71 systems: 11 slurs and 18 ties restored over breaks, 7 marks.
+  30 joins on the six songs of #274 were), and a half with no partner is marked
+  `⚠ slur?` -- never dropped on a guess that it was a tie, since the same pitch across
+  the break may be another staff's; only a half on a note already tied that way goes
+  quietly. Measured on those songs' 71 systems: 11 slurs and 18 ties restored over
+  breaks, 26 marks (most of them tie halves across a change in staff count).
   **The meter is decided here, and this pull request proposes that** (#177). homr has no
   token for a numerator — its vocabulary holds only `timeSignature/<denominator>` — so the
   number of beats does not exist in what the model can emit and is inferred afterwards

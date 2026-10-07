@@ -1369,14 +1369,35 @@ def test_a_tie_over_the_break_comes_back_as_a_tie(tmp_path):
     assert _marks(out) == []
 
 
-def test_a_tie_half_that_cannot_be_joined_is_dropped_quietly(tmp_path):
-    """The staff count changes at the break, so the halves cannot be joined; a
-    half on the edge note with the same pitch across the break is a tie, not a
-    doubtful slur, and marking it would send somebody to check every tie."""
+def test_a_half_that_cannot_be_joined_is_marked_even_beside_a_held_note(tmp_path):
+    """The staff count changes at the break, so the halves cannot be joined. The
+    same pitch opening the next system says nothing about which staff or voice
+    it belongs to, so the half is marked rather than guessed to be a tie."""
     out = omr_systems.assemble(
         [_held_over_system(1, 2, {(2, 1, 4): "start"}, "G"),
          _held_over_system(2, 3, {(3, 1, 1): "stop"}, "G")],
         str(tmp_path / "a.musicxml"))
+    assert _slurs(out) == []
+    assert sorted(_marks(out)) == [(1, "⚠ slur?"), (2, "⚠ slur?")]
+
+
+def test_an_unmatched_slur_is_marked_when_another_staff_has_its_pitch(tmp_path):
+    """A loose start on staff 1 whose pitch opens the next system on staff 2:
+    a slur homr lost the other half of, not a tie, and it must not vanish."""
+    first = _slurred_system(1, 2, {(1, 1, 4): "start"})
+    second = _slurred_system(2, 2, {})
+    second.staves[1].measures[0].findall("note")[0].find("pitch/step").text = "F"
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    assert _slurs(out) == []
+    assert _marks(out) == [(1, "⚠ slur?")]
+
+
+def test_a_loose_half_on_a_note_already_tied_that_way_is_dropped_quietly(tmp_path):
+    first = _slurred_system(1, 1, {(1, 1, 4): "start"})
+    last = first.staves[0].measures[0].findall("note")[3]
+    last.insert(2, etree.Element("tie", type="start"))
+    out = omr_systems.assemble([first, _slurred_system(2, 1, {})],
+                               str(tmp_path / "a.musicxml"))
     assert _slurs(out) == []
     assert _marks(out) == []
 

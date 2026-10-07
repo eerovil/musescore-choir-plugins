@@ -801,10 +801,13 @@ def _join_slurs(score: etree._Element, scans: Sequence[SystemScan]) -> None:
     pairs joined here were a held note tied over the line, so a pair from the
     system's last note to the next system's first note at the same pitch is
     written as a tie (the whole written pitch: Shakkitarina's B natural slurred
-    to B flat over the break is a slur). A loose half that looks like one -- on the edge note,
-    with the same pitch at the other side of the break in any staff -- is a tie
-    that cannot be joined because the staff count changes; it is dropped
-    quietly, which is what happened to every such tie before.
+    to B flat over the break is a slur).
+
+    **A half without a partner is never dropped silently** on a guess that it
+    was a tie: the same pitch across the break may be another staff's or another
+    voice's note, and a slur that disappears unmarked is the failure #318 exists
+    to stop. The one quiet case is a half on a note that already carries a tie
+    the same way, which is the same arc written twice.
 
     Any other half without a partner is taken out and its note marked red under
     `⚠ slur?`, the way homr marks its own doubts: either the page carries a slur
@@ -817,25 +820,11 @@ def _join_slurs(score: etree._Element, scans: Sequence[SystemScan]) -> None:
     for scan in scans:
         starts_at.append(at)
         at += scan.bars
-    # The pitches each system ends and starts on, over every staff: what a loose
-    # tie half is recognised by when its partner is in another column.
-    ending: Dict[int, set] = {}
-    opening: Dict[int, set] = {}
-    for part in parts:
-        measures = part.findall("measure")
-        for system, first in enumerate(starts_at):
-            last = first + scans[system].bars - 1
-            if last < len(measures):
-                ending.setdefault(system, set()).update(
-                    _step_octave(n) for n in _edge_notes(measures[last], last=True))
-            if first < len(measures):
-                opening.setdefault(system, set()).update(
-                    _step_octave(n) for n in _edge_notes(measures[first], last=False))
     for column, part in enumerate(parts):
-        _join_column(part, scans, column, starts_at, ending, opening)
+        _join_column(part, scans, column, starts_at)
 
 
-def _join_column(part, scans, column, starts_at, ending, opening) -> None:
+def _join_column(part, scans, column, starts_at) -> None:
     measures = part.findall("measure")
     loose_starts: Dict[int, List[_LooseEnd]] = {}
     loose_stops: Dict[int, List[_LooseEnd]] = {}
@@ -898,12 +887,10 @@ def _join_column(part, scans, column, starts_at, ending, opening) -> None:
             stop.slur.set("number", number)
         for end in starts:
             if id(end) not in paired:
-                _drop_loose_end(end, tie_half=_on_edge(end.note, last=True)
-                                and _step_octave(end.note) in opening.get(system + 1, set()))
+                _drop_loose_end(end, already_tied=_has_tie(end.note, "start"))
         for end in stops:
             if id(end) not in paired:
-                _drop_loose_end(end, tie_half=_on_edge(end.note, last=False)
-                                and _step_octave(end.note) in ending.get(system, set()))
+                _drop_loose_end(end, already_tied=_has_tie(end.note, "stop"))
 
 
 def _written_pitch(note: etree._Element) -> Tuple[str, str, int]:
@@ -957,9 +944,15 @@ def _remove_slur(end: _LooseEnd) -> None:
         end.note.remove(notations)
 
 
-def _drop_loose_end(end: _LooseEnd, tie_half: bool = False) -> None:
+def _has_tie(note: etree._Element, kind: str) -> bool:
+    return any(tie.get("type") == kind for tie in note.findall("tie"))
+
+
+def _drop_loose_end(end: _LooseEnd, already_tied: bool = False) -> None:
+    """Take out a half with no partner, marking its note -- unless the note
+    already carries a tie the same way, which is the same arc said twice."""
     _remove_slur(end)
-    if not tie_half:
+    if not already_tied:
         _mark_note(end.note, "slur?")
 
 
