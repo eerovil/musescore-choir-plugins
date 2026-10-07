@@ -164,6 +164,79 @@ def test_the_pick_comes_back_on_a_rebuild(make_song, tmp_path):
                                                                          "quarter.:50"]
 
 
+def _rebuild(tmp_path, staves):
+    rebuilt = tmp_path / "rebuilt.mscx"
+    rebuilt.write_text(_score(staves))
+    return rebuilt
+
+
+def _rebuilt_tokens(rebuilt, staff, measure=3):
+    root = etree.parse(str(rebuilt)).getroot()
+    return score_fixes._bar_tokens(score_fixes._measure(root, staff, measure))
+
+
+def test_a_pick_follows_its_notes_when_the_parts_are_regrouped(make_song, tmp_path):
+    # #291: the grid was answered again, and the part the pick was made on is now
+    # the second staff, under another name. Replaying it on staff 1 failed the clean.
+    song = make_song()
+    [offer] = bar_readings.offers(song)
+    bar_readings.record_pick(song, offer["id"], "b")
+    rebuilt = _rebuild(tmp_path, ((1, "S1", 7), (2, "S2b", 0)))
+    logged = []
+    assert pipeline.apply_recorded_fixes(str(rebuilt), song.dir, logged.append) == 1
+    assert _rebuilt_tokens(rebuilt, 2) == ["quarter.:48", "eighth:50"]
+    assert _rebuilt_tokens(rebuilt, 1) == ["quarter:55", "quarter:57"]
+    [entry] = _fixes(song)
+    assert (entry["staff"], entry["part"]) == (2, "S2b")
+    assert any("Moved the reading picked for bar 3 from B1 (staff 1) to S2b (staff 2)" in line
+               for line in logged)
+    # Moved once, it stays put on the next clean.
+    logged.clear()
+    pipeline.apply_recorded_fixes(str(_rebuild(tmp_path, ((1, "S1", 7), (2, "S2b", 0)))),
+                                  song.dir, logged.append)
+    assert not any("Moved" in line for line in logged)
+
+
+def test_a_pick_whose_voice_is_gone_is_dropped_not_fatal(make_song, tmp_path):
+    song = make_song()
+    [offer] = bar_readings.offers(song)
+    bar_readings.record_pick(song, offer["id"], "b")
+    rebuilt = _rebuild(tmp_path, ((1, "S1", 7),))
+    logged = []
+    assert pipeline.apply_recorded_fixes(str(rebuilt), song.dir, logged.append) == 0
+    assert _fixes(song) == []
+    assert any("Dropped the reading picked for bar 3" in line for line in logged)
+
+
+def test_picks_on_voices_reading_alike_land_on_one_staff_each(make_song, tmp_path):
+    doubled = json.loads(json.dumps(READINGS))
+    doubled["bars"].append({**doubled["bars"][0], "voice": "2"})
+    song = make_song(staves=((1, "B1", 0), (2, "B2", 0)), readings=doubled)
+    first, second = bar_readings.offers(song)
+    bar_readings.record_pick(song, first["id"], "b")
+    bar_readings.record_pick(song, second["id"], "b")
+    # Both parts move down past a new top staff.
+    rebuilt = _rebuild(tmp_path, ((1, "S1", 7), (2, "B1", 0), (3, "B2", 0)))
+    assert pipeline.apply_recorded_fixes(str(rebuilt), song.dir) == 2
+    assert sorted(e["staff"] for e in _fixes(song)) == [2, 3]
+    assert _rebuilt_tokens(rebuilt, 2) == _rebuilt_tokens(rebuilt, 3) == ["quarter.:48",
+                                                                         "eighth:50"]
+
+
+def test_a_hand_written_rhythm_entry_stays_strict(make_song, tmp_path):
+    song = make_song()
+    [offer] = bar_readings.offers(song)
+    bar_readings.record_pick(song, offer["id"], "b")
+    [entry] = _fixes(song)
+    del entry["source"]
+    with open(song.path("fixes.json"), "w") as fh:
+        json.dump([entry], fh)
+    rebuilt = _rebuild(tmp_path, ((1, "S1", 7), (2, "S2b", 0)))
+    with pytest.raises(RuntimeError, match="no longer matches"):
+        pipeline.apply_recorded_fixes(str(rebuilt), song.dir)
+    assert _fixes(song)[0]["staff"] == 1
+
+
 def test_none_of_these_keeps_the_reading_and_is_remembered(make_song):
     song = make_song()
     [offer] = bar_readings.offers(song)

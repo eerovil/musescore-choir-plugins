@@ -30,7 +30,10 @@ leaves every syllable on its note. `run_clean` replays it like any other entry.
 Each entry carries the content stamp of the fragment it was offered from, and **when
 that system is read again and comes back different the pick is dropped** before the
 next clean, so the bar asks again rather than writing an old answer over a new
-reading. "None of these" is kept in the song state against the same stamp: the
+reading. **A pick follows its notes, too** (#291): re-answering the per-system grid
+moves a part to another staff, so on a rebuild a pick whose staff no longer holds
+the bar it was made on goes to the staff that does, and one whose notes are nowhere
+in the bar any more is dropped, with a line in the clean's log either way. "None of these" is kept in the song state against the same stamp: the
 reading stays as homr wrote it, the red mark stays, and the bar is fixed in
 MuseScore.
 """
@@ -490,6 +493,63 @@ def drop_stale_picks(song: state.Song, log: Logger = _noop) -> int:
             log(f"Dropped the reading picked for bar {fix.get('measure')}: system "
                 f"{fix.get('system')} has been read again since.")
     return len(gone)
+
+
+def relocate_picks(root: etree._Element, entries: List[Dict],
+                   log: Logger = _noop) -> Tuple[List[Dict], bool]:
+    """Point each pick at the staff of `root` that holds the bar it was made on.
+
+    Returns the entries to replay and whether any pick moved or was dropped. A pick
+    names a cleaned staff, and cleaning numbers staves by the parts the per-system
+    grid names: answer the grid differently and the same notes land on another staff,
+    so a pick replayed by number checks the wrong bar and fails the clean (#291).
+    The notes are what the pick was checked against when it was made, so they are
+    what finds it again. A staff a pick already stands on is kept first; among the
+    rest the first match in staff order that no other pick in that bar has taken
+    wins, the rule `offers` uses for voices that read alike. A pick whose notes are
+    on no staff is dropped: its voice is gone from the score, and if the bar is
+    still on offer somewhere the Fix panel asks again. Every other kind of entry is
+    passed through untouched and stays strict.
+    """
+    staves = _staves(root)
+    picks = [fix for fix in entries if fix.get("source") == SOURCE and fix.get("kind") == "rhythm"]
+    pick_ids = {id(fix) for fix in picks}
+    taken: Dict[int, set] = {}
+
+    def reads(sid, measure, tokens) -> bool:
+        staff = next((st for s, _, st in staves if s == sid), None)
+        bar = _bar(staff, measure) if staff is not None else None
+        return bar is not None and score_fixes._bar_tokens(bar) == list(tokens)
+
+    # Picks still standing where they were claim their staves before any moves.
+    staying = set()
+    for fix in picks:
+        measure, sid = int(fix.get("measure", 0)), int(fix.get("staff", 0))
+        if sid not in taken.setdefault(measure, set()) and reads(sid, measure, fix.get("from", [])):
+            taken[measure].add(sid)
+            staying.add(id(fix))
+    out: List[Dict] = []
+    changed = False
+    for fix in entries:
+        if id(fix) not in pick_ids or id(fix) in staying:
+            out.append(fix)
+            continue
+        measure = int(fix.get("measure", 0))
+        claimed = taken.setdefault(measure, set())
+        match = next(((sid, name) for sid, name, _ in staves
+                      if sid not in claimed and reads(sid, measure, fix.get("from", []))), None)
+        changed = True
+        was = f"{fix.get('part') or 'staff'} (staff {fix.get('staff')})"
+        if match is None:
+            log(f"Dropped the reading picked for bar {measure} of {was}: no part sings "
+                "those notes in that bar any more.")
+            continue
+        sid, name = match
+        claimed.add(sid)
+        out.append({**fix, "staff": sid, "part": name})
+        log(f"Moved the reading picked for bar {measure} from {was} to {name} "
+            f"(staff {sid}): the parts were regrouped.")
+    return out, changed
 
 
 # ---------------------------------------------------------------- engraving an option
