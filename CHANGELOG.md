@@ -5,6 +5,11 @@ grouped by the day they were merged, and each line names its pull request
 (`#123`) on GitHub. Changes that only touch tests, measurements or the notes for
 developers are listed under *Behind the scenes*.
 
+## 2026-10-07
+
+- In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
+  words) in every bar where it has none of its own, instead of resting. (#293)
+
 ## 2026-10-06
 
 - A scanned song moves on to Clean as soon as every system is read; there is no
