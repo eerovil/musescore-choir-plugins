@@ -44,6 +44,34 @@ def test_note_comparison_reports_pass_and_difference(tmp_path):
     assert verification.compare_notes(str(source), str(cleaned))["status"] == "warning"
 
 
+def test_notes_a_b_part_borrows_from_its_base_part_are_not_a_difference(tmp_path):
+    """#293: a per-system S1b sings S1's notes where it has none, so the cleaned score
+    holds a copy the source has once. Only those copies are allowed; anything else
+    still warns."""
+    source = tmp_path / "source.mscx"
+    cleaned = tmp_path / "cleaned.mscx"
+    one = """<museScore><Score>
+<Part><trackName>S1</trackName><Staff id="1"/></Part>
+<Staff id="1"><Measure><voice><Chord><Note><pitch>72</pitch></Note></Chord></voice></Measure></Staff>
+</Score></museScore>"""
+    two = """<museScore><Score>
+<Part><trackName>S1</trackName><Staff id="1"/></Part>
+<Part><trackName>{name}</trackName><Staff id="2"/></Part>
+<Staff id="1"><Measure><voice><Chord><Note><pitch>72</pitch></Note></Chord></voice></Measure></Staff>
+<Staff id="2"><Measure><voice><Chord><Note><pitch>{pitch}</pitch></Note></Chord></voice></Measure></Staff>
+</Score></museScore>"""
+    source.write_text(one)
+    cleaned.write_text(two.format(name="S1b", pitch=72))
+    result = verification.compare_notes(str(source), str(cleaned))
+    assert result["status"] == "passed", result
+    assert "1 more" in result["detail"]
+
+    cleaned.write_text(two.format(name="S2", pitch=72))      # not a b-part
+    assert verification.compare_notes(str(source), str(cleaned))["status"] == "warning"
+    cleaned.write_text(two.format(name="S1b", pitch=74))     # a note the source never had
+    assert verification.compare_notes(str(source), str(cleaned))["status"] == "warning"
+
+
 def test_probe_requires_picture_sound_duration_and_reports_metadata(tmp_path, monkeypatch):
     media = tmp_path / "voice.mp4"
     media.write_bytes(b"video")
