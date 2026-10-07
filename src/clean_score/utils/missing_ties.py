@@ -12,40 +12,99 @@ from .utils import loop_staff, resolve_duration
 logger = logging.getLogger(__name__)
 
 
-def add_missing_ties(root):
-    # Find all tied notes (two notes each)
-    # Check all other staffs, if they have same lenght notes at the same time position
-    # Add slurs to the notes in the other staffs
-    tied_notes_by_measure_time_pos: Dict[Tuple[int, int], List[etree._Element]] = (
-        defaultdict(list)
-    )
+Rhythm = Tuple[Tuple[int, str, str, str], ...]
+
+
+def _bar_rhythms(root) -> Dict[Tuple[str, int, int], Rhythm]:
+    """{(staff id, measure index, voice index): every chord and rest, in order}."""
+    rhythms: Dict[Tuple[str, int, int], list] = defaultdict(list)
     for staff in root.findall(".//Score/Staff"):
-        span_index = None
+        for el in loop_staff(staff):
+            e = el["element"]
+            if e.tag not in ("Chord", "Rest"):
+                continue
+            rhythms[(staff.get("id"), el["measure_index"], el["voice_index"])].append(
+                (
+                    el["time_pos"],
+                    e.tag,
+                    e.findtext(".//durationType") or "",
+                    e.findtext(".//dots") or "0",
+                )
+            )
+    return {key: tuple(events) for key, events in rhythms.items()}
+
+
+def _shares_rhythm(rhythms, donor, target) -> bool:
+    """The two voices strike the same rhythm up to the end of the tie.
+
+    Equal pitch over an equal span is not enough: two voices can sound the same
+    pitch on the same beats and still be printed as separate notes, as an
+    ostinato against a held line is. A dropped tie is recovered only where the
+    target sings the donor's rhythm across the whole bar the tie starts in and,
+    when it crosses a barline, the next bar up to the note it ends on (#284).
+    What follows the tie is not compared: voices that move together into a held
+    note often part straight after it.
+    """
+    first, second = donor
+    a = rhythms.get((first["staff_id"], first["measure_index"], first["voice_index"]))
+    b = rhythms.get((target[0]["staff_id"], first["measure_index"], target[0]["voice_index"]))
+    if a is None or a != b:
+        return False
+    if second["measure_index"] == first["measure_index"]:
+        return True
+
+    def upto_end(staff_id, voice_index):
+        events = rhythms.get((staff_id, second["measure_index"], voice_index), ())
+        return tuple(e for e in events if e[0] <= second["time_pos"])
+
+    return upto_end(second["staff_id"], second["voice_index"]) == upto_end(
+        target[1]["staff_id"], target[1]["voice_index"]
+    )
+
+
+def add_missing_ties(root) -> List[Dict[str, Any]]:
+    """Copy a tie onto a voice that lost it, from a parallel voice that kept it.
+
+    Only where the target has the same two durations at the same time, the same
+    pitch on both notes, and the donor's rhythm up to the end of the tie
+    (`_shares_rhythm`). The donor's pitch is deliberately not compared: voices
+    in harmony tie together on different notes, and that is the case this exists for.
+    Returns where a tie was added (staff id, measure index, time position).
+    """
+    rhythms = _bar_rhythms(root)
+    tied_notes_by_measure_time_pos: Dict[
+        Tuple[int, int], List[List[Dict[str, Any]]]
+    ] = defaultdict(list)
+    for staff in root.findall(".//Score/Staff"):
+        open_tie = None
         for el in loop_staff(staff):
             if el["element"].tag == "Chord":
                 measure_index: int = el["measure_index"]
                 time_pos: int = el["time_pos"]
-                if span_index is not None:
-                    # We have a span starter, so this is the next note
-                    tied_notes_by_measure_time_pos[span_index].append(el["element"])
-                    span_index = None
-                    continue
+                record = {
+                    "staff_id": staff.get("id"),
+                    "measure_index": measure_index,
+                    "voice_index": el["voice_index"],
+                    "time_pos": time_pos,
+                    "element": el["element"],
+                }
+                if open_tie is not None:
+                    # We have a span starter, so this is the next note. In a chain
+                    # of ties it may start the next tie as well.
+                    open_tie.append(record)
+                    open_tie = None
 
-                spanner: Optional[etree._Element] = el["element"].find(
-                    ".//Spanner[@type='Tie']"
-                )
-                if spanner is not None:
-                    if spanner.find(".//next") is not None:
-                        span_index = (measure_index, time_pos)
-                        tied_notes_by_measure_time_pos[(measure_index, time_pos)] = [
-                            el["element"]
-                        ]
+                if el["element"].find(".//Spanner[@type='Tie'][next]") is not None:
+                    open_tie = [record]
+                    tied_notes_by_measure_time_pos[(measure_index, time_pos)].append(
+                        open_tie
+                    )
 
     logger.debug(
         f"Found {tied_notes_by_measure_time_pos.keys()} tied notes by measure and time position"
     )
+    added: List[Dict[str, Any]] = []
     for staff in root.findall(".//Score/Staff"):
-        span_index = None
         new_tied_notes = []
         for el in loop_staff(staff):
             if el["element"].tag == "Chord":
@@ -61,6 +120,7 @@ def add_missing_ties(root):
                             {
                                 "staff_id": staff.get("id"),
                                 "measure_index": measure_index,
+                                "voice_index": el["voice_index"],
                                 "time_pos": time_pos,
                                 "element": el["element"],
                             }
@@ -77,6 +137,7 @@ def add_missing_ties(root):
                                 {
                                     "staff_id": staff.get("id"),
                                     "measure_index": measure_index,
+                                    "voice_index": el["voice_index"],
                                     "time_pos": time_pos,
                                     "element": el["element"],
                                 }
@@ -85,38 +146,12 @@ def add_missing_ties(root):
 
         logger.debug(f"new_tied_notes for staff {staff.get('id')}: {new_tied_notes}")
 
-        # Check that each two notes match their parents in the tied_notes_by_measure_time_pos
+        # Check that each two notes match a parent pair in tied_notes_by_measure_time_pos
         for note_pair in new_tied_notes:
             if len(note_pair) != 2:
                 continue
             note1: Dict[str, Any] = note_pair[0]
             note2: Dict[str, Any] = note_pair[1]
-            parent_pair: List[etree._Element] = tied_notes_by_measure_time_pos.get(
-                (note1["measure_index"], note1["time_pos"]), []
-            )
-            if len(parent_pair) != 2:
-                logger.warning(
-                    f"Found a note pair with no matching parent pair: {note1}, {note2}"
-                )
-                continue
-
-            note1_duration = resolve_duration(
-                note1["element"].find(".//durationType").text
-            )
-            note2_duration = resolve_duration(
-                note2["element"].find(".//durationType").text
-            )
-            parent1_duration = resolve_duration(
-                parent_pair[0].find(".//durationType").text
-            )
-            parent2_duration = resolve_duration(
-                parent_pair[1].find(".//durationType").text
-            )
-            if note1_duration != parent1_duration or note2_duration != parent2_duration:
-                logger.warning(
-                    f"Note durations do not match parent pair: {note1_duration}, {note2_duration} != {parent1_duration}, {parent2_duration}"
-                )
-                continue
 
             # If notes are not same pitch, skip
             pitch1_el: Optional[etree._Element] = note1["element"].find(".//pitch")
@@ -130,17 +165,51 @@ def add_missing_ties(root):
                 pitch1 = int(pitch1_el.text)
                 pitch2 = int(pitch2_el.text)
                 if pitch1 != pitch2:
-                    logger.warning(
+                    logger.debug(
                         f"Note pitches do not match: {pitch1} != {pitch2}, skipping adding tie"
                     )
                     continue
 
-            # Clone the spanner from the parent pair to the note pair
-            spanner1: Optional[etree._Element] = parent_pair[0].find(
-                ".//Spanner[@type='Tie']"
+            note1_duration = resolve_duration(
+                note1["element"].find(".//durationType").text
             )
-            spanner2: Optional[etree._Element] = parent_pair[1].find(
-                ".//Spanner[@type='Tie']"
+            note2_duration = resolve_duration(
+                note2["element"].find(".//durationType").text
+            )
+            parent_pair = None
+            for candidate in tied_notes_by_measure_time_pos.get(
+                (note1["measure_index"], note1["time_pos"]), []
+            ):
+                if len(candidate) != 2:
+                    continue
+                if (
+                    resolve_duration(candidate[0]["element"].find(".//durationType").text)
+                    != note1_duration
+                    or resolve_duration(
+                        candidate[1]["element"].find(".//durationType").text
+                    )
+                    != note2_duration
+                ):
+                    continue
+                if not _shares_rhythm(rhythms, candidate, note_pair):
+                    logger.debug(
+                        f"Not copying tie to staff {staff.get('id')}, measure {note1['measure_index']}: "
+                        f"staff {candidate[0]['staff_id']} has it but sings a different rhythm"
+                    )
+                    continue
+                parent_pair = candidate
+                break
+            if parent_pair is None:
+                continue
+
+            # Clone the spanner from the parent pair to the note pair
+            # A note in the middle of a chain holds two tie halves: take the
+            # one that starts this tie and the one that ends it.
+            spanner1: Optional[etree._Element] = parent_pair[0]["element"].find(
+                ".//Spanner[@type='Tie'][next]"
+            )
+            spanner2: Optional[etree._Element] = parent_pair[1]["element"].find(
+                ".//Spanner[@type='Tie'][prev]"
             )
             if spanner1 is not None and spanner2 is not None:
                 new_spanner1: etree._Element = deepcopy(spanner1)
@@ -151,6 +220,13 @@ def add_missing_ties(root):
                 if note_e1 is not None and note_e2 is not None:
                     note_e1.append(new_spanner1)
                     note_e2.append(new_spanner2)
+                    added.append(
+                        {
+                            "staff_id": note1["staff_id"],
+                            "measure_index": note1["measure_index"],
+                            "time_pos": note1["time_pos"],
+                        }
+                    )
 
                 logger.debug(
                     f"Added spanner to note pair for staff {staff.get('id')}, measure {note1['measure_index']}, time position {note1['time_pos']}"
@@ -159,3 +235,4 @@ def add_missing_ties(root):
                 logger.warning(
                     f"Spanner not found in parent pair for staff {staff.get('id')}, measure {note1['measure_index']}, time position {note1['time_pos']}"
                 )
+    return added
