@@ -32,6 +32,7 @@ clean_score.py           CLI wrapper → src/clean_score/main.py (split voices i
 lyric_txt.py             CLI wrapper → src/clean_score/lyric_txt.py (lyrics <-> txt/json)
 rename_parts.py          Standalone CLI: rename Part/Instrument names + add click staff
 record_stemmanauha.py    CLI wrapper → src/stemmanauha (record practice video)
+backfill_staff_lines.py  One-off: add `stemmanauha-staff: N/M` to uploaded videos' descriptions
 scroll_video.py          CLI wrapper → src/scrollvideo (render scrolling practice video)
 src/song_app/            Local web app tying the workflow together (see DESIGN.md)
   state.py               Song state machine (.song.json), slug, stages
@@ -60,6 +61,7 @@ src/scrollvideo/         Scrolling practice video rendered from the score (no GU
 src/stemmanauha/         Audio/video recording automation (macOS, AppleScript + OBS/ffmpeg)
   create_video.py        Orchestrates mp3 export -> video record -> merge -> upload
   upload_to_youtube.py   YouTube Data API upload
+  staff_lines.py         Each part's staff, written into its video's description (#323)
   *.scpt                 AppleScript files driving MuseScore + QuickRecorder
 fixtures/                In-repo prototyping song + the OMR benchmark's PD slice
                          (see fixtures/*/README.md, STEPS.md)
@@ -80,7 +82,8 @@ CHANGELOG.md             What changed, by merge date — add a line for each use
   `ffmpeg`/`ffprobe` on PATH, and macOS with MuseScore 3 + QuickRecorder).
 - Config is via `.env` (falls back to `.env.default`). Keys:
   `MUSESCORE_CLI_PATH`, `MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
-  `YOUTUBE_CLIENT_SECRETS_PATH`. Never commit real secrets;
+  `YOUTUBE_CLIENT_SECRETS_PATH`, and optionally `STEMMANAUHAT_DISPATCH_TOKEN` /
+  `STEMMANAUHAT_REPO` (site refresh after upload). Never commit real secrets;
   `.env`, `client_secrets.json`, and `token.pickle` are gitignored.
 - The CLI wrappers import the package via `from src.clean_score... import ...`,
   so **run them from the repo root** (e.g. `./clean_score.py ...`). Their shebang is the
@@ -908,7 +911,12 @@ state model are in `DESIGN.md`.
   name is editable on the Start panel (`POST /rename`); if videos are already
   uploaded, it retitles them (and the playlist) on YouTube in the background via
   `rename_uploads` (each upload stores its `part`, so titles rebuild as
-  "<new name> <part>"). The folder slug never changes. All YouTube API calls go
+  "<new name> <part>"). The folder slug never changes. After an upload run that uploaded something,
+  and after `/youtube-delete`, `site_refresh.refresh_stemmanauhat` dispatches the
+  `eerovil/stemmanauhat` site's *Update Videos* workflow (#321): its own schedule
+  runs only a few times a day, so a new song otherwise took hours to appear there.
+  Off without `STEMMANAUHAT_DISPATCH_TOKEN` in `.env`; a failure is a log line and
+  never fails the upload. All YouTube API calls go
   through `_with_retry`/`_execute` (`upload_to_youtube.py`): 429 / 5xx / rate-limit
   reasons are retried with exponential backoff + jitter (6 tries; the resumable
   upload's `next_chunk` resumes on retry), while a daily-quota 403 raises
