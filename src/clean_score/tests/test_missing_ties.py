@@ -107,3 +107,13 @@ def test_any_donor_in_the_same_rhythm_will_do():
                   ["q55 q59 q59 q55"])
     add_missing_ties(root)
     assert _ties(root, 3) == [(1, 1)]
+
+
+def test_voices_in_harmony_share_a_tie_on_their_own_pitches():
+    # Deliberate: a copied tie joins two notes of the target's own pitch, not the
+    # donor's. Voices holding a chord tie together on different notes (Vieläkö
+    # huvittaisi bar 8 prints it in all four), so requiring the donor's pitch would
+    # drop most real recoveries — 73 ties across songs/ down to 19.
+    root = _score(["q69 q69~ h69"], ["q64 q64 h64"])
+    add_missing_ties(root)
+    assert _ties(root, 2) == [(1, 1)]

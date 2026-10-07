@@ -67,7 +67,8 @@ def add_missing_ties(root) -> List[Dict[str, Any]]:
 
     Only where the target has the same two durations at the same time, the same
     pitch on both notes, and the donor's rhythm up to the end of the tie
-    (`_shares_rhythm`).
+    (`_shares_rhythm`). The donor's pitch is deliberately not compared: voices
+    in harmony tie together on different notes, and that is the case this exists for.
     Returns where a tie was added (staff id, measure index, time position).
     """
     rhythms = _bar_rhythms(root)
