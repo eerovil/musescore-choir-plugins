@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## 2026-10-07
 
+- The Record panel's Preview button now saves every setting (tempo, quality,
+  margins, shared staves, NVIDIA encoding) and starts drawing the preview at once,
+  with a progress bar and a seconds counter. A new Save settings button saves them
+  without previewing. (#301)
 - In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
   words) in every bar where it has none of its own, instead of resting. (#293)
 

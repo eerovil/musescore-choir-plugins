@@ -1049,8 +1049,15 @@ state model are in `DESIGN.md`.
   succeeded, so framing decided against a render that then failed was gone by the next
   page load. **A successful preview records it too** — nudging a margin and looking at
   the result is how the choice actually gets made, and requiring a render first lost it
-  every time. Both paths go through `_remember_margins`, which writes only a real change
-  and never while a job is running, since the state file is saved whole. A framing the
+  every time. Both paths go through `_remember_record_settings`, which writes only a real change
+  and never while a job is running, since the state file is saved whole.
+  **The panel's Preview button saves them first** (#301), through `POST /record-settings`,
+  which also backs a **Save settings** button: quality, tempo, both margins, shared
+  staves and the NVIDIA choice, checked by `_scroll_settings` — the same checks the
+  render runs. Before that Preview only opened the tab, where a second button had to be
+  found before anything was asked of the server, so nothing was kept and the tab sat
+  blank. Opening it from the panel now starts preparing at once, with a moving bar and a
+  seconds counter, since the server reports no progress for that step. A framing the
   renderer refuses is not recorded: coming back to a margin that cannot be drawn would
   be a trap. Nothing else about the preview writes to the song — no stage moves, no
   video appears.

@@ -407,3 +407,86 @@ def test_the_render_says_when_it_is_waiting_for_a_heavy_slot(live, page, monkeyp
         log.scroll_into_view_if_needed()
         expect(log).to_be_in_viewport()
         page.screenshot(path=os.path.join(evidence, "issue-101-heavy-slot-log.png"))
+
+
+
+def _forget_settings(slug):
+    """This module shares one song; a saved setting must not leak into the next test."""
+    song = state.load(slug)
+    song.data.pop("record", None)
+    song.save()
+
+
+def test_pressing_preview_keeps_the_settings_and_starts_drawing(record_panel):
+    """#301: Preview used to only open the tab, so nothing was kept and nothing
+    happened until a second button was found there."""
+    view, slug, _ = record_panel
+    held = []
+    view.route("**/scroll-preview?**", lambda route: held.append(route))
+    try:
+        view.locator(".record-advanced").locator("summary").click()
+        view.locator('input[data-video-margin="bottom"]').fill("11")
+        view.locator("input[data-staff-groups]").fill("S+A")
+        view.locator("input[data-hardware-encoding]").uncheck()
+        view.locator(".record-actions").get_by_role("button", name="Preview").click()
+
+        # The tab is working at once, and says so, without a second click.
+        expect(view.locator(".pvprogress")).to_be_visible()
+        expect(view.locator(".pvstatus")).to_contain_text("Drawing the score")
+        expect(view.locator(".pvstatus")).to_contain_text("usually 10–30 s")
+        assert held, "the preview was not asked for"
+        _screenshot(view, "issue-301-preview-preparing.png")
+
+        rec = state.load(slug).data["record"]
+        assert rec["bottom_margin"] == 11
+        assert rec["staff_groups"] == "S+A"
+        assert rec["hardware_encoding"] is False
+
+        view.reload()
+        view.locator(".stagebar .step", has_text="Record").click()
+        view.locator(".record-advanced").locator("summary").click()
+        expect(view.locator('input[data-video-margin="bottom"]')).to_have_value("11")
+        expect(view.locator("input[data-staff-groups]")).to_have_value("S+A")
+        expect(view.locator("input[data-hardware-encoding]")).not_to_be_checked()
+    finally:
+        for route in held:
+            route.abort()
+        _forget_settings(slug)
+
+
+def test_save_settings_keeps_them_and_says_so(record_panel):
+    view, slug, _ = record_panel
+    try:
+        view.locator(".record-advanced").locator("summary").click()
+        view.locator('input[data-video-margin="top"]').fill("6")
+        expect(view.locator("[data-save-note]")).to_have_text("Unsaved changes")
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_have_text("Saved")
+        _screenshot(view, "issue-301-saved.png")
+        assert state.load(slug).data["record"]["top_margin"] == 6
+    finally:
+        _forget_settings(slug)
+
+
+def test_a_refused_setting_is_said_and_the_preview_stays_shut(record_panel):
+    view, slug, _ = record_panel
+    try:
+        view.locator(".record-advanced").locator("summary").click()
+        view.locator("input[data-staff-groups]").fill("S+Q")
+        view.locator(".record-actions").get_by_role("button", name="Preview").click()
+        expect(view.locator("[data-save-note]")).to_contain_text("Q")
+        expect(view.locator(".pvprogress")).to_be_hidden()
+        assert "staff_groups" not in state.load(slug).data.get("record", {})
+    finally:
+        _forget_settings(slug)
+
+
+def test_the_save_row_fits_a_phone(live, page):
+    base, slug = live
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{base}/#/song/{slug}")
+    page.locator(".mobilebar").get_by_role("button", name="Record").click()
+    expect(page.get_by_role("button", name="Save settings")).to_be_in_viewport()
+    expect(page.get_by_role("button", name="Render all 4 parts")).to_be_in_viewport()
+    assert not _page_overflows(page)
+    _screenshot(page, "issue-301-record-390.png")

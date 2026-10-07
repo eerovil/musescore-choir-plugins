@@ -258,7 +258,7 @@ table.grid input.unset { border-color: var(--warn); }
 .record-common { margin-top: 10px; }
 .record-advanced { margin: 12px 0; border: 1px solid var(--line); border-radius: 9px; padding: 0 10px; }
 .record-advanced summary { cursor: pointer; padding: 10px 0; color: var(--muted); }
-.record-actions { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+.record-actions { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 8px; }
 .record-actions.screen { grid-template-columns: 1fr; }
 .record-actions .primary { width: 100%; }
 .result { margin: 12px 0; }
@@ -355,6 +355,14 @@ table.grid input.unset { border-color: var(--warn); }
 .pvtime { font-variant-numeric: tabular-nums; color: var(--muted); }
 .pvstatus { margin: .3rem 0; color: var(--muted); font-size: .85rem; }
 .pvstatus.err { color: #b3261e; }
+.save-note { display: block; min-height: 1.2em; margin-top: 4px; }
+.save-note.err { color: #b3261e; }
+/* No real percentage exists while the score is drawn, so the bar only says "working". */
+.pvprogress { position: relative; height: 4px; width: min(100%, 360px); overflow: hidden;
+  border-radius: 2px; background: rgba(127, 127, 127, .25); margin: .3rem 0; }
+.pvprogress::after { content: ""; position: absolute; top: 0; bottom: 0; width: 35%;
+  background: #4c8dff; animation: pvprogress 1.3s ease-in-out infinite; }
+@keyframes pvprogress { from { left: -35%; } to { left: 100%; } }
 .pvaudio-controls { align-items: center; gap: .5rem; margin-top: .35rem; }
 .pvaudio { flex: 1 1 16rem; min-width: 12rem; max-width: 100%; height: 34px; }
 .pvaudio-status { color: var(--muted); font-size: .8rem; }
