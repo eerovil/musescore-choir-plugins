@@ -846,7 +846,7 @@ def api_problems(slug: str) -> Dict:
 
 @app.post("/api/songs/{slug}/problems/pick")
 def api_pick_problem(slug: str, body: Dict) -> Dict:
-    """Apply a person's answer to one problem's choice: a reading, a pitch or a slur."""
+    """Apply a person's answer to one problem's choice: a reading, a slur or a repeat."""
     song = _require(slug)
     _cleaned_or_400(song)
     body = body or {}
@@ -860,6 +860,8 @@ def api_pick_problem(slug: str, body: Dict) -> Dict:
     try:
         if kind == "slur":
             done = problems.record_slur_choice(song, choice, letter)
+        elif kind == "repeat":
+            done = problems.record_repeat_choice(song, choice, letter)
         else:
             done = bar_readings.record_pick(song, choice, letter)
     except FixError as exc:

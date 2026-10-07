@@ -21,6 +21,12 @@ Where each part comes from, and why:
   #295) — and for a slur cleaning took out because it ran from
   one singer into another, the slur back in either singer, both, or none — worked out
   here from where cleaning recorded the two halves (`cross_voice_slurs.removed_slurs`).
+- **A repeat with no start** (#312): an end-repeat sign with no start-repeat sign since
+  the previous end (or since bar 1) is asked about, because homr misses a start sign
+  that opens a printed system and the practice track then repeats the wrong bars. The
+  choices are the first bar of each printed system in between, and **a**, leaving it
+  as it is — the right answer when the page prints no start sign, kept in
+  `.song.json` (`repeats.kept`) so the question is asked once.
 
 Nothing here decides anything about the music: the rows are what is already known,
 put side by side.
@@ -42,6 +48,8 @@ from . import bar_readings, pdf_systems, pipeline, state
 
 #: What marks a `fixes.json` entry as a slur choice made here.
 SLUR_SOURCE = "slur-choice"
+#: ...and as a repeat choice.
+REPEAT_SOURCE = "repeat-choice"
 
 
 def _system_of(bounds: List[Tuple[int, int, int]], measure: Optional[int]) -> Optional[int]:
@@ -125,6 +133,51 @@ def _slur_marks(rec: Dict) -> List[Tuple[int, int, str]]:
 def _slur_decisions(song_dir: str) -> Dict[str, str]:
     return {fix["offer"]: fix.get("choice", "?") for fix in pipeline._recorded_fixes(song_dir)
             if fix.get("source") == SLUR_SOURCE and fix.get("offer")}
+
+
+def _repeat_id(end: int) -> str:
+    return f"repeat-{end}"
+
+
+def repeat_questions(root: etree._Element,
+                     bounds: List[Tuple[int, int, int]]) -> List[Dict]:
+    """Each end repeat with no start repeat since the previous end, and where it could go.
+
+    Read off the first staff: MuseScore keeps a repeat sign only when every staff
+    carries it. A question is `{id, end, since, options}`, each option `{letter,
+    label, measure}` — `measure` None for **a**, leaving the score as it is. The other
+    options are the printed systems that start between `since` and the end repeat,
+    since homr is what misses a start sign there; a song with no marked systems has
+    nothing to offer and is not asked.
+    """
+    staff = next((s for s in root.findall(".//Score/Staff")
+                  if s.find("Measure") is not None), None)
+    if staff is None or not bounds:
+        return []
+    found: List[Dict] = []
+    since, started = 1, False
+    for number, measure in enumerate(staff.findall("Measure"), start=1):
+        started = started or measure.find("startRepeat") is not None
+        if measure.find("endRepeat") is None:
+            continue
+        if not started:
+            heads = sorted({start for _, start, _ in bounds if since <= start <= number})
+            if heads:
+                systems = {start: index for index, start, _ in bounds}
+                options = [{"letter": "a", "measure": None,
+                            "label": "No start sign on the page — leave it as it is"}]
+                for letter, head in zip(bar_readings.LETTERS[1:], heads):
+                    options.append({"letter": letter, "measure": head,
+                                    "label": f"Bar {head} — the start of printed "
+                                             f"system {systems[head]}"})
+                found.append({"id": _repeat_id(number), "end": number, "since": since,
+                              "options": options})
+        since, started = number + 1, False
+    return found
+
+
+def _kept_repeats(song: state.Song) -> List[int]:
+    return list(song.data.get("repeats", {}).get("kept", []))
 
 
 def problems(song: state.Song) -> List[Dict]:
@@ -241,6 +294,20 @@ def problems(song: state.Song) -> List[Dict]:
                          "svg": None} for o in options],
             "decision": decision, "can_decline": False})
 
+    kept = _kept_repeats(song)
+    for question in repeat_questions(root, bounds):
+        target = row(question["end"], "All parts")
+        decision = {"picked": "a"} if question["end"] in kept else None
+        target["choices"].append({
+            "id": question["id"], "kind": "repeat",
+            "title": (f"A repeat ends at bar {question['end']}, and the scan found no "
+                      f"start sign since bar {question['since']}. Where does the page "
+                      "print |: ?"),
+            "options": [{"letter": o["letter"], "label": o["label"],
+                         "current": o["measure"] is None, "svg": None}
+                        for o in question["options"]],
+            "decision": decision, "can_decline": False})
+
     ranges = {index: (start, end) for index, start, end in bounds}
     for target in rows.values():
         start, end = ranges.get(target["system"], (0, 0))
@@ -293,6 +360,47 @@ def record_slur_choice(song: state.Song, cid: str, letter: str) -> Dict:
                         "staff": sid, "measure": measure, "text": text, "why": why})
     applied = score_fixes.apply_fixes(root, entries)
     recorded = pipeline._recorded_fixes(song.dir) + entries
+    with open(os.path.join(song.dir, "fixes.json"), "w", encoding="utf-8") as fh:
+        json.dump(recorded, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    etree.ElementTree(root).write(cleaned, encoding="UTF-8", xml_declaration=True)
+    return {"choice": cid, "applied": "; ".join(applied)}
+
+
+def record_repeat_choice(song: state.Song, cid: str, letter: str) -> Dict:
+    """Apply a person's answer to where a repeat starts.
+
+    **a** changes nothing in the score and is kept in `.song.json`, so the question
+    is not asked again after a re-clean. Any other letter is a `repeat` entry in
+    `fixes.json`, applied to the cleaned score now and replayed by every later clean
+    — after which there is a start sign and nothing to ask.
+    """
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise FixError("clean the score first")
+    root = etree.parse(cleaned).getroot()
+    bounds = [(b.index, b.measure_start, b.measure_end)
+              for b in pdf_systems.load_bounds(song.dir) if b.measure_start]
+    question = next((q for q in repeat_questions(root, bounds) if q["id"] == cid), None)
+    if question is None:
+        raise FixError("that repeat is not in question any more — the score has been "
+                       "cleaned or edited since the page was loaded")
+    if question["end"] in _kept_repeats(song):
+        raise FixError("that repeat has already been decided")
+    option = next((o for o in question["options"] if o["letter"] == letter), None)
+    if option is None:
+        raise FixError(f"there is no option {letter!r}")
+    if option["measure"] is None:
+        song.data.setdefault("repeats", {}).setdefault("kept", []).append(question["end"])
+        song.save()
+        return {"choice": cid, "applied": f"the repeat ending at bar {question['end']} "
+                                          "is left as it is"}
+    entry = {"kind": "repeat", "source": REPEAT_SOURCE, "offer": cid, "choice": letter,
+             "measure": option["measure"],
+             "why": f"the repeat ending at bar {question['end']} starts here: picked "
+                    f"{letter} against the page"}
+    applied = score_fixes.apply_fixes(root, [entry])
+    recorded = pipeline._recorded_fixes(song.dir) + [entry]
     with open(os.path.join(song.dir, "fixes.json"), "w", encoding="utf-8") as fh:
         json.dump(recorded, fh, indent=2, ensure_ascii=False)
         fh.write("\n")

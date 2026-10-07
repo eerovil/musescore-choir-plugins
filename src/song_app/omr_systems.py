@@ -508,7 +508,8 @@ def _staff_attributes(attributes: etree._Element, number: int) -> etree._Element
 # --- assembling ----------------------------------------------------------
 
 
-def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
+def assemble(scans: Sequence[SystemScan], out_path: str,
+             log: Optional[Logger] = None) -> str:
     """Write the systems out as one score, one part per staff column.
 
     Columns are filled **from the top**: a system of two staves puts them in
@@ -530,6 +531,10 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
     under that comparator and not a guarantee that a different ranking would move
     the two sides by the same amount, so the gap is a historical measurement that
     nobody has checked against issue #196's rule.
+
+    **Repeat signs and volta brackets belong to the whole system** (#312), so one
+    staff reading one is written on every staff of it -- see
+    :func:`_system_barlines`. ``log`` hears about each copy that was needed.
 
     Three seams are closed here, all of them consequences of each crop being its
     own document. ``divisions`` is unified across the score and every duration
@@ -597,9 +602,10 @@ def assemble(scans: Sequence[SystemScan], out_path: str) -> str:
         # voice out of it: which staff is which part is the grid's question.
         etree.SubElement(score_part, "part-name").text = f"Staff {column + 1}"
 
+    barlines = [_system_barlines(scan, log) for scan in scans]
     for column in range(width):
         part = etree.SubElement(score, "part", id=f"P{column + 1}")
-        _fill_column(part, scans, column, divisions, meters)
+        _fill_column(part, scans, column, divisions, meters, barlines)
 
     tree = etree.ElementTree(score)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -613,6 +619,7 @@ def _fill_column(
     column: int,
     divisions: int,
     meters: Sequence[Sequence["_BarMeter"]],
+    barlines: Optional[Sequence[Dict[int, Dict[str, etree._Element]]]] = None,
 ) -> None:
     number = 0
     prevailing_key: Optional[str] = None
@@ -663,6 +670,8 @@ def _fill_column(
                 if declared is not None:
                     prevailing_key = _canonical(declared.find("key")) or prevailing_key
                     prevailing_clef = _canonical(declared.find("clef")) or prevailing_clef
+            if barlines is not None:
+                _set_barlines(measure, barlines[system].get(bar, {}))
             if system and bar == 0 and source is not None:
                 _mark_lost_accidental(measure, ending, ending_fifths, fifths)
             first = False
@@ -670,6 +679,95 @@ def _fill_column(
             if bar == scan.bars - 1:
                 ending = _sounding(measure)[1] if source is not None else []
                 ending_fifths = fifths
+
+
+# --- repeats ------------------------------------------------------------
+
+#: What a barline says that is about the music rather than its drawing.
+_FORM = ("repeat", "ending")
+_BARLINE_ORDER = {"bar-style": 0, "ending": 2, "repeat": 3}
+
+
+def _system_barlines(
+    scan: SystemScan, log: Optional[Logger] = None,
+) -> Dict[int, Dict[str, etree._Element]]:
+    """The repeat and volta barlines of one system, bar by bar, read off every staff.
+
+    A repeat sign and a volta bracket are drawn across the whole system, so one
+    staff reading one is enough evidence for all of them -- and the converter
+    needs all of them: MuseScore 3 keeps a start repeat only when every part
+    carries it (#312: Kantajani bar 27, read on two staves of four, came out of
+    the conversion with no repeat at all, and with it copied onto the other two
+    it was kept). homr reads a sign that opens a system on some staves and not
+    others often enough that this is the common case, not a corner.
+
+    What is collected is the union, per bar and per side: each ``<repeat>`` and
+    ``<ending>`` any staff wrote there, once. The barline's style is left to
+    whichever staff drew it, since a style is a drawing and not a form.
+    """
+    found: Dict[int, Dict[str, etree._Element]] = {}
+    seen: Dict[Tuple[int, str], int] = {}
+    for staff in scan.staves:
+        for bar, measure in enumerate(staff.measures):
+            for barline in measure.findall("barline"):
+                side = barline.get("location") or "right"
+                marks = [child for child in barline if child.tag in _FORM]
+                if not marks:
+                    continue
+                seen[(bar, side)] = seen.get((bar, side), 0) + 1
+                union = found.setdefault(bar, {}).setdefault(
+                    side, etree.Element("barline", location=side))
+                for mark in marks:
+                    if not any(_same(mark, kept) for kept in union):
+                        union.append(copy.deepcopy(mark))
+    if log is not None:
+        for (bar, side), count in sorted(seen.items()):
+            if count < scan.width:
+                what = ", ".join(_describe(mark) for mark in found[bar][side])
+                log(f"System {scan.index} bar {bar + 1}: {what} read on {count} of "
+                    f"{scan.width} staves, written on all.")
+    return found
+
+
+def _same(a: etree._Element, b: etree._Element) -> bool:
+    return a.tag == b.tag and dict(a.attrib) == dict(b.attrib)
+
+
+def _describe(mark: etree._Element) -> str:
+    if mark.tag == "repeat":
+        return "start repeat" if mark.get("direction") == "forward" else "end repeat"
+    return f"volta {mark.get('number') or ''} {mark.get('type') or ''}".strip()
+
+
+def _set_barlines(measure: etree._Element, wanted: Dict[str, etree._Element]) -> None:
+    """Give a bar every repeat and volta its system has there, each where it belongs.
+
+    A left barline opens the bar: it goes after any ``print`` and ``attributes``
+    and before the first note, which is where a score writes it. Flattening puts
+    every barline after the notes, which is right for the right-hand one only.
+    """
+    for side, union in wanted.items():
+        barline = next((b for b in measure.findall("barline")
+                        if (b.get("location") or "right") == side), None)
+        if barline is None:
+            barline = etree.Element("barline", location=side)
+            measure.append(barline)
+        for mark in union:
+            if not any(_same(mark, kept) for kept in barline if kept.tag in _FORM):
+                barline.append(copy.deepcopy(mark))
+        # MusicXML's order: the drawing first, then the volta, then the repeat.
+        barline[:] = sorted(barline, key=lambda child: _BARLINE_ORDER.get(child.tag, 1))
+    for barline in measure.findall("barline"):
+        if barline.get("location") != "left":
+            continue
+        measure.remove(barline)
+        at = 0
+        for index, child in enumerate(measure):
+            if child.tag in ("print", "attributes"):
+                at = index + 1
+            else:
+                break
+        measure.insert(at, barline)
 
 
 #: Order the key signature adds accidentals in: sharps from the left, flats from

@@ -527,6 +527,13 @@ Key test modules:
   within/across staves; well-formed and donor-less voices left untouched).
 - `test_revoice.py` / `test_interactive.py` — the re-voicing plan and the
   non-interactive anomaly reduction.
+- `src/song_app/tests/test_repeat_question.py` / `test_repeat_question_ui.py` — added
+  for #312: an end repeat with no start is asked about once, with the printed systems
+  in between as its choices; a pick puts a start sign on every staff and comes back on
+  a re-clean; **a** leaves the score alone and stays answered; the `repeat` kind
+  refuses a bar that already opens one. The browser half is the card on a phone.
+  `test_omr_systems.py` carries the assembly half (a sign read on some staves written
+  on all, and MuseScore keeping it).
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index
@@ -1213,6 +1220,12 @@ state model are in `DESIGN.md`.
   `unmark` entries for both red marks. A song cleaned before this has no metaTag, so
   its slur marks are listed without choices until it is cleaned again. `voice?`, `notes?` and the other sentences are
   listed with nothing to pick.
+  **A repeat with no start is asked about too** (#312, `problems.repeat_questions`): an
+  end-repeat sign with no start sign since the previous end, because homr misses a
+  start sign that opens a printed system and the track then repeats the wrong bars.
+  The choices are the first bar of each printed system in between, as words; a pick
+  is a `repeat` entry in `fixes.json` (a start sign on every staff), and **a**, "no
+  start sign on the page", is kept in `.song.json` (`repeats.kept`) so it is asked once.
   **#295 replaced the separate length and pitch choices with whole bars**, because
   picking them one after the other mixed them up (the pitch options were drawn with
   the old lengths). `bar_readings.whole_bars` pairs every reading of the lengths with
@@ -1515,6 +1528,12 @@ state model are in `DESIGN.md`.
   can drop noteheads: before blaming the model for a lost note, re-read the band one staff
   at a time and check `--output-confidence`. `assemble` writes
   the systems out as one score, one part per staff column.
+  **Repeat signs and volta brackets are the whole system's** (#312,
+  `_system_barlines`): one staff reading one is written on every staff of that system,
+  a left barline ahead of the bar's notes. homr reads a start sign at the head of a
+  system on some staves and not others, and MuseScore 3 keeps a start repeat only
+  when every part carries it — Kantajani bar 27, read on two staves of four, came out
+  of the conversion with no repeat at all.
   **What flattening must not do is move the notes, and until this pull request it did**
   (#172). Splitting a part on its `<staff>` means the `<backup>` and `<forward>` homr
   wrote cannot be kept as they stand — they step between staves as well as between
