@@ -538,7 +538,10 @@ Key test modules:
   not losing the pitch offer), and the slur answers (drawn across the barline, marks
   off, back after a re-clean, "no slur" adding nothing, refusals). The second is the
   browser: one card for a bar with both kinds of doubt, a slur answered in words, and
-  a phone.
+  a phone. #295 rewrote their reading half around whole bars: the ranking, the second
+  reading always **b**, picking it writing the bar afresh and coming back on a rebuild,
+  an octave-shifted tenor, an earlier pick counting as decided, and in the browser six
+  shown with the rest behind "More". `test_bar_fix.py` pins the `bar` kind itself.
 - `src/song_app/tests/test_state_race.py` — added for #252. The file watcher used to
   save the whole song state it had loaded, so a lyric import that saved while the
   watcher was checking health was silently undone. It drives both interleavings (a
@@ -1174,10 +1177,23 @@ state model are in `DESIGN.md`.
   or none — `cross_voice_slurs` keeps where both halves stood in a `removedSlurs`
   metaTag, a pick is `slur` entries (which may now reach into a later bar) plus
   `unmark` entries for both red marks. A song cleaned before this has no metaTag, so
-  its slur marks are listed without choices until it is cleaned again. Picks on one bar
-  stack: a pitch offer still matches a bar whose lengths were picked, and the other
-  way round (`bar_readings._effective`). `voice?`, `notes?` and the other sentences are
+  its slur marks are listed without choices until it is cleaned again. `voice?`, `notes?` and the other sentences are
   listed with nothing to pick.
+  **#295 replaced the separate length and pitch choices with whole bars**, because
+  picking them one after the other mixed them up (the pitch options were drawn with
+  the old lengths). `bar_readings.whole_bars` pairs every reading of the lengths with
+  every pitch for each unsure note, ranks them by homr's log-likelihood plus each
+  pitch's log-probability, and offers at most `MOST` (18), `SHOWN` (6) before
+  "More". **a** is the bar as read; **b** is homr's **second reading** when there is
+  one (field version 3, key `second`: the crop read again at 80% read the bar
+  differently — the `notes?` mark), whatever it would rank, since it is what catches a
+  mistake the decoder was sure of. homr writes it only where the two readings line up
+  voice for voice and both fill the bar. A pick is one `bar` entry
+  (`score_fixes._replace_bar`): with the notes in the same places the lengths are
+  rewritten as `rhythm` does and the pitches set, keeping ties, slurs and words;
+  otherwise the bar is written afresh, ties and slurs reaching in are cut, and the words
+  go back on its notes in order. `rhythm` and `pitch` entries already recorded still
+  replay, and their bar shows as decided.
 - **The score can be taken away and brought back**, which this pull request proposes
   (#216). Both editing routes the app had assumed MuseScore was on *this* host:
   `open-score` shells out to `open -a`, and the file watcher re-checks a score saved

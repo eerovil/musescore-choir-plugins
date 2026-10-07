@@ -16,8 +16,9 @@ Where each part comes from, and why:
 - **Sentences** in `fixes.json` other than the red marks' own copies: a bar MuseScore
   refused, a rest the scan moved, a sentence somebody typed. A sentence with no bar
   is a row of its own.
-- **Choices** are homr's readings of an unsure bar's lengths and of an unsure note's
-  pitch (`bar_readings.offers`), and for a slur cleaning took out because it ran from
+- **Choices** are homr's readings of an unsure bar as whole bars — lengths and pitches
+  together, and the second reading of the bar when homr has one (`bar_readings.offers`,
+  #295) — and for a slur cleaning took out because it ran from
   one singer into another, the slur back in either singer, both, or none — worked out
   here from where cleaning recorded the two halves (`cross_voice_slurs.removed_slurs`).
 
@@ -132,7 +133,8 @@ def problems(song: state.Song) -> List[Dict]:
     A row: `id`, `measure` (None for a sentence about no bar), `part`, `system` (the
     printed system to crop, or None), `notes` (each `{text, kind, dismiss}`: what is
     wrong, and the health row to dismiss when there is one) and `choices` (each `{id,
-    kind, title, options, decision}`, options `{letter, label, current, svg}`).
+    kind, title, options, shown, decision}`, options `{letter, label, current, svg}`;
+    `shown` is how many to show before "More", absent when all are shown).
     """
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
@@ -210,18 +212,15 @@ def problems(song: state.Song) -> List[Dict]:
         target = row(offer["measure"], offer["part"] or "")
         if target["system"] is None:
             target["system"] = offer["system"]
-        if offer.get("kind") == "pitch":
-            title = f"Which note is {offer['note']}?"
-            options = [{"letter": o["letter"], "label": o["name"], "current": o["current"]}
-                       for o in offer["options"]]
-        else:
-            title = "Which lengths does the page print?"
-            options = [{"letter": o["letter"], "label": "", "current": o["current"]}
-                       for o in offer["options"]]
+        title = "Which bar does the page print?"
+        options = [{"letter": o["letter"], "current": o["current"],
+                    "label": "second reading" if o["second"] else ""}
+                   for o in offer["options"]]
         for option in options:
             option["svg"] = f"readings/{offer['id']}/{option['letter']}.svg"
-        target["choices"].append({"id": offer["id"], "kind": offer.get("kind", "rhythm"),
+        target["choices"].append({"id": offer["id"], "kind": offer["kind"],
                                   "title": title, "options": options,
+                                  "shown": bar_readings.SHOWN,
                                   "decision": offer["decision"], "can_decline": True})
 
     decided = _slur_decisions(song.dir)

@@ -54,7 +54,9 @@ def _bar(p1, p2):
 
 
 def _staff(sid, shift=0):
-    rest = "<Rest><durationType>half</durationType></Rest>"
+    # 2/4, as the fragment says, so health has nothing to say about the bars' lengths.
+    rest = ("<TimeSig><sigN>2</sigN><sigD>4</sigD></TimeSig>"
+            "<Rest><durationType>half</durationType></Rest>")
     bars = [rest, _bar(48 + shift, 50 + shift), _bar(48 + shift, 50 + shift)]
     return f"<Staff id=\"{sid}\">" + "".join(
         f"<Measure><voice>{b}</voice></Measure>" for b in bars) + "</Staff>"
@@ -140,8 +142,8 @@ def test_a_pick_changes_the_score_and_is_recorded(make_song):
     bar_readings.record_pick(song, offer["id"], "b")
     assert _tokens(song) == ["quarter.:48", "eighth:50"]
     [entry] = _fixes(song)
-    assert entry["kind"] == "rhythm" and entry["source"] == "reading"
-    assert entry["to"] == ["note_4.", "note_8"]
+    assert entry["kind"] == "bar" and entry["source"] == "reading"
+    assert [m["value"] for m in entry["to"]] == ["note_4.", "note_8"]
     assert entry["content"] == song.data["scan"]["systems"]["2"]["content"]
     # The words stay on their notes.
     root = etree.parse(song.cleaned_path()).getroot()

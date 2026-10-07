@@ -1652,9 +1652,10 @@ function panelFix(panel, song, P, refresh) {
 // Every problem the score has, one row per bar and part, with whatever there is to
 // choose between beside the page (#290). The server builds the rows — red marks read
 // live off the score, health findings, sentences in fixes.json, homr's other readings
-// of a bar's lengths or of a note's pitch, and a slur the scan ran between two singers
-// — so the panel decides nothing about the music. A tap applies the answer to the
-// score and records it in fixes.json, so a re-clean keeps it.
+// of a bar as whole bars (lengths and pitches together, and its second reading), and
+// a slur the scan ran between two singers — so the panel decides nothing about the
+// music. A tap applies the answer to the score and records it in fixes.json, so a
+// re-clean keeps it.
 const NOTE_KIND = { mark: "red mark", "fixes.json": "fixes.json — not applied automatically",
   "musescore-check": "fixes.json — not applied automatically", scan: "fixes.json — not applied automatically" };
 
@@ -1684,7 +1685,8 @@ function problemList(panel, song, P, refresh) {
   const decidedText = (row, c) => {
     const d = c.decision;
     if (d.none) return `${where(row)}: none of these — fix it in MuseScore`;
-    const word = c.kind === "pitch" ? "pitch" : c.kind === "slur" ? "slur answer" : "reading";
+    const word = c.kind === "slur" ? "slur answer" : "reading";
+    if (d.picked === "earlier") return `${where(row)}: picked before whole bars were offered`;
     const opt = c.options.find((o) => o.letter === d.picked);
     return `${where(row)}: ${word} ${d.picked}` + (opt && opt.label ? ` (${opt.label})` : "");
   };
@@ -1701,9 +1703,20 @@ function problemList(panel, song, P, refresh) {
       buttons.push(b);
       return b;
     });
+    // A whole-bar choice can offer many bars; the likeliest few show first and the
+    // rest wait behind "More", so a card stays short on a phone.
+    const opts = el("div", { className: "readopts" }, ...options);
     const block = el("div", { className: "readpick", "data-offer": c.id },
-      el("div", { className: "readtitle" }, c.title),
-      el("div", { className: "readopts" }, ...options));
+      el("div", { className: "readtitle" }, c.title), opts);
+    if (c.shown && options.length > c.shown) {
+      const hidden = options.slice(c.shown);
+      hidden.forEach((b) => { b.hidden = true; });
+      const more = el("button", { className: "readmore", onclick: () => {
+        hidden.forEach((b) => { b.hidden = false; });
+        more.remove();
+      } }, `More (${hidden.length})`);
+      block.append(el("div", { className: "row" }, more));
+    }
     if (c.can_decline) {
       const none = el("button", { className: "readnone", onclick: () => pick(c, "none", buttons) },
         "None of these");

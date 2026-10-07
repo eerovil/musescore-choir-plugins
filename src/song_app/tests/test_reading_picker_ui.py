@@ -126,7 +126,7 @@ def test_the_options_are_drawn_and_one_tap_picks(live, page):
     assert "Bar 3, B1: reading b" in page.locator(".readdone").inner_text()
     assert page.locator(".readpick").count() == 0
     [entry] = _fixes(song)
-    assert entry["kind"] == "rhythm" and entry["to"] == ["note_4.", "note_8"]
+    assert entry["kind"] == "bar" and [m["value"] for m in entry["to"]] == ["note_4.", "note_8"]
     assert errors == []
 
 

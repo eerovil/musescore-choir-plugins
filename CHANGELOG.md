@@ -12,6 +12,10 @@ developers are listed under *Behind the scenes*.
   pitches for an unsure note, and for a slur the scan ran between two singers, the
   slur in either, both or neither. One tap applies the answer and keeps it for the
   next clean. (#290)
+- An unsure bar's choices are now whole bars, lengths and pitches already put
+  together, so picking one never undoes another. homr's second reading of the bar
+  (the one behind a `notes?` mark) is always one of them, labelled "second
+  reading". Six show first and the rest are behind "More". (#295)
 
 ## 2026-10-06
 

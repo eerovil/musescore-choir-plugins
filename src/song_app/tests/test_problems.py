@@ -1,8 +1,8 @@
 """Every problem in one list, each with its choices (#290).
 
 What the Fix panel shows is built here, so this pins what a row is: one per bar and
-part, everything wrong there said once, homr's other lengths and other pitches offered
-beside it, and a slur the scan ran between two singers offered back in either, both or
+part, everything wrong there said once, homr's other readings offered beside it as
+whole bars — lengths and pitches together, and the second reading (#295) — and a slur the scan ran between two singers offered back in either, both or
 neither. Then the answers: each goes onto the score and into fixes.json, and the slur
 answer comes back on a re-clean.
 """
@@ -20,7 +20,7 @@ from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.score_fixes import FixError
 from src.song_app import bar_readings, pipeline, problems, state
 from src.song_app.tests.test_bar_readings import (  # noqa: F401 - make_song is a fixture
-    READINGS, _fixes, _score, make_song)
+    READINGS, _fixes, _score, _tokens, make_song)
 
 # homr's second guess at bar 2's D3: an E flat, or a C.
 NOTES = {**READINGS, "version": 2, "notes": [
@@ -40,15 +40,21 @@ def _pitch(song, staff=1, measure=3, index=1):
 # ---------------------------------------------------------------- the list
 
 
-def test_one_row_per_bar_and_part_with_both_choices(make_song):
+def _bar_of(option):
+    return [(m["value"], [bar_readings.pitch_name(p) for p in m["pitches"]])
+            for m in option["moments"]]
+
+
+def test_one_row_per_bar_and_part_with_whole_bars_to_pick(make_song):
     song = make_song(readings=NOTES)
     [row] = problems.problems(song)
     assert (row["measure"], row["part"]) == (3, "B1")
-    assert [c["kind"] for c in row["choices"]] == ["rhythm", "pitch"]
-    pitch = row["choices"][1]
-    assert [o["label"] for o in pitch["options"]] == ["D3", "Eb3", "C3"]
-    assert pitch["options"][0]["current"]
-    assert all(o["svg"].endswith(f"/{o['letter']}.svg") for o in pitch["options"])
+    [choice] = row["choices"]
+    assert choice["kind"] == "bar" and choice["shown"] == 6
+    # Three readings of the lengths times three pitches for the D: nine bars.
+    assert [o["letter"] for o in choice["options"]] == list("abcdefghi")
+    assert choice["options"][0]["current"]
+    assert all(o["svg"].endswith(f"/{o['letter']}.svg") for o in choice["options"])
 
 
 def test_a_mark_and_its_health_row_are_said_once(make_song):
@@ -85,55 +91,89 @@ def test_a_dismissed_mark_stays_dismissed(make_song):
     assert problems.problems(song) == []
 
 
-# ---------------------------------------------------------------- a pitch
+# ---------------------------------------------------------------- whole bars (#295)
+
+# homr read the crop a second time and got one half note, C3.
+SECOND = {**NOTES, "version": 3, "second": [
+    {"part": 0, "staff": 1, "bar": 2, "voice": "1", "length": "1/2",
+     "moments": READINGS["bars"][0]["moments"],
+     "second": [{"kind": "note", "value": "note_2",
+                 "pitches": [{"step": "C", "alter": 0, "octave": 3}]}]}]}
 
 
-def test_a_pitch_pick_changes_that_note_and_is_replayed(make_song):
-    song = make_song(readings=NOTES)
-    [offer] = [o for o in bar_readings.offers(song) if o["kind"] == "pitch"]
-    assert (offer["index"], offer["was"]) == (1, 50)
+def test_whole_bars_are_ranked_lengths_and_pitches_together(make_song):
+    [offer] = bar_readings.offers(make_song(readings=NOTES))
+    assert [_bar_of(o) for o in offer["options"]][:5] == [
+        [("note_4", ["C3"]), ("note_4", ["D3"])],   # a: as read
+        [("note_4.", ["C3"]), ("note_8", ["D3"])],  # the next lengths, the D as read
+        [("note_4", ["C3"]), ("note_4", ["Eb3"])],  # the lengths as read, the next pitch
+        [("note_4.", ["C3"]), ("note_8", ["Eb3"])],
+        [("note_8", ["C3"]), ("note_4.", ["D3"])],
+    ]
+    # The notes that differ from the bar as read are the ones drawn blue.
+    assert offer["options"][2]["differs"] == [(1, 0)]
+
+
+def test_the_second_reading_is_always_b(make_song):
+    song = make_song(readings=SECOND)
+    [offer] = bar_readings.offers(song)
+    b = offer["options"][1]
+    assert b["second"] and _bar_of(b) == [("note_2", ["C3"])]
+    [row] = problems.problems(song)
+    assert row["choices"][0]["options"][1]["label"] == "second reading"
+
+
+def test_picking_the_second_reading_writes_the_bar_afresh(make_song, tmp_path):
+    song = make_song(readings=SECOND)
+    [offer] = bar_readings.offers(song)
     bar_readings.record_pick(song, offer["id"], "b")
-    assert _pitch(song) == (51, 11)  # E flat, spelt as one
+    assert _tokens(song) == ["half:48"]
     [entry] = _fixes(song)
-    assert entry["kind"] == "pitch" and entry["to"] == 51 and entry["was"] == 50
-    # Decided, and the bar's lengths are still on offer though the bar now reads differently.
-    kinds = {o["kind"]: o for o in bar_readings.offers(song)}
-    assert kinds["pitch"]["decision"] == {"picked": "b"}
-    assert kinds["rhythm"]["decision"] is None
+    assert entry["kind"] == "bar" and entry["letter"] == "b"
+    assert "second reading" in entry["why"]
+    # The word on the first note stays.
+    root = etree.parse(song.cleaned_path()).getroot()
+    assert score_fixes._measure(root, 1, 3).findtext(".//Lyrics/text") == "la"
+    [offer] = bar_readings.offers(song)
+    assert offer["decision"] == {"picked": "b"}
     # A rebuild from the scan gets it back.
     with open(song.cleaned_path(), "w") as fh:
         fh.write(_score(((1, "B1", 0),)))
-    pipeline.apply_recorded_fixes(song.cleaned_path(), song.dir)
-    assert _pitch(song) == (51, 11)
+    assert pipeline.apply_recorded_fixes(song.cleaned_path(), song.dir) == 1
+    assert _tokens(song) == ["half:48"]
 
 
-def test_a_pitch_offer_follows_an_octave_shifted_tenor(make_song):
-    song = make_song(staves=((1, "T1", 12),), readings=NOTES)
-    [offer] = [o for o in bar_readings.offers(song) if o["kind"] == "pitch"]
-    assert offer["was"] == 62
-    assert [o["to"] for o in offer["options"]] == [62, 63, 60]
-
-
-def test_a_rhythm_pick_keeps_the_pitch_offer(make_song):
+def test_a_bar_with_another_pitch_is_picked_whole(make_song):
     song = make_song(readings=NOTES)
-    rhythm = next(o for o in bar_readings.offers(song) if o["kind"] == "rhythm")
-    bar_readings.record_pick(song, rhythm["id"], "b")
-    pitch = next(o for o in bar_readings.offers(song) if o["kind"] == "pitch")
-    assert pitch["decision"] is None and pitch["staff"] == 1
-    bar_readings.record_pick(song, pitch["id"], "c")
-    assert _pitch(song) == (48, 14)
-    # Both replay, in the order they were made.
-    with open(song.cleaned_path(), "w") as fh:
-        fh.write(_score(((1, "B1", 0),)))
-    pipeline.apply_recorded_fixes(song.cleaned_path(), song.dir)
-    assert _pitch(song) == (48, 14)
+    [offer] = bar_readings.offers(song)
+    bar_readings.record_pick(song, offer["id"], "d")  # dotted quarter, eighth E flat
+    assert _tokens(song) == ["quarter.:48", "eighth:51"]
+    assert _pitch(song) == (51, 11)  # E flat, spelt as one
+
+
+def test_a_whole_bar_follows_an_octave_shifted_tenor(make_song):
+    song = make_song(staves=((1, "T1", 12),), readings=NOTES)
+    [offer] = bar_readings.offers(song)
+    assert [m["pitches"] for m in offer["options"][2]["to"]] == [[60], [63]]
+
+
+def test_a_pick_made_before_whole_bars_counts_as_decided(make_song):
+    song = make_song(readings=NOTES)
+    [offer] = bar_readings.offers(song)
+    with open(song.path("fixes.json"), "w") as fh:
+        json.dump([{"kind": "rhythm", "source": "reading", "offer": offer["id"],
+                    "system": 2, "content": song.data["scan"]["systems"]["2"]["content"],
+                    "staff": 1, "part": "B1", "measure": 3, "from": _tokens(song),
+                    "to": ["note_4.", "note_8"], "why": "picked earlier"}], fh)
+    [offer] = bar_readings.offers(song)
+    assert offer["decision"] == {"picked": "earlier"}
 
 
 def test_an_option_is_engraved_with_the_other_pitch(make_song):
     pytest.importorskip("verovio")
     song = make_song(readings=NOTES)
-    offer = next(o for o in bar_readings.offers(song) if o["kind"] == "pitch")
-    svg = bar_readings.option_svg(song, offer["id"], "b")
+    [offer] = bar_readings.offers(song)
+    svg = bar_readings.option_svg(song, offer["id"], "c")
     assert svg.startswith("<?xml") or "<svg" in svg[:400]
     assert "#1f6fd1" in svg
 

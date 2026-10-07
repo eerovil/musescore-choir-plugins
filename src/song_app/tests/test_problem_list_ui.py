@@ -2,7 +2,8 @@
 
 `test_problems.py` pins the rows and the writes. What only exists in the browser is
 what a person meets on the Fix stage: one card per bar and part saying everything
-wrong there, the lengths and the pitch homr was unsure of offered side by side, a
+wrong there, homr's readings of an unsure bar offered as whole bars — the likeliest
+six first, the second reading always among them, the rest behind "More" (#295) — a
 slur the scan ran between two singers offered back as words, one tap each, and all
 of it on a phone.
 """
@@ -42,7 +43,7 @@ from src.clean_score.tests.test_cross_voice_slurs import _score as _slur_score
 from src.clean_score.utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
 from src.song_app import scan, server, state
 from src.song_app.tests.test_bar_readings import _fragment, _score
-from src.song_app.tests.test_problems import NOTES
+from src.song_app.tests.test_problems import SECOND
 
 pytestmark = pytest.mark.browser
 
@@ -60,7 +61,7 @@ def _unsure_song():
     with open(first, "w") as fh:
         fh.write(_fragment(None))
     with open(second, "w") as fh:
-        fh.write(_fragment(NOTES))
+        fh.write(_fragment(SECOND))
     song.data["scan"] = {"systems": {
         "1": {"index": 1, "musicxml": "scan/system-01.musicxml",
               "content": scan.content_stamp(first), "bars": 1, "error": None},
@@ -136,29 +137,35 @@ def _evidence(page, name, what=".problems"):
         page.locator(what).screenshot(path=os.path.join(out, name))
 
 
-def test_a_bar_with_unsure_lengths_and_pitch_is_one_card(live, page):
+def test_an_unsure_bar_offers_whole_bars(live, page):
     base, song, _ = live
     errors = _open_fix(page, base, song.slug)
     assert page.locator(".problem").count() == 1
     card = page.locator(".problem")
     assert "m3" in card.inner_text() and "B1" in card.inner_text()
-    picks = card.locator(".readpick")
-    assert picks.count() == 2
-    pitch = picks.nth(1)
-    assert "Which note is D3?" in pitch.inner_text()
-    assert [o.inner_text().split()[:2] for o in pitch.locator(".readopt").all()] == [
-        ["a", "D3"], ["b", "Eb3"], ["c", "C3"]]
+    [pick] = card.locator(".readpick").all()
+    assert "Which bar does the page print?" in pick.inner_text()
+    # Six shown: the bar as read, homr's second reading, then the likeliest others.
+    shown = pick.locator(".readopt:visible")
+    assert shown.count() == 6
+    assert "as read now" in shown.nth(0).inner_text()
+    assert "second reading" in shown.nth(1).inner_text()
     page.wait_for_function(
-        "() => [...document.querySelectorAll('.readsvg')].every(i => i.complete && i.naturalWidth > 0)")
-    _evidence(page, "unsure-bar-card.png")
+        "() => [...document.querySelectorAll('.readopt:not([hidden]) .readsvg')]"
+        ".every(i => i.complete && i.naturalWidth > 0)")
+    _evidence(page, "whole-bars-card.png")
 
-    pitch.locator(".readopt").nth(1).click()
+    pick.locator(".readmore").click()
+    assert pick.locator(".readopt:visible").count() == 10
+    assert pick.locator(".readmore").count() == 0
+
+    pick.locator(".readopt").nth(1).click()
     page.wait_for_selector(".readdone")
-    assert "Bar 3, B1: pitch b (Eb3)" in page.locator(".readdone").inner_text()
-    # The lengths are still asked about.
-    assert page.locator(".problem .readpick").count() == 1
+    assert "Bar 3, B1: reading b (second reading)" in page.locator(".readdone").inner_text()
+    assert page.locator(".problem .readpick").count() == 0
     [entry] = _fixes(song)
-    assert entry["kind"] == "pitch" and entry["to"] == 51
+    assert entry["kind"] == "bar" and [m["value"] for m in entry["to"]] == ["note_2"]
+    _evidence(page, "whole-bar-picked.png")
     assert errors == []
 
 
@@ -189,11 +196,12 @@ def test_it_fits_a_phone(live, page):
     card = page.locator(".problem")
     card.scroll_into_view_if_needed()
     assert card.bounding_box()["width"] <= 390
-    for option in card.locator(".readopt").all():
+    for option in card.locator(".readopt:visible").all():
         box = option.bounding_box()
         assert box["x"] + box["width"] <= 390
     page.wait_for_function(
-        "() => [...document.querySelectorAll('.readsvg')].every(i => i.complete && i.naturalWidth > 0)")
+        "() => [...document.querySelectorAll('.readopt:not([hidden]) .readsvg')]"
+        ".every(i => i.complete && i.naturalWidth > 0)")
     out = os.environ.get("EVIDENCE_DIR")
     if out:
         card.screenshot(path=os.path.join(out, "phone-card.png"))
