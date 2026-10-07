@@ -482,12 +482,14 @@ def test_the_panel_can_be_hidden_to_read_the_scores(page, live_app, bounds_song)
 
 def test_compare_says_so_when_it_cannot_pair(page, live_app, bounds_song):
     """Pairing needs the cleaned score rendered, which needs MuseScore — absent
-    here on purpose. It must say the systems do not correspond rather than sit
-    empty, which is the same message a real mismatch produces."""
+    here on purpose. It must say so rather than sit empty. Since #303 it says the
+    server's own reason; it used to say the systems "do not correspond", which sent
+    a person to the Systems tab to fix boundaries that were fine."""
     slug, _, _ = bounds_song
     page.goto(f"{live_app}/#/song/{slug}")
     page.get_by_role("button", name="Compare").first.click()
-    expect(page.locator(".compare .warn")).to_contain_text("do not correspond", timeout=60_000)
+    expect(page.locator(".compare .warn")).to_contain_text(
+        "Could not pair the systems:", timeout=60_000)
     assert page.locator(".cmprow").count() == 0
 
 
