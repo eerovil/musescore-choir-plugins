@@ -89,20 +89,16 @@ def add_missing_ties(root) -> List[Dict[str, Any]]:
                     "element": el["element"],
                 }
                 if open_tie is not None:
-                    # We have a span starter, so this is the next note
+                    # We have a span starter, so this is the next note. In a chain
+                    # of ties it may start the next tie as well.
                     open_tie.append(record)
                     open_tie = None
-                    continue
 
-                spanner: Optional[etree._Element] = el["element"].find(
-                    ".//Spanner[@type='Tie']"
-                )
-                if spanner is not None:
-                    if spanner.find(".//next") is not None:
-                        open_tie = [record]
-                        tied_notes_by_measure_time_pos[
-                            (measure_index, time_pos)
-                        ].append(open_tie)
+                if el["element"].find(".//Spanner[@type='Tie'][next]") is not None:
+                    open_tie = [record]
+                    tied_notes_by_measure_time_pos[(measure_index, time_pos)].append(
+                        open_tie
+                    )
 
     logger.debug(
         f"Found {tied_notes_by_measure_time_pos.keys()} tied notes by measure and time position"
@@ -207,11 +203,13 @@ def add_missing_ties(root) -> List[Dict[str, Any]]:
                 continue
 
             # Clone the spanner from the parent pair to the note pair
+            # A note in the middle of a chain holds two tie halves: take the
+            # one that starts this tie and the one that ends it.
             spanner1: Optional[etree._Element] = parent_pair[0]["element"].find(
-                ".//Spanner[@type='Tie']"
+                ".//Spanner[@type='Tie'][next]"
             )
             spanner2: Optional[etree._Element] = parent_pair[1]["element"].find(
-                ".//Spanner[@type='Tie']"
+                ".//Spanner[@type='Tie'][prev]"
             )
             if spanner1 is not None and spanner2 is not None:
                 new_spanner1: etree._Element = deepcopy(spanner1)

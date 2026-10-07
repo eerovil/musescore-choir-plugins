@@ -117,3 +117,14 @@ def test_voices_in_harmony_share_a_tie_on_their_own_pitches():
     root = _score(["q69 q69~ h69"], ["q64 q64 h64"])
     add_missing_ties(root)
     assert _ties(root, 2) == [(1, 1)]
+
+
+def test_a_chain_of_ties_is_copied_with_each_half_in_its_place():
+    # The middle note holds two halves. Copying the wrong one left a tie that never
+    # closed and swallowed the voice's lyric slots for bars afterwards.
+    root = _score(["q60 q64~ q64~ q64"], ["q55 q59 q59 q59"])
+    add_missing_ties(root)
+    chords = root.find(".//Score/Staff[@id='2']").findall(".//Chord")
+    halves = [[child.tag for sp in c.findall(".//Spanner[@type='Tie']")
+               for child in sp if child.tag in ("next", "prev")] for c in chords]
+    assert halves == [[], ["next"], ["prev", "next"], ["prev"]]
