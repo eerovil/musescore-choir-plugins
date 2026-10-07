@@ -171,3 +171,20 @@ def test_triplets_are_bracketed_beat_by_beat():
         triplet_groups(["note_12", "note_12", "note_4", "note_12", "note_2."])
     with pytest.raises(FixError):
         triplet_groups(["note_2.", "note_12", "note_6"][:2] + ["note_12"])
+
+
+def _marks(bar):
+    return [el.findtext("text") for el in bar.iter("StaffText")]
+
+
+def test_new_lengths_answer_rhythm_and_leave_the_bars_other_problems(root):
+    """#290: a pick answers what it answers; the bar stays listed for the rest."""
+    from src.clean_score.utils.problem_marks import mark_bar
+    bar = _measure(root, 1, 1)
+    for el in list(bar.iter("StaffText")):
+        el.getparent().remove(el)
+    mark_bar(bar, "rhythm? notes?")
+    mark_bar(bar, "slur to T2 bar 2 removed; check the page")
+    [done] = apply_fixes(root, [_fix(root, PAGE)])
+    assert "took rhythm? off" in done
+    assert sorted(_marks(bar)) == ["⚠ notes?", "⚠ slur to T2 bar 2 removed; check the page"]

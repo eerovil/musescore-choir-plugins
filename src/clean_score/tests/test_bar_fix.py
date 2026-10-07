@@ -112,3 +112,20 @@ def test_it_is_strict(root):
     with pytest.raises(FixError, match="spellings"):
         apply_fixes(root, [_fix([{"value": "note_1", "pitches": [60]}])])
     assert _bar_tokens(_measure(root, 1, 2)) == FROM
+
+
+@pytest.mark.parametrize("shape", ["same places", "new places"])
+def test_a_whole_bar_answers_its_notes_and_leaves_the_other_problems(root, shape):
+    """#290: `voice?` and cleaning's own marks are about something else in the bar."""
+    from src.clean_score.utils.problem_marks import mark_bar
+    bar = _measure(root, 1, 2)
+    for el in list(bar.iter("StaffText")):
+        el.getparent().remove(el)
+    mark_bar(bar, "pitch? rhythm? voice? notes?")
+    mark_bar(bar, "slur from A2 bar 1 removed; check the page")
+    to = ([_note("note_4.", 60, 14), _note("note_8", 62, 16), _note("note_2", 65, 13)]
+          if shape == "same places" else
+          [_note("note_2", 60, 14), _note("note_4", 62, 16), _note("note_4", 65, 13)])
+    apply_fixes(root, [_fix(to)])
+    assert sorted(el.findtext("text") for el in bar.iter("StaffText")) == [
+        "⚠ slur from A2 bar 1 removed; check the page", "⚠ voice?"]

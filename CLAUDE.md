@@ -1192,7 +1192,9 @@ state model are in `DESIGN.md`.
   voices — and shown under the page crop, each option engraved by verovio. A pick is a
   `rhythm` entry in `fixes.json`, applied in place (a re-clean would lose lyrics), which
   rewrites the lengths, re-brackets the triplets, moves ties and slurs with their notes
-  and takes the red mark off. It carries the fragment's content stamp, and
+  and takes `rhythm?` off the red mark (#290: only what a pick answers comes off — a
+  whole-bar pick takes homr's `rhythm?`, `pitch?`, `accidental?`, `notes?`, a pitch pick
+  `pitch?` and `accidental?`; `voice?` and cleaning's own marks stay). It carries the fragment's content stamp, and
   `drop_stale_picks` removes it before a clean once that system has been read again
   differently. "None of these" is kept in `.song.json` (`readings.declined`).
 - **Every problem is one list, each with its choices** (#290, `problems.py`, `GET
