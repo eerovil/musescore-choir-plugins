@@ -24,6 +24,8 @@ def _no_real_deck(monkeypatch):
     one off the host they run on. Each test that cares fakes its own deck."""
     monkeypatch.delenv("AGENTDECK_API_URL", raising=False)
     monkeypatch.delenv("AGENTDECK_URL", raising=False)
+    # Nor may a test upload ask the real stemmanauhat site to refresh.
+    monkeypatch.delenv("STEMMANAUHAT_DISPATCH_TOKEN", raising=False)
 
 
 @pytest.fixture
