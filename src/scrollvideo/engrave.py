@@ -11,14 +11,16 @@ import os
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
+from fractions import Fraction
 from functools import lru_cache
 from importlib.resources import files
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import verovio
 from lxml import etree
 
 from .geometry import SVG_NS, Layout, parse_layout
+from .spacing import measure_durations
 
 # One system, no page breaks: the score becomes a single horizontal strip.
 #
@@ -87,6 +89,7 @@ def engrave(musicxml_path: str, options: Dict | None = None,
     svg = keep_measure_numbers(draw_symbol_text(tk.renderToSVG(1)), numbered_measures)
     layout = parse_layout(svg)
     timemap = tk.renderToTimemap({"includeMeasures": True, "includeRests": True})
+    timemap = retime_repeats(timemap, measure_durations(musicxml_path))
     measures = printed_measures(svg)
     return Engraving(svg, layout, timemap, _drawn_ids(tk, timemap, layout),
                      measures, _measure_ids(tk, timemap, set(measures)))
@@ -240,6 +243,51 @@ def _draw_run(run: etree._Element, x: float, y: float,
         x += advances.get(code, 0.0) * scale
     run.getparent().remove(run)
     return group, x
+
+
+_REPEAT_PASS = re.compile(r"-rend\d+$")
+
+
+def retime_repeats(timemap: List[dict],
+                   durations: Optional[Sequence[Fraction]]) -> List[dict]:
+    """Put each bar of the played timeline at the length the score gives it.
+
+    Verovio unrolls a repeat into the timemap, but a whole-bar rest in the bar it
+    jumps back to is timed in the meter that was in force at the jump: Kantajani's
+    bar 6 is 7/4 and repeats to bar 1, which is 4/4 with the second alto resting,
+    and verovio timed the second pass of bar 1 as seven quarters. Every note after
+    it then came three quarters late against MuseScore's MIDI, which plays the bar
+    as written (#313).
+
+    So bar starts are rebuilt in play order — each bar starts where the one
+    before it started plus that bar's real length (`durations`, in quarters, one
+    per bar of the MusicXML) — and every entry moves with its bar. Positions
+    inside a bar, the order of the passes and the ids are verovio's. If the bar
+    counts do not agree the timemap is returned untouched; the alignment check
+    against the audio still guards the render.
+    """
+    bars: List[str] = []
+    for entry in timemap:
+        bar = entry.get("measureOn")
+        if bar and not _REPEAT_PASS.search(bar) and bar not in bars:
+            bars.append(bar)
+    if not durations or len(bars) != len(durations):
+        return timemap
+    length = dict(zip(bars, (float(d) for d in durations)))
+
+    retimed: List[dict] = []
+    shift, start, current = 0.0, 0.0, None
+    for entry in timemap:
+        q = float(entry.get("qstamp", 0.0))
+        bar = entry.get("measureOn")
+        if bar:
+            if current is not None:
+                shift = start + length[current] - q
+            start, current = q + shift, _REPEAT_PASS.sub("", bar)
+        if shift:
+            entry = {**entry, "qstamp": q + shift}
+        retimed.append(entry)
+    return retimed
 
 
 def _drawn_ids(tk, timemap: List[dict], layout: Layout) -> Dict[str, str]:

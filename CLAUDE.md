@@ -2686,7 +2686,11 @@ Three behaviours worth knowing:
   so the repeat pass sounds under suffixed ids (`xyz-rend2`) that are not drawn;
   `engrave._drawn_ids` maps them back with verovio's `getNotatedIdForElement`. A
   repeated note therefore gets one highlight event per pass, and the scroll walks
-  back to where that section is drawn.
+  back to where that section is drawn. One thing verovio gets wrong on the way: a
+  whole-bar rest in the bar a repeat jumps back to is timed in the meter in force *at
+  the jump* (a 7/4 bar repeating to a 4/4 one where a part rests made Kantajani's
+  highlights 2.25s late and the render was refused, #313), so `engrave.retime_repeats` puts every bar of the played
+  timeline back at its MusicXML length.
 - **D.C./D.S. jumps are followed in MuseScore's own bar order** (#314; `playorder.py`).
   They were refused until then, because verovio follows them only sometimes: it gets
   Illan viimeinen tango's D.S. al Coda right, and plays Jouluriemua's two D.C.s as
