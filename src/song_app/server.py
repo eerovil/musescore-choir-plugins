@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import traceback
 from typing import Dict, List, Optional, Set
 
@@ -18,8 +19,8 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
 from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_state, omr,
-               pdf_systems, pipeline, problems, pwa_assets, scan, state, system_finder,
-               verification)
+               pdf_systems, pipeline, problems, pwa_assets, scan, site_refresh, state,
+               system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
 
@@ -1698,6 +1699,10 @@ def _run_record(slug: str, opts: Dict) -> None:
                 else previous_rendered_against
             rec["verification"] = verification.verify_media(
                 song, rec["outputs"], verification.singing_parts(cleaned))
+        if youtube and rec.get("uploads"):
+            # One refresh picks up every video this run uploaded (#321).
+            rec["site_refresh"] = {"at": time.time(),
+                                   "ok": site_refresh.refresh_stemmanauhat(log)}
         rec["error"] = None
         # After recording, move on to the Upload stage; uploading stays there.
         if not merge_only:
@@ -1813,6 +1818,8 @@ def api_youtube_delete(slug: str) -> Dict:
     song.data["record"]["uploads"] = []
     song.data["record"]["playlist_id"] = None
     song.save()
+    # The site would otherwise list the deleted videos until its schedule runs.
+    site_refresh.refresh_stemmanauhat(lambda m: hub.emit(slug, {"type": "log", "line": m}))
     return _derived(song)
 
 
