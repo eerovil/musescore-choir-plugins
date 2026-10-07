@@ -12,9 +12,10 @@ Parts sharing a staff get the same number, and the ALL video gets no line, since
 stays zoomed out. The site reads it with `STAFF_LINE_RE`
 (eerovil/musescore-choir-plugins#323, eerovil/stemmanauhat#5).
 
-The staves are counted the way the scrolling renderer draws them: parts with nothing
-to sing (a click or spacer staff, percussion) are left out, and the song's shared
-staves (`record.staff_groups`) count once.
+The staves are counted the way the video shows them. A scrolling render leaves out
+parts with nothing to sing (a click or spacer staff, percussion) and draws the
+song's shared staves (`record.staff_groups`) once; a screen recording shows the
+score in MuseScore as it is, so there every staff counts, a click staff included.
 """
 
 import glob
@@ -37,17 +38,24 @@ def staff_line(staff: int, staves: int) -> str:
 
 
 def part_staves(mscx_path: str,
-                staff_groups: Sequence[Sequence[str]] = ()) -> Dict[str, Tuple[int, int]]:
+                staff_groups: Sequence[Sequence[str]] = (),
+                renderer: str = "scroll") -> Dict[str, Tuple[int, int]]:
     """`{part: (staff, staves)}`, 1-based from the top, as the video draws them.
 
-    Uses the renderer's own rules (`scrollvideo.score`) on an in-memory copy, so
-    the numbers cannot drift from the picture: silent parts dropped, and each
-    group's lower part put on its upper part's staff.
+    `renderer="scroll"` uses the scrolling renderer's own rules
+    (`scrollvideo.score`) on an in-memory copy, so the numbers cannot drift from
+    the picture: silent parts dropped, and each group's lower part put on its
+    upper part's staff. `renderer="screen"` is a recording of MuseScore showing
+    the score as it is, so every staff it shows counts, a click staff included,
+    and nothing is shared; only a part hidden in MuseScore is left out.
     """
+    root = etree.parse(mscx_path).getroot()
+    if renderer == "screen":
+        return _visible_staves(root)
+
     from src.scrollvideo import score as score_mod
     from src.scrollvideo.audio import part_names
 
-    root = etree.parse(mscx_path).getroot()
     score_mod.drop_parts(root, score_mod.silent_parts(root))
     if staff_groups:
         index = score_mod.merge_staves(root, staff_groups)
@@ -55,6 +63,21 @@ def part_staves(mscx_path: str,
         index = {name: i for i, name in enumerate(part_names(root))}
     staves = len(set(index.values()))
     return {name: (i + 1, staves) for name, i in index.items()}
+
+
+def _visible_staves(root) -> Dict[str, Tuple[int, int]]:
+    """Each part's first staff among the staves MuseScore shows."""
+    from src.scrollvideo.audio import part_name
+
+    score = root.find("Score")
+    index: Dict[str, int] = {}
+    shown = 0
+    for i, part in enumerate(score.findall("Part") if score is not None else []):
+        if (part.findtext("show") or "").strip() == "0":
+            continue   # hidden in MuseScore: not in the recording
+        index.setdefault(part_name(part, i), shown)
+        shown += max(1, len(part.findall("Staff")))
+    return {name: (i + 1, shown) for name, i in index.items()}
 
 
 def _song_score(song_dir: str, data: Dict) -> Optional[str]:
@@ -79,11 +102,11 @@ def song_part_staves(song_dir: str) -> Dict[str, Tuple[int, int]]:
     if not score:
         return {}
     record = data.get("record") or {}
-    # Only the scrolling renderer shares staves; a screen recording shows the
-    # score as it is.
-    groups = (score_mod.parse_groups(record.get("staff_groups"))
-              if record.get("renderer") in (None, "scroll") else [])
-    return part_staves(score, groups)
+    # Only the scrolling renderer writes "scroll"; a recording made before the
+    # field existed came from the screen recorder (the server reads it so too).
+    if record.get("renderer") == "scroll":
+        return part_staves(score, score_mod.parse_groups(record.get("staff_groups")))
+    return part_staves(score, renderer="screen")
 
 
 def line_for(part: str, staves: Dict[str, Tuple[int, int]]) -> Optional[str]:

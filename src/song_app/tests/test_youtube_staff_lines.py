@@ -72,6 +72,28 @@ def test_a_screen_recording_shares_no_staves(tmp_path):
     assert staff_lines.song_part_staves(song)["A1"] == (3, 3)
 
 
+def test_a_screen_recording_counts_the_silent_staff_it_shows(tmp_path):
+    # MuseScore on screen shows the click staff, so the parts under it move down.
+    for renderer in ("screen", None):
+        song = make_song(tmp_path, f"rec-{renderer}", ["Solo", "Click", "S1", "A1"],
+                         silent=("Click",), record={"renderer": renderer})
+        assert staff_lines.song_part_staves(song) == {
+            "Solo": (1, 4), "Click": (2, 4), "S1": (3, 4), "A1": (4, 4)}
+    # The same score rendered scrolling leaves the click staff out.
+    song = make_song(tmp_path, "scrolled", ["Solo", "Click", "S1", "A1"],
+                     silent=("Click",), record={"renderer": "scroll"})
+    assert staff_lines.song_part_staves(song) == {
+        "Solo": (1, 3), "S1": (2, 3), "A1": (3, 3)}
+
+
+def test_a_part_hidden_in_musescore_is_not_on_screen(tmp_path):
+    score = write_score(tmp_path / "s.mscx", ["S1", "A1"])
+    text = open(score, encoding="utf-8").read().replace(
+        "<trackName>S1</trackName>", "<trackName>S1</trackName><show>0</show>", 1)
+    open(score, "w", encoding="utf-8").write(text)
+    assert staff_lines.part_staves(score, renderer="screen") == {"A1": (1, 1)}
+
+
 def test_no_cleaned_score_is_no_lines(tmp_path):
     (tmp_path / "empty").mkdir()
     assert staff_lines.song_part_staves(str(tmp_path / "empty")) == {}
