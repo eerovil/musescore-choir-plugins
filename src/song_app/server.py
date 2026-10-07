@@ -1396,30 +1396,62 @@ def _staff_groups(cleaned: str, text) -> str:
         raise HTTPException(400, str(exc)) from None
 
 
-def _remember_margins(song: state.Song, top: float, bottom: float,
-                      staff_groups: Optional[str] = None) -> None:
-    """Keep the framing this song was last shown at.
+def _remember_record_settings(song: state.Song, **wanted) -> None:
+    """Keep the Record settings this song was last shown or rendered with.
 
-    The staff grouping (#246) is part of the framing — it changes what is drawn,
-    not what is heard — so it is kept the same way, when given.
-
-    Written when a render is asked for and when a preview succeeds, so nudging a
-    margin to see what it looks like is enough to keep it — that is the moment the
-    choice is actually made. Only a real change is written, and never while a job
-    is running: the state file is saved whole, so a needless write here could land
-    on top of what a finishing render just recorded. Pass a freshly loaded song for
-    the same reason.
+    The framing (margins, and the staff grouping of #246 — it changes what is
+    drawn, not what is heard), the output quality, the tempo the app supplies and
+    the encoder choice. Written when a render is asked for, when the panel's
+    Preview or Save settings is pressed (#301), and when a preview succeeds, so
+    nudging a value to see what it looks like is enough to keep it — that is the
+    moment the choice is actually made. Only a real change is written, and never
+    while a job is running: the state file is saved whole, so a needless write
+    here could land on top of what a finishing render just recorded. Pass a
+    freshly loaded song for the same reason.
     """
     rec = song.data.get("record", {})
-    wanted = {"top_margin": top, "bottom_margin": bottom}
-    if staff_groups is not None:
-        wanted["staff_groups"] = staff_groups
     if all(rec.get(key) == value for key, value in wanted.items()):
         return
     if is_recording(song):
         return
     song.data.setdefault("record", {}).update(wanted)
     song.save()
+
+
+def _scroll_settings(song: state.Song, opts: Dict) -> Dict:
+    """The scrolling renderer's settings out of a request, checked the way a render
+    checks them; anything the request leaves out falls back to what this song
+    chose last, then to the app-wide default.
+
+    One place for both the render and Save settings, so a value the render would
+    refuse is refused on save too, with the same message. The staff grouping and
+    the tempo need the cleaned score; without one they are left out. The tempo is
+    left out too when the score carries its own, since it would be ignored.
+    """
+    remembered = song.data.get("record", {})
+    quality = opts.get("quality", remembered.get("quality"))
+    out = {
+        "quality": quality if quality in pipeline.SCROLL_QUALITY else "4k",
+        "hardware_encoding": opts.get(
+            "hardware_encoding", remembered.get("hardware_encoding")) is not False,
+    }
+    for key, label, default in (
+            ("top_margin", "Top", DEFAULT_TOP_MARGIN_PERCENT),
+            ("bottom_margin", "Bottom", DEFAULT_BOTTOM_MARGIN_PERCENT)):
+        out[key] = _margin(opts.get(key, remembered.get(key, default)), label)
+    cleaned = song.cleaned_path()
+    if cleaned and os.path.exists(cleaned):
+        out["staff_groups"] = _staff_groups(
+            cleaned, opts.get("staff_groups", remembered.get("staff_groups", "")))
+        if not pipeline.has_opening_tempo(cleaned):
+            try:
+                bpm = int(opts.get("bpm", remembered.get("bpm", 80)))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "BPM must be a whole number") from None
+            if not 20 <= bpm <= 300:
+                raise HTTPException(400, "BPM must be between 20 and 300")
+            out["bpm"] = bpm
+    return out
 
 
 @app.get("/api/songs/{slug}/scroll-preview")
@@ -1433,7 +1465,7 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
     scroll curve and *pixels* `build_videos` would use, drawn by the same code at a
     height a page can carry. It does not count as a render — no stage moves and no
     video appears; the only files it leaves behind are its own cache. The one thing
-    it does record is the framing it was asked for (`_remember_margins`), because
+    it does record is the settings it was asked for (`_remember_record_settings`), because
     nudging a margin and looking at the result *is* how the choice gets made, and
     having to render before it would stick lost it every time.
 
@@ -1467,8 +1499,13 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
         raise HTTPException(400, str(exc) or exc.__class__.__name__)
     # Only once the picture came out: a framing the renderer refuses is not one to
     # come back to. Reloaded, because preparing can take seconds.
-    _remember_margins(_require(slug), settings["top_margin_percent"],
-                      settings["bottom_margin_percent"], groups)
+    remember = {"quality": settings["quality"],
+                "top_margin": settings["top_margin_percent"],
+                "bottom_margin": settings["bottom_margin_percent"],
+                "staff_groups": groups}
+    if settings["initial_bpm"]:
+        remember["bpm"] = settings["initial_bpm"]
+    _remember_record_settings(_require(slug), **remember)
     return JSONResponse(payload, headers=dict(REVALIDATE))
 
 
@@ -1679,6 +1716,27 @@ def _run_record(slug: str, opts: Dict) -> None:
         hub.emit(slug, {"type": "state"})
 
 
+RECORD_SETTINGS = ("quality", "hardware_encoding", "top_margin", "bottom_margin",
+                   "staff_groups", "bpm")
+
+
+@app.post("/api/songs/{slug}/record-settings")
+async def api_record_settings(slug: str, body: Dict = None) -> Dict:
+    """Save the scrolling renderer's settings without rendering (#301).
+
+    The Record panel's Save settings button, and its Preview button before it
+    opens the preview. Refused while a job runs: a render writes these same
+    fields when it finishes, and the state file is saved whole.
+    """
+    song = _require(slug)
+    if is_recording(song) or is_scanning(song) or job_state.is_running(song.dir, "clean"):
+        raise HTTPException(409, "A scan, clean or render is running — save the "
+                                 "settings after it finishes.")
+    settings = _scroll_settings(song, body or {})
+    _remember_record_settings(song, **settings)
+    return {"record": {key: song.data.get("record", {}).get(key) for key in RECORD_SETTINGS}}
+
+
 @app.post("/api/songs/{slug}/record")
 async def api_record(slug: str, body: Dict = None) -> Dict:
     song = _require(slug)
@@ -1693,33 +1751,15 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
             raise HTTPException(409, "Review and approve the current score before rendering")
     scrolling_render = (opts.get("renderer") or "scroll") == "scroll" \
         and not (opts.get("merge_only") or opts.get("upload_only"))
-    cleaned = song.cleaned_path()
     if scrolling_render:
-        # Remembered the way the BPM is: at request time, and falling back to what
-        # this song chose last before the app-wide default. Writing them only after
-        # a render succeeded meant a margin nudged against a render that then failed
-        # was gone by the next page load, and the panel offered the default again.
-        remembered = song.data.get("record", {})
-        for key, label, default in (
-                ("top_margin", "Top", DEFAULT_TOP_MARGIN_PERCENT),
-                ("bottom_margin", "Bottom", DEFAULT_BOTTOM_MARGIN_PERCENT)):
-            opts[key] = _margin(opts.get(key, remembered.get(key, default)), label)
-        if cleaned and os.path.exists(cleaned):
-            opts["staff_groups"] = _staff_groups(
-                cleaned, opts.get("staff_groups", remembered.get("staff_groups", "")))
-        _remember_margins(song, opts["top_margin"], opts["bottom_margin"],
-                          opts.get("staff_groups"))
-    if scrolling_render and cleaned and os.path.exists(cleaned) \
-            and not pipeline.has_opening_tempo(cleaned):
-        try:
-            bpm = int(opts.get("bpm", song.data.get("record", {}).get("bpm", 80)))
-        except (TypeError, ValueError):
-            raise HTTPException(400, "BPM must be a whole number") from None
-        if not 20 <= bpm <= 300:
-            raise HTTPException(400, "BPM must be between 20 and 300")
-        opts["bpm"] = bpm
-        song.data.setdefault("record", {})["bpm"] = bpm
-        song.save()
+        # Remembered at request time, falling back to what this song chose last
+        # before the app-wide default. Writing them only after a render succeeded
+        # meant a margin nudged against a render that then failed was gone by the
+        # next page load, and the panel offered the default again.
+        settings = _scroll_settings(song, opts)
+        opts.pop("bpm", None)  # only a tempo the score lacks is passed on
+        opts.update(settings)
+        _remember_record_settings(song, **settings)
     else:
         opts.pop("bpm", None)
     kind = "upload" if opts.get("upload_only") else "render"
