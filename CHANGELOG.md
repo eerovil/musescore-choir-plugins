@@ -5,6 +5,13 @@ grouped by the day they were merged, and each line names its pull request
 (`#123`) on GitHub. Changes that only touch tests, measurements or the notes for
 developers are listed under *Behind the scenes*.
 
+## 2026-10-07
+
+- Re-cleaning no longer fails after the per-system grid is answered again. A
+  reading picked in the Fix panel now follows its notes to whichever part they
+  land in, and is dropped (with a line in the log) if no part sings them any
+  more. (#292)
+
 ## 2026-10-06
 
 - A scanned song moves on to Clean as soon as every system is read; there is no
