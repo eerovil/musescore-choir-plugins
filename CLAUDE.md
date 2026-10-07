@@ -2094,6 +2094,12 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    panel (`source: "clean-marker"`, replaced on every clean). The scrolling video
    strips marks (`scrollvideo/score.prepare`), so a forgotten one never reaches a
    practice track.
+9. `centre_measure_rests` (`utils/measure_rests.py`, #298) runs last in both modes: a
+   rest that alone fills its bar becomes a bar rest (`durationType` `measure`).
+   MuseScore 3's MusicXML import writes an ordinary whole rest even for
+   `<rest measure="yes"/>`, and MuseScore draws that at the start of the bar rather
+   than centred. Only the length changes; a rest that does not fill the bar exactly,
+   a dotted one, one in a tuplet, or one a `location` shifts off beat one is left alone.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
 (which makes an upper/lower pair) and is either an OCR glitch or a real multi-way
