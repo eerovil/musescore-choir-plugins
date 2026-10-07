@@ -5,6 +5,11 @@ grouped by the day they were merged, and each line names its pull request
 (`#123`) on GitHub. Changes that only touch tests, measurements or the notes for
 developers are listed under *Behind the scenes*.
 
+## 2026-10-07
+
+- A bar a part rests through shows its rest in the middle of the bar after cleaning,
+  as MuseScore draws a bar rest, instead of at the start of the bar. (#298)
+
 ## 2026-10-06
 
 - A scanned song moves on to Clean as soon as every system is read; there is no
