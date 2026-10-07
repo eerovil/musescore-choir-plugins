@@ -251,6 +251,12 @@ def apply_recorded_fixes(cleaned_path: str, song_dir: str, log: Logger = _noop) 
     if not entries:
         return 0
     tree = etree.parse(cleaned_path)
+    # A picked reading follows its notes to whichever staff the grid put them on
+    # (#291); the move is written back so the Fix panel and the next clean agree.
+    from .bar_readings import relocate_picks
+    entries, moved = relocate_picks(tree.getroot(), entries, log)
+    if moved:
+        _replace_recorded(song_dir, lambda fix: True, entries)
     try:
         lines = apply_fixes(tree.getroot(), entries)
     except FixError as exc:
