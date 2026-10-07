@@ -913,6 +913,17 @@ state model are in `DESIGN.md`.
   `_media_list` hands out, because re-recording a part rewrites the same file
   name and an identical URL is the one thing revalidation cannot save you from
   once a range request is already cached.
+- `static/` **slow pictures say so** (#303). A score tab is a MuseScore render and can
+  take a minute: `mountPdf` shows a note with a running seconds count (`busyNote`) on a
+  first build, keeps the old score under an "Updating…" badge on a rebuild, and says
+  why when the server refuses. The engraved systems in Compare and Scan vs page are
+  one MuseScore run each, so they wait in placeholders and are fetched by
+  `slowQueue` in reading order, `SLOW_AT_ONCE` (2) at a time — asked for all at once
+  they started a MuseScore per system and arrived at random. A system jumped to goes
+  next. The queue belongs to the view and outlives a redraw (a scan redraws Scan vs
+  page after every system it reads): a request in flight lands on the new placeholder
+  rather than being dropped or started again, since dropping it would not stop the
+  MuseScore run behind it. `test_loading_states_ui.py` pins it.
 - `static/` **layout**: the page never scrolls — `html, body` are fixed to the
   window and every panel scrolls inside itself. `#app` takes what the header leaves
   (`flex: 1 1 auto; min-height: 0`) and the workspace grid fills it. It used to be
