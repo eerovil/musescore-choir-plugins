@@ -9,8 +9,8 @@ staves. Deleting one in MuseScore puts a bar rest back, which is why it then jum
 the middle.
 
 Only the length is rewritten: a rest that is hidden or carries anything else keeps it.
-A rest that does not fill the bar exactly (a whole rest under 3/4), a dotted one, or one
-in a tuplet is left alone; the bar-length passes before this one deal with those.
+A rest that does not fill the bar exactly (a whole rest under 3/4), a dotted one, one
+in a tuplet, or one a `location` moves off the start of the bar is left alone; the bar-length passes before this one deal with those.
 """
 from lxml import etree
 
@@ -32,7 +32,9 @@ def _bar_lengths(staff: etree._Element):
 
 
 def _lone_rest(voice: etree._Element):
-    events = [el for el in voice if el.tag in ("Chord", "Rest", "Tuplet")]
+    # A `location` moves the voice's position, so a rest after one does not start the
+    # bar, and making it a bar rest would move it rather than only re-spell it.
+    events = [el for el in voice if el.tag in ("Chord", "Rest", "Tuplet", "location")]
     if len(events) != 1 or events[0].tag != "Rest":
         return None
     rest = events[0]

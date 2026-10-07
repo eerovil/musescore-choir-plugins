@@ -2078,7 +2078,7 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    MuseScore 3's MusicXML import writes an ordinary whole rest even for
    `<rest measure="yes"/>`, and MuseScore draws that at the start of the bar rather
    than centred. Only the length changes; a rest that does not fill the bar exactly,
-   a dotted one, or one in a tuplet is left alone.
+   a dotted one, one in a tuplet, or one a `location` shifts off beat one is left alone.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
 (which makes an upper/lower pair) and is either an OCR glitch or a real multi-way

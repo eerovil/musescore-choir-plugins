@@ -69,6 +69,13 @@ def test_a_rest_beside_a_note_is_left_alone():
     assert centre_measure_rests(root) == 0
 
 
+def test_a_rest_shifted_by_a_location_is_left_alone():
+    body = "<location><fractions>1/4</fractions></location>" + _rest("whole")
+    root = _score((body, ""))
+    assert centre_measure_rests(root) == 0
+    assert _first_rest(root).findtext("durationType") == "whole"
+
+
 def test_the_bars_own_length_wins_over_the_signature():
     root = _score((_rest("whole"), ""), (_rest("half"), ' len="2/4"'))
     centre_measure_rests(root)
