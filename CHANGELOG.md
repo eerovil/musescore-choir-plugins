@@ -11,6 +11,10 @@ developers are listed under *Behind the scenes*.
   margins, shared staves, NVIDIA encoding) and starts drawing the preview at once,
   with a progress bar and a seconds counter. A new Save settings button saves them
   without previewing. (#302)
+- Re-cleaning no longer fails after the per-system grid is answered again. A
+  reading picked in the Fix panel now follows its notes to whichever part they
+  land in, and is dropped (with a line in the log) if no part sings them any
+  more. (#292)
 - In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
   words) in every bar where it has none of its own, instead of resting. (#293)
 
