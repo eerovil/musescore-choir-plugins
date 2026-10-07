@@ -31,6 +31,7 @@ MuseScore.
 """
 import json
 import os
+import re
 from typing import Callable, Dict, List, Optional, Tuple
 
 from lxml import etree
@@ -56,8 +57,7 @@ def _noop(_msg: str) -> None:
 # ---------------------------------------------------------------- reading the field
 
 
-def fragment_readings(path: str) -> List[Dict]:
-    """The readings a fragment carries, or none (an older homr, or nothing doubted)."""
+def _field(path: str, key: str) -> List[Dict]:
     try:
         root = etree.parse(path).getroot()
     except (OSError, etree.XMLSyntaxError):
@@ -65,10 +65,23 @@ def fragment_readings(path: str) -> List[Dict]:
     for field in root.iterfind("identification/miscellaneous/miscellaneous-field"):
         if field.get("name") == FIELD and field.text:
             try:
-                return list(json.loads(field.text).get("bars", []))
-            except ValueError:
+                return list(json.loads(field.text).get(key, []))
+            except (ValueError, AttributeError):
                 return []
     return []
+
+
+def fragment_readings(path: str) -> List[Dict]:
+    """The readings a fragment carries, or none (an older homr, or nothing doubted)."""
+    return _field(path, "bars")
+
+
+def fragment_note_readings(path: str) -> List[Dict]:
+    """The other pitches a fragment carries for its doubted notes (#290).
+
+    homr's field version 2; a fragment read by an older homr has none.
+    """
+    return _field(path, "notes")
 
 
 _STEPS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
@@ -94,8 +107,17 @@ def _systems(song: state.Song) -> List[Tuple[Dict, int]]:
 
 
 def offer_id(system: Dict, entry: Dict) -> str:
-    return (f"s{system['index']}-{system.get('content', '')}-p{entry['part']}"
-            f"-st{entry['staff']}-b{entry['bar']}-v{entry['voice']}")
+    oid = (f"s{system['index']}-{system.get('content', '')}-p{entry['part']}"
+           f"-st{entry['staff']}-b{entry['bar']}-v{entry['voice']}")
+    if "moment" in entry:  # one note's pitch rather than the bar's lengths
+        oid += f"-m{entry['moment']}-c{entry['chord']}"
+    return oid
+
+
+def pitch_name(pitch: Dict) -> str:
+    """A homr pitch as a person reads it: "F#4", "Bb3"."""
+    accidental = {-2: "bb", -1: "b", 0: "", 1: "#", 2: "##"}.get(int(pitch.get("alter", 0)), "")
+    return f"{pitch.get('step', '?')}{accidental}{pitch.get('octave', '')}"
 
 
 # ---------------------------------------------------------------- the cleaned bar
@@ -131,28 +153,63 @@ def _bar_reading(measure: etree._Element) -> Optional[List[Tuple[str, Tuple[int,
     return out
 
 
-def _matches(found, entry: Dict) -> bool:
-    """Whether a cleaned bar is the voice homr offered readings of."""
+def _shift(found, entry: Dict) -> Optional[int]:
+    """How far a cleaned bar sounds from the voice homr wrote, or None if it is not it.
+
+    Whole octaves only: a tenor cleaned onto a G8vb staff sounds an octave below
+    what homr read off the page, at the same shift for every note.
+    """
     moments = entry.get("moments", [])
     if found is None or len(found) != len(moments):
-        return False
+        return None
     shift = None
     for (value, pitches), moment in zip(found, moments):
         if value != moment.get("value"):
-            return False
+            return None
         wanted = tuple(sorted(_midi(p) for p in moment.get("pitches", [])))
         if len(wanted) != len(pitches):
-            return False
+            return None
         if not wanted:
             continue
         here = pitches[0] - wanted[0]
         if here % 12 or any(a - b != here for a, b in zip(pitches, wanted)):
-            return False
+            return None
         if shift is None:
             shift = here
         elif here != shift:
-            return False
-    return True
+            return None
+    return shift or 0
+
+
+_NOTE_SUFFIX = re.compile(r"-m(\d+)-c(\d+)$")
+
+
+def _effective(entry: Dict, oid: str, picks: Dict[str, Dict]) -> Dict:
+    """The voice as the cleaned score holds it now, after the picks made on it.
+
+    A bar can be doubted for its lengths and one of its pitches at once, and each pick
+    changes what the bar reads; matching the other offer against homr's original would
+    lose it the moment the first was picked.
+    """
+    base = _NOTE_SUFFIX.sub("", oid)
+    moments = json.loads(json.dumps(entry.get("moments", [])))
+    rhythm = picks.get(base)
+    if rhythm and rhythm.get("kind") == "rhythm" and len(rhythm.get("to") or []) == len(moments):
+        for moment, value in zip(moments, rhythm["to"]):
+            moment["value"] = value
+    for pid, fix in picks.items():
+        found = _NOTE_SUFFIX.search(pid)
+        if pid == oid or not found or pid[:found.start()] != base or not fix.get("pitch"):
+            continue
+        m, c = int(found.group(1)), int(found.group(2))
+        if m < len(moments) and c < len(moments[m].get("pitches", [])):
+            moments[m]["pitches"][c] = fix["pitch"]
+    return {**entry, "moments": moments}
+
+
+def _matches(found, entry: Dict) -> bool:
+    """Whether a cleaned bar is the voice homr offered readings of."""
+    return _shift(found, entry) is not None
 
 
 def _staves(root: etree._Element) -> List[Tuple[int, str, etree._Element]]:
@@ -212,8 +269,9 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
             options = [{"letter": LETTERS[i], "values": r["values"],
                         "current": r["values"] == now}
                        for i, r in enumerate(readings[:len(LETTERS)])]
-            base = {"id": oid, "system": int(system["index"]), "measure": measure,
-                    "bar_in_system": int(entry["bar"]), "options": options}
+            base = {"id": oid, "kind": "rhythm", "system": int(system["index"]),
+                    "measure": measure, "bar_in_system": int(entry["bar"]),
+                    "options": options}
             if oid in picks:
                 fix = picks[oid]
                 letter = next((o["letter"] for o in options if o["values"] == fix["to"]), "?")
@@ -232,12 +290,75 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
                 if sid in taken:
                     continue
                 bar = _bar(staff, measure)
-                if bar is None or not _matches(_bar_reading(bar), entry):
+                if bar is None or not _matches(_bar_reading(bar), _effective(entry, oid, picks)):
                     continue
                 taken.add(sid)
                 out.append({**base, "staff": sid, "part": name,
                             "from": score_fixes._bar_tokens(bar), "decision": None})
                 break
+        out.extend(_pitch_offers(system, start, path, staves, picks, declined))
+    return out
+
+
+def _pitch_offers(system: Dict, start: int, path: str, staves, picks: Dict,
+                  declined: Dict) -> List[Dict]:
+    """The notes of one system homr offered other pitches for, on the cleaned staves."""
+    out: List[Dict] = []
+    claimed: Dict[Tuple[int, int, int], set] = {}
+    for entry in fragment_note_readings(path):
+        pitches = entry.get("pitches") or []
+        moments = entry.get("moments") or []
+        try:
+            moment_no, chord_no = int(entry["moment"]), int(entry["chord"])
+            written = moments[moment_no]["pitches"][chord_no]
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if len(pitches) < 2:
+            continue
+        measure = start + int(entry["bar"])
+        oid = offer_id(system, entry)
+        # The chord a recorded fix means by `index`: rests are not chords.
+        index = sum(1 for m in moments[:moment_no] if m.get("kind") == "note")
+        base = {"id": oid, "kind": "pitch", "system": int(system["index"]),
+                "measure": measure, "bar_in_system": int(entry["bar"]), "index": index,
+                "note": pitch_name(written)}
+
+        def options(shift: int) -> List[Dict]:
+            return [{"letter": LETTERS[i], "name": pitch_name(p),
+                     "current": i == 0, "to": _midi(p) + shift,
+                     "pitch": {k: p[k] for k in ("step", "alter", "octave") if k in p},
+                     "tpc": score_fixes.tpc_of(p["step"], int(p.get("alter", 0)))}
+                    for i, p in enumerate(pitches[:len(LETTERS)])]
+
+        if oid in picks:
+            fix = picks[oid]
+            shift = int(fix["was"]) - _midi(written)
+            opts = options(shift)
+            letter = next((o["letter"] for o in opts if o["to"] == fix["to"]), "?")
+            out.append({**base, "options": opts, "staff": fix["staff"],
+                        "part": fix.get("part", ""), "from": fix["from"],
+                        "was": fix["was"], "decision": {"picked": letter}})
+            continue
+        if oid in declined:
+            d = declined[oid]
+            out.append({**base, "options": options(0), "staff": d.get("staff"),
+                        "part": d.get("part", ""), "from": [], "was": None,
+                        "decision": {"none": True}})
+            continue
+        taken = claimed.setdefault((measure, moment_no, chord_no), set())
+        for sid, name, staff in staves:
+            if sid in taken:
+                continue
+            bar = _bar(staff, measure)
+            shift = (_shift(_bar_reading(bar), _effective(entry, oid, picks))
+                     if bar is not None else None)
+            if shift is None:
+                continue
+            taken.add(sid)
+            out.append({**base, "options": options(shift), "staff": sid, "part": name,
+                        "from": score_fixes._bar_tokens(bar), "was": _midi(written) + shift,
+                        "decision": None})
+            break
     return out
 
 
@@ -283,9 +404,14 @@ def record_pick(song: state.Song, oid: str, choice: str) -> Dict:
     entry = {"kind": "rhythm", "source": SOURCE, "offer": oid,
              "system": offer["system"], "content": system.get("content"),
              "staff": offer["staff"], "part": offer["part"], "measure": offer["measure"],
-             "from": offer["from"], "to": option["values"],
+             "from": offer["from"], "to": option.get("values"),
              "why": (f"picked homr's reading {choice} of bar {offer['measure']} "
                      "against the page")}
+    if offer.get("kind") == "pitch":
+        entry.update({"kind": "pitch", "index": offer["index"], "was": offer["was"],
+                      "to": option["to"], "tpc": option["tpc"], "pitch": option["pitch"],
+                      "why": (f"picked homr's pitch {choice} ({option['name']}) for "
+                              f"{offer['note']} in bar {offer['measure']} against the page")})
     root = etree.parse(cleaned).getroot()
     applied = score_fixes.apply_fixes(root, [entry])
     entries = pipeline._recorded_fixes(song.dir) + [entry]
@@ -345,8 +471,16 @@ _ACCIDENTAL = {-2: "flat-flat", -1: "flat", 0: "natural", 1: "sharp", 2: "double
 _DIVISIONS = 48  # per quarter: triplets and 32nds both come out whole
 
 
-def option_musicxml(fragment: str, entry: Dict, values: List[str]) -> str:
-    """One bar of one voice, with `values` as its lengths, as MusicXML."""
+def option_musicxml(fragment: str, entry: Dict, values: List[str],
+                    moments: Optional[List[Dict]] = None,
+                    highlight: Optional[Tuple[int, int]] = None) -> str:
+    """One bar of one voice, with `values` as its lengths, as MusicXML.
+
+    `moments` stands in for the voice homr wrote (a pitch option swaps one note), and
+    `highlight` — (moment, chord) — draws that note blue, so the one that differs
+    between the options is the one the eye lands on.
+    """
+    moments = moments if moments is not None else entry["moments"]
     root = etree.parse(fragment).getroot()
     parts = root.findall("part")
     part = parts[int(entry["part"])]
@@ -374,13 +508,15 @@ def option_musicxml(fragment: str, entry: Dict, values: List[str]) -> str:
     groups = score_fixes.triplet_groups(values)
     starts = {first for first, _ in groups}
     stops = {last for _, last in groups}
-    for index, (moment, value) in enumerate(zip(entry["moments"], values)):
+    for index, (moment, value) in enumerate(zip(moments, values)):
         _, number, dots = score_fixes._parse_value(value)
         length = score_fixes.value_length(value)
         triplet = number % 3 == 0
         written = number * 2 // 3 if triplet else number
         for n, pitch in enumerate(moment.get("pitches") or [None]):
             note = etree.SubElement(m, "note")
+            if highlight == (index, n):
+                note.set("color", "#1f6fd1")
             if n:
                 etree.SubElement(note, "chord")
             if pitch is None:
@@ -427,12 +563,23 @@ def option_svg(song: state.Song, oid: str, letter: str) -> str:
         raise FixError(f"there is no option {letter!r}")
     system = song.data["scan"]["systems"][str(offer["system"])]
     fragment = os.path.join(song.dir, system["musicxml"])
-    entry = next(e for e in fragment_readings(fragment) if offer_id(system, e) == oid)
+    if offer.get("kind") == "pitch":
+        entry = next(e for e in fragment_note_readings(fragment) if offer_id(system, e) == oid)
+        moment_no, chord_no = int(entry["moment"]), int(entry["chord"])
+        moments = json.loads(json.dumps(entry["moments"]))
+        pitch = entry["pitches"][LETTERS.index(letter)]
+        moments[moment_no]["pitches"][chord_no] = {
+            k: pitch[k] for k in ("step", "alter", "octave") if k in pitch}
+        xml = option_musicxml(fragment, entry, [m["value"] for m in moments], moments,
+                              (moment_no, chord_no))
+    else:
+        entry = next(e for e in fragment_readings(fragment) if offer_id(system, e) == oid)
+        xml = option_musicxml(fragment, entry, option["values"])
     tk = verovio.toolkit(False)
     tk.setResourcePath(RESOURCE_PATH)
     tk.setOptions({"adjustPageWidth": True, "adjustPageHeight": True, "header": "none",
                    "footer": "none", "scale": 45, "pageMarginLeft": 20,
                    "pageMarginRight": 20, "pageMarginTop": 20, "pageMarginBottom": 20})
-    if not tk.loadData(option_musicxml(fragment, entry, option["values"])):
+    if not tk.loadData(xml):
         raise RuntimeError("verovio could not engrave that option")
     return tk.renderToSVG(1)

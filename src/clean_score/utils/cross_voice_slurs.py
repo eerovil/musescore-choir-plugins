@@ -11,6 +11,7 @@ A slur belongs to one singer, so a half whose other end is in another voice or o
 another staff is wrong whatever the page says. Both halves are removed and both bars
 are marked; which slur (or tie) the page really prints is a person's call.
 """
+import json
 from fractions import Fraction
 from typing import Dict, List, Optional, Tuple
 
@@ -87,8 +88,8 @@ def _next_chord(voice: etree._Element, el: etree._Element) -> Optional[etree._El
 def drop_cross_voice_slurs(root: etree._Element) -> List[Dict]:
     """Remove those slurs and mark their bars. Returns one record per slur.
 
-    A record is `{measure, staff, part, note, end_measure, end_staff, end_part,
-    end_note}`, 1-based; a half whose partner is not found has its own record with the
+    A record is `{measure, staff, part, note, pos, end_measure, end_staff, end_part,
+    end_note, end_pos}`, 1-based, `pos` a fraction of a whole note into the bar; a half whose partner is not found has its own record with the
     other side's fields `None` (`measure`... for a lone end half, `end_`... for a start).
     """
     halves = _halves(root)
@@ -128,4 +129,45 @@ def _record(start: Optional[Dict], end: Optional[Dict], names: Dict[int, str]) -
         rec[prefix + "staff"] = half["staff"] if half else None
         rec[prefix + "part"] = names.get(half["staff"]) if half else None
         rec[prefix + "note"] = half["note"] if half else None
+        rec[prefix + "pos"] = str(half["pos"]) if half else None
     return rec
+
+
+#: The metaTag the removed slurs are kept in, so the app can offer them back (#290).
+META = "removedSlurs"
+
+
+def store_removed(root: etree._Element, records: List[Dict]) -> None:
+    """Keep the removed slurs in the score itself, where the Fix stage reads them.
+
+    Each record says where both halves stood (`pos` is how far into its bar), which
+    is what offering "slur in this singer" or "in that one" needs, and what the red
+    mark's sentence does not carry. Nothing is written when nothing was removed.
+    """
+    score = root if root.tag == "Score" else root.find(".//Score")
+    if score is None:
+        return
+    for tag in score.findall(f"metaTag[@name='{META}']"):
+        score.remove(tag)
+    if not records:
+        return
+    tag = etree.Element("metaTag", name=META)
+    tag.text = json.dumps(records, ensure_ascii=False)
+    existing = score.findall("metaTag")
+    if existing:
+        existing[-1].addnext(tag)
+    else:
+        score.insert(0, tag)
+
+
+def removed_slurs(root: etree._Element) -> List[Dict]:
+    """The slurs cleaning removed from this score, or none."""
+    score = root if root.tag == "Score" else root.find(".//Score")
+    tag = score.find(f"metaTag[@name='{META}']") if score is not None else None
+    if tag is None or not tag.text:
+        return []
+    try:
+        found = json.loads(tag.text)
+    except ValueError:
+        return []
+    return [r for r in found if isinstance(r, dict)]

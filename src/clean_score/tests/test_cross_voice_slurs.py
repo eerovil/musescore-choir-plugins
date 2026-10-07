@@ -45,8 +45,9 @@ def _slurs(root):
 def test_both_halves_go_and_are_reported_as_one_slur():
     root = _score()
     records = drop_cross_voice_slurs(root)
-    assert records == [{"measure": 1, "staff": 1, "part": "T1", "note": "E4",
-                        "end_measure": 2, "end_staff": 2, "end_part": "T2", "end_note": "C4"}]
+    assert records == [{"measure": 1, "staff": 1, "part": "T1", "note": "E4", "pos": "3/4",
+                        "end_measure": 2, "end_staff": 2, "end_part": "T2", "end_note": "C4",
+                        "end_pos": "0"}]
     # Only the slur inside one voice is left.
     assert _slurs(root) == [True, False]
 

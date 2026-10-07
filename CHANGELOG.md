@@ -5,6 +5,14 @@ grouped by the day they were merged, and each line names its pull request
 (`#123`) on GitHub. Changes that only touch tests, measurements or the notes for
 developers are listed under *Behind the scenes*.
 
+## Unreleased
+
+- The Fix stage lists every problem once, one card per bar and part, with its
+  choices beside the page: homr's other lengths for an unsure bar, homr's other
+  pitches for an unsure note, and for a slur the scan ran between two singers, the
+  slur in either, both or neither. One tap applies the answer and keeps it for the
+  next clean. (#290)
+
 ## 2026-10-06
 
 - A scanned song moves on to Clean as soon as every system is read; there is no

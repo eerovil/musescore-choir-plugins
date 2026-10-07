@@ -531,6 +531,14 @@ Key test modules:
   voices one staff each, a changed bar not offered), the pick and its replay, "none of
   these", and a pick lapsing when its system is read again. The third is the browser:
   options drawn, one tap picks, and it fits a phone.
+- `src/song_app/tests/test_problems.py` / `test_problem_list_ui.py` — added for #290.
+  The first pins the rows (one per bar and part, a mark and its health row said once,
+  a dismissed mark staying hidden, a removed slur asked once on its first bar), the
+  `pitch` pick and its replay (an octave-shifted tenor, a rhythm pick on the same bar
+  not losing the pitch offer), and the slur answers (drawn across the barline, marks
+  off, back after a re-clean, "no slur" adding nothing, refusals). The second is the
+  browser: one card for a bar with both kinds of doubt, a slur answered in words, and
+  a phone.
 - `src/song_app/tests/test_state_race.py` — added for #252. The file watcher used to
   save the whole song state it had loaded, so a lyric import that saved while the
   watcher was checking health was silently undone. It drives both interleavings (a
@@ -1152,6 +1160,24 @@ state model are in `DESIGN.md`.
   and takes the red mark off. It carries the fragment's content stamp, and
   `drop_stale_picks` removes it before a clean once that system has been read again
   differently. "None of these" is kept in `.song.json` (`readings.declined`).
+- **Every problem is one list, each with its choices** (#290, `problems.py`, `GET
+  /problems`, `POST /problems/pick`). The panel used to say one problem up to three
+  times — a `fixes.json` sentence, a red-mark health row, the bar again under "Unsure
+  bars" — and only the last offered anything to tap. Now a row is one bar of one part:
+  everything wrong there, the page crop, and its a/b/c choices. Red marks are read
+  **live off the cleaned score**, not off the `clean-marker` sentences, which are only
+  rewritten at the next clean and so kept listing marks a person had already deleted;
+  a dismissed health row still hides its mark. The choices: homr's lengths (#269);
+  homr's other **pitches** for a note whose pitch or accidental it doubted (field
+  version 2, key `notes`, eerovil/homr#91), recorded as a `pitch` entry; and for a slur
+  cleaning took out because it ran between two singers, the slur back in either, both,
+  or none — `cross_voice_slurs` keeps where both halves stood in a `removedSlurs`
+  metaTag, a pick is `slur` entries (which may now reach into a later bar) plus
+  `unmark` entries for both red marks. A song cleaned before this has no metaTag, so
+  its slur marks are listed without choices until it is cleaned again. Picks on one bar
+  stack: a pitch offer still matches a bar whose lengths were picked, and the other
+  way round (`bar_readings._effective`). `voice?`, `notes?` and the other sentences are
+  listed with nothing to pick.
 - **The score can be taken away and brought back**, which this pull request proposes
   (#216). Both editing routes the app had assumed MuseScore was on *this* host:
   `open-score` shells out to `open -a`, and the file watcher re-checks a score saved

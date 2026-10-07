@@ -1641,45 +1641,37 @@ function panelFix(panel, song, P, refresh) {
     // Said here too, because this is the panel that offers the rows one at a time.
     // Sixty Dismiss buttons is what a verdict looks like when nobody makes it.
     parseVerdict(song.verification_summary?.health));
-  const pending = song.pending_fixes || [];
-  if (pending.length) {
-    panel.append(el("div", { className: "issue" },
-      el("div", { className: "top" }, el("span", {}, el("span", { className: "kind" }, "fixes.json — not applied automatically"))),
-      ...pending.map((t) => el("div", { className: "detail" }, t))));
-  }
-  const issues = song.open_issues || [];
-  if (!issues.length) {
-    panel.append(el("p", { className: "empty" }, "✓ No issues. Ready for lyrics."));
-  } else {
-    panel.append(...issues.map((i) =>
-      el("div", { className: "issue" },
-        el("div", { className: "top" },
-          el("span", {}, el("span", { className: "m" }, `m${i.measure}`), "  ", el("span", { className: "kind" }, i.kind)),
-          el("button", { onclick: async () => { await postJSON(`${P}/issues/${i.id}/dismiss`); refresh(); } }, "Dismiss")),
-        el("div", { className: "detail" }, `${i.staff}: ${i.detail}`))));
-  }
+  problemList(panel, song, P, refresh);
   panel.append(el("div", { className: "row" },
     el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
     el("button", { onclick: async () => { await postJSON(`${P}/rescan`); refresh(); } }, "Re-check now")));
   panel.append(scoreFileTransfer(song, P, refresh));
-  readingPicker(panel, song, P, refresh);
   slurRecorder(panel, song, P, refresh);
 }
 
-// Bars homr was unsure how long the notes are (#269). It wrote down the few readings
-// that fill the bar; the person looks at the page and taps the one it prints. The
-// pick goes onto the score where it stands and into fixes.json, so a re-clean keeps
-// it. Nothing shows when homr offered nothing.
-function readingPicker(panel, song, P, refresh) {
-  if (!song.has_cleaned) return;
-  const box = el("div", { className: "readings", hidden: true });
+// Every problem the score has, one row per bar and part, with whatever there is to
+// choose between beside the page (#290). The server builds the rows — red marks read
+// live off the score, health findings, sentences in fixes.json, homr's other readings
+// of a bar's lengths or of a note's pitch, and a slur the scan ran between two singers
+// — so the panel decides nothing about the music. A tap applies the answer to the
+// score and records it in fixes.json, so a re-clean keeps it.
+const NOTE_KIND = { mark: "red mark", "fixes.json": "fixes.json — not applied automatically",
+  "musescore-check": "fixes.json — not applied automatically", scan: "fixes.json — not applied automatically" };
+
+function problemList(panel, song, P, refresh) {
+  const box = el("div", { className: "problems" });
   panel.append(box);
+  if (!song.has_cleaned) {
+    box.append(el("p", { className: "empty" }, "Clean the score first."));
+    return;
+  }
+  box.append(el("p", { className: "hint" }, "Reading the score…"));
   const problem = el("p", { className: "lyerr readerr" });
-  const pick = async (offer, choice, buttons) => {
+  const pick = async (choice, letter, buttons) => {
     problem.textContent = "";
     buttons.forEach((b) => { b.disabled = true; });
     try {
-      const fresh = await postJSON(`${P}/readings/pick`, { offer: offer.id, choice });
+      const fresh = await postJSON(`${P}/problems/pick`, { choice: choice.id, kind: choice.kind, letter });
       Object.assign(song, fresh);
       refresh();
     } catch (e) {
@@ -1687,49 +1679,74 @@ function readingPicker(panel, song, P, refresh) {
       buttons.forEach((b) => { b.disabled = false; });
     }
   };
-  getJSON(`${P}/readings`).then(({ offers }) => {
-    if (!offers?.length) return;
-    const open = offers.filter((o) => !o.decision);
-    const done = offers.filter((o) => o.decision);
-    box.hidden = false;
-    box.append(el("h3", {}, "Unsure bars"),
-      el("p", { className: "sub" },
-        "homr was not sure how long these notes are. Compare each bar with the page and tap the reading the page prints. It is applied to the score and kept in fixes.json, so a re-clean keeps it."));
-    for (const offer of open) {
-      const buttons = [];
-      const options = offer.options.map((o) => {
-        const b = el("button", { className: "readopt", onclick: () => pick(offer, o.letter, buttons) },
-          el("span", { className: "readletter" }, o.letter),
-          o.current ? el("span", { className: "hint" }, " as read now") : "",
-          el("img", { className: "readsvg", loading: "lazy", alt: `reading ${o.letter}`,
-            src: `${P}/readings/${encodeURIComponent(offer.id)}/${o.letter}.svg` }));
-        buttons.push(b);
-        return b;
-      });
-      const none = el("button", { className: "readnone", onclick: () => pick(offer, "none", buttons) },
+  const where = (row) => row.measure ? `Bar ${row.measure}${row.part ? ", " + row.part : ""}` : "Note";
+  const decidedText = (row, c) => {
+    const d = c.decision;
+    if (d.none) return `${where(row)}: none of these — fix it in MuseScore`;
+    const word = c.kind === "pitch" ? "pitch" : c.kind === "slur" ? "slur answer" : "reading";
+    const opt = c.options.find((o) => o.letter === d.picked);
+    return `${where(row)}: ${word} ${d.picked}` + (opt && opt.label ? ` (${opt.label})` : "");
+  };
+  const choiceBlock = (row, c) => {
+    const buttons = [];
+    const options = c.options.map((o) => {
+      const b = el("button", { className: "readopt" + (o.svg ? "" : " readtext"),
+        onclick: () => pick(c, o.letter, buttons) },
+        el("span", { className: "readletter" }, o.letter),
+        o.label ? el("span", { className: "readlabel" }, " " + o.label) : "",
+        o.current ? el("span", { className: "hint" }, " as read now") : "",
+        o.svg ? el("img", { className: "readsvg", loading: "lazy", alt: `option ${o.letter}`,
+          src: `${P}/${o.svg.split("/").map(encodeURIComponent).join("/")}` }) : "");
+      buttons.push(b);
+      return b;
+    });
+    const block = el("div", { className: "readpick", "data-offer": c.id },
+      el("div", { className: "readtitle" }, c.title),
+      el("div", { className: "readopts" }, ...options));
+    if (c.can_decline) {
+      const none = el("button", { className: "readnone", onclick: () => pick(c, "none", buttons) },
         "None of these");
       buttons.push(none);
-      box.append(el("div", { className: "readpick", "data-offer": offer.id },
-        el("div", { className: "top" },
-          el("span", {}, el("span", { className: "m" }, `m${offer.measure}`), "  ", offer.part),
-          el("span", { className: "hint" }, `bar ${offer.bar_in_system} of system ${offer.system}`)),
-        el("img", { className: "readcrop", loading: "lazy", alt: `printed system ${offer.system}`,
-          src: `${P}/system/${offer.system}?dpi=200` }),
-        el("div", { className: "readopts" }, ...options),
-        el("div", { className: "row" }, none,
-          el("span", { className: "hint" }, "keeps homr's reading and the red mark; fix the bar in MuseScore"))));
+      block.append(el("div", { className: "row" }, none,
+        el("span", { className: "hint" }, "keeps it as read and the red mark; fix the bar in MuseScore")));
     }
-    if (done.length) {
+    return block;
+  };
+  getJSON(`${P}/problems`).then(({ rows }) => {
+    box.replaceChildren();
+    const open = rows.filter((r) => r.notes.length || r.choices.some((c) => !c.decision));
+    const decided = rows.flatMap((r) => r.choices.filter((c) => c.decision).map((c) => decidedText(r, c)));
+    if (!open.length) box.append(el("p", { className: "empty" }, "✓ No issues. Ready for lyrics."));
+    else box.append(el("p", { className: "sub problemcount" },
+      `${open.length} place(s) to check against the page. Tap the letter the page prints; it is applied to the score and kept in fixes.json, so a re-clean keeps it.`));
+    for (const row of open) {
+      const card = el("div", { className: "issue problem", "data-row": row.id },
+        el("div", { className: "top" },
+          el("span", {}, row.measure ? el("span", { className: "m" }, `m${row.measure}`) : "",
+            row.measure ? "  " : "", row.part || (row.measure ? "" : "Note")),
+          row.system != null ? el("span", { className: "hint" }, `system ${row.system}`) : ""));
+      for (const n of row.notes) {
+        const line = el("div", { className: "detail" },
+          el("span", { className: "kind" }, NOTE_KIND[n.kind] || n.kind), " ", n.text);
+        if (n.dismiss) line.append(" ", el("button", { className: "dismiss", onclick: async () => {
+          await postJSON(`${P}/issues/${n.dismiss}/dismiss`); refresh(); } }, "Dismiss"));
+        card.append(line);
+      }
+      const undecided = row.choices.filter((c) => !c.decision);
+      if (undecided.length && row.system != null && song.has_pdf)
+        card.append(el("img", { className: "readcrop", loading: "lazy", alt: `printed system ${row.system}`,
+          src: `${P}/system/${row.system}?dpi=200` }));
+      for (const c of undecided) card.append(choiceBlock(row, c));
+      box.append(card);
+    }
+    if (decided.length) {
       box.append(el("div", { className: "issue readdone" },
-        el("div", { className: "top" }, el("span", {}, el("span", { className: "kind" }, `${done.length} decided`))),
-        ...done.map((o) => el("div", { className: "detail" },
-          `Bar ${o.measure}, ${o.part}: ` + (o.decision.picked
-            ? `reading ${o.decision.picked}` : "none of these — fix it in MuseScore")))));
+        el("div", { className: "top" }, el("span", {}, el("span", { className: "kind" }, `${decided.length} decided`))),
+        ...decided.map((t) => el("div", { className: "detail" }, t))));
     }
     box.append(problem);
   }).catch((e) => {
-    box.hidden = false;
-    box.append(el("p", { className: "lyerr readerr" }, `Could not load homr's readings: ${e.message}`));
+    box.replaceChildren(el("p", { className: "lyerr readerr" }, `Could not list the problems: ${e.message}`));
   });
 }
 

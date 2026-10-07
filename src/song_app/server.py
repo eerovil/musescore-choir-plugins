@@ -18,7 +18,8 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
 from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_state, omr,
-               pdf_systems, pipeline, pwa_assets, scan, state, system_finder, verification)
+               pdf_systems, pipeline, problems, pwa_assets, scan, state, system_finder,
+               verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
 
@@ -823,6 +824,49 @@ def api_pick_reading(slug: str, body: Dict) -> Dict:
         raise HTTPException(500, str(exc))
     hub.emit(slug, {"type": "log", "line": f"Picked a reading — {done['applied']}"})
     # Our own write, as with a recorded slur: claim it, or the watcher re-checks it.
+    _rescan(song)
+    return _derived(song)
+
+
+@app.get("/api/songs/{slug}/problems")
+def api_problems(slug: str) -> Dict:
+    """Every problem of the cleaned score, one row per bar and part, with its choices.
+
+    Its own route for the same reason `/readings` is: it parses the cleaned score and
+    every fragment, which only the Fix panel needs.
+    """
+    song = _require(slug)
+    _cleaned_or_400(song)
+    try:
+        rows = problems.problems(song)
+    except (OSError, RuntimeError, etree.XMLSyntaxError) as exc:
+        raise HTTPException(500, str(exc))
+    return {"rows": rows}
+
+
+@app.post("/api/songs/{slug}/problems/pick")
+def api_pick_problem(slug: str, body: Dict) -> Dict:
+    """Apply a person's answer to one problem's choice: a reading, a pitch or a slur."""
+    song = _require(slug)
+    _cleaned_or_400(song)
+    body = body or {}
+    choice, kind, letter = (str(body.get(k) or "") for k in ("choice", "kind", "letter"))
+    if not choice or not letter:
+        raise HTTPException(400, "say which problem (choice) and which answer (letter)")
+    if is_scanning(song) or any(
+            job_state.is_running(song.dir, k) for k in ("clean", "render", "upload")):
+        raise HTTPException(409, "A scan, clean, render, or upload is running for this "
+                                 "song — wait for it to finish, then pick again.")
+    try:
+        if kind == "slur":
+            done = problems.record_slur_choice(song, choice, letter)
+        else:
+            done = bar_readings.record_pick(song, choice, letter)
+    except FixError as exc:
+        raise HTTPException(400, str(exc))
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(500, str(exc))
+    hub.emit(slug, {"type": "log", "line": f"Picked {letter} — {done['applied']}"})
     _rescan(song)
     return _derived(song)
 

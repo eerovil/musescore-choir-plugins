@@ -52,6 +52,23 @@ against the page.
      "to": ["note_12", "note_12", "note_12", "note_6", "note_12", "note_4", ...],
      "why": "picked reading c against the page"}
 
+Three more kinds are how a person's answer to a problem listed on the Fix stage is
+recorded (#290). `pitch` gives one note of a chord another pitch, picked among the
+pitches homr weighed for it; `from` is the bar as it reads now, `was` the MIDI pitch
+the note has, and `to` / `tpc` what it gets — the spelling is homr's, read off the
+page, rather than derived. Its red note and the bar's red mark go with it. A `slur`
+may reach into a later bar with `end_measure` and `end_index` instead of `span`,
+because a slur the scan ran from one singer into another usually crosses a barline.
+And `unmark` takes one red mark off a bar — the answer "the page prints no slur here"
+— and is content if the mark is already gone, because what it records is that
+nothing in that bar needs doing.
+
+    {"kind": "pitch", "staff": 3, "measure": 12, "index": 1, "from": [...],
+     "was": 62, "to": 63, "tpc": 11, "why": "picked homr's reading b ..."}
+    {"kind": "slur", "staff": 5, "measure": 19, "index": 3,
+     "end_measure": 20, "end_index": 0, "why": "..."}
+    {"kind": "unmark", "staff": 5, "measure": 19, "text": "slur to A2 bar 20 removed; ..."}
+
 Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
@@ -135,6 +152,88 @@ def _slur(chords: List[etree._Element], start: int, span: int) -> str:
     loc = etree.SubElement(etree.SubElement(tail, "prev"), "location")
     etree.SubElement(loc, "fractions").text = f"-{distance}"
     return f"slurred {span} note(s) from chord {start}"
+
+
+def _onset(body: etree._Element, chord: etree._Element) -> Fraction:
+    for el, at, _ in _timeline(body):
+        if el is chord:
+            return at
+    raise FixError("that chord is not in the bar")
+
+
+def _slur_across(root: etree._Element, staff: int, measure: int, index: int,
+                 end_measure: int, end_index: int) -> str:
+    """Slur one chord to a chord in the same or a later bar of the same staff."""
+    starts = _chords(root, staff, measure)
+    ends = _chords(root, staff, end_measure)
+    if not 0 <= index < len(starts):
+        raise FixError(f"m{measure} has {len(starts)} chords, no index {index}")
+    if not 0 <= end_index < len(ends):
+        raise FixError(f"m{end_measure} has {len(ends)} chords, no index {end_index}")
+    if (end_measure, end_index) <= (measure, index):
+        raise FixError("a slur has to end after it starts")
+    first, last = starts[index], ends[end_index]
+    along = _onset(last.getparent(), last) - _onset(first.getparent(), first)
+    bars = end_measure - measure
+
+    def location(parent: etree._Element, side: str, sign: int) -> None:
+        loc = etree.SubElement(etree.SubElement(parent, side), "location")
+        if bars:
+            etree.SubElement(loc, "measures").text = str(sign * bars)
+        value = sign * along
+        if value:
+            etree.SubElement(loc, "fractions").text = f"{value.numerator}/{value.denominator}"
+
+    head = etree.SubElement(first, "Spanner", type="Slur")
+    etree.SubElement(etree.SubElement(head, "Slur"), "up").text = "up"
+    location(head, "next", 1)
+    tail = etree.SubElement(last, "Spanner", type="Slur")
+    location(tail, "prev", -1)
+    return f"slurred chord {index} to chord {end_index} of m{end_measure}"
+
+
+def _unmark(root: etree._Element, staff: int, measure: int, text: str) -> str:
+    """Take the red mark saying `text` off a bar. Nothing to take off is fine."""
+    gone = 0
+    for el in list(_measure(root, staff, measure).iter("StaffText")):
+        if (el.findtext("text") or "") == "⚠ " + text:
+            el.getparent().remove(el)
+            gone += 1
+    return f"took the red mark off ({text})" if gone else f"no red mark left ({text})"
+
+
+def tpc_of(step: str, alter: int) -> int:
+    """MuseScore's tpc for a spelt note: F C G D A E B are 13..19, a sharp is +7."""
+    return 13 + _LETTERS.index(step) + 7 * int(alter)
+
+
+def _set_pitch(root: etree._Element, staff: int, measure: int, index: int,
+               expect: List[str], was: int, to: int, tpc: int) -> str:
+    bar = _measure(root, staff, measure)
+    found = _bar_tokens(bar)
+    if found != list(expect):
+        raise FixError(f"bar reads {found} now, but the fix was recorded against {list(expect)}")
+    chords = _chords(root, staff, measure)
+    if not 0 <= index < len(chords):
+        raise FixError(f"the bar has {len(chords)} chords, no index {index}")
+    note = next((n for n in chords[index].findall("Note")
+                 if (n.findtext("pitch") or "").strip() == str(was)), None)
+    if note is None:
+        raise FixError(f"chord {index} has no note at pitch {was}")
+    note.find("pitch").text = str(to)
+    for tag in ("tpc", "tpc2"):
+        node = note.find(tag)
+        if node is not None:
+            node.text = str(tpc)
+    if note.find("tpc") is None:
+        etree.SubElement(note, "tpc").text = str(tpc)
+    for color in note.findall("color"):
+        note.remove(color)
+    for el in list(bar.iter("StaffText")):
+        if (el.findtext("text") or "").startswith("⚠ "):
+            el.getparent().remove(el)
+    return (f"set chord {index}'s {note_name(was)} to {note_name(to, tpc)}"
+            " and took the red mark off")
 
 
 # A bar as tokens, so a recorded fix can say what it expects to find and what it
@@ -580,6 +679,15 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             elif kind == "rhythm":
                 what = _rewrite_rhythm(root, staff, measure, fix.get("from", []),
                                        fix.get("to", []))
+            elif kind == "pitch":
+                what = _set_pitch(root, staff, measure, int(fix["index"]),
+                                  fix.get("from", []), int(fix["was"]), int(fix["to"]),
+                                  int(fix["tpc"]))
+            elif kind == "unmark":
+                what = _unmark(root, staff, measure, str(fix.get("text", "")))
+            elif kind == "slur" and "end_measure" in fix:
+                what = _slur_across(root, staff, measure, int(fix.get("index", 0)),
+                                    int(fix["end_measure"]), int(fix.get("end_index", 0)))
             elif kind in ("undot", "slur"):
                 index = int(fix.get("index", 0))
                 chords = _chords(root, staff, measure)
