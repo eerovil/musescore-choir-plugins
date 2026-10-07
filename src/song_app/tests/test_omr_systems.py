@@ -1426,3 +1426,63 @@ def test_a_slur_to_the_same_note_flattened_is_still_a_slur(tmp_path):
     out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
     assert [(bar, kind) for _, bar, _, kind, _ in _slurs(out)] == [(1, "start"), (2, "stop")]
     assert not list(etree.parse(out).iter("tied"))
+
+
+def _steps(scan_, staff, bar, steps):
+    """Set the pitch steps of one bar's four notes."""
+    for note, step in zip(scan_.staves[staff - 1].measures[bar - 1].findall("note"), steps):
+        note.find("pitch/step").text = step
+
+
+def test_a_slur_into_the_next_system_may_start_a_bar_before_the_last(tmp_path):
+    """Finlandia s01 Bass 2: from bar 7 of 8 into the next system's first note."""
+    out = omr_systems.assemble(
+        [_slurred_system(1, 1, {(1, 1, 2): "start"}, bars=2),
+         _slurred_system(2, 1, {(1, 1, 1): "stop"})],
+        str(tmp_path / "a.musicxml"))
+    assert [(bar, kind) for _, bar, _, kind, _ in _slurs(out)] == [(1, "start"), (3, "stop")]
+    assert _paired(out)
+
+
+def test_a_start_beside_a_stop_that_closed_nothing_is_not_a_half(tmp_path):
+    """Flattening writes a staff voice by voice, so a pair inside one bar can
+    come out stop first; that start is not a slur over the break, and the next
+    system's loose stop is marked rather than joined to it."""
+    first = _slurred_system(1, 1, {(1, 2, 2): "stop", (1, 2, 3): "start"}, bars=2)
+    out = omr_systems.assemble([first, _slurred_system(2, 1, {(1, 1, 1): "stop"})],
+                               str(tmp_path / "a.musicxml"))
+    assert [kind for _, bar, _, kind, _ in _slurs(out) if bar == 3] == []
+    assert (3, "⚠ slur?") in _marks(out)
+
+
+def test_a_tie_and_a_slur_over_the_break_are_told_apart_by_pitch(tmp_path):
+    """Illan s06: a slur from an earlier note and a tie from the last note both
+    run over the line; the tie takes the stop on its own pitch."""
+    first = _slurred_system(1, 1, {(1, 1, 2): "start", (1, 1, 4): "start"})
+    _steps(first, 1, 1, "CDEG")
+    second = _slurred_system(2, 1, {(1, 1, 1): "stop", (1, 1, 2): "stop"})
+    _steps(second, 1, 1, "GCEF")
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    root = etree.parse(out).getroot()
+    tied = [(m.get("number"), n.findtext("pitch/step"), t.get("type"))
+            for m in root.iter("measure") for n in m.iter("note") for t in n.iter("tied")]
+    assert tied == [("1", "G", "start"), ("2", "G", "stop")]
+    assert [(bar, step, kind) for _, bar, step, kind, _ in _slurs(out)] == [
+        (1, "D", "start"), (2, "C", "stop")]
+
+
+def test_a_slur_and_a_tie_ending_on_one_note_share_its_stop(tmp_path):
+    """Vielako s01: a slur from the eighth and a tie from the dotted half both
+    run onto the next system's first note, and homr writes one stop there. The
+    slur ends where the tie does, marked, since that stop was inferred."""
+    first = _slurred_system(1, 1, {(1, 1, 2): "start", (1, 1, 4): "start"})
+    _steps(first, 1, 1, "CAGA")
+    second = _slurred_system(2, 1, {(1, 1, 1): "stop"})
+    _steps(second, 1, 1, "ADEF")
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    assert [(bar, step, kind) for _, bar, step, kind, _ in _slurs(out)] == [
+        (1, "A", "start"), (2, "A", "stop")]
+    assert _paired(out)
+    assert _marks(out) == [(1, "⚠ slur?")]
+    root = etree.parse(out).getroot()
+    assert [t.get("type") for t in root.iter("tied")] == ["start", "stop"]

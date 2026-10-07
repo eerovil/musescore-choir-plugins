@@ -1754,15 +1754,18 @@ state model are in `DESIGN.md`.
   something that was not already true, and a `<print new-system="yes"/>` at each join so
   the grid cuts the score where the page is cut.
   **A slur or tie over a line break is joined here** (#318). Each crop is read alone, so
-  homr writes it as a start in the system's last bar and a stop in the next one's first
-  bar, and keeps exactly those loose ends (eerovil/homr, `resolve_slurs(keep_edges=)`).
-  `_join_slurs` pairs them within one staff column when both systems print the same
-  number of staves; last note to first note at the same written pitch is a tie (22 of
-  30 joins on the six songs of #274 were), and a half with no partner is marked
-  `⚠ slur?` -- never dropped on a guess that it was a tie, since the same pitch across
-  the break may be another staff's; only a half on a note already tied that way goes
-  quietly. Measured on those songs' 71 systems: 11 slurs and 18 ties restored over
-  breaks, 26 marks (most of them tie halves across a change in staff count).
+  homr writes it as a start in the system's last two bars and a stop in the next one's
+  first bar, and keeps exactly those loose ends (eerovil/homr, `resolve_slurs`,
+  `EDGE_BARS`; this module's `EDGE_BARS` must agree). `_join_slurs` pairs them within
+  one staff column when both systems print the same number of staves: last note to
+  first note at the same written pitch first, as a tie, then the rest in reading order.
+  homr writes one arc mark per note, so a slur and a tie both ending on the next
+  system's first note come back as two starts and one stop; the slur is given the
+  tie's stop note and marked `⚠ slur?`, since that stop was inferred. A half with no
+  partner is marked `⚠ slur?` -- never dropped on a guess that it was a tie, since the
+  same pitch across the break may be another staff's; only a half on a note already
+  tied that way goes quietly. Measured on the six songs of #274 (71 systems): 13
+  slurs and 23 ties restored over breaks, 28 marks.
   **The meter is decided here, and this pull request proposes that** (#177). homr has no
   token for a numerator — its vocabulary holds only `timeSignature/<denominator>` — so the
   number of beats does not exist in what the model can emit and is inferred afterwards
