@@ -724,7 +724,7 @@ def _json_lines_to_by_measure(
         if kind == TOO_MANY:
             message = (
                 f"Measures {m_start}-{m_end - 1} (staffs {staffs_str}): too many tokens "
-                f"({n_syl} syllables, {slots} slots); the extra are kept on the last note — fix the count."
+                f"({n_syl} syllables, {slots} slots); the extra words are kept on the last note and extra _ are dropped — fix the count."
             )
         else:
             message = (
@@ -1133,14 +1133,27 @@ def _import_txt_into_mscx(
                 eligible_remaining = _count_remaining_eligible_chords(
                     voice_children, el_idx, slur_active, tie_active
                 )
-                if syllables_left > eligible_remaining and eligible_remaining > 0:
-                    # Cram remaining syllables onto this chord so JSON can "force" text (e.g. öt-tä. in one slot)
-                    chunk = syllables[syl_index[0] : syl_index[0] + syllables_left]
-                    merged_tokens = _syllables_to_tokens(chunk)
-                    merged_text = " ".join(merged_tokens).strip() if merged_tokens else ""
-                    if merged_text:
-                        _set_lyric(el, "single", merged_text, "1")
+                if eligible_remaining == 1 and syllables_left > 1:
+                    # More syllables than notes: every earlier note took its own, and the
+                    # overflow is kept on this last note so it stays visible (e.g. öt-tä.
+                    # forced into one slot). Cramming as soon as the count went over put a
+                    # whole bar on its first note (#307). A `_` says "no word here", so
+                    # extra ones are dropped rather than printed.
+                    chunk = syllables[syl_index[0] :]
+                    kept = [chunk[0]] + [s for s in chunk[1:] if s[0] != "_"]
+                    if kept[0][0] == "_" and len(kept) > 1:
+                        kept = kept[1:]
                     syl_index[0] += syllables_left
+                    if len(kept) == 1:
+                        syllabic, text = kept[0]
+                        if syllabic == "_":
+                            _clear_verse1_lyrics(el)
+                        else:
+                            _set_lyric(el, syllabic, text, "1")
+                    else:
+                        merged_text = " ".join(_syllables_to_tokens(kept)).strip()
+                        if merged_text:
+                            _set_lyric(el, "single", merged_text, "1")
                 else:
                     syllabic, text = syllables[syl_index[0]]
                     syl_index[0] += 1
