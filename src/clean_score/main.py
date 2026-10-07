@@ -23,6 +23,7 @@ from .utils.overfull_measures import fix_overfull_measures
 from .utils.shared_rests import share_rests
 from .utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
 from .utils.long_bars import trim_long_bars
+from .utils.measure_rests import centre_measure_rests
 from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.spurious_timesigs import fix_spurious_timesigs
 from .utils.interactive import resolve_voice_anomalies
@@ -64,6 +65,13 @@ def mark_scan_damage(root: etree._Element) -> None:
                        slur["part"], slur["measure"], slur["end_part"], slur["end_measure"])
     for bar in trim_long_bars(root):
         logger.warning("Cut bar %s from %s to %s (marked)", bar["measure"], bar["was"], bar["meter"])
+
+
+def _centre_measure_rests(root: etree._Element) -> None:
+    """Write a rest that fills its bar alone as a bar rest, so MuseScore centres it (#298)."""
+    changed = centre_measure_rests(root)
+    if changed:
+        logger.info("Wrote %s whole-bar rest(s) as bar rests", changed)
 
 
 def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
@@ -266,6 +274,7 @@ def main(
             logger.warning("Per-system re-voicing produced no parts; nothing written.")
             return
         mark_scan_damage(root)
+        _centre_measure_rests(root)
         output_content = etree.tostring(
             root, pretty_print=True, encoding="UTF-8"
         ).decode("UTF-8")
@@ -575,6 +584,7 @@ def main(
         apply_revoice_plan(root, revoice_plan, revoice_baseline, printed_to_output)
 
     mark_scan_damage(root)
+    _centre_measure_rests(root)
 
     # Serialize the output XML
     output_content: str = etree.tostring(
