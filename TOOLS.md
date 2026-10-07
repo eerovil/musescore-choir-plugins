@@ -114,9 +114,11 @@ stemmanauhat site reads to zoom a phone to that part's staff:
 
     stemmanauha-staff: <staff>/<staves>
 
-Counted from the top starting at 1, as the video draws the staves: a click or
-spacer staff does not count, and parts sharing a staff (the Record stage's
-*Shared staves*) get the same number. The ALL video has no line. The uploader
+Counted from the top starting at 1, as the video shows the staves. In a
+scrolling video a click or spacer staff does not count, and parts sharing a staff
+(the Record stage's *Shared staves*) get the same number. A screen recording
+shows the score as MuseScore has it, so there every shown staff counts, a click
+staff included. The ALL video has no line. The uploader
 works it out from the song's cleaned score (`src/stemmanauha/staff_lines.py`).
 
 Videos uploaded before that get the line with a one-off command, run from the
