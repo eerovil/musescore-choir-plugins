@@ -727,7 +727,7 @@ def _assemble(song: state.Song, log: Logger) -> Dict:
         for index in sorted(fragments)
     ]
     out = song.path(ASSEMBLED_NAME)
-    omr_systems.assemble(scans, out)
+    omr_systems.assemble(scans, out, log)
     log(f"Assembled {len(scans)} system(s) into {ASSEMBLED_NAME}.")
 
     song.data.setdefault("sources", {})["xml"] = ASSEMBLED_NAME

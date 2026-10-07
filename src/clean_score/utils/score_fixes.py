@@ -87,6 +87,15 @@ in order, the extra ones dropped.
      "to": [{"value": "note_4.", "pitches": [62], "tpcs": [16]},
             {"value": "note_8", "pitches": [64], "tpcs": [18]}], "why": "..."}
 
+`repeat` (#312) opens a repeat at a bar: a start-repeat sign on every staff. It has
+no `staff`, because a repeat sign is drawn across the whole system and MuseScore
+keeps one only when every staff carries it. It is how a person answers "where does
+the repeat ending at bar N go back to?" when the scan read the end sign and missed
+the start — which homr does for a sign that opens a printed system. A bar that
+already opens a repeat refuses it.
+
+    {"kind": "repeat", "measure": 46, "why": "the page prints |: at bar 46"}
+
 Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
@@ -825,6 +834,30 @@ def read_bar(root: etree._Element, staff_id: int, measure_no: int) -> List[Dict]
     return out
 
 
+def _start_repeat(root: etree._Element, measure_no: int) -> str:
+    """Put a start-repeat sign on bar ``measure_no`` of every staff."""
+    staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
+    if not staves:
+        raise FixError("the score has no staves")
+    bars = []
+    for staff in staves:
+        measures = staff.findall("Measure")
+        if measure_no < 1 or measure_no > len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        bar = measures[measure_no - 1]
+        if bar.find("startRepeat") is not None:
+            raise FixError("a repeat already starts here")
+        bars.append(bar)
+    for bar in bars:
+        # MuseScore writes it ahead of the bar's voices, after any `irregular`.
+        at = 0
+        for index, child in enumerate(bar):
+            if child.tag in ("irregular", "breakMultiMeasureRest"):
+                at = index + 1
+        bar.insert(at, etree.Element("startRepeat"))
+    return f"repeat starts here on all {len(bars)} staves"
+
+
 def free_text(fixes: List[Dict]) -> List[str]:
     """The sentences among the recorded fixes, in file order.
 
@@ -856,6 +889,14 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
     for fix in fixes:
         kind = fix.get("kind")
         if kind == "text":
+            continue
+        if kind == "repeat":
+            measure = int(fix["measure"])
+            try:
+                what = _start_repeat(root, measure)
+            except FixError as exc:
+                raise FixError(f"m{measure} (repeat): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         staff, measure = int(fix["staff"]), int(fix["measure"])
         try:

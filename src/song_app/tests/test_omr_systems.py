@@ -1081,3 +1081,114 @@ def test_a_key_changed_inside_the_system_still_marks_a_printed_accidental(tmp_pa
          _one_bar_system(2, [("E", 4, -1, 1), ("C", 4, 0, 3)], fifths=-4)],
         str(tmp_path / "a.musicxml"))
     assert [bar for bar, _ in _marks(out)] == [3]
+
+
+# --- repeats are the whole system's (#312) --------------------------------
+#
+# homr reads a start repeat that opens a system on some staves and not others,
+# and MuseScore 3 keeps a start repeat only when every part carries it: on
+# Kantajani bar 27 the sign was read on two staves of four and the converted
+# score had no repeat at all.
+
+
+def with_barline(staff, bar, xml, at_end=True):
+    measure = staff.measures[bar]
+    barline = etree.fromstring(xml)
+    if at_end:
+        measure.append(barline)
+    else:
+        measure.insert(0, barline)
+    return staff
+
+
+START = '<barline location="left"><repeat direction="forward"/></barline>'
+END = ('<barline location="right"><bar-style>light-heavy</bar-style>'
+       '<repeat direction="backward"/></barline>')
+VOLTA = '<barline location="left"><ending number="1" type="start"/></barline>'
+
+
+def barlines(part, bar):
+    """``(side, [mark, ...])`` for each barline of a bar, as written."""
+    measure = part.findall("measure")[bar]
+    return [(b.get("location"), [c.tag + ":" + (c.get("direction") or c.get("number") or "")
+                                 for c in b if c.tag != "bar-style"])
+            for b in measure.findall("barline")]
+
+
+def test_a_start_repeat_read_on_some_staves_is_written_on_all(tmp_path):
+    first = scan(1, 2, bars=2)
+    second = scan(2, 4, bars=2)
+    # Flattening puts every barline after the notes, so that is where it starts.
+    with_barline(second.staves[0], 0, START)
+    with_barline(second.staves[1], 0, START)
+    heard = []
+    out = read(omr_systems.assemble([first, second], str(tmp_path / "s.musicxml"),
+                                    heard.append))
+    for part in out.findall("part"):
+        assert barlines(part, 2) == [("left", ["repeat:forward"])], part.get("id")
+        # ...and it opens the bar, ahead of the music, the way a score writes it.
+        tags = [child.tag for child in part.findall("measure")[2]]
+        assert tags.index("barline") < tags.index("note")
+        assert barlines(part, 0) == barlines(part, 1) == barlines(part, 3) == []
+    assert heard == ["System 2 bar 1: start repeat read on 2 of 4 staves, written on all."]
+
+
+def test_an_end_repeat_and_a_volta_are_copied_the_same_way(tmp_path):
+    system = scan(1, 3, bars=2)
+    with_barline(system.staves[1], 0, VOLTA)
+    with_barline(system.staves[2], 1, END)
+    out = read(omr_systems.assemble([system], str(tmp_path / "s.musicxml")))
+    for part in out.findall("part"):
+        assert barlines(part, 0) == [("left", ["ending:1"])]
+        assert barlines(part, 1) == [("right", ["repeat:backward"])]
+    # The drawing stays with the staff that drew it: style is not form.
+    assert out.findall("part")[2].find(".//bar-style").text == "light-heavy"
+    assert out.findall("part")[0].find(".//bar-style") is None
+
+
+def test_a_staff_resting_through_the_system_gets_the_repeat_too(tmp_path):
+    wide = scan(1, 3, bars=1)
+    narrow = scan(2, 2, bars=1)
+    with_barline(narrow.staves[0], 0, START)
+    out = read(omr_systems.assemble([wide, narrow], str(tmp_path / "s.musicxml")))
+    assert barlines(out.findall("part")[2], 1) == [("left", ["repeat:forward"])]
+
+
+def test_a_repeat_every_staff_read_is_written_once(tmp_path):
+    system = scan(1, 2, bars=1)
+    for staff in system.staves:
+        with_barline(staff, 0, START)
+    heard = []
+    out = read(omr_systems.assemble([system], str(tmp_path / "s.musicxml"), heard.append))
+    for part in out.findall("part"):
+        assert barlines(part, 0) == [("left", ["repeat:forward"])]
+    assert heard == []
+
+
+def test_a_repeat_does_not_leak_into_the_next_system(tmp_path):
+    first, second = scan(1, 2, bars=2), scan(2, 2, bars=2)
+    with_barline(first.staves[0], 0, START)
+    out = read(omr_systems.assemble([first, second], str(tmp_path / "s.musicxml")))
+    for part in out.findall("part"):
+        assert [bool(barlines(part, bar)) for bar in range(4)] == [True, False, False, False]
+
+
+def test_a_score_with_no_repeats_is_unchanged(tmp_path):
+    systems = [scan(1, 2, bars=2), scan(2, 3, bars=2)]
+    out = open(omr_systems.assemble(systems, str(tmp_path / "s.musicxml")), "rb").read()
+    assert b"<barline" not in out
+
+
+@pytest.mark.skipif(not _musescore() or not os.path.exists(_musescore() or ""),
+                    reason="needs the MuseScore CLI")
+def test_musescore_keeps_a_start_repeat_read_on_half_the_staves(tmp_path):
+    """Kantajani bar 27's shape: the head of a system, read on two staves of four."""
+    first, second = scan(1, 4, bars=2), scan(2, 4, bars=2)
+    with_barline(second.staves[0], 0, START)
+    with_barline(second.staves[1], 0, START)
+    assembled = omr_systems.assemble([first, second], str(tmp_path / "s.musicxml"))
+    mscx = str(tmp_path / "s.mscx")
+    subprocess.run([_musescore(), "-o", mscx, assembled],
+                   check=True, capture_output=True, timeout=300)
+    measures = etree.parse(mscx).getroot().find(".//Score/Staff").findall("Measure")
+    assert [m.find("startRepeat") is not None for m in measures] == [False, False, True, False]
