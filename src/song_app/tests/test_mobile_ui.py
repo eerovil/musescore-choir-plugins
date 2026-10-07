@@ -301,6 +301,11 @@ def test_phone_score_zooms_itself(live_app, own_answers, page):
     page.set_viewport_size(PHONE)
     page.route("**/pdf.min.js", lambda route: route.fulfill(
         body=_FAKE_PDFJS, content_type="application/javascript"))
+    # The viewer fetches the score's bytes itself before pdf.js sees them (#303),
+    # and this module has no MuseScore to build one, so the render is stood in for
+    # too. The fake pdf.js never reads the bytes.
+    page.route("**/render?*", lambda route: route.fulfill(
+        body=b"%PDF-1.4\n%%EOF\n", content_type="application/pdf"))
     _new_song(page, live_app, "Zoom song")
     page.locator(".mobilebar").get_by_role("button", name="Score").click()
 
