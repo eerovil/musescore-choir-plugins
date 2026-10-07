@@ -11,6 +11,10 @@ developers are listed under *Behind the scenes*.
   count, a rebuilt one keeps the old picture under "Updating…", and a failed build
   says why. In Compare and Scan vs page the engraved systems wait in their place
   and arrive top to bottom instead of popping in at random. (#303)
+- Re-cleaning no longer fails after the per-system grid is answered again. A
+  reading picked in the Fix panel now follows its notes to whichever part they
+  land in, and is dropped (with a line in the log) if no part sings them any
+  more. (#292)
 - In the per-system grid, a part named like `S1b` now sings `S1`'s notes (and
   words) in every bar where it has none of its own, instead of resting. (#293)
 
