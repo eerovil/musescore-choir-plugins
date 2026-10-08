@@ -19,8 +19,8 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
 from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_state, omr,
-               pdf_systems, pipeline, problems, pwa_assets, scan, site_refresh, state,
-               system_finder, verification)
+               pdf_systems, pipeline, playlists, problems, pwa_assets, scan, site_refresh,
+               state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
 
@@ -974,6 +974,70 @@ def api_playlists() -> List[Dict]:
     return state.load_playlists()
 
 
+def _youtube_failed(exc: Exception) -> HTTPException:
+    """YouTube refusing or unreachable, said in words (#338)."""
+    from src.stemmanauha.upload_to_youtube import QuotaExceeded
+    if isinstance(exc, QuotaExceeded):
+        return HTTPException(503, str(exc))
+    return HTTPException(503, f"YouTube could not be reached: {exc}")
+
+
+@app.post("/api/playlists")
+def api_remember_playlist(body: Dict) -> List[Dict]:
+    """Offer one more of the account's playlists for songs to be picked into."""
+    playlist_id = (body.get("playlist_id") or "").strip()
+    if not playlist_id:
+        raise HTTPException(400, "Which playlist?")
+    state.save_playlist(playlist_id, body.get("title") or None)
+    return state.load_playlists()
+
+
+@app.delete("/api/playlists/{playlist_id}")
+def api_forget_playlist(playlist_id: str) -> List[Dict]:
+    """Stop offering a playlist. It is not touched on YouTube."""
+    state.forget_playlist(playlist_id)
+    return state.load_playlists()
+
+
+@app.get("/api/youtube-playlists")
+def api_youtube_playlists() -> List[Dict]:
+    try:
+        return playlists.account_playlists()
+    except Exception as exc:
+        raise _youtube_failed(exc)
+
+
+@app.get("/api/songs/{slug}/playlists")
+def api_song_playlists(slug: str) -> Dict:
+    song = _require(slug)
+    try:
+        return playlists.song_playlists(song)
+    except playlists.PlaylistError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise _youtube_failed(exc)
+
+
+@app.post("/api/songs/{slug}/playlists")
+def api_song_playlist_membership(slug: str, body: Dict) -> Dict:
+    """Put this song's videos into a playlist, or take them out (#338)."""
+    song = _require(slug)
+    if is_recording(song):
+        raise HTTPException(409, "A recording or upload is running; try again when it is done.")
+    log = lambda m: hub.emit(slug, {"type": "log", "line": m})
+    try:
+        row = playlists.set_membership(song, (body.get("playlist_id") or "").strip(),
+                                       bool(body.get("member")), log,
+                                       title=body.get("title") or None)
+    except playlists.PlaylistError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise _youtube_failed(exc)
+    # The site lists the choir's playlists, so it would otherwise wait for its schedule.
+    site_refresh.refresh_stemmanauhat(log)
+    return row
+
+
 @app.get("/api/prompt")
 def api_prompt() -> Dict:
     path = os.path.join(SCRIPT_DIR, "lyric_json_prompt.txt")
@@ -1592,8 +1656,6 @@ def _run_record(slug: str, opts: Dict) -> None:
         rec = current_song.data.setdefault("record", {})
         rec.setdefault("uploads", []).append(info)
         rec["playlist_id"] = info.get("playlist_id")
-        if info.get("playlist_id"):
-            state.save_playlist(info["playlist_id"], info.get("playlist_title"))
         current_song.save()
         hub.emit(slug, {"type": "state"})
 

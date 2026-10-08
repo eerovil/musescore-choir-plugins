@@ -3019,6 +3019,84 @@ function panelUpload(panel, song, P, refresh) {
           appendLog("Deleting from YouTube…");
           try { await postJSON(`${P}/youtube-delete`); appendLog("Deleted."); refresh(); }
           catch (e) { appendLog(e.message, true); }
-        }}, "Delete from YouTube")));
+        }}, "Delete from YouTube")),
+      playlistSection(P, recording));
   }
+}
+
+// Which of the choir's playlists hold this song (#338). Read from YouTube each
+// time the panel opens: the app keeps no record of it, and a playlist can be
+// edited in YouTube's own app. A tick means every video of the song is in it.
+function playlistSection(P, recording) {
+  const box = el("div", { className: "playlists" });
+  const section = el("div", { className: "playlist-section" },
+    el("h3", {}, "Playlists"),
+    el("p", { className: "hint" }, "Tick a playlist to put this song's videos in it; untick to take them out."),
+    box);
+
+  const load = async () => {
+    box.replaceChildren(el("p", { className: "hint" }, "Reading playlists from YouTube…"));
+    let data;
+    try { data = await getJSON(`${P}/playlists`); }
+    catch (e) { box.replaceChildren(el("p", { className: "banner err" }, e.message)); return; }
+    box.replaceChildren(...data.playlists.map(row), addAnother(data.playlists));
+  };
+
+  const row = (p) => {
+    const tick = el("input", { type: "checkbox", disabled: recording || !!p.error });
+    tick.checked = p.total > 0 && p.count >= p.total;
+    tick.indeterminate = p.count > 0 && p.count < p.total;
+    const note = el("span", { className: "plnote" },
+      p.error || (tick.indeterminate ? `${p.count} of ${p.total}` : ""));
+    const line = el("div", { className: "plrow", "data-playlist": p.id },
+      el("label", {}, tick, " ", p.title || p.id, " ", note),
+      el("button", { className: "plhide", title: "Stop offering this playlist (nothing changes on YouTube)",
+        onclick: async () => {
+          try { await api(`/api/playlists/${encodeURIComponent(p.id)}`, { method: "DELETE" }); load(); }
+          catch (e) { appendLog(e.message, true); }
+        } }, "Hide"));
+    tick.onchange = async () => {
+      const member = tick.checked;
+      tick.disabled = true;
+      note.textContent = member ? "Adding…" : "Removing…";
+      try {
+        const now = await postJSON(`${P}/playlists`, { playlist_id: p.id, member, title: p.title });
+        line.replaceWith(row(now));
+      } catch (e) {
+        appendLog(e.message, true);
+        note.textContent = e.message;
+        tick.checked = !member;
+        tick.disabled = false;
+      }
+    };
+    return line;
+  };
+
+  const addAnother = (shown) => {
+    const pick = el("select", {}, el("option", { value: "" }, "Add another playlist…"));
+    let loaded = false;
+    const fill = async () => {
+      if (loaded) return;
+      loaded = true;
+      try {
+        const all = await getJSON("/api/youtube-playlists");
+        const have = new Set(shown.map((p) => p.id));
+        for (const p of all) if (!have.has(p.id)) pick.append(el("option", { value: p.id }, p.title));
+      } catch (e) { appendLog(e.message, true); loaded = false; }
+    };
+    pick.onfocus = fill;
+    pick.onpointerdown = fill;
+    pick.onchange = async () => {
+      if (!pick.value) return;
+      try {
+        await postJSON("/api/playlists", { playlist_id: pick.value,
+          title: pick.options[pick.selectedIndex].textContent });
+        load();
+      } catch (e) { appendLog(e.message, true); }
+    };
+    return el("div", { className: "row" }, pick);
+  };
+
+  load();
+  return section;
 }

@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The Upload stage lists the choir's playlists with a tick box each, read from
+  YouTube: ticking puts every video of the song into that playlist and unticking
+  takes them out, so a song no longer has to be re-uploaded to change its
+  playlists. "Add another playlist…" offers the account's other playlists, and the
+  playlist menus no longer list every song's own playlist. (#338)
 - Importing lyrics no longer throws the Lyrics panel back to the top: the list
   stays where it was, the box being typed in keeps its focus, and the warnings
   change in place. The One system view shows the cleaned system with its words
