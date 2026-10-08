@@ -204,10 +204,10 @@ line breaks the previews take off the converted input still count the invented b
 lost (Kristallen den fina squeezed printed bars 2-4 into cleaned bars 3-4): an empty
 bar, a whole-bar rest in the meter in force, goes in **after** bar `measure` on every
 staff, for `bar` fixes later in the file to write (a `bar` fix now writes a bar that
-holds only a whole-bar rest). `from` is what bar `measure` reads now. A slur or volta
+holds only a whole-bar rest, and a `bar` rewrite now keeps a volta bracket's halves in the bar). `from` is what bar `measure` reads now. A slur or volta
 across that barline is lengthened, a volta ending on it keeps its length, a tie across
 it refuses, and the metaTags move as for `delbar`. Both count in file order, and the
-Fix panel maps bars through both (`score_fixes.bar_moves`).
+Fix panel maps bars through both (`score_fixes.bar_moves`) — homr's offers, picks, and the slur answers it matches by bar-numbered id (`problems._slur_decisions`).
 
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — taking one notehead off a chord and turning a

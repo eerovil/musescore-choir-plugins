@@ -348,3 +348,14 @@ def test_a_pick_recorded_after_an_insert_survives_the_next_clean(tmp_path):
     assert bar_tokens(again, 2, 6) == ["whole:69"]
     assert bar_tokens(again, 2, 2) == ["whole:61"]
     assert json.loads((tmp_path / "fixes.json").read_text()) == [INSBAR, pick, fill]
+
+
+def test_filling_an_inserted_bar_keeps_the_bracket_ending_in_it(root):
+    # "1." over bars 3-4 with its end marker in bar 5; a bar put in after bar 4 carries
+    # that marker, and writing the new bar must not take the bracket with it.
+    fill = {"kind": "bar", "staff": 1, "measure": 5, "from": ["measure:R"],
+            "to": [{"value": "note_1", "pitches": [66], "tpcs": [20]}], "why": "page"}
+    apply_fixes(root, [dict(INSBAR, measure=4, **{"from": ["measure:R"]}), fill])
+    assert bar_tokens(root, 1, 5) == ["whole:66"]
+    assert volta_spans(_staff(root, 1)) == [(3, 4), (6, 6)]
+    assert _measure(root, 1, 5).find("voice/Spanner[@type='Volta']") is not None

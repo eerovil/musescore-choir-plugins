@@ -1311,7 +1311,9 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     at = list(body).index(first)
     gone = ("Chord", "Rest", "Tuplet", "endTuplet", "Beam", "Spanner")
     for el in list(body):
-        if el.tag in gone:
+        # A volta bracket belongs to the bar, not to its notes: it stays, either half
+        # (an `insbar` bar can carry a bracket's end marker, #346).
+        if el.tag in gone and not (el.tag == "Spanner" and el.get("type") == "Volta"):
             if list(body).index(el) < at:
                 at -= 1
             body.remove(el)
@@ -1334,7 +1336,7 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     chords = [el for el in written if el.tag == "Chord"]
     for chord, lyric in zip(chords, words):
         chord.insert(list(chord).index(chord.find("Note")), lyric)
-    _cut_spanners_into(measures, lengths, measures.index(measure))
+    _cut_spanners_into(measures, lengths, measures.index(measure), keep=("Volta",))
     return (f"wrote the bar afresh as {_bar_tokens(measure)}"
             + _answered(_strike(root, staff_id, measure_no, _BAR_WORDS)))
 
