@@ -1486,3 +1486,40 @@ def test_a_slur_and_a_tie_ending_on_one_note_share_its_stop(tmp_path):
     assert _marks(out) == [(1, "⚠ slur?")]
     root = etree.parse(out).getroot()
     assert [t.get("type") for t in root.iter("tied")] == ["start", "stop"]
+
+
+def _slur_at(scan_, bar, note):
+    """The slur element on one note (staff 1) of a `_slurred_system`."""
+    return scan_.staves[0].measures[bar - 1].findall("note")[note - 1].find("notations/slur")
+
+
+def test_an_out_of_order_pair_does_not_hide_a_real_half_in_its_bar(tmp_path):
+    """One edge bar holds a pair flattening put stop-first (note 1 stops, note 2
+    starts) and, separately, a slur running into the next system from note 4.
+    Only the out-of-order start is set aside; the real half is still joined."""
+    first = _slurred_system(1, 1, {(1, 2, 1): "stop", (1, 2, 2): "start",
+                                   (1, 2, 4): "start"}, bars=2)
+    second = _slurred_system(2, 1, {(1, 1, 1): "stop"})
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    slurs = [(bar, step, kind) for _, bar, step, kind, _ in _slurs(out)]
+    assert (2, "F", "start") in slurs and (3, "C", "stop") in slurs
+    joined = {n for _, bar, step, kind, n in _slurs(out)
+              if (bar, step) in ((2, "F"), (3, "C"))}
+    assert len(joined) == 1
+    assert _marks(out) == []
+
+
+def test_a_joined_slur_takes_no_number_used_in_a_bar_it_spans(tmp_path):
+    """A start a bar before the system's last, a slur of its own inside that
+    last bar, and the stop in the next system: the joined slur must not share
+    the inner slur's number, which only the bar between the ends holds."""
+    first = _slurred_system(1, 1, {(1, 1, 4): "start", (1, 2, 1): "start",
+                                   (1, 2, 2): "stop"}, bars=2)
+    _slur_at(first, 1, 4).set("number", "3")
+    second = _slurred_system(2, 1, {(1, 1, 1): "stop"})
+    _slur_at(second, 1, 1).set("number", "3")
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    numbers = {(bar, step): n for _, bar, step, _, n in _slurs(out)}
+    assert numbers[(1, "F")] == numbers[(3, "C")]
+    assert numbers[(1, "F")] != numbers[(2, "C")]
+    assert _paired(out)

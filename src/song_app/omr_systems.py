@@ -837,9 +837,11 @@ def _join_column(part, scans, column, starts_at) -> None:
     for system, first in enumerate(starts_at):
         block = measures[first:first + scans[system].bars]
         open_: Dict[str, List[_LooseEnd]] = {}
-        # Bars holding a stop that closed nothing: a start there may be the
-        # other half of a pair flattening put out of document order.
-        orphaned = set()
+        # Stops that closed nothing, past the first bar: each is the other half
+        # of a pair inside one bar that flattening put out of document order (a
+        # slur from one voice into the other), and its start is no half of
+        # anything over the break.
+        orphans: List[Tuple[etree._Element, str]] = []
         for index, measure in enumerate(block):
             for note in measure.findall("note"):
                 for slur in note.findall("notations/slur"):
@@ -853,14 +855,23 @@ def _join_column(part, scans, column, starts_at) -> None:
                         elif index == 0:
                             loose_stops.setdefault(system, []).append(end)
                         else:
-                            orphaned.add(id(measure))
+                            orphans.append((measure, number))
+        # Each orphaned stop sets aside only its own partner: the first start
+        # left open in the same bar with the same number. Any other start in
+        # that bar is still a half to join, or to mark.
+        set_aside = set()
+        for measure, number in orphans:
+            partner = next((end for end in open_.get(number, [])
+                            if end.note.getparent() is measure
+                            and id(end) not in set_aside), None)
+            if partner is not None:
+                set_aside.add(id(partner))
         # Only the edge bars: homr keeps a loose start only in the system's last
-        # EDGE_BARS bars (a slur may cross one barline before the edge), and a
-        # pair inside one bar that flattening put out of document order (a slur
-        # from one voice into the other) is not a half of anything.
-        edge = {id(m) for m in block[-EDGE_BARS:]} - orphaned
+        # EDGE_BARS bars (a slur may cross one barline before the edge).
+        edge = {id(m) for m in block[-EDGE_BARS:]}
         loose_starts[system] = [end for ends in open_.values() for end in ends
-                                if id(end.note.getparent()) in edge]
+                                if id(end.note.getparent()) in edge
+                                and id(end) not in set_aside]
 
     for system in range(-1, len(scans)):
         starts = loose_starts.get(system, [])
@@ -933,10 +944,17 @@ def _join_column(part, scans, column, starts_at) -> None:
 
 
 def _number_pair(start: etree._Element, stop: etree._Element) -> None:
-    """Give a joined slur a number no other slur in its two bars uses."""
-    note_of = {"start": start.getparent().getparent(), "stop": stop.getparent().getparent()}
-    used = {slur.get("number") for note in note_of.values()
-            for slur in note.getparent().iter("slur")
+    """Give a joined slur a number no other slur in the bars it spans uses.
+
+    Every bar from the start's through the stop's, not just those two: a start
+    may stand a bar before the system's last, and a slur in that last bar
+    sharing the number would close it or overlap it."""
+    first = start.getparent().getparent().getparent()
+    last = stop.getparent().getparent().getparent()
+    part = first.getparent()
+    bars = list(part.findall("measure"))
+    span = bars[bars.index(first):bars.index(last) + 1]
+    used = {slur.get("number") for measure in span for slur in measure.iter("slur")
             if slur is not start and slur is not stop}
     number = next(str(n) for n in range(1, 17) if str(n) not in used)
     start.set("number", number)
