@@ -215,10 +215,6 @@ table.grid .undernote:empty { display: none; }
 .banner.good { color: var(--good); border-color: var(--good); }
 .banner.err { color: var(--bad); border-color: var(--bad); }
 .banner.warn { color: var(--warn); border-color: var(--warn); }
-/* The verdict on a whole parse. Loud, because the thing it is arguing against is a
-   long tidy list of small rows that reads as ordinary work. */
-.verdict strong { display: block; margin-bottom: 4px; }
-.verdict .hint { margin-top: 4px; }
 .scanfound { color: var(--warn); }
 .verify { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; background: var(--panel); }
 .verify h3 { margin: 0 0 4px; }
