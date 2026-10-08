@@ -170,9 +170,14 @@ def test_an_unsure_bar_offers_whole_bars(live, page):
     assert errors == []
 
 
-def test_the_card_says_which_bar_of_the_line_is_meant(live, page):
-    """The crop is a whole printed line; the card names the bar in it (#310)."""
+def test_the_card_says_which_bar_staff_and_voice_is_meant(live, page):
+    """The crop is a whole printed system; the card names the bar, staff and voice (#310)."""
     base, song, _ = live
+    # Where clean_score recorded the parts were printed: B1 alone on the second staff.
+    root = etree.parse(song.cleaned_path()).getroot()
+    etree.SubElement(root.find("Score"), "metaTag", name="lyricsSystemMap").text = json.dumps(
+        [{"start": 1, "end": 5, "map": {"1": [2], "2": [1]}}])
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
     pdf = os.path.join(os.path.dirname(__file__), "..", "..", "..", "fixtures",
                        "virta-venhetta-vie", "00-registered", "Virta venhettä vie.pdf")
     shutil.copy(pdf, song.path("scan.pdf"))
@@ -187,7 +192,7 @@ def test_the_card_says_which_bar_of_the_line_is_meant(live, page):
     errors = _open_fix(page, base, song.slug)
     card = page.locator(".problem")
     assert "system 2 · bar 2/4" in card.locator(".top").inner_text()
-    assert card.locator(".barpos").inner_text() == "Bar 2 of 4 in this line"
+    assert card.locator(".barpos").inner_text() == "Bar 2 of 4 · staff 2 of 2, only voice"
     # Said right above the crop it is about.
     assert card.locator(".barpos + .readcrop").count() == 1
     page.wait_for_function("() => { const i = document.querySelector('.readcrop');"

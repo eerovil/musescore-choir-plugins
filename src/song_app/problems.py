@@ -43,6 +43,7 @@ from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
 
+from src.clean_score.lyric_txt import _read_lyrics_staff_map, _read_lyrics_system_map
 from src.clean_score.utils import score_fixes
 from src.clean_score.utils.cross_voice_slurs import removed_slurs
 from src.clean_score.utils.problem_marks import marks
@@ -68,6 +69,33 @@ def _system_of(bounds: List[Tuple[int, int, int]], measure: Optional[int]) -> Op
         if start <= measure <= end:
             return index
     return None
+
+
+def _printed_staves(root: etree._Element) -> List[Tuple[int, int, Dict[int, List[int]]]]:
+    """(first bar, last bar, {printed staff: [output staves, upper voice first]}).
+
+    The routing clean_score writes for the lyric import says where each part was
+    printed: one entry per printed system for a per-system score, one for the whole
+    score otherwise. Empty when the score carries neither.
+    """
+    systems = _read_lyrics_system_map(root)
+    if systems:
+        return [(entry["start"], entry["end"], entry["map"]) for entry in systems]
+    staves = _read_lyrics_staff_map(root)
+    return [(1, 10 ** 9, staves)] if staves else []
+
+
+def _printed_place(printed, measure: Optional[int], staff: Optional[int]) -> Tuple:
+    """(staff, staves, voice, voices) a part was printed on in a bar, or four Nones."""
+    if measure and staff:
+        for start, end, staves in printed:
+            if not start <= measure <= end:
+                continue
+            for number, outputs in staves.items():
+                if staff in outputs:
+                    return (number, len(staves), outputs.index(staff) + 1, len(outputs))
+            break
+    return (None, None, None, None)
 
 
 def _slur_id(rec: Dict) -> str:
@@ -244,7 +272,11 @@ def problems(song: state.Song) -> List[Dict]:
     `bar_in_system` / `bars_in_system`: which bar of its printed system the row is
     about, and how many that system holds (#310) — the crop shows the whole line, so
     without them a person counts bars to find the one meant. Both are None when the
-    bar or the system's range is not known.
+    bar or the system's range is not known. And `staff_in_system` / `staves_in_system`
+    / `voice_on_staff` / `voices_on_staff`: which printed staff of that system the part
+    is on, and which voice of that staff, counted from the top (#310) — the crop shows
+    every staff, so the part name alone does not say which one to read. All four are
+    None when the score does not record where its parts were printed.
     """
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
@@ -375,11 +407,16 @@ def problems(song: state.Song) -> List[Dict]:
             "decision": decision, "can_decline": False})
 
     ranges = {index: (start, end) for index, start, end in bounds}
+    ids = {name: sid for sid, name in names.items()}
+    printed = _printed_staves(root)
     for target in rows.values():
         start, end = ranges.get(target["system"], (0, 0))
         inside = bool(target["measure"]) and start <= target["measure"] <= end
         target["bar_in_system"] = target["measure"] - start + 1 if inside else None
         target["bars_in_system"] = end - start + 1 if inside else None
+        place = _printed_place(printed, target["measure"], ids.get(target["part"]))
+        (target["staff_in_system"], target["staves_in_system"],
+         target["voice_on_staff"], target["voices_on_staff"]) = place
 
     return sorted(rows.values(), key=lambda r: (
         r["measure"] is None, r["measure"] or 0, order.get(r["part"], 99), r["part"]))

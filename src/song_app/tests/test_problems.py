@@ -97,6 +97,49 @@ def test_without_bar_ranges_the_position_is_not_guessed(make_song):
     assert (row["bar_in_system"], row["bars_in_system"]) == (None, None)
 
 
+def _marked_row(song, *meta):
+    """The one row a mark on B1 bar 3 makes, with the routing metaTags `meta` stored."""
+    root = etree.parse(song.cleaned_path()).getroot()
+    mark_bar(root.findall(".//Score/Staff")[0].findall("Measure")[2], "pitch?")
+    score = root.find("Score")
+    for name, text in meta:
+        tag = etree.SubElement(score, "metaTag", name=name)
+        tag.text = text
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+    [row] = problems.problems(song)
+    return (row["staff_in_system"], row["staves_in_system"],
+            row["voice_on_staff"], row["voices_on_staff"])
+
+
+@pytest.mark.parametrize("meta, place", [
+    # A per-system score: B1 is printed second of two in the system holding bar 3.
+    ([("lyricsSystemMap", json.dumps([{"start": 1, "end": 2, "map": {"1": [1]}},
+                                      {"start": 3, "end": 6, "map": {"1": [2], "2": [1]}}]))],
+     (2, 2, 1, 1)),
+    # Two parts on one printed staff, B1 the lower of them.
+    ([("lyricsSystemMap", json.dumps([{"start": 1, "end": 6, "map": {"1": [2, 1]}}]))],
+     (1, 1, 2, 2)),
+    # An ordinary clean: one map for the whole score, the split staff's upper voice first.
+    ([("lyricsStaffMap", "1:1,2;2:3")], (1, 2, 1, 2)),
+    # The system map wins over the identity staff map a per-system clean also writes.
+    ([("lyricsStaffMap", "1:1;2:2"),
+      ("lyricsSystemMap", json.dumps([{"start": 1, "end": 6, "map": {"1": [2], "2": [1]}}]))],
+     (2, 2, 1, 1)),
+])
+def test_a_row_says_which_staff_and_voice_of_the_system_it_is(make_song, meta, place):
+    """The crop shows every staff, so the row says which one the part is on (#310)."""
+    assert _marked_row(make_song(readings=None), *meta) == place
+
+
+@pytest.mark.parametrize("meta", [
+    [],                                                       # a score from before the maps
+    [("lyricsSystemMap", json.dumps([{"start": 1, "end": 2, "map": {"1": [1]}}]))],  # bar 3 not covered
+    [("lyricsStaffMap", "1:2;2:3")],                         # B1 not printed anywhere
+])
+def test_without_a_record_of_the_page_the_staff_is_not_guessed(make_song, meta):
+    assert _marked_row(make_song(readings=None), *meta) == (None, None, None, None)
+
+
 def test_a_mark_and_its_health_row_are_said_once(make_song):
     song = make_song(readings=None)
     root = etree.parse(song.cleaned_path()).getroot()

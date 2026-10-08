@@ -1831,6 +1831,17 @@ function panelFix(panel, song, P, refresh) {
 const NOTE_KIND = { mark: "red mark", "fixes.json": "fixes.json — not applied automatically",
   "musescore-check": "fixes.json — not applied automatically", scan: "fixes.json — not applied automatically" };
 
+// Which staff of the cropped system a row's part was printed on, and which voice of
+// that staff, counted from the top (#310): "staff 1 of 4, lower voice".
+function staffPlace(row) {
+  if (!row.staff_in_system) return "";
+  const voices = row.voices_on_staff;
+  const voice = voices === 1 ? "only voice"
+    : voices === 2 ? (row.voice_on_staff === 1 ? "upper voice" : "lower voice")
+    : `voice ${row.voice_on_staff} of ${voices} from the top`;
+  return `staff ${row.staff_in_system} of ${row.staves_in_system}, ${voice}`;
+}
+
 function problemList(panel, song, P, refresh) {
   const box = el("div", { className: "problems" });
   panel.append(box);
@@ -1910,7 +1921,7 @@ function problemList(panel, song, P, refresh) {
     else box.append(el("p", { className: "sub problemcount" },
       `${open.length} place(s) to check against the page. Tap the letter the page prints; it is applied to the score and kept in fixes.json, so a re-clean keeps it.`));
     for (const row of open) {
-      // The crop is the whole printed line, so say which of its bars is meant (#310).
+      // The crop is the whole printed system, so say which of its bars is meant (#310).
       const barOf = row.bar_in_system ? `${row.bar_in_system}/${row.bars_in_system}` : "";
       const card = el("div", { className: "issue problem", "data-row": row.id },
         el("div", { className: "top" },
@@ -1926,8 +1937,9 @@ function problemList(panel, song, P, refresh) {
       }
       const undecided = row.choices.filter((c) => !c.decision);
       if (undecided.length && row.system != null && song.has_pdf) {
-        if (barOf) card.append(el("p", { className: "sub barpos" },
-          `Bar ${row.bar_in_system} of ${row.bars_in_system} in this line`));
+        const where = [barOf && `Bar ${row.bar_in_system} of ${row.bars_in_system}`, staffPlace(row)]
+          .filter(Boolean).join(" · ");
+        if (where) card.append(el("p", { className: "sub barpos" }, where));
         card.append(el("img", { className: "readcrop", loading: "lazy", alt: `printed system ${row.system}`,
           src: `${P}/system/${row.system}?dpi=200` }));
       }
