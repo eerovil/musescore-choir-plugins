@@ -391,3 +391,30 @@ def test_triplet_options_are_bracketed():
     tuplets = [t.get("type") for t in root.iter("tuplet")]
     assert tuplets == ["start", "stop"]
     assert len(root.findall(".//time-modification")) == 3
+
+
+def test_an_offer_past_a_deleted_bar_is_read_and_picked_in_the_cleaned_numbering(
+        make_song, tmp_path):
+    # The scan read an extra empty bar in system 1, so its bars run one ahead of the
+    # cleaned score, which a `delbar` took it out of (#346).
+    song = make_song()
+    song.data["scan"]["systems"]["1"]["bars"] = 2
+    song.save()
+    delbar = {"kind": "delbar", "measure": 2, "from": ["measure:R"], "why": "invented"}
+    with open(song.path("fixes.json"), "w") as fh:
+        json.dump([delbar], fh)
+    [offer] = bar_readings.offers(song)
+    assert offer["measure"] == 3 and offer["staff"] == 1
+    bar_readings.record_pick(song, offer["id"], "b")
+    assert _tokens(song) == ["quarter.:48", "eighth:50"]
+    # The next clean starts from the scan, invented bar and all, and keeps the pick.
+    raw = _score(((1, "B1", 0),)).replace(
+        "</Measure><Measure>",
+        "</Measure><Measure><voice><Rest><durationType>measure</durationType>"
+        "<duration>2/4</duration></Rest></voice></Measure><Measure>", 1)
+    rebuilt = tmp_path / "rebuilt.mscx"
+    rebuilt.write_text(raw)
+    picked = _fixes(song)
+    assert pipeline.apply_recorded_fixes(str(rebuilt), song.dir) == 2
+    assert _rebuilt_tokens(rebuilt, 1) == ["quarter.:48", "eighth:50"]
+    assert _fixes(song) == picked

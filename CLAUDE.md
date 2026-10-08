@@ -197,7 +197,7 @@ ends on the barline before it keeps its length, and a per-system lyric map loses
 bar too; a spanner starting or ending in it, any volta starting in it, a repeat sign,
 or a clef/key/meter change refuses. Fixes apply **in file order**: an entry before a
 `delbar` counts bars with the invented one still there, an entry after it without, so
-neither has to be renumbered; a Fix-panel pick is relocated (`relocate_picks`) in that numbering too. The printed-system bar labels (`.systems.json`) and the
+neither has to be renumbered; a Fix-panel pick is relocated (`relocate_picks`) in that numbering too, and the bars homr offered readings of are numbered off the scan, so `offers` maps them past the deleted bars (`score_fixes.after_deletions`). The printed-system bar labels (`.systems.json`) and the
 line breaks the previews take off the converted input still count the invented bar.
 
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because

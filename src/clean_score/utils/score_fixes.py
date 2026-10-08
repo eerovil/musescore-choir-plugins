@@ -1478,6 +1478,32 @@ def _add_volta(root: etree._Element, measure_no: int, bars: int) -> str:
     return f"1. over {span}, 2. over bar {measure_no + 1}"
 
 
+def deleted_bars(fixes: List[Dict]) -> List[int]:
+    """The bars ``delbar`` entries take out, in file order, each in its own numbering."""
+    return [int(fix.get("measure", 0)) for fix in fixes
+            if isinstance(fix, dict) and fix.get("kind") == "delbar"]
+
+
+def after_deletions(measure: int, deleted: List[int]) -> Optional[int]:
+    """Bar ``measure`` of the score before ``deleted`` (file order) as numbered after.
+
+    ``None`` when that bar is itself one of the deleted ones.
+    """
+    for gone in deleted:
+        if measure == gone:
+            return None
+        if measure > gone:
+            measure -= 1
+    return measure
+
+
+def before_deletions(measure: int, deleted: List[int]) -> int:
+    """`after_deletions` the other way: a bar counted after ``deleted``, counted before."""
+    for gone in reversed(deleted):
+        if measure >= gone:
+            measure += 1
+    return measure
+
 def _shift_system_map(root: etree._Element, measure_no: int) -> None:
     """Take bar ``measure_no`` out of the per-system lyric map's bar ranges."""
     import json  # noqa: PLC0415 - only a per-system score carries the map
