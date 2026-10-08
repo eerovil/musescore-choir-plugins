@@ -172,6 +172,16 @@ again. Strophic songs print **dashed** ties that belong to a later verse only, a
 reads them as real ties, so verse 1 loses a syllable (Gaudeamus igitur bars 6 and 8).
 Strict about `from` like the others, and replayed on every clean.
 
+`delbar` (#346, `measure`, `from`) takes out a bar the scan invented, on every staff —
+Kun poijat ne raitilla's scan put an empty bar between the "1." and "2." endings, so
+the "1." bracket covered two bars and the track played a bar of silence. A volta, slur
+or tie reaching across the bar is shortened by one, both halves, and a per-system
+lyric map loses the bar too; a spanner starting or ending in it, a repeat sign, or a
+clef/key/meter change refuses. Fixes apply **in file order**: an entry before a
+`delbar` counts bars with the invented one still there, an entry after it without, so
+neither has to be renumbered. The printed-system bar labels (`.systems.json`) and the
+line breaks the previews take off the converted input still count the invented bar.
+
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — taking one notehead off a chord and turning a
 bar-length rest into a whole-bar rest both came up on one song in one sitting, and
@@ -572,6 +582,10 @@ Key test modules:
   and (with MuseScore) the bar it had refused opens once the dot is back. `untie`
   (#342) takes both halves out across or inside a bar, gives the syllable back,
   leaves other ties alone, and replays on a rebuild.
+- `test_delbar.py` — added for #346: the bar goes on every staff, the "1." and "2."
+  brackets close up round it, a slur across it keeps both notes, fixes count bars in
+  file order, `from` is strict, a bar with music or a spanner end in it refuses, the
+  per-system lyric map loses the bar, and the entry replays on a rebuild.
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index

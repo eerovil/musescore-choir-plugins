@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- `fixes.json` can now take out a bar the scan invented, on every staff (`delbar`):
+  a volta or slur across it is shortened to match, and fixes after it in the file
+  count bars without it. (#346)
 - `fixes.json` can now take out a tie (`untie`), for the dashed ties a strophic song
   prints for a later verse only, which the scan reads as real ties. (#343)
 - `fixes.json` can now take out a slur (`unslur`), tie two notes (`tie`) and give
