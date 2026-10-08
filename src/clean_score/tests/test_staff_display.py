@@ -101,3 +101,22 @@ def test_running_it_twice_changes_nothing():
     first = fix_staff_display(root)
     assert sum(first.values()) == 5
     assert sum(fix_staff_display(root).values()) == 0
+
+
+def test_a_final_barline_is_not_copied():
+    """MuseScore draws it on every staff by itself, so an ordinary score must
+    come through unchanged -- otherwise every video renders from a copy."""
+    root = score([[CHORD + barline("end")], [CHORD + barline("end")]], [[CHORD], [CHORD]])
+    assert fix_staff_display(root) == {"rests": 0, "moved": 0, "dropped": 0, "shared": 0}
+
+
+def test_ordinary_test_scores_pass_through_unchanged():
+    import glob
+    import os
+    here = os.path.dirname(__file__)
+    files = glob.glob(os.path.join(here, "..", "..", "scrollvideo", "tests", "test_files", "*.mscx"))
+    files.append(os.path.join(here, "test_files", "simple_1_output.mscx"))
+    assert files
+    for path in files:
+        root = etree.parse(path).getroot()
+        assert not any(fix_staff_display(root).values()), path

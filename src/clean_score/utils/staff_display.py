@@ -94,11 +94,15 @@ def drop_plain_final_barlines(root: etree._Element) -> int:
 
 
 def share_end_barlines(root: etree._Element) -> int:
-    """Give every staff of a bar the bar's double, final or repeat barline.
+    """Give every staff of a bar the bar's double or repeat barline.
 
     In a choir score the style of a barline runs through the whole system, so a
     staff that has none in a bar where another has one lost it in the split.
-    Only a staff with no barline of its own in that bar is given one.
+    Only a staff with no barline of its own in that bar is given one. A final
+    (``end``) barline is never shared: on the last bar MuseScore draws one by
+    itself, and copying it there changed every ordinary score for nothing, so
+    every video rendered from a copy. One inside the score is rare in this
+    repertoire and left as the scan read it.
     """
     staves = [s.findall("Measure") for s in root.iterfind(".//Score/Staff")]
     staves = [m for m in staves if m]
@@ -108,7 +112,8 @@ def share_end_barlines(root: etree._Element) -> int:
     for index in range(min(len(m) for m in staves)):
         bars = [m[index] for m in staves]
         styled = next((b for b in (_end_barline(bar) for bar in bars)
-                       if b is not None and _subtype(b) != "normal"), None)
+                       if b is not None and _subtype(b) != "normal"
+                       and _subtype(b) != "end"), None)
         if styled is None:
             continue
         for bar in bars:

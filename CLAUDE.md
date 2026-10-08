@@ -2337,7 +2337,7 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    staff and missing from the picture once that voice has a staff of its own, so a
    bar with one voice shows its rests. A barline with music after it in its voice moves
    to the bar's end (MuseScore puts a barline where the cursor stands, and a voice
-   that stopped early drew a fake bar). A double, final or repeat barline goes on
+   that stopped early drew a fake bar). A double or repeat barline (never a final one) goes on
    every staff of the bar that has none, since the split left it with the upper
    voice. A plain barline on the last bar goes, since it overrides the final barline
    MuseScore draws there. The same pass runs on the copy every cleaned preview
