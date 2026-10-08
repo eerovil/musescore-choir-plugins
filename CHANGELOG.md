@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A `bar` fix can now give a voice the scan made too long a bar that fills the
+  time signature. False triplets had left Lasinkuultava laulu's T1 bar 9 7/6 long
+  in 4/4, a length no writable bar adds up to, so MuseScore reset it to a rest and
+  no recorded fix could put it back. (#350)
 - A bar a recorded fix has answered stops showing red. An `unmark` or a pick now
   finds the bar's red mark on either part of a shared staff (the mark sits on the
   first part, the red notes on both), a `tie`/`untie`, `slur`/`unslur` or `duration`

@@ -83,7 +83,10 @@ of the bar can be: ties and slurs reaching into it from outside are cut, as when
 MuseScore refuses a bar (`rejected_bars`), and its words are put back on its notes
 in order, the extra ones dropped. A gap cleaning left in the voice (`location`) is
 taken out first and the bar is written afresh, so the new bar has to fill the bar's
-own length (#344).
+own length (#344). Otherwise the new bar may last as long as the voice does now or
+fill the bar's own length; the second is how a voice the scan made too long is put
+right, since false triplets can leave it a length (7/6) no writable bar adds up to
+(#350). A bar whose length changes is written afresh.
 
     {"kind": "bar", "staff": 3, "measure": 12, "from": [...],
      "to": [{"value": "note_4.", "pitches": [62], "tpcs": [16]},
@@ -1246,18 +1249,24 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     gaps = [el for el in body if el.tag == "location"]
     timeline = _timeline([el for el in body if el.tag != "location"])
     new_total = sum((value_length(v) for v in values), Fraction(0))
-    if gaps:
-        from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
-        staff = measure.getparent()
-        total = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
-    else:
-        total = sum((length for _, _, length in timeline), Fraction(0))
-    if new_total != total:
-        raise FixError(f"the new bar adds up to {new_total} of a whole note, the bar "
-                       f"to {total}")
+    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+    staff = measure.getparent()
+    bar_length = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
+    voice_total = sum((length for _, _, length in timeline), Fraction(0))
+    # The bar's own length (its time signature, unless it carries a length of its
+    # own) is always a reading of the page, and the voice's length is too unless the
+    # scan made it wrong: false triplets left Lasinkuultava laulu's T1 bar 9 7/6 long
+    # in 4/4, which no writable lengths add up to (#350).
+    if new_total != bar_length and (gaps or new_total != voice_total):
+        if gaps or voice_total == bar_length:
+            raise FixError(f"the new bar adds up to {new_total} of a whole note, the bar "
+                           f"to {bar_length}")
+        raise FixError(f"the new bar adds up to {new_total} of a whole note, the voice "
+                       f"to {voice_total} and the bar to {bar_length}")
     for gap in gaps:
         body.remove(gap)
-    if not gaps and _same_shape(timeline, to) and not _tied_and_moving(timeline, to):
+    if (not gaps and new_total == voice_total and _same_shape(timeline, to)
+            and not _tied_and_moving(timeline, to)):
         said = _rewrite_rhythm(root, staff_id, measure_no, expect, values)
         for (el, _, _), new in zip(timeline, to):
             if el.tag == "Chord":

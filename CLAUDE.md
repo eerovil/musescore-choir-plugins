@@ -169,7 +169,10 @@ restored bar exactly (#344): otherwise MuseScore's check, which runs after the f
 reads those voices as too long and resets them to rests nothing recorded could undo —
 Gute Nacht bar 6 and Annin laulu bars 9, 10 and 21. And a `bar` fix no longer refuses
 a voice with a gap in it: it takes the gap out and writes the bar afresh, which then has
-to fill the bar's own length (Integer vitae T2 bar 9, Jouluyö's last bar). All three take a `from` and refuse without one. `GET /bar` now also returns
+to fill the bar's own length (Integer vitae T2 bar 9, Jouluyö's last bar). It may
+also fill the bar's own length when the scan made the voice longer than the bar (#350):
+false triplets left Lasinkuultava laulu's T1 bar 9 7/6 long in 4/4, which no writable
+lengths add up to. All three take a `from` and refuse without one. `GET /bar` now also returns
 the bar's `from` (rests included), and the lyric import's reply carries `mismatches`.
 
 **A bar a fix has answered stops showing red** (#347). homr marks a printed staff, so
@@ -595,6 +598,10 @@ Key test modules:
   step did not squeeze to the bar, a forward gap and another voice's tie are left
   alone, a `bar` fix writes over a gap (Integer vitae T2 bar 9) and still has to fill
   the bar, and (with MuseScore) every voice of the bar opens.
+- `test_overlong_voice_bar.py` — added for #350, on Lasinkuultava laulu T1 bar 9: a
+  voice false triplets made 7/6 long in 4/4 comes back from one `bar` fix filling the
+  bar, the other tenor untouched; a total that fills neither refuses naming both, and
+  (with MuseScore) the bar it refused opens.
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index
