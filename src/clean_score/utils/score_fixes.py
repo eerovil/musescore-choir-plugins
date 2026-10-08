@@ -121,6 +121,15 @@ its `from`.
     {"kind": "duration", "staff": 2, "measure": 10, "index": 0, "to": "quarter..",
      "from": [...], "why": "the page prints a double dot"}
 
+`untie` (#342) is `tie` taken back: it takes out the tie that starts on note `pitch`
+of chord `index`, both halves, wherever the end half sits, so playback sings the note
+again. Strophic songs print **dashed** ties that belong to a later verse only, and the
+scan reads them as real ties, so the verse that re-strikes the note loses a syllable.
+It needs its `from` like the others.
+
+    {"kind": "untie", "staff": 1, "measure": 6, "index": 1, "pitch": 65, "from": [...],
+     "why": "dashed tie, verse 2 only"}
+
 Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
@@ -423,6 +432,54 @@ def _tie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch
     _before_pitch(other, _tie_spanner("prev", mi - bar, -along))
     where = "the next chord" if bar == mi else f"the first chord of m{bar + 1}"
     return f"tied pitch {pitch} of chord {index} to {where}"
+
+
+def _untie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch: int,
+           expect: List[str]) -> str:
+    """Take out the tie that starts on note `pitch` of chord `index`: both of its halves.
+
+    The end half is found where the start half points, in this bar or a later one, and
+    must be the same pitch tied back. Strophic songs print dashed ties for a later verse
+    only; homr reads them as real ties, so the verse that re-strikes the note loses a
+    syllable (#342). A tie whose end cannot be found loses its start all the same.
+    """
+    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+    measure = _measure(root, staff_id, measure_no)
+    _expect(measure, expect)
+    chords = _chords(root, staff_id, measure_no)
+    if not 0 <= index < len(chords):
+        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+    chord = chords[index]
+    note = _pitched(chord, pitch)
+    if note is None:
+        raise FixError(f"chord {index} has no note at pitch {pitch}")
+    starts = [t for t in note.findall("Spanner[@type='Tie']") if t.find("next") is not None]
+    if not starts:
+        raise FixError(f"no tie starts on pitch {pitch} of chord {index}")
+    head = starts[0]
+    staff = measure.getparent()
+    lengths = _bar_lengths(staff)
+    mi = staff.findall("Measure").index(measure)
+    own = next(at for at, el in _positions(staff, mi) if el is chord)
+    tail = None
+    bar = mi
+    location = head.find("next/location")
+    if location is not None:
+        bar, at = _resolve(mi, own, location, lengths)
+        if 0 <= bar < len(lengths):
+            for pos, el in _positions(staff, bar):
+                if el.tag == "Chord" and pos == at and el is not chord:
+                    other = _pitched(el, pitch)
+                    if other is not None:
+                        tail = next((t for t in other.findall("Spanner[@type='Tie']")
+                                     if t.find("prev") is not None), None)
+                    break
+    head.getparent().remove(head)
+    if tail is None:
+        return f"took out the tie from pitch {pitch} of chord {index} (no end half found)"
+    tail.getparent().remove(tail)
+    where = "the next chord" if bar == mi else f"m{bar + 1}"
+    return f"took out the tie from pitch {pitch} of chord {index} to {where}"
 
 
 def _meter(staff: etree._Element, mi: int) -> Fraction:
@@ -1306,6 +1363,9 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             elif kind == "tie":
                 what = _tie(root, staff, measure, int(fix.get("index", 0)), int(fix["pitch"]),
                             fix.get("from"))
+            elif kind == "untie":
+                what = _untie(root, staff, measure, int(fix.get("index", 0)),
+                              int(fix["pitch"]), fix.get("from"))
             elif kind == "duration":
                 what = _set_duration(root, staff, measure, int(fix.get("index", 0)),
                                      fix.get("from"), str(fix.get("to", "")))

@@ -7,6 +7,8 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- `fixes.json` can now take out a tie (`untie`), for the dashed ties a strophic song
+  prints for a later verse only, which the scan reads as real ties. (#PR)
 - `fixes.json` can now take out a slur (`unslur`), tie two notes (`tie`) and give
   a note another length, double dots included (`duration`); a length change that
   makes the bar fit its time signature again gives the bar that length on every

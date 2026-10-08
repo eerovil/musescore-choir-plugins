@@ -1,4 +1,4 @@
-"""The `unslur`, `tie` and `duration` fixes (#340), on Annin laulu's own bars.
+"""The `unslur`, `tie`, `untie` and `duration` fixes (#340, #342), on Annin laulu's own bars.
 
 An agent fixing Annin laulu from its page could not record three things, and faking
 them damaged the score: a slur the scan pinned on the wrong voice (B1 bars 1-2, the
@@ -191,6 +191,90 @@ def test_tie_refuses_a_note_already_tied(root):
     fix["from"] = bar_tokens(root, 2, 3)
     with pytest.raises(FixError, match="tied already"):
         apply_fixes(root, [fix])
+
+
+# --- untie ----------------------------------------------------------------------
+
+def _tied(root, *fixes):
+    """The bars with ties recorded on them, as a scan reading a dashed tie leaves them."""
+    apply_fixes(root, [_fix(root, "tie", *f[:2], index=f[2], pitch=f[3]) for f in fixes])
+    return root
+
+
+def test_untie_takes_out_a_tie_across_the_barline_and_gives_the_syllable_back(root):
+    _tied(root, (2, 3, 2, 60))
+    assert lyric_txt.slot_counts(root)[2][4] == 0
+    done = apply_fixes(root, [_fix(root, "untie", 2, 3, index=2, pitch=60)])
+    assert "took out the tie from pitch 60 of chord 2 to m4" in done[0]
+    assert _ties(root, 2, 3) == [] and _ties(root, 2, 4) == []
+    assert lyric_txt.slot_counts(root)[2][4] == 1
+
+
+def test_untie_takes_out_a_tie_inside_one_bar(root):
+    _tied(root, (2, 3, 0, 61))
+    before = lyric_txt.slot_counts(root)[2][3]
+    done = apply_fixes(root, [_fix(root, "untie", 2, 3, index=0, pitch=61)])
+    assert "to the next chord" in done[0]
+    assert _ties(root, 2, 3) == []
+    assert lyric_txt.slot_counts(root)[2][3] == before + 1
+
+
+def test_untie_leaves_the_other_ties_alone(root):
+    _tied(root, (2, 3, 0, 61), (2, 3, 2, 60))
+    apply_fixes(root, [_fix(root, "untie", 2, 3, index=2, pitch=60)])
+    out, into = _ties(root, 2, 3)
+    assert out.find("next") is not None and into.find("prev") is not None
+    assert _ties(root, 2, 4) == []
+
+
+def test_untie_takes_the_start_out_when_the_end_is_missing(root):
+    _tied(root, (2, 3, 2, 60))
+    into, = _ties(root, 2, 4)
+    into.getparent().remove(into)
+    done = apply_fixes(root, [_fix(root, "untie", 2, 3, index=2, pitch=60)])
+    assert "no end half found" in done[0]
+    assert _ties(root, 2, 3) == []
+
+
+@pytest.mark.parametrize("measure,index,pitch,says", [
+    (3, 1, 61, "no tie starts on pitch 61 of chord 1"),
+    (3, 2, 62, "chord 2 has no note at pitch 62"),
+    (3, 5, 60, "no index 5"),
+])
+def test_untie_refuses_a_note_no_tie_starts_on(root, measure, index, pitch, says):
+    _tied(root, (2, 3, 0, 61))
+    # Chord 1 is where that tie ends, which is not where one starts.
+    with pytest.raises(FixError, match=says):
+        apply_fixes(root, [_fix(root, "untie", 2, measure, index=index, pitch=pitch)])
+
+
+def test_untie_is_strict_about_from(root):
+    _tied(root, (2, 3, 2, 60))
+    fix = _fix(root, "untie", 2, 3, index=2, pitch=60)
+    fix["from"] = ["quarter:61", "16th:61", "quarter:60"]
+    with pytest.raises(FixError, match="staff 2 m3 .untie.: bar reads"):
+        apply_fixes(root, [fix])
+    del fix["from"]
+    with pytest.raises(FixError, match="'from'"):
+        apply_fixes(root, [fix])
+    assert len(_ties(root, 2, 3)) == 1
+
+
+def test_untie_replays_on_a_rebuild(root, tmp_path):
+    # What cleaning does: the scan's tie is back on every rebuild and the recorded
+    # entry takes it out again, strictly.
+    from src.song_app import pipeline  # noqa: PLC0415 - only this test needs the app
+    import json
+
+    _tied(root, (2, 3, 2, 60))
+    fix = _fix(root, "untie", 2, 3, index=2, pitch=60)
+    (tmp_path / "fixes.json").write_text(json.dumps([fix]))
+    score = tmp_path / "score_cleaned.mscx"
+    for _ in range(2):
+        etree.ElementTree(root).write(str(score))
+        pipeline.apply_recorded_fixes(str(score), str(tmp_path))
+        again = etree.parse(str(score)).getroot()
+        assert _ties(again, 2, 3) == [] and _ties(again, 2, 4) == []
 
 
 # --- duration -------------------------------------------------------------------
