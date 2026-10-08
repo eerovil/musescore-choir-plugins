@@ -7,6 +7,8 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Answering a problem in the Fix stage no longer throws the list to its bottom:
+  the next card moves up into the place of the one answered. (#329)
 - A problem card in the Fix stage also says which staff of the printed system the
   part is on, and which voice of that staff ("Bar 3 of 7 · staff 2 of 4, only
   voice"). A per-system song shows it after its next clean. (#310)

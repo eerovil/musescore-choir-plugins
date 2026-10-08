@@ -248,3 +248,58 @@ def test_it_fits_a_phone(live, page):
     out = os.environ.get("EVIDENCE_DIR")
     if out:
         card.screenshot(path=os.path.join(out, "phone-card.png"))
+
+
+def _many_rows(answered=()):
+    """Twelve open rows, each with a choice in words; `answered` ones come back decided."""
+    rows = []
+    for n in range(1, 13):
+        rid = f"row-{n}"
+        choice = {"id": f"c-{n}", "kind": "slur", "title": f"Is there a slur in bar {n}?",
+                  "options": [{"letter": "a", "label": "No slur"},
+                              {"letter": "b", "label": "Slur in T1"}],
+                  "decision": {"picked": "b"} if rid in answered else None}
+        rows.append({"id": rid, "measure": n, "part": "T1", "system": None,
+                     "notes": [], "choices": [choice]})
+    return rows
+
+
+@pytest.mark.parametrize("size", [{"width": 1280, "height": 800}, {"width": 390, "height": 844}],
+                         ids=["desktop", "phone"])
+def test_a_pick_keeps_the_place_in_the_list(live, page, size):
+    """A tap redraws the panel; it must not leave the reader at its bottom (#329)."""
+    base, song, _ = live
+    answered = set()
+    page.route("**/problems", lambda route: route.fulfill(
+        json={"rows": _many_rows(answered)}))
+    song_json = page.request.get(f"{base}/api/songs/{song.slug}").json()
+
+    def pick(route):
+        answered.add("row-" + json.loads(route.request.post_data)["choice"].split("-")[1])
+        route.fulfill(json=song_json)
+    page.route("**/problems/pick", pick)
+
+    page.set_viewport_size(size)
+    errors = _open_fix(page, base, song.slug)
+    page.wait_for_selector('.problems[data-loaded="1"]')
+    if size["width"] < 800:
+        assert page.locator(".ws.m-panel").count() == 1
+    panel = page.locator(".panel")
+    assert panel.evaluate("p => p.scrollHeight > p.clientHeight + 400"), "the list must scroll"
+
+    tapped = page.locator('[data-row="row-5"]')
+    panel.evaluate("(p) => { const c = p.querySelector('[data-row=\"row-5\"]');"
+                   " p.scrollTop += c.getBoundingClientRect().top - p.getBoundingClientRect().top - 120; }")
+    stood = tapped.bounding_box()["y"]
+    tapped.locator(".readopt").nth(1).click()
+    page.wait_for_selector('[data-row="row-5"]', state="detached")
+    page.wait_for_selector('.problems[data-loaded="1"] .readdone')
+
+    at_bottom = panel.evaluate("p => p.scrollTop >= p.scrollHeight - p.clientHeight - 2")
+    assert not at_bottom, "the pick threw the panel to its bottom"
+    # The next card slid into the place of the one answered.
+    assert abs(page.locator('[data-row="row-6"]').bounding_box()["y"] - stood) <= 4
+    out = os.environ.get("EVIDENCE_DIR")
+    if out and size["width"] < 800:
+        page.screenshot(path=os.path.join(out, "after-pick-place-kept-phone.png"))
+    assert errors == []
