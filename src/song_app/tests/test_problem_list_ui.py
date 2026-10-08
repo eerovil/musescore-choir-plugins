@@ -39,6 +39,7 @@ if not _browser_installed():
 
 import uvicorn
 from lxml import etree
+from playwright.sync_api import expect
 
 from src.clean_score.tests.test_cross_voice_slurs import _score as _slur_score
 from src.clean_score.utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
@@ -195,7 +196,8 @@ def test_the_card_says_which_bar_staff_and_voice_is_meant(live, page):
     assert "system 2 · bar 2/4" in card.locator(".top").inner_text()
     assert card.locator(".barpos").inner_text() == "Bar 2 of 4 · staff 2 of 2, only voice"
     # Said right above the crop it is about.
-    assert card.locator(".barpos + .readcrop").count() == 1
+    # Waited for rather than counted once: the panel can redraw between reads (CI saw 0).
+    expect(card.locator(".barpos + .readcrop")).to_have_count(1)
     page.wait_for_function("() => { const i = document.querySelector('.readcrop');"
                            " return i && i.complete && i.naturalWidth > 0; }")
     out = os.environ.get("EVIDENCE_DIR")

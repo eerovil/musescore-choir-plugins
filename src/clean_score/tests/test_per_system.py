@@ -680,23 +680,23 @@ def test_the_lower_notes_of_chords_under_one_name_are_reported_as_kept_in_the_ch
     assert [(d.system, d.voice, d.notes, d.kind) for d in lost] == [(1, 1, 2, "kept")]
     message = lost[0].message()
     assert "lower notes of its chords (2 notes) stay in S1's chords" in message
-    assert "dropped" not in message and '"S1, S1b"' in message
+    assert "dropped" not in message
     clean_per_system(root, answers_from=lambda _l: answers)
     assert _pitches(_by_part(root)["S1"], 1) == ["72", "67", "74", "69"]   # kept
 
 
-def test_a_chord_note_past_the_names_is_reported_as_dropped():
-    """Two names split the stack one notehead each, so a third notehead is lost."""
+def test_chord_notes_past_the_names_stay_in_the_lowest_parts_chord():
+    """#330: two names on a three-note chord split the top note off and leave the
+    lowest part the rest as its chord — one voice may sing a chord — not dropped."""
     answers = {0: {1: "A2, A2b"}}
     root = _score({1: [[[("74", "69", "62")]]]})
     lost = dropped_voices(root, answers)
-    assert [(d.voice, d.notes, d.kind) for d in lost] == [(2, 1, "chord")]
-    assert "note 3 from the top of its chords (1 note) was dropped" in lost[0].message()
-    assert '"A2, A2b, A2c"' in lost[0].message()
+    assert [(d.voice, d.notes, d.kind, d.holder) for d in lost] == [(2, 1, "kept", "A2b")]
+    assert "stay in A2b's chords" in lost[0].message()
     clean_per_system(root, answers_from=lambda _l: answers)
     staves = _by_part(root)
-    assert _pitches(staves["A2"], 0) + _pitches(staves["A2b"], 0) == ["74", "69"]
-
+    assert _pitches(staves["A2"], 0) == ["74"]
+    assert _pitches(staves["A2b"], 0) == ["69", "62"]
 
 def test_a_borrowed_bar_leaves_the_base_parts_red_mark_behind():
     """S1b borrowing S1's bar takes the notes, not S1's ⚠ mark: one doubt, one row."""
@@ -779,3 +779,24 @@ def test_naming_a_voice_under_an_all_rest_voice_gives_it_a_part():
     staves = _by_part(root)
     assert _pitches(staves["A1b"], 0) == ["67"]
     assert _pitches(staves["A1"], 0) == []
+
+
+def test_a_chords_noteheads_count_as_parts_but_not_as_lines_to_warn_about():
+    """#330: the grid may name each notehead (voices) but warns only about written
+    voices (lines), since unnamed chord notes stay in the lowest part's chord."""
+    row = system_layout(_score({1: [[[("74", "69", "62")]]]}))[0].staves[0]
+    assert (row.voices, row.lines) == (3, 1)
+    row = system_layout(_score({1: [[["r"], ["67"]]]}))[0].staves[0]
+    assert (row.voices, row.lines) == (2, 2)
+
+
+def test_a_dash_after_the_last_name_keeps_the_chord_notes_below_it_silent():
+    """Review of #334: "-" after the last name says the lines below are silent, so
+    the lowest named part takes only its own notehead and nothing is reported."""
+    answers = {0: {1: "A2, A2b, -"}}
+    root = _score({1: [[[("74", "69", "62")]]]})
+    assert dropped_voices(root, answers) == []
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A2"], 0) == ["74"]
+    assert _pitches(staves["A2b"], 0) == ["69"]

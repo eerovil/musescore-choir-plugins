@@ -250,7 +250,7 @@ def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers
 
     note = lambda system, staff: cell(system, staff).locator("xpath=following-sibling::div")
     expect(cell(0, 1)).to_have_class(re.compile(r"\bundernamed\b"))
-    expect(note(0, 1)).to_have_text("2 lines here, 1 answered — one gets no part of its own")
+    expect(note(0, 1)).to_have_text("2 voices here, 1 answered — one is dropped")
     expect(cell(1, 1)).to_have_class(re.compile(r"\bundernamed\b"))   # carried over
     expect(note(1, 1)).to_be_visible()
     expect(cell(0, 2)).not_to_have_class(re.compile(r"\bundernamed\b"))
@@ -279,7 +279,7 @@ def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers
     page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
     page.get_by_role("button", name="Run clean").click()
     assert asked, "cleaning with an unnamed line must confirm first"
-    assert "DROPPED" in asked[0] and "stay in the named part" in asked[0] and "staff 1 · system 1" in asked[0], asked[0]
+    assert "DROPPED" in asked[0] and "kept in the lowest named part" in asked[0] and "staff 1 · system 1" in asked[0], asked[0]
     assert "staff 1 · system 2 —" not in asked[0], asked[0]
 
 
