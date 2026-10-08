@@ -788,3 +788,15 @@ def test_a_chords_noteheads_count_as_parts_but_not_as_lines_to_warn_about():
     assert (row.voices, row.lines) == (3, 1)
     row = system_layout(_score({1: [[["r"], ["67"]]]}))[0].staves[0]
     assert (row.voices, row.lines) == (2, 2)
+
+
+def test_a_dash_after_the_last_name_keeps_the_chord_notes_below_it_silent():
+    """Review of #334: "-" after the last name says the lines below are silent, so
+    the lowest named part takes only its own notehead and nothing is reported."""
+    answers = {0: {1: "A2, A2b, -"}}
+    root = _score({1: [[[("74", "69", "62")]]]})
+    assert dropped_voices(root, answers) == []
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A2"], 0) == ["74"]
+    assert _pitches(staves["A2b"], 0) == ["69"]

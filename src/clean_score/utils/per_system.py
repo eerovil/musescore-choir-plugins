@@ -157,10 +157,12 @@ class DroppedVoice:
     - ``voice``: a voice with no name is not copied — dropped.
     - ``beside``: a voice beside a top voice whose stacked chord the names are split
       across is not copied either, however many names there are — dropped.
-    - ``chord``: a stacked chord split one notehead per name loses the noteheads past
-      the names — dropped.
+    - ``chord``: a stacked chord split one notehead per name loses a notehead no
+      name takes — one skipped between names, or any below a ``-`` slot that follows
+      the last name — dropped.
     - ``kept``: chord notes below the last name stay in the lowest named part's
-      chords — not lost, since one voice may sing a chord. Logged, never listed.
+      chords — not lost, since one voice may sing a chord. Logged, never listed. A
+      ``-`` after the last name says those lines are silent, so nothing is kept.
     """
 
     system: int  # 0-based system index
@@ -491,8 +493,21 @@ def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls
     return decls
 
 
+def _silent_from_answers(
+    layouts: List[SystemLayout], answers: Answers
+) -> Dict[int, Dict[int, Set[int]]]:
+    """{system: {staff_id: slots answered "-"}}: lines silent on purpose (#330)."""
+    out: Dict[int, Dict[int, Set[int]]] = {}
+    for layout, row, raw, _ in _answers_in_force(layouts, answers):
+        quiet = {i for i, name in enumerate(_labels(raw)) if name == CLEARED}
+        if quiet:
+            out.setdefault(layout.index, {})[row.staff_id] = quiet
+    return out
+
+
 def _unnamed_lines(
-    staff: etree._Element, a: int, b: int, declared: Set[int]
+    staff: etree._Element, a: int, b: int, declared: Set[int],
+    silent: Set[int] = frozenset(),
 ) -> Dict[Tuple[str, int], int]:
     """{(kind, line): notes} the rebuild leaves without a part, over measures a..b.
 
@@ -519,12 +534,15 @@ def _unnamed_lines(
             continue
         if len(declared) > len(voices) and _has_chord_stack(voices[0]):
             last = max(declared)
+            keeps_rest = not any(i > last for i in silent)
             for chord in voices[0].findall("Chord"):
                 size = len(chord.findall("Note"))
                 taken = {min(d, size - 1) for d in declared}
                 for rank in range(size):
-                    if rank > last:
+                    if rank > last and keeps_rest:
                         add("kept", last + 1, 1)   # the lowest part keeps them
+                    elif rank > last:
+                        add("chord", rank, 1)      # past a "-": silent on purpose
                     elif rank not in taken:
                         add("chord", rank, 1)
             for vidx in range(1, len(voices)):
@@ -563,7 +581,8 @@ def dropped_voices(root: etree._Element, answers: Answers) -> List[DroppedVoice]
         if not declared:
             continue
         silent = {i for i, name in enumerate(labels) if name == CLEARED}
-        lines = _unnamed_lines(staves[row.staff_id], layout.start - 1, layout.end - 1, declared)
+        lines = _unnamed_lines(staves[row.staff_id], layout.start - 1, layout.end - 1,
+                               declared, silent)
         for (kind, line), notes in sorted(lines.items(), key=lambda kv: (order[kv[0][0]], kv[0][1])):
             if line in silent and kind != "beside":
                 continue
@@ -678,7 +697,8 @@ def _voice_at_notehead(
 
 
 def _build_parts(
-    root: etree._Element, bounds: List[Tuple[int, int]], decls: _Decls
+    root: etree._Element, bounds: List[Tuple[int, int]], decls: _Decls,
+    silent: Optional[Dict[int, Dict[int, Set[int]]]] = None,
 ) -> List[str]:
     """
     Rebuild the score as one staff per declared part. Returns the ordered part names.
@@ -758,8 +778,12 @@ def _build_parts(
                     stacked = (declared_here > len(src_voices) and bool(src_voices)
                                and _has_chord_stack(src_voices[0]))
                     if stacked:
-                        lowest = src[1] == max(v for (sid, v) in decls.get(system, {})
-                                               if sid == src[0])
+                        # The lowest named part keeps the notes below it, unless a
+                        # "-" after it says those lines are silent on purpose.
+                        quiet = (silent or {}).get(system, {}).get(src[0], set())
+                        lowest = (src[1] == max(v for (sid, v) in decls.get(system, {})
+                                                if sid == src[0])
+                                  and not any(i > src[1] for i in quiet))
                         for el in _voice_at_notehead(src_voices[0], src[1], lowest):
                             voice.append(el)
                         placed = True
@@ -995,7 +1019,7 @@ def clean_per_system(
     for lost in dropped_voices(root, answers):
         logger.warning("Per-system: %s", lost.message())
     decls = _decls_from_answers(layouts, answers)
-    parts = _build_parts(root, bounds, decls)
+    parts = _build_parts(root, bounds, decls, _silent_from_answers(layouts, answers))
     if not parts:
         return PerSystemResult()
 
