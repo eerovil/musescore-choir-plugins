@@ -1857,7 +1857,7 @@ function problemList(panel, song, P, refresh) {
   const decidedText = (row, c) => {
     const d = c.decision;
     if (d.none) return `${where(row)}: none of these — fix it in MuseScore`;
-    const word = { slur: "slur answer", repeat: "repeat answer" }[c.kind] || "reading";
+    const word = { slur: "slur answer", repeat: "repeat answer", volta: "bracket answer" }[c.kind] || "reading";
     if (d.picked === "earlier") return `${where(row)}: picked before whole bars were offered`;
     const opt = c.options.find((o) => o.letter === d.picked);
     return `${where(row)}: ${word} ${d.picked}` + (opt && opt.label ? ` (${opt.label})` : "");
