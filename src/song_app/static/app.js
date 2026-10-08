@@ -297,6 +297,7 @@ async function renderWorkspace(slug) {
     : song.has_pdf ? "pdf" : "original";
   const panes = [firstDoc]; // 1 or 2 docs shown side by side
   let viewFp = song.cleaned_fingerprint; // viewer is only rebuilt when this changes
+  resetSysVersions(slug, song.cleaned_fingerprint);
   let recordPreviewSettings = null;
 
   // Build the shell once. The viewer (and its rendered previews) is NOT recreated on
@@ -370,6 +371,7 @@ async function renderWorkspace(slug) {
   function drawPanel() {
     recordPreviewSettings = null;
     panelEl._keepPlace = null;
+    panelEl._refreshInPlace = null;
     panelEl.replaceChildren();
     renderPanel(panelEl, view, song, slug, refresh, {
       // Use the same click path as the rail so rendering_state.js remembers an
@@ -430,7 +432,11 @@ async function renderWorkspace(slug) {
     // A refresh redraws the panel the person is looking at, so a panel that loads
     // its content later says where it was first (the Fix panel, #329).
     panelEl._keepPlace?.();
-    drawPanel();
+    // A panel that can bring itself up to date says so, and is left standing: the
+    // Lyrics panel, so an import does not throw away the box being typed in and
+    // the place in the list (#336). It answers false when what it shows is stale.
+    if (!panelEl._refreshInPlace?.()) drawPanel();
+    if (song.cleaned_fingerprint !== viewFp) cleanedScoreMoved(slug, song.cleaned_fingerprint);
     if (tabKeys() !== builtTabs) {
       // The tab set changed (a doc appeared or vanished) → structural rebuild.
       viewFp = song.cleaned_fingerprint;
@@ -678,6 +684,100 @@ async function mountPdf(view, url) {
 const SYSTEM_EVENT = "song-system";
 const showSystem = (index) =>
   window.dispatchEvent(new CustomEvent(SYSTEM_EVENT, { detail: { index } }));
+// The system last asked for, so a viewer rebuilt underneath (a tab appearing after
+// the first import) comes back on it rather than on system 1.
+const shownSystem = {};
+
+// ---- the cleaned score, one system at a time, kept current (#336) -------------
+// Typing lyrics is checked by looking at them on the notes, and an import changes
+// a system or two. So each cleaned system's picture carries its own version in its
+// URL, and an import moves on only the versions of the systems it touched: those
+// are fetched again, every other picture stays exactly as it is. `seen` is the
+// score fingerprint the pictures already account for, so the refresh that follows
+// an import does not then reload everything for the same change; a fingerprint
+// nobody announced (a re-clean, an edit in MuseScore) moves on every system.
+const LYRICS_EVENT = "song-lyrics-imported";
+let sysVer = { slug: null, base: "", by: {}, seen: "" };
+// Set while an import is on its way: the import names what it changed when it
+// lands, so a refresh that sees the new fingerprint first must not call it "all".
+let lyricImporting = false;
+
+function resetSysVersions(slug, fp) {
+  sysVer = { slug, base: fp || "", by: {}, seen: fp || "" };
+}
+
+function cleanedSystemSrc(slug, n) {
+  const v = sysVer.slug === slug ? (sysVer.by[n] || sysVer.base) : "";
+  return `/api/songs/${encodeURIComponent(slug)}/cleaned-system/${n}?dpi=300`
+    + `&v=${encodeURIComponent(v)}`;
+}
+
+// `systems` is a list of printed system numbers, or "all".
+function cleanedSystemsChanged(slug, fp, systems) {
+  if (sysVer.slug !== slug) resetSysVersions(slug, sysVer.seen);
+  if (systems === "all") sysVer = { slug, base: fp || "", by: {}, seen: fp || "" };
+  else { for (const n of systems) sysVer.by[n] = fp || ""; sysVer.seen = fp || ""; }
+  window.dispatchEvent(new CustomEvent(LYRICS_EVENT, { detail: { slug, systems } }));
+}
+
+// The score moved; if nobody said which systems, all of them did.
+function cleanedScoreMoved(slug, fp) {
+  if (lyricImporting) return;
+  if (sysVer.slug === slug && sysVer.seen === fp) return;
+  cleanedSystemsChanged(slug, fp, "all");
+}
+
+// Two at a time, like the slow queue: each one can be a MuseScore run.
+const swapQueue = { running: 0, waiting: [] };
+function swapLimited(job) {
+  const pump = () => {
+    while (swapQueue.running < SLOW_AT_ONCE && swapQueue.waiting.length) {
+      const next = swapQueue.waiting.shift();
+      swapQueue.running++;
+      next().finally(() => { swapQueue.running--; pump(); });
+    }
+  };
+  swapQueue.waiting.push(job);
+  pump();
+}
+
+// Put the picture at `src` into `box`. A picture already there stays on screen,
+// under an "Updating…" note, until the new one has loaded — so nothing collapses
+// or jumps while MuseScore works — and a failure leaves it there with the reason.
+function swapSystemImage(box, src, n) {
+  if (box._src === src) return;
+  box._src = src;
+  box.querySelectorAll(".liveupd, .liveerr").forEach((e) => e.remove());
+  const old = box.querySelector("img");
+  const note = old ? el("div", { className: "liveupd" }, "Updating…")
+    : busyNote(`Engraving system ${n}…`, "busynote small");
+  if (old) box.append(note); else box.replaceChildren(note);
+  const current = () => box._src === src;
+  swapLimited(() => fetchOrSay(src).then((r) => r.blob()).then((blob) => {
+    if (!current()) return;
+    const img = el("img", { className: "cmpimg", alt: `cleaned system ${n}` });
+    const local = URL.createObjectURL(blob);
+    return new Promise((done) => {
+      img.onload = () => {
+        URL.revokeObjectURL(local);
+        if (current()) box.replaceChildren(img);
+        done();
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(local);
+        if (current()) { box._src = null; note.remove(); box.append(el("div", { className: "liveerr" }, "The picture could not be shown.")); }
+        done();
+      };
+      img.src = local;
+    });
+  }, (e) => {
+    if (!current()) return;
+    box._src = null; // a failed picture is asked for again the next time it is wanted
+    note.remove();
+    box.append(el("div", { className: "liveerr" },
+      `Could not engrave system ${n}${e.message ? ": " + e.message : "."}`));
+  }));
+}
 
 // ---- slow pictures: the engraved systems in Compare and Scan vs page -----------
 // Each one is a MuseScore run on the server. Asked for all at once they started a
@@ -788,8 +888,12 @@ async function compareView(view, slug) {
   const byIndex = {};
   const queue = slowQueue(view);
   view.replaceChildren(...rows.map((r) => {
-    const slow = slowImage(view, `${P}/cleaned-system/${r.index}?dpi=300`,
-      `cleaned system ${r.index}`, r.index);
+    const src = cleanedSystemSrc(slug, r.index);
+    const slow = slowImage(view, src, `cleaned system ${r.index}`, r.index);
+    // The cleaned picture sits in a box of its own, so an import can swap it for a
+    // newer one in place (#336) whether it has arrived yet or not.
+    const cleanedBox = el("div", { className: "cmpcleaned" }, slow);
+    cleanedBox._src = src;
     const row = byIndex[r.index] = el("div", { className: "cmprow" },
       el("div", { className: "cmphead" },
         `System ${r.index} — measures ${r.measure_start}–${r.measure_end}`),
@@ -797,12 +901,22 @@ async function compareView(view, slug) {
       el("img", { className: "cmpimg", loading: "lazy",
                   src: `${P}/system/${r.index}?dpi=300`, alt: `printed system ${r.index}` }),
       el("div", { className: "cmplabel" }, "cleaned"),
-      slow,
+      cleanedBox,
     );
     row._slow = slow;
+    row._cleaned = cleanedBox;
     return row;
   }));
   for (const r of rows) queue.push(byIndex[r.index]._slow);
+
+  // Only the systems an import touched are fetched again; the rest stay as drawn.
+  view._refreshSystems = (systems) => {
+    const which = systems === "all" ? Object.keys(byIndex).map(Number) : systems;
+    for (const n of which) {
+      const row = byIndex[n];
+      if (row) swapSystemImage(row._cleaned, cleanedSystemSrc(slug, n), n);
+    }
+  };
 
   // Typing lyrics for a system should put that system in front of you, scan and
   // result together — that is the pair you are checking the words against.
@@ -812,6 +926,11 @@ async function compareView(view, slug) {
     for (const el_ of Object.values(byIndex)) el_.classList.remove("cmpon");
     row.classList.add("cmpon");
     queue.front(row._slow);
+    // A cleaned picture that failed is asked for again when its system is wanted.
+    if (!row._cleaned._src || row._cleaned.querySelector(".cmpslot.err")) {
+      row._cleaned._src = null;
+      swapSystemImage(row._cleaned, cleanedSystemSrc(slug, n), n);
+    }
     row.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 }
@@ -1177,14 +1296,32 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
         else if (doc === "system") {
           v._systems = true;                       // draws itself, not a PDF
           v.className = "pdfview onesystem";
+          // The printed system, and under it the same system of the cleaned score
+          // once it has words on it: that is the pair a lyric is checked against.
           v._setSystem = (n) => {
-            v._n = n;
-            v.replaceChildren(
+            // Already there -- unless its cleaned picture failed, which is asked again.
+            if (n === v._n && v._shownLyrics === !!song.lyrics && (!v._box || v._box._src)) return;
+            v._n = shownSystem[slug] = n;
+            v._shownLyrics = !!song.lyrics;
+            v._box = null;
+            const parts = [
               el("div", { className: "muted" }, `Printed system ${n}`),
               el("img", { src: `/api/songs/${encodeURIComponent(slug)}/system/${n}?dpi=400` }),
-            );
+            ];
+            if (song.has_cleaned && song.lyrics) {
+              v._box = el("div", { className: "cmpcleaned" });
+              parts.push(el("div", { className: "muted" }, `Cleaned system ${n}, with lyrics`), v._box);
+              swapSystemImage(v._box, cleanedSystemSrc(slug, n), n);
+            }
+            v.replaceChildren(...parts);
           };
-          v._setSystem(v._n || 1);
+          v._refreshSystems = (systems) => {
+            if (!v._n) return;
+            if (!v._box || v._shownLyrics !== !!song.lyrics) { v._setSystem(v._n); return; }
+            if (systems === "all" || systems.includes(v._n))
+              swapSystemImage(v._box, cleanedSystemSrc(slug, v._n), v._n);
+          };
+          v._setSystem(shownSystem[slug] || 1);
         }
         else if (doc === "preview") {
           v._systems = true;
@@ -1252,6 +1389,15 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
       window.addEventListener(SYSTEM_EVENT, onAsk);
       body._cleanup = () => window.removeEventListener(SYSTEM_EVENT, onAsk);
     }
+    // An import (or any change to the cleaned score) names the systems it moved;
+    // only those pictures are fetched again (#336).
+    const onChanged = (ev) => {
+      if (!body.isConnected) { window.removeEventListener(LYRICS_EVENT, onChanged); return; }
+      if (ev.detail?.slug !== slug) return;
+      frames.system?._refreshSystems?.(ev.detail.systems);
+      frames.compare?._refreshSystems?.(ev.detail.systems);
+    };
+    window.addEventListener(LYRICS_EVENT, onChanged);
 
     const ctrl = panes.length === 1
       ? el("button", { className: "vtab split", title: "Split view",
@@ -2278,7 +2424,12 @@ function slurRecorder(panel, song, P, refresh) {
 
 async function panelLyrics(panel, song, P, refresh) {
   const mode = localStorage.getItem("lyricMode") === "manual" ? "manual" : "paste";
-  const swap = (m) => { localStorage.setItem("lyricMode", m); panel.replaceChildren(); panelLyrics(panel, song, P, refresh); };
+  const swap = (m) => {
+    localStorage.setItem("lyricMode", m);
+    panel._refreshInPlace = null;
+    panel.replaceChildren();
+    panelLyrics(panel, song, P, refresh);
+  };
   panel.append(
     el("h2", {}, "Lyrics"),
     el("div", { className: "row" },
@@ -2312,12 +2463,33 @@ function autoGrow(ta) {
   ta.style.height = ta.scrollHeight + "px";
 }
 
+// An import brings the panel up to date where it stands rather than redrawing it,
+// so the place in the list and the box being typed in survive (#336). A refresh
+// that arrives while the import is still running is ignored -- the import's own
+// answer is the one to show -- and one about a score that changed some other way
+// (a re-clean) is refused, so the panel is drawn afresh from the new score.
+function lyricsInPlace(panel, song, update) {
+  const live = { fp: song.cleaned_fingerprint, busy: false };
+  panel._refreshInPlace = () => {
+    if (live.busy) return true;
+    if (song.cleaned_fingerprint !== live.fp) return false;
+    update();
+    return true;
+  };
+  return live;
+}
+
 async function lyricsPaste(panel, song, P, refresh) {
-  const warns = lyricMismatches(song);
-  if (warns.length) {
-    panel.append(el("p", { className: "sub" }, "Mismatches (often a note problem — check the measure in MuseScore):"),
-      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w.message))));
-  }
+  const warnBox = el("div", {});
+  const drawWarns = () => {
+    const warns = lyricMismatches(song);
+    warnBox.replaceChildren(...(warns.length ? [
+      el("p", { className: "sub" }, "Mismatches (often a note problem — check the measure in MuseScore):"),
+      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w.message)))] : []));
+  };
+  drawWarns();
+  panel.append(warnBox);
+  const live = lyricsInPlace(panel, song, drawWarns);
   panel.append(el("p", { className: "sub" }, "No API key needed — your AI does the reading, this catches the result."));
   const ta = el("textarea", { rows: 12, placeholder: "Paste the lyric JSON from your AI chat here…" });
   if (song.lyrics?.json) {
@@ -2339,16 +2511,25 @@ async function lyricsPaste(panel, song, P, refresh) {
     el("div", { className: "row" }, el("span", { className: "hint" }, "Open your AI:"), ...aiLinks),
     el("label", {}, "2. Paste the returned JSON"), ta,
     el("div", { className: "row" },
-      el("button", { className: "primary", onclick: async () => {
+      el("button", { className: "primary", onclick: async (ev) => {
+        const btn = ev.currentTarget;
+        btn.disabled = true;
+        live.busy = lyricImporting = true;
         appendLog("Importing lyrics…");
         try {
           const fresh = await postJSON(`${P}/lyrics`, { json: ta.value });
           Object.assign(song, fresh);
+          live.fp = song.cleaned_fingerprint;
+          drawWarns();
           const w = song.lyrics?.warnings || [];
           if (w.length) appendLog(`Imported with ${w.length} warning(s).`);
           else appendLog("Imported cleanly. Ready for review.");
-          refresh();
+          // Pasted JSON can touch any system, so every one is fetched again.
+          cleanedSystemsChanged(song.slug, song.cleaned_fingerprint, "all");
         } catch (e) { appendLog(e.message, true); }
+        live.busy = lyricImporting = false;
+        btn.disabled = false;
+        refresh();
       }}, "3. Import lyrics")));
   panel.append(makeLog());
 }
@@ -2360,6 +2541,7 @@ async function lyricsManual(panel, song, P, refresh) {
     showScore = !showScore;
     localStorage.setItem("lyricScore", showScore ? "1" : "0");
     lyricScroll = panel.scrollTop;
+    panel._refreshInPlace = null; // this one does want the panel drawn again
     refresh();
   };
   panel.append(toggle);
@@ -2384,11 +2566,16 @@ async function lyricsManual(panel, song, P, refresh) {
   let showScore = localStorage.getItem("lyricScore") === "1";
   const { parts, systems, cells, capacities } = grid;
   const cellText = (si, name) => (cells?.[si]?.[name]) || "";
-  const warns = lyricMismatches(song);
   // Attach a mismatch to the system where its line STARTS (a line can span several
   // systems if the part is blank in later ones); show the full measure range.
-  const cellWarns = (sys, p) => warns.filter((w) =>
+  const cellWarns = (sys, p) => lyricMismatches(song).filter((w) =>
     (w.staff_ids || []).includes(p.id) && w.measure_start >= sys.start && w.measure_start <= sys.end);
+  const warnLines = (sys, p) => cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
+    `⚠ m${w.measure_start}–${w.measure_end}`
+    + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
+    + `${w.message.split("): ").pop()}`));
+  const warnBoxes = [];
+  let typingIn = null; // the box last typed in, given back its focus after an import
 
   const scoreFor = (sys) => {
     const idx = byStart[sys.start];
@@ -2408,39 +2595,103 @@ async function lyricsManual(panel, song, P, refresh) {
           "data-sys": sys.index, "data-part": p.name });
         ta.oninput = () => autoGrow(ta);
         const shown = byStart[sys.start];
-        if (shown) ta.onfocus = () => showSystem(shown);
+        ta.onfocus = () => { typingIn = ta; if (shown) showSystem(shown); };
+        const errs = el("div", { className: "lyerrs" }, ...warnLines(sys, p));
+        warnBoxes.push([errs, sys, p]);
         return el("div", { className: "lyrow" },
-          el("label", {}, `${p.name} · ${capacities?.[sys.index]?.[p.name] ?? 0} lyric slots`), ta,
-          ...cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
-            `⚠ m${w.measure_start}–${w.measure_end}`
-            + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
-            + `${w.message.split("): ").pop()}`)));
+          el("label", {}, `${p.name} · ${capacities?.[sys.index]?.[p.name] ?? 0} lyric slots`), ta, errs);
       }))));
   toggle.textContent = Object.keys(byStart).length
     ? (showScore ? "Hide the score" : "Show the score")
     : "";
   toggle.style.display = Object.keys(byStart).length ? "" : "none";
   holder.querySelectorAll("textarea").forEach(autoGrow); // size to content (no scroll)
-  if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after re-import
+  if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after "Show the score"
 
-  const doImport = async (btn) => {
+  // The warnings are the only thing an import changes in this panel, so they are
+  // the only thing redrawn: the boxes, the one being typed in and the scroll stay.
+  const drawWarns = () => {
+    for (const [errs, sys, p] of warnBoxes) errs.replaceChildren(...warnLines(sys, p));
+  };
+  const live = lyricsInPlace(panel, song, drawWarns);
+  const readCells = () => {
     const map = {};
     panel.querySelectorAll("textarea[data-sys]").forEach((t) => {
       (map[t.dataset.sys] ||= {})[t.dataset.part] = t.value.trim();
     });
+    return map;
+  };
+  let imported = readCells(); // what the score holds now, to tell what an import changes
+
+  // After an import each box shows what actually landed -- the words, and a `_` for
+  // every slot left without one -- written into the boxes already there. The box
+  // being typed in keeps its caret, and whatever is in view stays where it is on
+  // screen even when a box above it grows.
+  const showLanded = async () => {
+    let fresh;
+    try { fresh = await getJSON(`${P}/lyric-grid`); } catch { return; }
+    const boxes = [...panel.querySelectorAll("textarea[data-sys]")];
+    const anchor = (typingIn?.isConnected && typingIn)
+      || boxes.find((t) => t.getBoundingClientRect().bottom > panel.getBoundingClientRect().top);
+    const y = anchor?.getBoundingClientRect().top;
+    for (const t of boxes) {
+      const text = fresh.cells?.[t.dataset.sys]?.[t.dataset.part] || "";
+      if (t.value === text) continue;
+      const caret = t === typingIn ? t.selectionStart : null;
+      t.value = text;
+      autoGrow(t);
+      if (caret != null) t.setSelectionRange(caret, caret);
+    }
+    if (anchor) panel.scrollTop += anchor.getBoundingClientRect().top - y;
+    imported = readCells();
+  };
+
+  // The printed systems an import touches: each one where a part's text differs
+  // from what was imported last, and the systems after it where that part is left
+  // blank, because a blank box carries the line on and the words spill into them.
+  const changedSystems = (now) => {
+    const touched = new Set();
+    for (const p of parts) {
+      let carrying = false;
+      for (const sys of systems) {
+        const text = now[sys.index]?.[p.name] || "";
+        const before = imported[sys.index]?.[p.name] || "";
+        if (text !== before) { touched.add(sys); carrying = true; }
+        else if (text) carrying = false;
+        else if (carrying) touched.add(sys);
+      }
+    }
+    const printed = [...touched].map((sys) => byStart[sys.start]);
+    return printed.every(Boolean) ? printed.sort((a, b) => a - b) : "all";
+  };
+
+  const doImport = async (btn) => {
+    const map = readCells();
     if (!Object.values(map).some((row) => Object.values(row).some((t) => t))) {
       appendLog("Nothing typed yet.", true); return;
     }
     btn.disabled = true;
-    lyricScroll = panel.scrollTop; // preserve scroll across the re-render
+    live.busy = lyricImporting = true;
     appendLog("Importing lyrics…");
     try {
       const fresh = await postJSON(`${P}/lyrics`, { cells: map });
       Object.assign(song, fresh);
+      live.fp = song.cleaned_fingerprint;
+      drawWarns();
       const w = song.lyrics?.warnings || [];
       appendLog(w.length ? `Imported with ${w.length} warning(s).` : "Imported cleanly. Ready for review.");
-      refresh(); // re-renders with updated inline errors
-    } catch (e) { btn.disabled = false; appendLog(e.message, true); }
+      cleanedSystemsChanged(song.slug, song.cleaned_fingerprint, changedSystems(map));
+      imported = map;
+      await showLanded();
+    } catch (e) { appendLog(e.message, true); }
+    live.busy = lyricImporting = false;
+    btn.disabled = false;
+    // Pressing the button took the focus (and disabling it dropped it on the page);
+    // give it back to the box being typed in, without scrolling to it.
+    const away = document.activeElement;
+    if (typingIn?.isConnected && (away === btn || away === document.body || !away))
+      typingIn.focus({ preventScroll: true });
+    refresh(); // the stage rail and the viewer; this panel only updates its warnings
   };
   const importBtn = el("button", { className: "primary", onclick: () => doImport(importBtn) }, "Import lyrics");
   panel.append(el("div", { className: "floatbar" }, importBtn));

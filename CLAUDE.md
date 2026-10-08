@@ -575,6 +575,12 @@ Key test modules:
   reading always **b**, picking it writing the bar afresh and coming back on a rebuild,
   an octave-shifted tenor, an earlier pick counting as decided, and in the browser six
   shown with the rest behind "More". `test_bar_fix.py` pins the `bar` kind itself.
+- `src/song_app/tests/test_lyrics_live_ui.py` — added for #336: an import keeps the
+  Lyrics panel's scroll, its boxes and the focus, through the watcher's `state` ping
+  too; the warnings change in place; only the changed systems (and the blank-box
+  systems a line spills into) are fetched again, the old picture kept under
+  "Updating…" meanwhile; One system shows the words on the notes; and a phone keeps
+  its place. Pictures and the import are `page.route` stubs, so no MuseScore.
 - `src/song_app/tests/test_state_race.py` — added for #252. The file watcher used to
   save the whole song state it had loaded, so a lyric import that saved while the
   watcher was checking health was silently undone. It drives both interleavings (a
@@ -1047,9 +1053,26 @@ state model are in `DESIGN.md`.
   `measure_start`, `measure_end`, `staff_ids`, `syllables`, `slots`, `message`) and
   are attached to the matching system/part cell by comparing those fields — the
   browser no longer parses warning prose (a song whose `.song.json` predates this holds
-  the sentence as a string; the panel reads the fields back out of it). Lyric-panel
-  scroll is preserved across the
-  refresh. Blank cells are omitted, so this editor expresses a lyric line starting in
+  the sentence as a string; the panel reads the fields back out of it). **An import
+  does not redraw the panel** (#336): it sets `panel._refreshInPlace`, which
+  `refresh()` calls instead of `drawPanel()`, so the warnings, and each box's text
+  (re-read off `/lyric-grid`, `_` for an empty slot), change in the boxes already
+  there, the scroll and the focus stay, and the `state` ping the file watcher sends
+  after the import's own write cannot redraw it either — and `api_lyrics` claims
+  that write (the new `cleaned_fingerprint` saved under `song_lock` before the slow
+  health check), so the watcher normally sends none, while the page ignores a
+  "score moved" during an import (`lyricImporting`). The hook refuses (and the
+  panel is drawn afresh) when the cleaned fingerprint moved some other way. The
+  viewer's cleaned-system pictures (One system, which now shows the cleaned system
+  with its words under the printed one, and Compare) carry a version per system in
+  their URL: an import moves on only the systems whose text changed, plus the ones
+  after where that part's box is blank, since a blank box carries the line on
+  (`cleanedSystemsChanged`); any other change of fingerprint moves on all of them.
+  The server still renders the whole score once and crops (4.6s for Kantajani's 37
+  bars); engraving one system alone was refused as not worth cutting slurs and ties
+  at the seams. The old picture stays under an "Updating…" note until the new one
+  has loaded (`swapSystemImage`, two at a time); a picture that failed is asked for
+  again the next time its system is wanted. Blank cells are omitted, so this editor expresses a lyric line starting in
   a system, not an instruction to clear one isolated cell.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the

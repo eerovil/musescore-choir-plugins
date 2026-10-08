@@ -111,6 +111,24 @@ def test_an_import_landing_while_the_watcher_checks_health_survives(client, monk
     assert fresh.data["cleaned_fingerprint"] == state.file_fingerprint(fresh.cleaned_path())
 
 
+def test_the_watcher_leaves_an_import_alone_while_its_health_is_checked(client, monkeypatch):
+    """The import claims its write before checking health (#336): the watcher
+    waking in between finds nothing to do and tells the page nothing, so the page
+    redraws only the systems the import says it changed."""
+    api, song = client
+    woke = []
+    real = server._health_scan
+
+    def scan_with_the_watcher_waking(s, cleaned):
+        woke.append(server._on_cleaned_saved(song.slug))
+        return real(s, cleaned)
+
+    monkeypatch.setattr(server, "_health_scan", scan_with_the_watcher_waking)
+    _import(api, song.slug)
+    assert woke == [False]
+    _assert_import_survived(song.slug)
+
+
 def test_the_watcher_still_records_an_edit_made_in_musescore(client):
     """Writing only its own fields must not stop it writing them."""
     api, song = client

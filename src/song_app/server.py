@@ -1028,6 +1028,15 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     except Exception as exc:
         raise HTTPException(400, f"Import failed: {exc}")
     current_fingerprint = state.file_fingerprint(cleaned)
+    # Claim the write before the slow health check below (#336). The file watcher
+    # sees the score change at once, and until the new fingerprint is on disk it
+    # takes the import for an edit made in MuseScore: it checks the score again and
+    # tells the page the score moved, so the page fetches every system's picture
+    # again instead of the one or two the import changed.
+    with state.song_lock(song.slug):
+        claimed = state.load(song.slug) or song
+        claimed.data["cleaned_fingerprint"] = current_fingerprint
+        claimed.save()
     song.data["lyrics"] = {
         "json": "lyrics.json",
         "imported_against": current_fingerprint,
