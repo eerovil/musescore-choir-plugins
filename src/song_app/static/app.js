@@ -1695,8 +1695,8 @@ async function panelClean(panel, song, slug, P, refresh) {
         const slots = carry.split(",").map((n) => n.trim());
         if (!slots.some((n) => n && n !== CLEARED)) return 0;
         let answered = 0;
-        for (let i = 0; i < +inp.dataset.voices; i++) if (slots[i]) answered++;
-        return +inp.dataset.voices - answered;
+        for (let i = 0; i < +inp.dataset.lines; i++) if (slots[i]) answered++;
+        return +inp.dataset.lines - answered;
       };
       const cascade = () => {
         for (const list of Object.values(byStaff())) {
@@ -1715,8 +1715,8 @@ async function panelClean(panel, song, slug, P, refresh) {
             inp.classList.toggle("undernamed", lost > 0);
             const note = inp.parentElement.querySelector(".undernote");
             if (note) note.textContent = lost > 0
-              ? `${inp.dataset.voices} lines here, ${inp.dataset.voices - lost} answered — `
-                + (lost === 1 ? "one gets" : `${lost} get`) + " no part of its own"
+              ? `${inp.dataset.lines} voices here, ${inp.dataset.lines - lost} answered — `
+                + (lost === 1 ? "one is" : `${lost} are`) + " dropped"
               : "";
           }
         }
@@ -1790,7 +1790,7 @@ async function panelClean(panel, song, slug, P, refresh) {
             + "\n\nClean anyway?")) return;
         const lost = dropping();
         if (lost.length && !confirm(
-            `${lost.length} staff slot(s) carry more lines than they have names. An unnamed line gets no part of its own: a separate voice is DROPPED, and the lower notes of a chord stay in the named part's chords:\n\n`
+            `${lost.length} staff slot(s) have more voices than names, and the unnamed voices will be DROPPED (a chord's extra notes are kept in the lowest named part's chord):\n\n`
             + lost.slice(0, 12).join("\n") + (lost.length > 12 ? `\n…and ${lost.length - 12} more` : "")
             + "\n\nName each line (e.g. A1, A1b) to give it a part. Clean anyway?")) return;
         runBtn.disabled = true;
@@ -1827,6 +1827,7 @@ function sysBlock(sys) {
       el("td", {}, el("input", {
         value: st.answer || "", placeholder: st.voices > 1 ? "e.g. T1, T2 (- = silent)" : "e.g. T1 (- = silent)",
         "data-sys": sys.system, "data-staff": st.staff_id, "data-voices": st.voices,
+        "data-lines": st.lines ?? st.voices,
         "data-hint": st.voices > 1 ? "e.g. T1, T2 (- = silent)" : "e.g. T1 (- = silent)",
       }), el("div", { className: "undernote" }))));
   const reuse = sys.can_reuse_previous

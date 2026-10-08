@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- In per-system cleaning, a chord with more notes than part names no longer loses
+  the extra notes: the lowest named part keeps them as its chord, and the Clean grid
+  and the Fix stage no longer warn about it. (#330)
 - In per-system cleaning, a staff carrying two lines with only one part name
   (usually a name carried over from an earlier system) no longer loses its lower
   line in silence: the Clean grid marks the cell and asks before cleaning, and the

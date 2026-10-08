@@ -196,3 +196,15 @@ def test_a_line_left_unnamed_is_listed_until_it_is_named(song_dir):
     assert [f["measure"] for f in _fixes(song_dir)
             if f.get("source") == pipeline.DROPPED_VOICE_SOURCE] == [16, 16]
     assert typed in _fixes(song_dir)
+
+
+def test_chord_notes_kept_in_a_part_are_logged_but_not_listed(tmp_path):
+    """#330: one voice may sing a chord, so notes kept in the lowest part's chord are
+    said in the log and are not a Fix row."""
+    from src.clean_score.utils.per_system import DroppedVoice
+    kept = DroppedVoice(system=14, start=86, end=89, staff_id=4, voice=2, notes=2,
+                        answer="A2, A2b", answered_in=14, kind="kept", holder="A2b")
+    logged = []
+    assert pipeline.record_dropped_voices(str(tmp_path), [kept], logged.append) == 0
+    assert not [f for f in _fixes(str(tmp_path)) if f.get("source") == pipeline.DROPPED_VOICE_SOURCE]
+    assert any("stay in A2b's chords" in line for line in logged)

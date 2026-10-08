@@ -2264,11 +2264,13 @@ refuses to guess. **A line left unnamed is said out loud** (#330): the rebuild t
 line, top first, so a two-voice staff answered with one name keeps the upper line and
 loses the rest — usually an answer typed once in system 1 and carried into a system
 where the page prints two lines there (Lemmen nosto lost ~150 alto notes that way).
-`per_system.dropped_voices` finds each such line with notes (the lower notes of
-chords under one name are the exception: the chords are copied whole, so those stay
-in the named part with no part of their own, and are reported that way); the grid marks the cell
+`per_system.dropped_voices` finds each such voice with notes; the grid marks the cell
 and asks before cleaning, the clean logs it, and `pipeline.record_dropped_voices`
 lists it in the Fix panel (`source: "per-system-dropped"`, replaced on every clean).
+A chord is different: **one voice may sing a chord**, so notes of a stacked chord
+past the last name stay in the lowest named part's chord (`A2, A2b` on a three-note
+chord gives A2b the bottom two). They are only logged — the grid warns about written
+voices (`StaffRow.lines`), not noteheads (`StaffRow.voices`).
 It warns and never blocks: leaving a line out can be the right reading. Answers are
 recorded per input file (basename, no extension) in `.persystem_cache.json` at the repo
 root (gitignored) via `save_answers`/`saved_answers`/`has_answers`; the file itself is
@@ -2289,7 +2291,8 @@ voice is.
 as one voice with the noteheads stacked, so a staff can carry two declared parts
 without having two `<voice>` elements. `_max_voices_in_range` therefore counts a chord's
 noteheads as parts, and the rebuild gives each declared part its own notehead (top
-first). Copying the voice whole instead handed both notes to the upper part and left
+first; the lowest named part keeps every notehead from its own down, so a chord with
+more notes than names stays a chord there). Copying the voice whole instead handed both notes to the upper part and left
 the lower one silent — on Kaksi-laulua-krapulasta the lower bass lost the "duu" in m22
 entirely, which no health check catches (a chord is well-formed and so is a rest). Where
 the stack narrows to one notehead the parts converge in unison rather than one of them
