@@ -13,6 +13,12 @@ developers are listed under *Behind the scenes*.
   answers the mark's `tie?`, `slur?` or `rhythm?`, and once no mark is left on the
   bar its red notes turn black. Cleaning no longer copies each red mark into
   `fixes.json`, and the next clean removes the copies already there. (#347)
+- A `duration` fix that gives a bar its time signature back now also takes out the
+  back-step cleaning had squeezed the other voices into the short bar with, so those
+  voices are no longer reset to rests by the MuseScore check. Gute Nacht bar 6 and
+  Annin laulu bars 9, 10 and 21 now come out right from `fixes.json` alone. A `bar`
+  fix also writes over a gap cleaning left in a voice instead of refusing it, so
+  Integer vitae T2 bar 9 and Jouluyö's last bar can be recorded too. (#344)
 - `fixes.json` can now take out a tie (`untie`), for the dashed ties a strophic song
   prints for a later verse only, which the scan reads as real ties. (#343)
 - `fixes.json` can now take out a slur (`unslur`), tie two notes (`tie`) and give
