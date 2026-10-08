@@ -190,3 +190,28 @@ def test_a_pick_recorded_after_it_survives_the_next_clean(tmp_path):
         again = etree.parse(str(score)).getroot()
         assert bar_tokens(again, 2, 4) == ["whole:69"]
     assert json.loads((tmp_path / "fixes.json").read_text()) == [DELBAR, pick]
+
+
+def test_a_bracket_ending_before_the_bar_keeps_its_length():
+    # The Kun poijat shape once the "1." bracket is read the right length: over bar 3
+    # only, its end marker in the invented bar 4.
+    bars = _bars(True)
+    bars[2] = bars[2].replace("<measures>2</measures>", "<measures>1</measures>")
+    bars[3] = VOLTA1_END.replace("-2", "-1") + EMPTY
+    bars[4] = bars[4].replace(VOLTA1_END, "")
+    root = _score({1: bars, 2: _bars(False)})
+    assert volta_spans(_staff(root, 1)) == [(3, 3), (5, 5)]
+    apply_fixes(root, [dict(DELBAR)])
+    assert volta_spans(_staff(root, 1)) == [(3, 3), (4, 4)]
+    first = _measure(root, 1, 4).find("voice")[0]
+    assert first.get("type") == "Volta" and first.findtext("prev/location/measures") == "-1"
+
+
+def test_a_bracket_starting_in_the_bar_refuses():
+    bars = _bars(False)
+    bars[3] = VOLTA2 + EMPTY
+    root = _score({1: bars, 2: _bars(False)})
+    with pytest.raises(FixError, match="a volta bracket starts in this bar on staff 1"):
+        apply_fixes(root, [dict(DELBAR)])
+    assert volta_spans(_staff(root, 1)) == [(4, 4)]
+    assert len(_staff(root, 2).findall("Measure")) == 5

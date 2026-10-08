@@ -138,8 +138,9 @@ homr read between a "1." and a "2." ending, say. `from` is what the bar reads no
 one list when every staff reads the same (`["measure:R"]`), or one list per staff —
 and it is required, because replayed against a better reading it would delete a bar
 the page prints. A volta, slur or tie reaching across the bar is shortened by one,
-both halves; one starting or ending inside it, a repeat sign, or a clef, key or meter
-change in it refuses. Fixes apply **in file order**, so an entry before a `delbar`
+both halves, and a volta ending on the barline before it keeps its length; one
+starting or ending inside it, any volta starting in it, a repeat sign, or a clef,
+key or meter change in it refuses. Fixes apply **in file order**, so an entry before a `delbar`
 counts bars as they were before the deletion and one after it counts them without
 the deleted bar — which is how fixes recorded before anyone noticed the invented bar
 keep matching, and how one recorded afterwards in the app matches too.
@@ -1435,8 +1436,9 @@ def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
     """Take bar ``measure_no`` out of every staff, and the bars after it move up one.
 
     Spanners reaching across the bar (a volta, a slur, a tie over an empty bar) are
-    shortened by one bar, both halves. One that starts or ends inside the bar, a
-    repeat sign, or a clef, key or meter change in it refuses: each says the bar is
+    shortened by one bar, both halves; a volta that ends on the barline before it
+    keeps its length. One that starts or ends inside the bar, a volta starting in
+    it, a repeat sign, or a clef, key or meter change in it refuses: each says the bar is
     part of the music, which a bar the scan invented is not.
     """
     staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
@@ -1465,35 +1467,59 @@ def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
                           ("TimeSig", "the meter changes")):
             if bar.find(f".//{tag}") is not None:
                 raise FixError(f"{what} in this bar on staff {staff.get('id')}")
-    shortened = 0
+    # Look first, change after: a refusal on the last staff must not leave the
+    # first ones half edited.
+    shorten = []  # (step, partner end marker or None, span)
+    carry = []    # (volta end marker, the bar after the deleted one)
     for staff in staves:
         measures = staff.findall("Measure")
-        done = set()
+        claimed = set()
         for i, measure in enumerate(measures):
             for spanner in measure.iter("Spanner"):
-                step = spanner.find("next/location/measures")
                 if spanner.find("next") is None:
                     continue
+                kind = spanner.get("type")
+                step = spanner.find("next/location/measures")
                 span = int((step.text if step is not None else "0") or 0)
                 end = i + span
+                where = f"on staff {staff.get('id')}"
+                if kind == "Volta" and i == d:
+                    raise FixError(f"a volta bracket starts in this bar {where}")
                 if end < d or i > d or (i == d and end == d):
                     continue
-                kind = spanner.get("type")
-                if i == d or end == d:
-                    raise FixError(f"a {kind} from bar {i + 1} to bar {end + 1} on staff "
-                                   f"{staff.get('id')} starts or ends in this bar")
-                if step is None:
-                    continue
-                step.text = str(span - 1)
                 partner = next(
                     (sp for sp in measures[end].iter("Spanner")
-                     if sp.get("type") == kind and id(sp) not in done
-                     and (sp.findtext("prev/location/measures") or "").strip() == str(-span)),
+                     if sp.get("type") == kind and id(sp) not in claimed
+                     and sp.find("prev") is not None
+                     and (sp.findtext("prev/location/measures") or "0").strip() == str(-span)),
                     None)
                 if partner is not None:
-                    done.add(id(partner))
-                    partner.find("prev/location/measures").text = str(-(span - 1))
-                shortened += 1
+                    claimed.add(id(partner))
+                if kind == "Volta" and end == d:
+                    # A bracket's end marker stands in the bar after its last bar, so
+                    # this one ends on the barline before the deleted bar: its marker
+                    # moves on into the bar that takes the deleted one's place.
+                    if partner is None or d + 1 >= len(measures):
+                        raise FixError(f"the volta over bars {i + 1}-{end} {where} has no "
+                                       "bar after this one to end on")
+                    carry.append((partner, measures[d + 1]))
+                    continue
+                if i == d or end == d:
+                    raise FixError(f"a {kind} from bar {i + 1} to bar {end + 1} {where} "
+                                   "starts or ends in this bar")
+                shorten.append((step, partner, span))
+    for step, partner, span in shorten:
+        step.text = str(span - 1)
+        if partner is not None:
+            partner.find("prev/location/measures").text = str(-(span - 1))
+    for marker, bar in carry:
+        voice = bar.find("voice")
+        if voice is None:
+            voice = etree.SubElement(bar, "voice")
+        voice.insert(0, marker)  # an end before any start in the bar
+    shortened = len(shorten)
+    for staff in staves:
+        measures = staff.findall("Measure")
         bar = measures[d]
         # A system break on an invented bar belongs to the bar the page ends its line on.
         for brk in bar.findall("LayoutBreak"):
