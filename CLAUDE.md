@@ -175,6 +175,19 @@ false triplets left Lasinkuultava laulu's T1 bar 9 7/6 long in 4/4, which no wri
 lengths add up to. All three take a `from` and refuse without one. `GET /bar` now also returns
 the bar's `from` (rests included), and the lyric import's reply carries `mismatches`.
 
+`GET /bar` answers the questions agents writing fixes kept getting wrong (#357). Each
+chord carries `at`, its place in `from`, and `items` pairs every `from` token with the
+chord `index` it has (`null` for a rest or bracket), since `index` counts chords only;
+a wrong `index` is refused with the chords listed. Each note in `pitches` gives its MIDI
+`pitch` and whether a tie leaves it (`tied_to_next`) or reaches it (`tied_from_prev`).
+A bar MuseScore's check reset carries `reset`: the bar as the recorded fixes left it,
+kept in its `musescore-check` entry (`scanned_from`), which is the `from` a new fix for
+it needs, because fixes replay **before** the check. An `append` spells what it adds by
+the key in force (flats in a flat key). And cleans take turns (`pipeline._CLEAN_LOCK`):
+`clean_score`'s `GLOBALS` is one per process, and two songs cleaning at once emptied
+each other's tables — a clean failed with the bare error `"3"` (`KeyError: 3`); a failed
+job now names an unexpected error's type.
+
 **A bar a fix has answered stops showing red** (#347). homr marks a printed staff, so
 on a staff two parts share the `⚠` mark lands on the first part while the red notes stay
 on both. `unmark` and the word-striking picks (`pitch`, `rhythm`, `bar`) therefore look

@@ -18,7 +18,8 @@ why a note lost its dot.
       "why": "..."}]
 
 `staff` and `measure` are 1-based and refer to the **cleaned** score, where each
-staff carries one voice. `index` counts chords in that measure from 0. Applying is
+staff carries one voice. `index` counts chords in that measure from 0 — chords only,
+not the rests `from` lists (`bar_items` pairs each token with its index). Applying is
 strict: an entry that does not match raises, because a silently skipped fix would
 leave the score looking repaired when it is not.
 
@@ -34,9 +35,10 @@ Tokens are `duration[.]:pitch` (`eighth:50`, `quarter.:60` for a dotted quarter)
 `tuplet]` mark a triplet bracket: they appear in `from` and cannot be written. A
 whole-bar rest reads as `measure:R` and cannot be written either — it needs the bar's
 own length, which a fix has no way to know, so write the rests out instead. The
-note's **spelling** (MuseScore's tpc) is derived from the pitch and is deliberately
-not part of the token: the first fixes to carry one by hand got three of four wrong,
-which puts a note on the wrong line while it still sounds right.
+note's **spelling** (MuseScore's tpc) is derived from the pitch and the key in force
+on that staff — flats for the black keys in a flat key, sharps otherwise (#357) — and
+is deliberately not part of the token: the first fixes to carry one by hand got three
+of four wrong, which puts a note on the wrong line while it still sounds right.
 
 A fifth kind, `rhythm`, gives every note and rest of a bar a new length and leaves
 the notes themselves alone. It is how a person's pick among the readings homr weighed
@@ -242,6 +244,18 @@ def _chords(root: etree._Element, staff_id: int, measure_no: int) -> List[etree.
     return [el for el in body if el.tag == "Chord"]
 
 
+def _no_index(chords: List[etree._Element], index: int, where: str) -> "FixError":
+    """The refusal for a chord index that is not there, naming the ones that are.
+
+    `index` counts chords only, while `from` lists the rests too, and that is the
+    mistake this answers: the chords are listed with their numbers, so a wrong first
+    guess shows the right one (#357).
+    """
+    listed = ", ".join(f"{i} = {_token(c)}" for i, c in enumerate(chords)) or "none"
+    return FixError(f"{where} has {len(chords)} chords, no index {index}; "
+                    f"index counts chords only, not rests: {listed}")
+
+
 def _length(chord: etree._Element) -> Fraction:
     base = _DUR.get((chord.findtext("durationType") or "").strip(), Fraction(0))
     dots = int((chord.findtext("dots") or "0").strip() or 0)
@@ -287,9 +301,9 @@ def _slur_across(root: etree._Element, staff: int, measure: int, index: int,
     starts = _chords(root, staff, measure)
     ends = _chords(root, staff, end_measure)
     if not 0 <= index < len(starts):
-        raise FixError(f"m{measure} has {len(starts)} chords, no index {index}")
+        raise _no_index(starts, index, f"m{measure}")
     if not 0 <= end_index < len(ends):
-        raise FixError(f"m{end_measure} has {len(ends)} chords, no index {end_index}")
+        raise _no_index(ends, end_index, f"m{end_measure}")
     if (end_measure, end_index) <= (measure, index):
         raise FixError("a slur has to end after it starts")
     first, last = starts[index], ends[end_index]
@@ -440,7 +454,7 @@ def _unslur(root: etree._Element, staff_id: int, measure_no: int, index: int,
     _expect(measure, expect)
     chords = _chords(root, staff_id, measure_no)
     if not 0 <= index < len(chords):
-        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+        raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
     starts = _halves(chord, "next")
     if not starts:
@@ -626,7 +640,7 @@ def _tie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch
     _expect(measure, expect)
     chords = _chords(root, staff_id, measure_no)
     if not 0 <= index < len(chords):
-        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+        raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
     note = _pitched(chord, pitch)
     if note is None:
@@ -677,7 +691,7 @@ def _untie(root: etree._Element, staff_id: int, measure_no: int, index: int, pit
     _expect(measure, expect)
     chords = _chords(root, staff_id, measure_no)
     if not 0 <= index < len(chords):
-        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+        raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
     note = _pitched(chord, pitch)
     if note is None:
@@ -746,7 +760,7 @@ def _set_duration(root: etree._Element, staff_id: int, measure_no: int, index: i
     _expect(measure, expect)
     chords = _chords(root, staff_id, measure_no)
     if not 0 <= index < len(chords):
-        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+        raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
     staff = measure.getparent()
     measures = staff.findall("Measure")
@@ -924,7 +938,7 @@ def _set_pitch(root: etree._Element, staff: int, measure: int, index: int,
         raise FixError(f"bar reads {found} now, but the fix was recorded against {list(expect)}")
     chords = _chords(root, staff, measure)
     if not 0 <= index < len(chords):
-        raise FixError(f"the bar has {len(chords)} chords, no index {index}")
+        raise _no_index(chords, index, "the bar")
     note = next((n for n in chords[index].findall("Note")
                  if (n.findtext("pitch") or "").strip() == str(was)), None)
     if note is None:
@@ -1033,7 +1047,7 @@ def _bar_tokens(measure: etree._Element) -> List[str]:
     return out
 
 
-def _write_token(voice: etree._Element, token: str) -> None:
+def _write_token(voice: etree._Element, token: str, key: int = 0) -> None:
     dur, _, notes = token.partition(":")
     dots = dur.count(".")
     dur = dur.replace(".", "")
@@ -1056,7 +1070,7 @@ def _write_token(voice: etree._Element, token: str) -> None:
                 raise FixError(f"bad pitch {part!r} in {token!r}")
             note = etree.SubElement(el, "Note")
             etree.SubElement(note, "pitch").text = str(pitch_no)
-            etree.SubElement(note, "tpc").text = str(_SPELLING[pitch_no % 12])
+            etree.SubElement(note, "tpc").text = str(spelling(pitch_no, key))
 
 
 # MuseScore's tpc is the note's spelling: 14 is C and each step of one is a fifth
@@ -1065,6 +1079,35 @@ def _write_token(voice: etree._Element, token: str) -> None:
 # which puts the note on the wrong line of the staff while sounding correct.
 _SPELLING = {0: 14, 1: 21, 2: 16, 3: 23, 4: 18, 5: 13,
              6: 20, 7: 15, 8: 22, 9: 17, 10: 24, 11: 19}
+# In a flat key the black keys are flats: B flat, not the A sharp the table above
+# gives, which a person reading the bar against the page had to write out as a `bar`
+# fix with explicit tpcs to get right (#357). White keys stay natural either way.
+_FLAT_SPELLING = {**_SPELLING, 1: 9, 3: 11, 6: 8, 8: 10, 10: 12}
+
+
+def spelling(pitch: int, key: int = 0) -> int:
+    """The tpc a derived note gets: flats for black keys in a flat key, else sharps."""
+    return (_FLAT_SPELLING if key < 0 else _SPELLING)[pitch % 12]
+
+
+def key_in_force(measure: etree._Element) -> int:
+    """The key signature on this bar's staff at this bar: sharps up, flats down, 0 for none.
+
+    The last `KeySig` at or before the bar, so a key change part-way through the song
+    spells the notes after it in the new key.
+    """
+    staff = measure.getparent()
+    key = 0
+    for bar in staff.findall("Measure"):
+        for sig in bar.iter("KeySig"):
+            value = (sig.findtext("accidental") or sig.findtext("concertKey") or "").strip()
+            try:
+                key = int(value)
+            except ValueError:
+                pass
+        if bar is measure:
+            break
+    return key
 
 
 def _append_bar(measure: etree._Element, expect: List[str], add: List[str],
@@ -1100,8 +1143,9 @@ def _append_bar(measure: etree._Element, expect: List[str], add: List[str],
                 "Removing a note is a musical decision — write the bar out by hand.")
         for el in going:
             body.remove(el)
+    key = key_in_force(measure)
     for token in add:
-        _write_token(body, token)
+        _write_token(body, token, key)
     dropped = f"dropped the last {drop} and " if drop else ""
     return f"{dropped}added {list(add)} to the end of the bar"
 
@@ -1528,22 +1572,54 @@ def bar_tokens(root: etree._Element, staff_id: int, measure_no: int) -> List[str
     return _bar_tokens(_measure(root, staff_id, measure_no))
 
 
+def bar_items(root: etree._Element, staff_id: int, measure_no: int) -> List[Dict]:
+    """The bar's `from` tokens, each with the chord `index` a fix would use for it.
+
+    `index` is None for a rest or a tuplet bracket, because a fix's `index` counts
+    chords only while `from` lists everything — the mismatch agents kept tripping on
+    (#357). Read in the same pass as `bar_tokens`, so the two lists line up exactly.
+    """
+    measure = _measure(root, staff_id, measure_no)
+    body = measure.find("voice") if measure.find("voice") is not None else measure
+    out: List[Dict] = []
+    chord = 0
+    for el in body:
+        if el.tag == "Chord":
+            out.append({"token": _token(el), "index": chord})
+            chord += 1
+        elif el.tag == "Rest":
+            out.append({"token": _token(el), "index": None})
+        elif el.tag in _MARKERS:
+            out.append({"token": _MARKERS[el.tag], "index": None})
+    return out
+
+
+def _has_end(note: etree._Element, side: str) -> bool:
+    return any(t.find(side) is not None for t in note.findall("Spanner[@type='Tie']"))
+
+
 def read_bar(root: etree._Element, staff_id: int, measure_no: int) -> List[Dict]:
     """One bar's chords, in the numbering a recorded fix uses. Rests are not chords.
 
     `index` is what an `undot` or `slur` entry means by `index`, and `token` is the
     same word that entry's `from` list would carry, so what is shown and what is
-    recorded cannot drift apart. `starts_slur` says a slur already begins there,
-    which is the one thing a caller has to check before offering to add another.
-    `marks` lists what a `delete` entry could take off the chord (#352), and is left
-    out when there is nothing.
+    recorded cannot drift apart; `at` is where that token stands in `from`, rests and
+    brackets counted. `starts_slur` says a slur already begins there, which is the one
+    thing a caller has to check before offering to add another, and `ends_slur` that
+    one ends there. `pitches` names each note with its MIDI pitch — what a `tie` or
+    `untie` entry calls `pitch` — and whether a tie already leaves it or reaches it,
+    since a tie recorded twice is refused and one that was never there cannot be
+    taken out (#357). `marks` lists what a `delete` entry could take off the chord
+    (#352), and is left out when there is nothing.
 
     Raises `FixError` for a staff or measure that is not there, so a caller asking
     about a bar out of range gets the same answer as a fix recorded against one.
     """
+    items = bar_items(root, staff_id, measure_no)
+    at = {item["index"]: n for n, item in enumerate(items) if item["index"] is not None}
     out: List[Dict] = []
     for index, chord in enumerate(_chords(root, staff_id, measure_no)):
-        notes = []
+        notes, pitches = [], []
         for note in chord.findall("Note"):
             try:
                 pitch = int((note.findtext("pitch") or "").strip())
@@ -1554,12 +1630,18 @@ def read_bar(root: etree._Element, staff_id: int, measure_no: int) -> List[Dict]
             except ValueError:
                 tpc = None
             notes.append(note_name(pitch, tpc))
+            pitches.append({"pitch": pitch, "name": notes[-1],
+                            "tied_to_next": _has_end(note, "next"),
+                            "tied_from_prev": _has_end(note, "prev")})
+        slurs = chord.findall(".//Spanner[@type='Slur']")
         out.append({
             "index": index,
+            "at": at[index],
             "token": _token(chord),
             "name": "+".join(notes) if notes else "?",
-            "starts_slur": any(sp.find(".//next") is not None
-                               for sp in chord.findall(".//Spanner[@type='Slur']")),
+            "pitches": pitches,
+            "starts_slur": any(sp.find(".//next") is not None for sp in slurs),
+            "ends_slur": any(sp.find(".//prev") is not None for sp in slurs),
         })
         marks = chord_marks(chord)
         if marks:
@@ -2104,8 +2186,7 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 index = int(fix.get("index", 0))
                 chords = _chords(root, staff, measure)
                 if index < 0 or index >= len(chords):
-                    raise FixError(
-                        f"staff {staff} m{measure} has {len(chords)} chords, no index {index}")
+                    raise _no_index(chords, index, f"staff {staff} m{measure}")
                 what = (_undot(chords[index]) if kind == "undot"
                         else _slur(chords, index, int(fix.get("span", 1))))
             else:

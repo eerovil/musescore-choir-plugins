@@ -240,3 +240,34 @@ def test_what_is_still_refused_becomes_a_health_finding(tmp_path, monkeypatch):
 def test_the_review_row_says_what_musescore_said(stored, status, says):
     result = verification._musescore_result(stored, "now")
     assert result["status"] == status and says in result["detail"]
+
+
+def test_a_reset_bar_keeps_what_a_fix_for_it_meets(tmp_path, monkeypatch):
+    """`/bar` shows the bar as scanned beside the reset one (#357).
+
+    Fixes replay before the check, so on the next clean a new entry meets the bar as it
+    read before the reset. On meeste-laul that only showed up in a failed clean's error.
+    """
+    from src.clean_score.utils.score_fixes import FixError, apply_fixes, bar_tokens
+    before = bar_tokens(_score(), 1, 2)
+    score = _write_score(tmp_path)
+    _stub(monkeypatch, [REJECTED], [])
+    pipeline.check_opens_in_musescore(score, str(tmp_path))
+
+    entry = next(f for f in _fixes(tmp_path) if f.get("source") == pipeline.MUSESCORE_CHECK_SOURCE)
+    assert entry["scanned_from"] == before
+    assert entry["staff_id"] == "1"
+
+    bar = pipeline.bar_for_fix(score, 1, 2)
+    assert bar["from"] == ["measure:R"]
+    assert bar["reset"]["from"] == before
+    assert [n["token"] for n in bar["reset"]["notes"]] == [t for t in before
+                                                           if t[0] != "[" and t[-1] != "]"]
+    assert "reset" not in pipeline.bar_for_fix(score, 1, 1)
+    assert "reset" not in pipeline.bar_for_fix(score, 2, 2)
+
+    # The rebuilt score reads as `reset.from` when the fixes run, not as the rest.
+    fix = {"kind": "append", "staff": 1, "measure": 2, "add": [], "why": "check"}
+    apply_fixes(_score(), [{**fix, "from": bar["reset"]["from"]}])
+    with pytest.raises(FixError):
+        apply_fixes(_score(), [{**fix, "from": bar["from"]}])
