@@ -161,6 +161,19 @@ refuses. File order holds as for `delbar`: entries after it count the new bar.
     {"kind": "insbar", "measure": 2, "from": [[...], [...], ...],
      "why": "the scan lost the barline between printed bars 2 and 3"}
 
+`timesig` (#353) takes a time signature the scan invented off bar `measure` on every
+staff (`"to": null`), or writes another one in its place (`"to": "6/8"`). homr read a
+3/4 into a song printed in 6/8 throughout; the notes fit both, so the automatic
+`spurious_timesigs` pass cannot tell them apart and only the page can. `from` is the
+signature the bar carries now, on every staff, and is required. The bar keeps its
+length or the fix refuses: a signature that changes the length of the bars after it
+would leave every one of them wrong, so only a change between meters of one length
+(3/4 and 6/8, 2/2 and 4/4) is allowed, and a removal only where the meter already in
+force is that length. Bar 1's opening signature is never touched.
+
+    {"kind": "timesig", "measure": 22, "from": "3/4", "to": null,
+     "why": "the page prints no meter change; 6/8 throughout"}
+
 Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
@@ -1778,6 +1791,70 @@ def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
     return said
 
 
+def _parse_meter(text, what: str) -> Tuple[int, int]:
+    try:
+        n, d = (int(part) for part in str(text).split("/"))
+    except ValueError:
+        raise FixError(f"{what} {text!r} is not a time signature like 3/4") from None
+    if n < 1 or d < 1:
+        raise FixError(f"{what} {text!r} is not a time signature like 3/4")
+    return n, d
+
+
+def _set_timesig(root: etree._Element, measure_no: int, expect, to) -> str:
+    """Take the time signature off bar ``measure_no`` of every staff, or replace it.
+
+    Only where the bar keeps its length (see the module notes): the bars the
+    signature governs are not touched, so a change of length would leave them all
+    contradicting their meter.
+    """
+    staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
+    if not staves:
+        raise FixError("the score has no staves")
+    if not expect:
+        raise FixError("give the signature's 'from', so one the page prints is never removed")
+    was_n, was_d = _parse_meter(expect, "from")
+    if measure_no == 1:
+        raise FixError("bar 1 carries the opening time signature")
+    signs = []
+    for staff in staves:
+        measures = staff.findall("Measure")
+        if not 1 <= measure_no <= len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        found = measures[measure_no - 1].findall(".//TimeSig")
+        if len(found) != 1:
+            raise FixError(f"staff {staff.get('id')} carries {len(found)} time signatures "
+                           f"in this bar, not one")
+        ts = found[0]
+        reads = f"{ts.findtext('sigN')}/{ts.findtext('sigD')}"
+        if reads != f"{was_n}/{was_d}":
+            raise FixError(f"staff {staff.get('id')} reads {reads} now, but the fix was "
+                           f"recorded against {was_n}/{was_d}")
+        signs.append(ts)
+    if to is None:
+        new = None
+        length = _meter(staves[0], measure_no - 2)
+    else:
+        new = _parse_meter(to, "to")
+        length = Fraction(*new)
+    if length != Fraction(was_n, was_d):
+        then = (f"{to}" if to is not None else f"the meter in force, {length},")
+        raise FixError(f"{was_n}/{was_d} and {then} give bars of different lengths; "
+                       f"this fix only changes how a bar of the same length is written")
+    for ts in signs:
+        if new is None:
+            ts.getparent().remove(ts)
+            continue
+        ts.find("sigN").text, ts.find("sigD").text = str(new[0]), str(new[1])
+        # Beaming groups and a common/cut subtype belong to the old meter.
+        for tag in ("subtype", "groups"):
+            for el in ts.findall(tag):
+                ts.remove(el)
+    if new is None:
+        return f"took the {was_n}/{was_d} time signature off on all {len(signs)} staves"
+    return f"{was_n}/{was_d} became {new[0]}/{new[1]} on all {len(signs)} staves"
+
+
 def free_text(fixes: List[Dict]) -> List[str]:
     """The sentences among the recorded fixes, in file order.
 
@@ -1832,6 +1909,14 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 what = _delete_bar(root, measure, fix.get("from"))
             except FixError as exc:
                 raise FixError(f"m{measure} (delbar): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind == "timesig":
+            measure = int(fix["measure"])
+            try:
+                what = _set_timesig(root, measure, fix.get("from"), fix.get("to"))
+            except FixError as exc:
+                raise FixError(f"m{measure} (timesig): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         if kind == "volta":
