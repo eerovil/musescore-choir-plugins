@@ -1683,10 +1683,16 @@ async function panelClean(panel, song, slug, P, refresh) {
         for (const sid in m) m[sid].sort((a, b) => a.dataset.sys - b.dataset.sys);
         return m;
       };
+      // Lines with no answer: a slot holding a name or "-" (silent on purpose) answers
+      // its line, an empty one ("A1,") does not — the same count the server reports
+      // by (per_system.dropped_voices). A staff with no name at all is "unset" instead.
       const underNamed = (inp, carry) => {
         if (!carry) return 0;
-        const names = carry.split(",").map((n) => n.trim()).filter((n) => n && n !== CLEARED);
-        return names.length ? Math.max(0, +inp.dataset.voices - names.length) : 0;
+        const slots = carry.split(",").map((n) => n.trim());
+        if (!slots.some((n) => n && n !== CLEARED)) return 0;
+        let answered = 0;
+        for (let i = 0; i < +inp.dataset.voices; i++) if (slots[i]) answered++;
+        return +inp.dataset.voices - answered;
       };
       const cascade = () => {
         for (const list of Object.values(byStaff())) {
@@ -1705,8 +1711,8 @@ async function panelClean(panel, song, slug, P, refresh) {
             inp.classList.toggle("undernamed", lost > 0);
             const note = inp.parentElement.querySelector(".undernote");
             if (note) note.textContent = lost > 0
-              ? `${inp.dataset.voices} lines here, ${inp.dataset.voices - lost} named — `
-                + (lost === 1 ? "the lowest gets" : `the lowest ${lost} get`) + " no part of its own"
+              ? `${inp.dataset.voices} lines here, ${inp.dataset.voices - lost} answered — `
+                + (lost === 1 ? "one gets" : `${lost} get`) + " no part of its own"
               : "";
           }
         }

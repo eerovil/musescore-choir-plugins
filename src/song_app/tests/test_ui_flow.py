@@ -250,7 +250,7 @@ def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers
 
     note = lambda system, staff: cell(system, staff).locator("xpath=following-sibling::div")
     expect(cell(0, 1)).to_have_class(re.compile(r"\bundernamed\b"))
-    expect(note(0, 1)).to_have_text("2 lines here, 1 named — the lowest gets no part of its own")
+    expect(note(0, 1)).to_have_text("2 lines here, 1 answered — one gets no part of its own")
     expect(cell(1, 1)).to_have_class(re.compile(r"\bundernamed\b"))   # carried over
     expect(note(1, 1)).to_be_visible()
     expect(cell(0, 2)).not_to_have_class(re.compile(r"\bundernamed\b"))
@@ -259,6 +259,16 @@ def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers
         os.makedirs(evidence, exist_ok=True)
         cell(0, 1).scroll_into_view_if_needed()
         page.screenshot(path=os.path.join(evidence, "undernamed-grid.png"))
+
+    # One rule with the server: "-" answers its line (silent on purpose), an empty
+    # slot does not.
+    cell(2, 1).fill("T1, -")
+    cell(2, 1).blur()
+    expect(cell(2, 1)).not_to_have_class(re.compile(r"\bundernamed\b"))
+    cell(2, 1).fill("T1,")
+    cell(2, 1).blur()
+    expect(cell(2, 1)).to_have_class(re.compile(r"\bundernamed\b"))
+    cell(2, 1).fill("")
 
     cell(1, 1).fill("T1, T2")      # naming both lines clears that cell and not the first
     cell(1, 1).blur()

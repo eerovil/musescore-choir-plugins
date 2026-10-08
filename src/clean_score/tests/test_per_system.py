@@ -745,10 +745,24 @@ def test_a_second_voice_beside_a_split_chord_is_reported_dropped():
     answers = {0: {1: "A2, A2b, A2c"}}
     root = _score({1: [[[("74", "69")], ["62"]], [[("74", "69", "62")]]]})
     lost = dropped_voices(root, answers)
-    assert [(d.kind, d.voice, d.notes) for d in lost] == [("voice", 1, 1)]
+    assert [(d.kind, d.voice, d.notes) for d in lost] == [("beside", 1, 1)]
     assert "not copied" in lost[0].message()
     clean_per_system(root, answers_from=lambda _l: answers)
     staves = _by_part(root)
     first_bar = [p for part in ("A2", "A2b", "A2c") for p in _pitches(staves[part], 0)]
     assert "62" not in first_bar                       # voice 2's note really is lost
     assert [_pitches(staves[p], 1) for p in ("A2", "A2b", "A2c")] == [["74"], ["69"], ["62"]]
+
+
+def test_a_dash_answers_its_line_and_an_empty_slot_does_not():
+    """Review of #332: "T1, -" leaves the lower line silent on purpose and is not
+    reported; "A1," declares only A1, drops voice 2 the same way, and is."""
+    root = _two_voice_later()
+    assert dropped_voices(root, {0: {1: "A1"}, 1: {1: "A1, -"}}) == []
+    lost = dropped_voices(root, {0: {1: "A1"}, 1: {1: "A1,"}})
+    assert [(d.system, d.kind, d.voice, d.notes) for d in lost] == [(1, "voice", 1, 1)]
+    assert '"A1, A1b"' in lost[0].message()
+    for answer in ("A1, -", "A1,"):
+        rebuilt = _two_voice_later()
+        clean_per_system(rebuilt, answers_from=lambda _l, a=answer: {0: {1: "A1"}, 1: {1: a}})
+        assert list(_by_part(rebuilt)) == ["A1"]     # both drop voice 2
