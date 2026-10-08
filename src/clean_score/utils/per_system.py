@@ -38,11 +38,12 @@ import logging
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from lxml import etree
 
 from .missing_ties import add_missing_ties
+from .problem_marks import PREFIX as MARK_PREFIX
 from .rejected_bars import cut_spanners_between
 from .revoice import _voice_summary
 from .utils import delete_all_elements_by_selector, starts_new_system
@@ -135,6 +136,79 @@ class PerSystemResult:
 
     def __bool__(self) -> bool:
         return bool(self.parts)
+
+
+@dataclass(frozen=True)
+class DroppedVoice:
+    """A line with notes in a system that its staff's answer gives no part of its own
+    (#330).
+
+    The rebuild takes one name per voice, top first, so a two-voice staff answered
+    with one name keeps the upper voice and loses the lower one. The usual way in is
+    inheritance: a staff named once in system 1 carries that one name into a later
+    system where the page prints two lines on it. Three kinds, because the rebuild
+    treats them differently (`_build_parts`):
+
+    - ``voice``: a voice with no name is not copied — dropped.
+    - ``beside``: a voice beside a top voice whose stacked chord the names are split
+      across is not copied either, however many names there are — dropped.
+    - ``chord``: a stacked chord split one notehead per name loses the noteheads past
+      the names — dropped.
+    - ``kept``: a stacked chord under a single name is copied whole, so its lower
+      notes stay in that part's chords with no part of their own — not lost.
+    """
+
+    system: int  # 0-based system index
+    start: int  # 1-based measure range of the system
+    end: int
+    staff_id: int
+    voice: int  # 0-based voice index (``voice``) or notehead from the top (``chord``/``kept``)
+    notes: int  # notes of that line over the system
+    answer: str  # the answer in force for the staff in this system
+    answered_in: int  # 0-based system the answer was typed in (== system unless inherited)
+    kind: str = "voice"  # "voice" | "beside" | "chord" | "kept"
+
+    @property
+    def kept_in_chord(self) -> bool:
+        return self.kind == "kept"
+
+    def message(self) -> str:
+        if self.kind in ("voice", "beside"):
+            lost = "the lower voice" if self.voice == 1 else f"voice {self.voice + 1} from the top"
+        else:
+            lost = ("the lower notes of its chords" if self.voice == 1
+                    else f"note {self.voice + 1} from the top of its chords")
+        said = (f'"{self.answer}"' if self.answered_in == self.system
+                else f'"{self.answer}" (carried over from system {self.answered_in + 1})')
+        labels = _labels(self.answer)
+        base = next((l for l in labels if l and l != CLEARED), "")
+        names = [labels[k] if k < len(labels) and labels[k] else base + chr(ord("a") + k)
+                 for k in range(max(len(labels), self.voice + 1))]
+        count = f"{self.notes} note" + ("" if self.notes == 1 else "s")
+        where = (f"System {self.system + 1} (bars {self.start}–{self.end}), staff "
+                 f"{self.staff_id}: {lost} ({count})")
+        if self.kind == "kept":
+            return (f"{where} stay in {base}'s chords with no part of their own, because "
+                    f"the staff is named only {said}. Name them in the Clean grid "
+                    f'(e.g. "{", ".join(names)}") to split them, and clean again.')
+        verb = "were" if self.kind == "chord" and self.voice == 1 else "was"
+        if self.kind == "beside":
+            # Named, but in a bar whose top voice stacks a chord: the names are split
+            # across those noteheads and this voice is never copied. More names do
+            # not help; the bar's voices have to be put right.
+            return (f"{where} {verb} dropped: in a bar where the top voice stacks a "
+                    f"chord, the names {said} are split across its notes and the other "
+                    f"voices are not copied. Put the bar's lines into separate voices "
+                    f"(or one chord) in the score, and clean again.")
+        return (f"{where} {verb} dropped, because the staff is named only {said}. "
+                f'Name every line in the Clean grid (e.g. "{", ".join(names)}", or "-" '
+                f"for a line left silent on purpose) and clean again.")
+
+    def to_dict(self) -> Dict:
+        return {"system": self.system, "start": self.start, "end": self.end,
+                "staff_id": self.staff_id, "voice": self.voice, "notes": self.notes,
+                "answer": self.answer, "answered_in": self.answered_in,
+                "kind": self.kind, "message": self.message()}
 
 
 # An adapter that turns the layout into answers (the CLI prompt, or a test double).
@@ -267,18 +341,24 @@ def system_ranges(root: etree._Element) -> List[SystemRange]:
 def _max_voices_in_range(staff: etree._Element, a: int, b: int) -> int:
     """How many parts this staff can carry across the range.
 
-    Note-bearing voices (all-rest voices don't count), but a chord counts as one part
-    per notehead: an engraver writes two singers holding a chord together as a single
+    The voices up to the last one with notes (all-rest voices after it don't count),
+    but a chord in a lone top voice counts as one part per notehead: an engraver writes two singers holding a chord together as a single
     voice with the notes stacked, and a staff that is only ever asked for one name
     there hands both notes to the upper part and leaves the lower one silent.
+    Voices are counted by their written index, the way the rebuild hands them out:
+    a sung voice 2 under an all-rest voice 1 is two lines, or naming the second one
+    would be capped away and the lower line could never get a part (#330).
     """
     measures = staff.findall("Measure")
     best = 0
     for m in range(a, b + 1):
-        voices = [v for v in measures[m].findall("voice") if v.find("Chord") is not None]
-        stacked = max((len(ch.findall("Note"))
-                       for v in voices for ch in v.findall("Chord")), default=0)
-        best = max(best, len(voices), stacked if len(voices) == 1 else 0)
+        voices = measures[m].findall("voice")
+        sung = [i for i, v in enumerate(voices) if v.find("Chord") is not None]
+        lines = sung[-1] + 1 if sung else 0
+        # The rebuild splits a stack only in the top voice (`_build_parts`).
+        stacked = (max((len(ch.findall("Note")) for ch in voices[0].findall("Chord")),
+                       default=0) if sung == [0] else 0)
+        best = max(best, lines, stacked)
     return best
 
 
@@ -355,6 +435,31 @@ def _fallback_of(parts: List[str]) -> Dict[str, str]:
     return {child: base for child, base in links.items() if base not in links}
 
 
+def _answers_in_force(
+    layouts: List[SystemLayout], answers: Answers
+) -> Iterator[Tuple[SystemLayout, StaffRow, str, int]]:
+    """Each (system, staff) with the answer that applies there and where it was typed.
+
+    A staff left unanswered in a system inherits its answer from the previous system;
+    CLEARED is yielded as itself and stops that inheritance.
+    """
+    last_answer: Dict[int, Tuple[str, int]] = {}
+    for layout in layouts:
+        sys_ans = answers.get(layout.index, {})
+        for row in layout.staves:
+            raw = sys_ans.get(row.staff_id, "")
+            if raw == "":
+                raw, typed_in = last_answer.get(row.staff_id, ("", layout.index))
+            else:
+                typed_in = layout.index
+                last_answer[row.staff_id] = (raw, typed_in)
+            yield layout, row, raw, typed_in
+
+
+def _labels(raw: str) -> List[str]:
+    return [n.strip() for n in raw.split(",")] if raw and raw != CLEARED else []
+
+
 def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls:
     """Resolve answer strings ("T1,T2") into {(staff_id, voice_index): part} per system.
 
@@ -363,22 +468,100 @@ def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls
     it is answered again). Names beyond the staff's voice count are ignored.
     """
     decls: _Decls = {}
-    last_answer: Dict[int, str] = {}
-    for layout in layouts:
-        sys_ans = answers.get(layout.index, {})
-        for row in layout.staves:
-            raw = sys_ans.get(row.staff_id, "")
-            if raw == "":
-                raw = last_answer.get(row.staff_id, "")  # inherit previous system
-            else:
-                last_answer[row.staff_id] = raw
-            if raw == CLEARED:
-                continue
-            labels = [n.strip() for n in raw.split(",")] if raw else []
-            for vidx, name in enumerate(labels):
-                if vidx < row.voices and name and name != CLEARED:
-                    decls.setdefault(layout.index, {})[(row.staff_id, vidx)] = name
+    for layout, row, raw, _ in _answers_in_force(layouts, answers):
+        for vidx, name in enumerate(_labels(raw)):
+            if vidx < row.voices and name and name != CLEARED:
+                decls.setdefault(layout.index, {})[(row.staff_id, vidx)] = name
     return decls
+
+
+def _unnamed_lines(
+    staff: etree._Element, a: int, b: int, declared: Set[int]
+) -> Dict[Tuple[str, int], int]:
+    """{(kind, line): notes} the rebuild leaves without a part, over measures a..b.
+
+    Mirrors `_build_parts` bar by bar, given the voice indices `declared` as parts on
+    the staff (`_decls_from_answers`): a bar with more parts than voices whose top
+    voice stacks chords is cut one notehead per part, part N taking notehead N (the
+    lowest when the chord is shorter) and the bar's other voices copied nowhere; any
+    other bar hands its voices out by their index as written, rest-only voices
+    included, so a sung voice under an all-rest one is still the second voice. Kinds
+    are those of `DroppedVoice`.
+    """
+    found: Dict[Tuple[str, int], int] = {}
+
+    def add(kind: str, line: int, n: int) -> None:
+        if n:
+            found[(kind, line)] = found.get((kind, line), 0) + n
+
+    def notes_of(voice: etree._Element) -> int:
+        return sum(len(ch.findall("Note")) for ch in voice.findall("Chord"))
+
+    for measure in staff.findall("Measure")[a:b + 1]:
+        voices = measure.findall("voice")
+        if not voices:
+            continue
+        if len(declared) > len(voices) and _has_chord_stack(voices[0]):
+            for chord in voices[0].findall("Chord"):
+                size = len(chord.findall("Note"))
+                taken = {min(d, size - 1) for d in declared}
+                for rank in range(size):
+                    if rank not in taken:
+                        add("chord", rank, 1)
+            for vidx in range(1, len(voices)):
+                add("beside" if vidx in declared else "voice", vidx, notes_of(voices[vidx]))
+            continue
+        for vidx in range(len(voices)):
+            if vidx not in declared:
+                add("voice", vidx, notes_of(voices[vidx]))
+        if declared == {0} and len([v for v in voices if v.find("Chord") is not None]) == 1:
+            # Copied whole: a single voice's stacked noteheads stay in the one part.
+            add("kept", 1, sum(len(ch.findall("Note")) - 1
+                               for ch in voices[0].findall("Chord")))
+    return found
+
+
+def dropped_voices(root: etree._Element, answers: Answers) -> List[DroppedVoice]:
+    """Every line with notes that the answers leave without a part, on a staff they name.
+
+    A line counts as answered when its slot holds a name or `-`: `-` says the line is
+    silent on purpose, so it is dropped and not reported, while an empty slot ("A1,")
+    is not an answer and is. A staff named nowhere is not reported here: the grid
+    already asks about that before cleaning. This is the quieter case — named, but
+    with fewer names than the lines the page prints there — which used to cost the
+    lower voice in silence.
+    """
+    score = _score_of(root)
+    staves = {int(s.get("id", "0")): s for s in score.findall("Staff")}
+    layouts = system_layout(root)
+    out: List[DroppedVoice] = []
+    order = {"voice": 0, "beside": 1, "chord": 2, "kept": 3}
+    for layout, row, raw, typed_in in _answers_in_force(layouts, answers):
+        labels = _labels(raw)
+        # The same declarations the rebuild makes (`_decls_from_answers`).
+        declared = {i for i, name in enumerate(labels)
+                    if i < row.voices and name and name != CLEARED}
+        if not declared:
+            continue
+        silent = {i for i, name in enumerate(labels) if name == CLEARED}
+        lines = _unnamed_lines(staves[row.staff_id], layout.start - 1, layout.end - 1, declared)
+        for (kind, line), notes in sorted(lines.items(), key=lambda kv: (order[kv[0][0]], kv[0][1])):
+            if line in silent and kind != "beside":
+                continue
+            out.append(DroppedVoice(
+                system=layout.index, start=layout.start, end=layout.end,
+                staff_id=row.staff_id, voice=line, notes=notes, answer=raw,
+                answered_in=typed_in, kind=kind,
+            ))
+    return out
+
+
+def dropped_voices_for_file(mscx_path: str) -> List[DroppedVoice]:
+    """`dropped_voices` for a score on disk, against its recorded answers."""
+    answers = saved_answers(mscx_path) or {}
+    with open(mscx_path, "r", encoding="utf-8") as f:
+        root = etree.fromstring(f.read().encode("utf-8"))
+    return dropped_voices(root, answers)
 
 
 # --------------------------------------------------------------------------- #
@@ -608,6 +791,10 @@ def _build_parts(
     return parts
 
 
+def _is_problem_mark(el: etree._Element) -> bool:
+    return el.tag == "StaffText" and (el.findtext("text") or "").startswith(MARK_PREFIX)
+
+
 def _fill_from_fallbacks(
     parts: List[str],
     staves: List[etree._Element],
@@ -637,7 +824,9 @@ def _fill_from_fallbacks(
                     voice.remove(el)
             base_voice = base_bars[mi].find("voice")
             for el in (base_voice if base_voice is not None else []):
-                if el.tag not in _SKELETON_KEEP:
+                # The base part's red mark stays with the base part: copied, it lists the
+                # same doubt twice and has to be deleted twice (#330).
+                if el.tag not in _SKELETON_KEEP and not _is_problem_mark(el):
                     voice.append(deepcopy(el))
             origin[mi] = "borrowed"
             borrowed = True
@@ -773,6 +962,8 @@ def clean_per_system(
             return PerSystemResult()
 
     bounds = [(l.start - 1, l.end - 1) for l in layouts]
+    for lost in dropped_voices(root, answers):
+        logger.warning("Per-system: %s", lost.message())
     decls = _decls_from_answers(layouts, answers)
     parts = _build_parts(root, bounds, decls)
     if not parts:

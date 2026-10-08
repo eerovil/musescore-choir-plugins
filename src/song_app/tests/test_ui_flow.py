@@ -165,6 +165,10 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     expect(page.get_by_role("button", name="Saved ✓")).to_be_visible()
 
     # --- clean: the server works in the background and pings the page when done ---
+    # The fixture's reading names two of the four voices system 4 has on staff 1, so
+    # the grid asks before the other two (one note each) are dropped (#330); this
+    # journey says yes.
+    page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Run clean").click()
     # The panel re-renders on the state ping, so wait for what that leaves behind:
     # the button now offers a re-clean, and the Clean step is marked done.
@@ -231,6 +235,52 @@ def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
     assert dropped, "cleaning with unnamed staves must confirm first"
     assert "staff 1 · system 3" in dropped[0], dropped[0]
     assert "staff 1 · system 4" in dropped[0], dropped[0]
+
+
+def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers, page):
+    """#330: a two-voice staff named once — typed, or carried over from an earlier
+    system — loses its lower line, and the grid says so before cleaning."""
+    _new_song(page, live_app, "Lines and names")
+    cell = lambda system, staff: page.locator(f'input[data-sys="{system}"][data-staff="{staff}"]')
+    cell(0, 1).fill("T1")          # system 1 prints two lines on staff 1
+    cell(0, 2).fill("B")
+    cell(4, 3).fill("T2, T3")
+    cell(6, 4).fill("B")
+    cell(0, 1).blur()
+
+    note = lambda system, staff: cell(system, staff).locator("xpath=following-sibling::div")
+    expect(cell(0, 1)).to_have_class(re.compile(r"\bundernamed\b"))
+    expect(note(0, 1)).to_have_text("2 lines here, 1 answered — one gets no part of its own")
+    expect(cell(1, 1)).to_have_class(re.compile(r"\bundernamed\b"))   # carried over
+    expect(note(1, 1)).to_be_visible()
+    expect(cell(0, 2)).not_to_have_class(re.compile(r"\bundernamed\b"))
+    expect(note(0, 2)).to_be_hidden()
+    if evidence := os.getenv("EVIDENCE_DIR"):
+        os.makedirs(evidence, exist_ok=True)
+        cell(0, 1).scroll_into_view_if_needed()
+        page.screenshot(path=os.path.join(evidence, "undernamed-grid.png"))
+
+    # One rule with the server: "-" answers its line (silent on purpose), an empty
+    # slot does not.
+    cell(2, 1).fill("T1, -")
+    cell(2, 1).blur()
+    expect(cell(2, 1)).not_to_have_class(re.compile(r"\bundernamed\b"))
+    cell(2, 1).fill("T1,")
+    cell(2, 1).blur()
+    expect(cell(2, 1)).to_have_class(re.compile(r"\bundernamed\b"))
+    cell(2, 1).fill("")
+
+    cell(1, 1).fill("T1, T2")      # naming both lines clears that cell and not the first
+    cell(1, 1).blur()
+    expect(cell(1, 1)).not_to_have_class(re.compile(r"\bundernamed\b"))
+    expect(cell(0, 1)).to_have_class(re.compile(r"\bundernamed\b"))
+
+    asked = []
+    page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+    page.get_by_role("button", name="Run clean").click()
+    assert asked, "cleaning with an unnamed line must confirm first"
+    assert "DROPPED" in asked[0] and "stay in the named part" in asked[0] and "staff 1 · system 1" in asked[0], asked[0]
+    assert "staff 1 · system 2 —" not in asked[0], asked[0]
 
 
 def test_grid_says_a_b_part_sings_its_base_part(live_app, own_answers, page):

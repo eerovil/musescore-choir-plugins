@@ -23,6 +23,7 @@ from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
+from src.clean_score.utils.per_system import dropped_voices_for_file
 from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.rejected_bars import clear_bar, staff_names
 from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text, read_bar
@@ -217,6 +218,9 @@ def run_clean(
     try:
         apply_recorded_fixes(building, out_dir, log)
         record_clean_marks(building, out_dir, log)
+        record_dropped_voices(
+            out_dir, dropped_voices_for_file(mscx_path) if per_system else [],
+            log)
         outcome = check_opens_in_musescore(building, out_dir, log)
     except Exception:
         os.remove(building)
@@ -442,6 +446,35 @@ def record_clean_marks(mscx_path: str, song_dir: str, log: Logger = _noop) -> in
                 f"(red mark in the score): {one['text']}",
     } for one in found]
     _replace_recorded(song_dir, lambda fix: fix.get("source") == CLEAN_MARK_SOURCE, written)
+    for one in written:
+        log("  " + one["what"])
+    return len(written)
+
+
+DROPPED_VOICE_SOURCE = "per-system-dropped"
+
+
+def record_dropped_voices(song_dir: str, dropped: List, log: Logger = _noop) -> int:
+    """List each voice the per-system answers left unnamed as an outstanding fix (#330).
+
+    A staff answered with one name keeps its upper voice and loses the rest, and the
+    usual way in is an answer typed once in system 1 and carried into a later system
+    where the page prints two lines on that staff. Nothing about the result looks
+    wrong — each part is well-formed — so a singer's line simply goes missing. This
+    puts it in the Fix panel, where it was noticed, and in the clean's log. Every
+    clean replaces the previous ones, so naming the voice and cleaning again takes
+    the sentence away; a typed sentence is never touched.
+    """
+    written = [{
+        "kind": "text",
+        "source": DROPPED_VOICE_SOURCE,
+        "measure": one.start,
+        "what": one.message(),
+    } for one in dropped]
+    _replace_recorded(song_dir, lambda fix: fix.get("source") == DROPPED_VOICE_SOURCE, written)
+    if written:
+        log(f"{len(written)} line(s) the per-system answers leave without a part of "
+            "their own (listed in the Fix panel):")
     for one in written:
         log("  " + one["what"])
     return len(written)

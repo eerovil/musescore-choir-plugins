@@ -14,6 +14,7 @@ from lxml import etree
 
 from src.clean_score.utils.per_system import (
     clean_per_system,
+    dropped_voices,
     layout_for_file,
     save_answers,
     saved_answers,
@@ -628,3 +629,153 @@ def test_a_tie_from_a_borrowed_bar_into_an_own_bar_is_cut():
     assert staves["S1"].findall(".//Spanner") and len(staves["S1"].findall(".//Spanner")) == 2
     assert staves["S1b"].findall(".//Spanner") == []   # its bar 1 is a different note
     assert _pitches(staves["S1b"], 0) == ["67"]
+
+
+# --------------------------------------------------------------------------- #
+# A line the answers leave unnamed is said out loud (#330)
+# --------------------------------------------------------------------------- #
+
+def _two_voice_later():
+    """Staff 1 prints one line in system 0 and two in system 1 (Lemmen nosto's shape)."""
+    return _score({1: [[["72"]], [["72"], ["67"]]]}, breaks=(0,))
+
+
+def test_an_inherited_single_name_on_a_two_voice_staff_is_reported():
+    lost = dropped_voices(_two_voice_later(), {0: {1: "A1"}, 1: {1: ""}})
+    assert [(d.system, d.staff_id, d.voice, d.notes, d.answered_in) for d in lost] == \
+        [(1, 1, 1, 1, 0)]
+    message = lost[0].message()
+    assert "System 2" in message and "lower voice" in message
+    assert "carried over from system 1" in message and '"A1, A1b"' in message
+
+
+def test_the_rebuild_still_drops_it_and_logs_why(caplog):
+    root = _two_voice_later()
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "A1"}, 1: {1: ""}})
+    assert list(_by_part(root)) == ["A1"]
+    assert any("lower voice" in r.getMessage() for r in caplog.records)
+
+
+def test_naming_every_line_reports_nothing():
+    assert dropped_voices(_two_voice_later(), {0: {1: "A1"}, 1: {1: "A1, A1b"}}) == []
+
+
+def test_a_cleared_or_never_named_staff_is_not_this_report():
+    # The grid already asks about a staff named nowhere; this is the quieter case.
+    assert dropped_voices(_two_voice_later(), {0: {1: "A1"}, 1: {1: "-"}}) == []
+    assert dropped_voices(_two_voice_later(), {}) == []
+
+
+def test_a_second_voice_of_rests_is_not_a_lost_line():
+    root = _score({1: [[["72"]], [["72"], ["r"]]]}, breaks=(0,))
+    assert dropped_voices(root, {0: {1: "A1"}}) == []
+
+
+def test_the_lower_notes_of_chords_under_one_name_are_reported_as_kept_in_the_chord():
+    """With one name the rebuild copies the chords whole: nothing is lost, but the
+    lower notes have no part of their own — the report says that, not "dropped"."""
+    answers = {0: {1: "S1"}}
+    root = _score({1: [[["72"]], [[("72", "67"), ("74", "69")]]]}, breaks=(0,))
+    lost = dropped_voices(root, answers)
+    assert [(d.system, d.voice, d.notes, d.kind) for d in lost] == [(1, 1, 2, "kept")]
+    message = lost[0].message()
+    assert "lower notes of its chords (2 notes) stay in S1's chords" in message
+    assert "dropped" not in message and '"S1, S1b"' in message
+    clean_per_system(root, answers_from=lambda _l: answers)
+    assert _pitches(_by_part(root)["S1"], 1) == ["72", "67", "74", "69"]   # kept
+
+
+def test_a_chord_note_past_the_names_is_reported_as_dropped():
+    """Two names split the stack one notehead each, so a third notehead is lost."""
+    answers = {0: {1: "A2, A2b"}}
+    root = _score({1: [[[("74", "69", "62")]]]})
+    lost = dropped_voices(root, answers)
+    assert [(d.voice, d.notes, d.kind) for d in lost] == [(2, 1, "chord")]
+    assert "note 3 from the top of its chords (1 note) was dropped" in lost[0].message()
+    assert '"A2, A2b, A2c"' in lost[0].message()
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A2"], 0) + _pitches(staves["A2b"], 0) == ["74", "69"]
+
+
+def test_a_borrowed_bar_leaves_the_base_parts_red_mark_behind():
+    """S1b borrowing S1's bar takes the notes, not S1's ⚠ mark: one doubt, one row."""
+    root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
+    voice = root.find(".//Score/Staff/Measure/voice")
+    mark = etree.Element("StaffText")
+    etree.SubElement(mark, "text").text = "⚠ rhythm?"
+    voice.insert(0, mark)
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
+    staves = _by_part(root)
+    first = lambda part: staves[part].findall("Measure")[0]
+    assert _pitches(staves["S1b"], 0) == ["72"]
+    assert first("S1").find(".//StaffText") is not None
+    assert first("S1b").find(".//StaffText") is None
+
+
+def test_a_dropped_voice_and_kept_chord_notes_in_one_system_are_said_apart():
+    """Review of #332: bar 1 has two voices, bar 2 one stacked voice, under one name.
+    Bar 1's lower voice is lost, bar 2's lower note stays in the chord — two reports."""
+    answers = {0: {1: "A1"}}
+    root = _score({1: [[["72"], ["67"]], [[("72", "67")]]]})
+    lost = dropped_voices(root, answers)
+    assert [(d.kind, d.voice, d.notes) for d in lost] == [("voice", 1, 1), ("kept", 1, 1)]
+    assert "lower voice (1 note) was dropped" in lost[0].message()
+    assert "stay in A1's chords" in lost[1].message()
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A1"], 0) == ["72"]           # the lower voice is gone
+    assert _pitches(staves["A1"], 1) == ["72", "67"]     # the chord is whole
+
+
+def test_a_voice_under_an_all_rest_voice_is_counted_by_its_written_index():
+    """Review of #332: the rebuild copies voice 0 (all rests) to the one name and
+    drops voice 1, so the report has to count voice 1 too."""
+    answers = {0: {1: "A1"}}
+    root = _score({1: [[["r"], ["67"]]]})
+    lost = dropped_voices(root, answers)
+    assert [(d.kind, d.voice, d.notes) for d in lost] == [("voice", 1, 1)]
+    clean_per_system(root, answers_from=lambda _l: answers)
+    assert _pitches(_by_part(root)["A1"], 0) == []
+
+
+def test_a_second_voice_beside_a_split_chord_is_reported_dropped():
+    """Review of #332: with more names than voices and a stacked top voice, the
+    rebuild cuts every part from that voice's noteheads and never copies voice 2."""
+    answers = {0: {1: "A2, A2b, A2c"}}
+    root = _score({1: [[[("74", "69")], ["62"]], [[("74", "69", "62")]]]})
+    lost = dropped_voices(root, answers)
+    assert [(d.kind, d.voice, d.notes) for d in lost] == [("beside", 1, 1)]
+    assert "not copied" in lost[0].message()
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    first_bar = [p for part in ("A2", "A2b", "A2c") for p in _pitches(staves[part], 0)]
+    assert "62" not in first_bar                       # voice 2's note really is lost
+    assert [_pitches(staves[p], 1) for p in ("A2", "A2b", "A2c")] == [["74"], ["69"], ["62"]]
+
+
+def test_a_dash_answers_its_line_and_an_empty_slot_does_not():
+    """Review of #332: "T1, -" leaves the lower line silent on purpose and is not
+    reported; "A1," declares only A1, drops voice 2 the same way, and is."""
+    root = _two_voice_later()
+    assert dropped_voices(root, {0: {1: "A1"}, 1: {1: "A1, -"}}) == []
+    lost = dropped_voices(root, {0: {1: "A1"}, 1: {1: "A1,"}})
+    assert [(d.system, d.kind, d.voice, d.notes) for d in lost] == [(1, "voice", 1, 1)]
+    assert '"A1, A1b"' in lost[0].message()
+    for answer in ("A1, -", "A1,"):
+        rebuilt = _two_voice_later()
+        clean_per_system(rebuilt, answers_from=lambda _l, a=answer: {0: {1: "A1"}, 1: {1: a}})
+        assert list(_by_part(rebuilt)) == ["A1"]     # both drop voice 2
+
+
+def test_naming_a_voice_under_an_all_rest_voice_gives_it_a_part():
+    """Review of #332: the line count follows the written voice index, so the second
+    name is not capped away — A1b gets the note and nothing is reported."""
+    answers = {0: {1: "A1, A1b"}}
+    root = _score({1: [[["r"], ["67"]]]})
+    assert [r.voices for r in system_layout(root)[0].staves] == [2]
+    assert dropped_voices(root, answers) == []
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A1b"], 0) == ["67"]
+    assert _pitches(staves["A1"], 0) == []

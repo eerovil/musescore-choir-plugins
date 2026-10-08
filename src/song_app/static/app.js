@@ -1683,6 +1683,17 @@ async function panelClean(panel, song, slug, P, refresh) {
         for (const sid in m) m[sid].sort((a, b) => a.dataset.sys - b.dataset.sys);
         return m;
       };
+      // Lines with no answer: a slot holding a name or "-" (silent on purpose) answers
+      // its line, an empty one ("A1,") does not — the same count the server reports
+      // by (per_system.dropped_voices). A staff with no name at all is "unset" instead.
+      const underNamed = (inp, carry) => {
+        if (!carry) return 0;
+        const slots = carry.split(",").map((n) => n.trim());
+        if (!slots.some((n) => n && n !== CLEARED)) return 0;
+        let answered = 0;
+        for (let i = 0; i < +inp.dataset.voices; i++) if (slots[i]) answered++;
+        return +inp.dataset.voices - answered;
+      };
       const cascade = () => {
         for (const list of Object.values(byStaff())) {
           let carry = "";
@@ -1693,6 +1704,16 @@ async function panelClean(panel, song, slug, P, refresh) {
             else inp.placeholder = carry || inp.dataset.hint;
             // flag staves that will be dropped (cleared, or no value and nothing to inherit)
             inp.classList.toggle("unset", (!v || v === CLEARED) && !carry);
+            // ...and staves named with fewer parts than the lines they carry here: the
+            // rebuild takes one name per line, top first, so the rest are dropped (#330).
+            // Usually an answer carried over from a system where the staff had one line.
+            const lost = underNamed(inp, carry);
+            inp.classList.toggle("undernamed", lost > 0);
+            const note = inp.parentElement.querySelector(".undernote");
+            if (note) note.textContent = lost > 0
+              ? `${inp.dataset.voices} lines here, ${inp.dataset.voices - lost} answered — `
+                + (lost === 1 ? "one gets" : `${lost} get`) + " no part of its own"
+              : "";
           }
         }
       };
@@ -1733,6 +1754,9 @@ async function panelClean(panel, song, slug, P, refresh) {
         }
         return out;
       };
+      const dropping = () => inputs.filter((inp) => inp.classList.contains("undernamed"))
+        .map((inp) => `staff ${inp.dataset.staff} · system ${+inp.dataset.sys + 1}`
+          + ` — ${inp.parentElement.querySelector(".undernote").textContent}`);
       inputs.forEach((inp) => (inp.oninput = cascade));
       cascade();
 
@@ -1760,6 +1784,11 @@ async function panelClean(panel, song, slug, P, refresh) {
             `${miss.length} staff slot(s) have no voice names and will be DROPPED from the result:\n\n`
             + miss.slice(0, 12).join("\n") + (miss.length > 12 ? `\n…and ${miss.length - 12} more` : "")
             + "\n\nClean anyway?")) return;
+        const lost = dropping();
+        if (lost.length && !confirm(
+            `${lost.length} staff slot(s) carry more lines than they have names. An unnamed line gets no part of its own: a separate voice is DROPPED, and the lower notes of a chord stay in the named part's chords:\n\n`
+            + lost.slice(0, 12).join("\n") + (lost.length > 12 ? `\n…and ${lost.length - 12} more` : "")
+            + "\n\nName each line (e.g. A1, A1b) to give it a part. Clean anyway?")) return;
         runBtn.disabled = true;
         appendLog("Saving assignments and cleaning…");
         try { await save(); await postJSON(`${P}/clean`, {}); }
@@ -1793,9 +1822,9 @@ function sysBlock(sys) {
       el("td", { className: "stsum" }, st.summary),
       el("td", {}, el("input", {
         value: st.answer || "", placeholder: st.voices > 1 ? "e.g. T1, T2 (- = silent)" : "e.g. T1 (- = silent)",
-        "data-sys": sys.system, "data-staff": st.staff_id,
+        "data-sys": sys.system, "data-staff": st.staff_id, "data-voices": st.voices,
         "data-hint": st.voices > 1 ? "e.g. T1, T2 (- = silent)" : "e.g. T1 (- = silent)",
-      }))));
+      }), el("div", { className: "undernote" }))));
   const reuse = sys.can_reuse_previous
     ? el("button", { "data-reuse": sys.system }, "Reuse previous assignments through matching systems")
     : "";
