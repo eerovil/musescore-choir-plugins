@@ -185,7 +185,7 @@ or tie reaching across the bar is shortened by one, both halves, and a per-syste
 lyric map loses the bar too; a spanner starting or ending in it, a repeat sign, or a
 clef/key/meter change refuses. Fixes apply **in file order**: an entry before a
 `delbar` counts bars with the invented one still there, an entry after it without, so
-neither has to be renumbered. The printed-system bar labels (`.systems.json`) and the
+neither has to be renumbered; a Fix-panel pick is relocated (`relocate_picks`) in that numbering too. The printed-system bar labels (`.systems.json`) and the
 line breaks the previews take off the converted input still count the invented bar.
 
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
@@ -591,7 +591,7 @@ Key test modules:
 - `test_delbar.py` — added for #346: the bar goes on every staff, the "1." and "2."
   brackets close up round it, a slur across it keeps both notes, fixes count bars in
   file order, `from` is strict, a bar with music or a spanner end in it refuses, the
-  per-system lyric map loses the bar, and the entry replays on a rebuild.
+  per-system lyric map loses the bar, the entry replays on a rebuild, and a pick recorded after it survives the next clean.
 - `test_duration_back_steps.py` — added for #344, on the shapes of Gute Nacht bar 6
   and Annin laulu bar 10: a `duration` fix that restores the bar takes the back-step out
   of the voices it squeezed, a tie after the step still reaches its note, a voice the

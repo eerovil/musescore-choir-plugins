@@ -171,3 +171,22 @@ def test_it_replays_on_a_rebuild(root, tmp_path):
         pipeline.apply_recorded_fixes(str(score), str(tmp_path))
         again = etree.parse(str(score)).getroot()
         assert volta_spans(_staff(again, 1)) == [(3, 3), (4, 4)]
+
+
+def test_a_pick_recorded_after_it_survives_the_next_clean(tmp_path):
+    # A Fix-panel pick is checked against the cleaned score before any fix runs, so
+    # one recorded after the deletion has to be looked up in the old numbering.
+    from src.song_app import pipeline  # noqa: PLC0415 - only this test needs the app
+    from src.song_app.bar_readings import SOURCE  # noqa: PLC0415
+
+    pick = {"kind": "bar", "source": SOURCE, "staff": 2, "part": "T2", "measure": 4,
+            "from": ["whole:67"], "to": [{"value": "note_1", "pitches": [69],
+                                         "tpcs": [17]}], "why": "picked b"}
+    (tmp_path / "fixes.json").write_text(json.dumps([DELBAR, pick]))
+    score = tmp_path / "score_cleaned.mscx"
+    for _ in range(2):
+        etree.ElementTree(_score()).write(str(score))
+        pipeline.apply_recorded_fixes(str(score), str(tmp_path))
+        again = etree.parse(str(score)).getroot()
+        assert bar_tokens(again, 2, 4) == ["whole:69"]
+    assert json.loads((tmp_path / "fixes.json").read_text()) == [DELBAR, pick]

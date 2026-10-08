@@ -594,6 +594,19 @@ def relocate_picks(root: etree._Element, entries: List[Dict],
              if fix.get("source") == SOURCE and fix.get("kind") in ("bar", "rhythm", "pitch")]
     pick_ids = {id(fix) for fix in picks}
     taken: Dict[int, set] = {}
+    # Fixes apply in file order, so a pick after a `delbar` counts bars without the
+    # deleted one (#346); `root` still has it, so look the pick up in that numbering.
+    deleted: List[int] = []
+    at_bar: Dict[int, int] = {}
+    for fix in entries:
+        if fix.get("kind") == "delbar":
+            deleted.append(int(fix.get("measure", 0)))
+        elif id(fix) in pick_ids:
+            measure = int(fix.get("measure", 0))
+            for gone in reversed(deleted):
+                if measure >= gone:
+                    measure += 1
+            at_bar[id(fix)] = measure
 
     def reads(sid, measure, tokens) -> bool:
         staff = next((st for s, _, st in staves if s == sid), None)
@@ -603,7 +616,7 @@ def relocate_picks(root: etree._Element, entries: List[Dict],
     # Picks still standing where they were claim their staves before any moves.
     staying = set()
     for fix in picks:
-        measure, sid = int(fix.get("measure", 0)), int(fix.get("staff", 0))
+        measure, sid = at_bar[id(fix)], int(fix.get("staff", 0))
         if sid not in taken.setdefault(measure, set()) and reads(sid, measure, fix.get("from", [])):
             taken[measure].add(sid)
             staying.add(id(fix))
@@ -613,20 +626,20 @@ def relocate_picks(root: etree._Element, entries: List[Dict],
         if id(fix) not in pick_ids or id(fix) in staying:
             out.append(fix)
             continue
-        measure = int(fix.get("measure", 0))
+        measure = at_bar[id(fix)]
         claimed = taken.setdefault(measure, set())
         match = next(((sid, name) for sid, name, _ in staves
                       if sid not in claimed and reads(sid, measure, fix.get("from", []))), None)
         changed = True
         was = f"{fix.get('part') or 'staff'} (staff {fix.get('staff')})"
         if match is None:
-            log(f"Dropped the reading picked for bar {measure} of {was}: no part sings "
+            log(f"Dropped the reading picked for bar {fix.get('measure')} of {was}: no part sings "
                 "those notes in that bar any more.")
             continue
         sid, name = match
         claimed.add(sid)
         out.append({**fix, "staff": sid, "part": name})
-        log(f"Moved the reading picked for bar {measure} from {was} to {name} "
+        log(f"Moved the reading picked for bar {fix.get('measure')} from {was} to {name} "
             f"(staff {sid}): the parts were regrouped.")
     return out, changed
 
