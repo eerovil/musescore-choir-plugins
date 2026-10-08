@@ -314,3 +314,29 @@ def test_the_exempt_last_bar_is_still_checked_for_extra_voices(tmp_path):
     path = _score(tmp_path, [[2]] + [[8]] * 3 + [[6, 6]], lens=["1/4", None, None, None, "3/4"])
     assert not _meter_findings(path)
     assert [i["measure"] for i in _kinds(path, "extra-voices")] == [5]
+
+
+# The closing bar of a song that opens with a pickup (#353). Kesäaamu opens with a
+# sixteenth in 6/8 and closes on a bar of 11/16: the two make one bar between them,
+# which is how the page prints it, and four "bar is 11/16" rows said otherwise.
+# Four ordinary bars between them, so the overrides stay a minority of the score.
+
+def test_a_last_bar_that_completes_the_pickup_is_quiet(tmp_path):
+    path = _score(tmp_path, [[1]] + [[8]] * 4 + [[7]], lens=["1/8"] + [None] * 4 + ["7/8"])
+    assert not _kinds(path, "unprinted-meter")
+
+
+def test_a_short_last_bar_with_no_pickup_is_still_reported(tmp_path):
+    path = _score(tmp_path, [[8]] * 5 + [[7]], lens=[None] * 5 + ["7/8"])
+    assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [6]
+
+
+def test_a_last_bar_that_does_not_complete_the_pickup_is_still_reported(tmp_path):
+    path = _score(tmp_path, [[1]] + [[8]] * 4 + [[6]], lens=["1/8"] + [None] * 4 + ["6/8"])
+    assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [6]
+
+
+def test_only_the_last_bar_is_let_through(tmp_path):
+    """A bar of the pickup's complement in the middle of the song is not a closing bar."""
+    path = _score(tmp_path, [[1], [7]] + [[8]] * 4, lens=["1/8", "7/8"] + [None] * 4)
+    assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [2]
