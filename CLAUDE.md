@@ -172,6 +172,12 @@ a voice with a gap in it: it takes the gap out and writes the bar afresh, which 
 to fill the bar's own length (Integer vitae T2 bar 9, Jouluyö's last bar). All three take a `from` and refuse without one. `GET /bar` now also returns
 the bar's `from` (rests included), and the lyric import's reply carries `mismatches`.
 
+`untie` (#342, `index`, `pitch`) is `tie` taken back: it takes out the tie that starts on
+that note, both halves, in this bar or across the barline, so playback sings the note
+again. Strophic songs print **dashed** ties that belong to a later verse only, and homr
+reads them as real ties, so verse 1 loses a syllable (Gaudeamus igitur bars 6 and 8).
+Strict about `from` like the others, and replayed on every clean.
+
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — taking one notehead off a chord and turning a
 bar-length rest into a whole-bar rest both came up on one song in one sitting, and
@@ -569,7 +575,9 @@ Key test modules:
   of its chord too), a tie lands on both notes with MuseScore's own offsets and takes
   the held note's syllable, a double dot gives the 11/16 bar back its 3/4 on every
   staff while ties out of it keep their notes, a length no signature prints refuses,
-  and (with MuseScore) the bar it had refused opens once the dot is back.
+  and (with MuseScore) the bar it had refused opens once the dot is back. `untie`
+  (#342) takes both halves out across or inside a bar, gives the syllable back,
+  leaves other ties alone, and replays on a rebuild.
 - `test_duration_back_steps.py` — added for #344, on the shapes of Gute Nacht bar 6
   and Annin laulu bar 10: a `duration` fix that restores the bar takes the back-step out
   of the voices it squeezed, a tie after the step still reaches its note, a voice the

@@ -13,6 +13,8 @@ developers are listed under *Behind the scenes*.
   Annin laulu bars 9, 10 and 21 now come out right from `fixes.json` alone. A `bar`
   fix also writes over a gap cleaning left in a voice instead of refusing it, so
   Integer vitae T2 bar 9 and Jouluyö's last bar can be recorded too. (#344)
+- `fixes.json` can now take out a tie (`untie`), for the dashed ties a strophic song
+  prints for a later verse only, which the scan reads as real ties. (#343)
 - `fixes.json` can now take out a slur (`unslur`), tie two notes (`tie`) and give
   a note another length, double dots included (`duration`); a length change that
   makes the bar fit its time signature again gives the bar that length on every
