@@ -1523,3 +1523,17 @@ def test_a_joined_slur_takes_no_number_used_in_a_bar_it_spans(tmp_path):
     assert numbers[(1, "F")] == numbers[(3, "C")]
     assert numbers[(1, "F")] != numbers[(2, "C")]
     assert _paired(out)
+
+
+def test_a_same_pitch_pair_from_a_bar_before_the_last_is_a_slur_not_a_tie(tmp_path):
+    """A start on the last note of the second-to-last bar and a stop on the
+    next system's first note, both F: a tie cannot span the bar between, so
+    this is a slur, joined as one."""
+    first = _slurred_system(1, 1, {(1, 1, 4): "start"}, bars=2)
+    second = _slurred_system(2, 1, {(1, 1, 1): "stop"})
+    second.staves[0].measures[0].findall("note")[0].find("pitch/step").text = "F"
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    assert [(bar, step, kind) for _, bar, step, kind, _ in _slurs(out)] == [
+        (1, "F", "start"), (3, "F", "stop")]
+    assert not list(etree.parse(out).iter("tied"))
+    assert _paired(out)

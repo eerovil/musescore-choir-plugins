@@ -875,6 +875,14 @@ def _join_column(part, scans, column, starts_at) -> None:
 
     for system in range(-1, len(scans)):
         starts = loose_starts.get(system, [])
+        # The system's last bar: only its last note can start a tie over the
+        # break. A start a bar earlier is a slur, whatever its pitch.
+        closing = (measures[starts_at[system] + scans[system].bars - 1]
+                   if 0 <= system < len(scans) else None)
+
+        def ends_system(note: etree._Element) -> bool:
+            return note.getparent() is closing and _on_edge(note, last=True)
+
         stops = loose_stops.get(system + 1, [])
         same_shape = (0 <= system < len(scans) - 1 and column < scans[system].width
                       and scans[system].width == scans[system + 1].width)
@@ -888,7 +896,7 @@ def _join_column(part, scans, column, starts_at) -> None:
             # the line; pair those first, so a slur beside the tie does not
             # take its stop.
             for start in starts:
-                if not _on_edge(start.note, last=True):
+                if not ends_system(start.note):
                     continue
                 match = [stop for stop in stops if id(stop) not in taken
                          and _on_edge(stop.note, last=False)
@@ -912,7 +920,7 @@ def _join_column(part, scans, column, starts_at) -> None:
         paired = {id(end) for pair in pairs for end in pair}
         tied_over: List[Tuple[_LooseEnd, _LooseEnd]] = []
         for start, stop in pairs:
-            if (_on_edge(start.note, last=True) and _on_edge(stop.note, last=False)
+            if (ends_system(start.note) and _on_edge(stop.note, last=False)
                     and _written_pitch(start.note) == _written_pitch(stop.note)):
                 _remove_slur(start)
                 _remove_slur(stop)
