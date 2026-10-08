@@ -269,53 +269,6 @@ def _score_with_meters(tmp_path, measures, lens, sigs):
     return path
 
 
-def test_a_last_bar_that_completes_the_pickup_is_exempt(tmp_path):
-    """1/4 pickup, closing 3/4 bar in 4/4: correct engraving, not a finding (#355)."""
-    path = _score(tmp_path, [[2]] + [[8]] * 3 + [[6]], lens=["1/4", None, None, None, "3/4"])
-    assert not _meter_findings(path)
-
-
-def test_a_compound_meter_pickup_is_completed_the_same_way(tmp_path):
-    """Metsämiehen juomalaulu's shape: 9/8 with a 4/8 pickup and a 5/8 last bar."""
-    path = _score(tmp_path, [[4]] + [[9]] * 3 + [[5]], sig=(9, 8),
-                  lens=["4/8", None, None, None, "5/8"])
-    assert not _meter_findings(path)
-
-
-def test_a_last_bar_that_does_not_complete_the_pickup_is_flagged(tmp_path):
-    """Maamme's shape: a 3/8 pickup and a 2/4 last bar make 7/8, not 3/4."""
-    path = _score(tmp_path, [[3]] + [[6]] * 3 + [[4]], sig=(3, 4),
-                  lens=["3/8", None, None, None, "2/4"])
-    found = _kinds(path, "unprinted-meter")
-    assert [i["measure"] for i in found] == [5]
-
-
-def test_a_short_last_bar_without_a_pickup_is_flagged(tmp_path):
-    path = _score(tmp_path, [[8], [8], [6]], lens=[None, None, "3/4"])
-    assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [3]
-
-
-def test_only_the_last_bar_completes_the_pickup(tmp_path):
-    """The same 3/4 bar in the middle of the song is still flagged."""
-    path = _score(tmp_path, [[2], [6], [8], [8], [8]], lens=["1/4", "3/4", None, None, None])
-    assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [2]
-
-
-def test_the_meter_at_the_end_decides(tmp_path):
-    """4/4 changing to 3/4: a 1/4 pickup is completed by a 2/4 last bar."""
-    path = _score_with_meters(tmp_path, [[2], [8], [6], [6], [4]],
-                              lens=["1/4", None, None, None, "2/4"],
-                              sigs={0: (4, 4), 2: (3, 4)})
-    assert not _meter_findings(path)
-
-
-def test_the_exempt_last_bar_is_still_checked_for_extra_voices(tmp_path):
-    """Only the meter finding is waived; two voices on one staff are still reported."""
-    path = _score(tmp_path, [[2]] + [[8]] * 3 + [[6, 6]], lens=["1/4", None, None, None, "3/4"])
-    assert not _meter_findings(path)
-    assert [i["measure"] for i in _kinds(path, "extra-voices")] == [5]
-
-
 # The closing bar of a song that opens with a pickup (#353). Kesäaamu opens with a
 # sixteenth in 6/8 and closes on a bar of 11/16: the two make one bar between them,
 # which is how the page prints it, and four "bar is 11/16" rows said otherwise.
@@ -323,7 +276,7 @@ def test_the_exempt_last_bar_is_still_checked_for_extra_voices(tmp_path):
 
 def test_a_last_bar_that_completes_the_pickup_is_quiet(tmp_path):
     path = _score(tmp_path, [[1]] + [[8]] * 4 + [[7]], lens=["1/8"] + [None] * 4 + ["7/8"])
-    assert not _kinds(path, "unprinted-meter")
+    assert not _meter_findings(path)
 
 
 def test_a_short_last_bar_with_no_pickup_is_still_reported(tmp_path):
@@ -340,3 +293,25 @@ def test_only_the_last_bar_is_let_through(tmp_path):
     """A bar of the pickup's complement in the middle of the song is not a closing bar."""
     path = _score(tmp_path, [[1], [7]] + [[8]] * 4, lens=["1/8", "7/8"] + [None] * 4)
     assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [2]
+
+
+def test_a_compound_meter_pickup_is_completed_the_same_way(tmp_path):
+    """Metsämiehen juomalaulu's shape: 9/8 with a 4/8 pickup and a 5/8 last bar."""
+    path = _score(tmp_path, [[4]] + [[9]] * 3 + [[5]], sig=(9, 8),
+                  lens=["4/8", None, None, None, "5/8"])
+    assert not _meter_findings(path)
+
+
+def test_the_meter_at_the_end_decides(tmp_path):
+    """4/4 changing to 3/4: a 1/4 pickup is completed by a 2/4 last bar."""
+    path = _score_with_meters(tmp_path, [[2], [8], [6], [6], [4]],
+                              lens=["1/4", None, None, None, "2/4"],
+                              sigs={0: (4, 4), 2: (3, 4)})
+    assert not _meter_findings(path)
+
+
+def test_the_exempt_last_bar_is_still_checked_for_extra_voices(tmp_path):
+    """Only the meter finding is waived; two voices on one staff are still reported."""
+    path = _score(tmp_path, [[2]] + [[8]] * 3 + [[6, 6]], lens=["1/4", None, None, None, "3/4"])
+    assert not _meter_findings(path)
+    assert [i["measure"] for i in _kinds(path, "extra-voices")] == [5]
