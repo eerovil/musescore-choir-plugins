@@ -161,10 +161,23 @@ refuses. File order holds as for `delbar`: entries after it count the new bar.
     {"kind": "insbar", "measure": 2, "from": [[...], [...], ...],
      "why": "the scan lost the barline between printed bars 2 and 3"}
 
+`dropnote` and `addnote` (#358) take one note off chord `index` or put one on, and
+leave its length, its words and its other notes alone. A page often prints an
+optional note in brackets — a low octave, a divisi — and the scan reads it as a real
+chord note, so the practice track sings both; the default is to sing the main note
+only. `dropnote` also takes out a tie on the note, both halves, and refuses a
+chord's only note (that is a rest, a `bar` fix's job). `addnote` refuses a pitch the
+chord has and adds no tie; its spelling comes from `tpc`, else from a note of the
+same pitch class in the chord, else from the key in force. Each needs its `from`.
+
+    {"kind": "dropnote", "staff": 4, "measure": 17, "index": 3, "pitch": 51,
+     "from": [...], "why": "the page prints (Eb3) as optional; B2 sings Eb2"}
+    {"kind": "addnote", "staff": 3, "measure": 25, "index": 0, "pitch": 52,
+     "from": [...], "why": "the page prints E3 under the G#3"}
+
 Most edits are none of those kinds, and the shapes that are missing are not
-exotic — taking one notehead off a chord, or turning a bar-length rest into a
-whole-bar rest, both came up on one song in one sitting. So a fix can also just be
-a **sentence**:
+exotic — turning a bar-length rest into a whole-bar rest came up on one song in one
+sitting. So a fix can also just be a **sentence**:
 
     {"kind": "text",
      "what": "B1 bar 40, last eighth: drop the D, keep the C. The page prints one
@@ -527,7 +540,6 @@ def _untie(root: etree._Element, staff_id: int, measure_no: int, index: int, pit
     only; homr reads them as real ties, so the verse that re-strikes the note loses a
     syllable (#342). A tie whose end cannot be found loses its start all the same.
     """
-    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
     measure = _measure(root, staff_id, measure_no)
     _expect(measure, expect)
     chords = _chords(root, staff_id, measure_no)
@@ -542,28 +554,146 @@ def _untie(root: etree._Element, staff_id: int, measure_no: int, index: int, pit
         raise FixError(f"no tie starts on pitch {pitch} of chord {index}")
     head = starts[0]
     staff = measure.getparent()
-    lengths = _bar_lengths(staff)
     mi = staff.findall("Measure").index(measure)
-    own = next(at for at, el in _positions(staff, mi) if el is chord)
-    tail = None
-    bar = mi
-    location = head.find("next/location")
-    if location is not None:
-        bar, at = _resolve(mi, own, location, lengths)
-        if 0 <= bar < len(lengths):
-            for pos, el in _positions(staff, bar):
-                if el.tag == "Chord" and pos == at and el is not chord:
-                    other = _pitched(el, pitch)
-                    if other is not None:
-                        tail = next((t for t in other.findall("Spanner[@type='Tie']")
-                                     if t.find("prev") is not None), None)
-                    break
+    tail, bar = _tie_partner(staff, mi, chord, head, pitch)
     head.getparent().remove(head)
     if tail is None:
         return f"took out the tie from pitch {pitch} of chord {index} (no end half found)"
     tail.getparent().remove(tail)
     where = "the next chord" if bar == mi else f"m{bar + 1}"
     return f"took out the tie from pitch {pitch} of chord {index} to {where}"
+
+
+def _tie_partner(staff: etree._Element, mi: int, chord: etree._Element,
+                 half: etree._Element, pitch: int) -> Tuple[Optional[etree._Element], int]:
+    """The other half of the tie `half` on note `pitch` of `chord` in bar `mi`, and its bar.
+
+    A start half (`next`) points forward at the note the tie ends on, an end half
+    (`prev`) back at the note it starts on; the other half sits on that note at the
+    same pitch. None when nothing stands where the half points.
+    """
+    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+    side, other_side = ("next", "prev") if half.find("next") is not None else ("prev", "next")
+    lengths = _bar_lengths(staff)
+    own = next(at for at, el in _positions(staff, mi) if el is chord)
+    location = half.find(f"{side}/location")
+    if location is None:
+        return None, mi
+    bar, at = _resolve(mi, own, location, lengths)
+    if not 0 <= bar < len(lengths):
+        return None, bar
+    for pos, el in _positions(staff, bar):
+        if el.tag == "Chord" and pos == at and el is not chord:
+            other = _pitched(el, pitch)
+            if other is None:
+                return None, bar
+            return next((t for t in other.findall("Spanner[@type='Tie']")
+                         if t.find(other_side) is not None), None), bar
+    return None, bar
+
+
+def _key_in_force(staff: etree._Element, measure: etree._Element) -> int:
+    """The key signature in force in `measure`: sharps positive, flats negative."""
+    key = 0
+    for m in staff.findall("Measure"):
+        for sig in m.iter("KeySig"):
+            text = sig.findtext("accidental") or sig.findtext("concertKey") or "0"
+            try:
+                key = int(text.strip())
+            except ValueError:
+                pass
+        if m is measure:
+            break
+    return key
+
+
+def _tpc_pitch_class(tpc: int) -> int:
+    return (7 * (tpc - 14)) % 12
+
+
+def _spell(pitch: int, key: int) -> int:
+    """The spelling (tpc) a note of `pitch` takes in `key`: the key's own when it has
+    one, otherwise flats in a flat key and sharps in any other."""
+    pc = pitch % 12
+    for tpc in range(13 + key, 20 + key):
+        if _tpc_pitch_class(tpc) == pc:
+            return tpc
+    return _FLAT_SPELLING[pc] if key < 0 else _SPELLING[pc]
+
+
+def _drop_note(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch: int,
+               expect: List[str]) -> str:
+    """Take note `pitch` off chord `index`, and any tie on it, both halves.
+
+    For an optional note the page prints in brackets (#358): the scan reads it as a
+    chord note, and the practice track then sings both. The chord keeps its length and
+    its words. The last note of a chord is refused: that turns the chord into a rest,
+    which changes the rhythm and the words, and is a `bar` fix's job.
+    """
+    measure = _measure(root, staff_id, measure_no)
+    _expect(measure, expect)
+    chords = _chords(root, staff_id, measure_no)
+    if not 0 <= index < len(chords):
+        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+    chord = chords[index]
+    note = _pitched(chord, pitch)
+    if note is None:
+        raise FixError(f"chord {index} has no note at pitch {pitch}")
+    if len(chord.findall("Note")) == 1:
+        raise FixError(f"pitch {pitch} is chord {index}'s only note; a bar fix writes a rest")
+    staff = measure.getparent()
+    mi = staff.findall("Measure").index(measure)
+    ties = []
+    for half in note.findall("Spanner[@type='Tie']"):
+        other, bar = _tie_partner(staff, mi, chord, half, pitch)
+        if other is not None:
+            other.getparent().remove(other)
+        ties.append("into it" if half.find("prev") is not None else "out of it")
+    tpc = note.findtext("tpc")
+    name = note_name(pitch, int(tpc) if tpc and tpc.strip().lstrip("-").isdigit() else None)
+    chord.remove(note)
+    return (f"took {name} off chord {index}"
+            + (f" with its tie {' and '.join(ties)}" if ties else ""))
+
+
+def _add_note(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch: int,
+              expect: List[str], tpc: Optional[int] = None) -> str:
+    """Put a note of `pitch` on chord `index`, untied, among its notes lowest first.
+
+    The spelling comes from `tpc` when given, else from a note of the same pitch class
+    in the chord (an octave doubling, the usual optional note), else from the key in
+    force: the plain sharps table would write E flat as D sharp.
+    """
+    measure = _measure(root, staff_id, measure_no)
+    _expect(measure, expect)
+    chords = _chords(root, staff_id, measure_no)
+    if not 0 <= index < len(chords):
+        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+    chord = chords[index]
+    notes = chord.findall("Note")
+    if _pitched(chord, pitch) is not None:
+        raise FixError(f"chord {index} has pitch {pitch} already")
+    if tpc is None:
+        for other in notes:
+            text = (other.findtext("tpc") or "").strip()
+            if (other.findtext("pitch") or "").strip().isdigit() and \
+                    int(other.findtext("pitch")) % 12 == pitch % 12 and text.lstrip("-").isdigit():
+                tpc = int(text)
+                break
+    if tpc is None:
+        tpc = _spell(pitch, _key_in_force(measure.getparent(), measure))
+    note = etree.Element("Note")
+    etree.SubElement(note, "pitch").text = str(pitch)
+    etree.SubElement(note, "tpc").text = str(tpc)
+    higher = next((n for n in notes
+                   if int((n.findtext("pitch") or "0").strip() or 0) > pitch), None)
+    if higher is not None:
+        higher.addprevious(note)
+    elif notes:
+        notes[-1].addnext(note)
+    else:
+        chord.append(note)
+    return f"put {note_name(pitch, tpc)} on chord {index}"
 
 
 def _meter(staff: etree._Element, mi: int) -> Fraction:
@@ -920,6 +1050,8 @@ def _write_token(voice: etree._Element, token: str) -> None:
 # which puts the note on the wrong line of the staff while sounding correct.
 _SPELLING = {0: 14, 1: 21, 2: 16, 3: 23, 4: 18, 5: 13,
              6: 20, 7: 15, 8: 22, 9: 17, 10: 24, 11: 19}
+_FLAT_SPELLING = {0: 14, 1: 9, 2: 16, 3: 11, 4: 18, 5: 13,
+                  6: 8, 7: 15, 8: 10, 9: 17, 10: 12, 11: 19}
 
 
 def _append_bar(measure: etree._Element, expect: List[str], add: List[str],
@@ -1866,6 +1998,13 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             elif kind == "untie":
                 what = _untie(root, staff, measure, int(fix.get("index", 0)),
                               int(fix["pitch"]), fix.get("from"))
+            elif kind == "dropnote":
+                what = _drop_note(root, staff, measure, int(fix.get("index", 0)),
+                                  int(fix["pitch"]), fix.get("from"))
+            elif kind == "addnote":
+                what = _add_note(root, staff, measure, int(fix.get("index", 0)),
+                                 int(fix["pitch"]), fix.get("from"),
+                                 int(fix["tpc"]) if "tpc" in fix else None)
             elif kind == "duration":
                 what = _set_duration(root, staff, measure, int(fix.get("index", 0)),
                                      fix.get("from"), str(fix.get("to", "")))
