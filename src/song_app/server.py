@@ -624,11 +624,6 @@ def _run_clean(slug: str) -> None:
         n = health.finding_count(open_issues)
         final = f"Done. {n} issue(s) to review." if n else "Done. No issues found."
         log(final)
-        # This is the first moment the verdict is knowable, so it is the first moment
-        # it is said. A count on its own reads as a to-do list however large it gets.
-        judgement = health.verdict(open_issues, health.score_bars(cleaned))
-        if judgement["level"] == "unusable":
-            log(judgement["message"])
         _job_finish(song, "clean")
         hub.emit(slug, {"type": "state"})
     except Exception as exc:  # surface to the UI rather than dying silently
