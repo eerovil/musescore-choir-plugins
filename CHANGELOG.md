@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Importing lyrics no longer throws the Lyrics panel back to the top: the list
+  stays where it was, the box being typed in keeps its focus, and the warnings
+  change in place. The One system view shows the cleaned system with its words
+  under the printed one, and after an import only the systems whose words changed
+  are drawn again, the old picture staying until the new one is ready. Compare
+  does the same. (#PR)
 - In per-system cleaning, a chord with more notes than part names no longer loses
   the extra notes: the lowest named part keeps them as its chord, and the Clean grid
   and the Fix stage no longer warn about it. (#330)

@@ -540,3 +540,8 @@ table.grid .undernote:empty { display: none; }
 .cmpslot.err { border: 1px solid #a33; color: #a33; background: #fff4f4; padding: .5rem; }
 .cmpimg.fresh { animation: cmpfade .15s ease-in; }
 @keyframes cmpfade { from { opacity: 0; } to { opacity: 1; } }
+/* A cleaned system being brought up to date keeps its old picture under a note (#336). */
+.cmpcleaned { position: relative; }
+.liveupd { position: absolute; top: .3rem; right: .3rem; padding: .1rem .45rem; border-radius: 4px;
+           background: rgba(255,255,255,.9); color: #555; font-size: .8rem; border: 1px solid #ccc; }
+.liveerr { color: #a33; font-size: .85rem; margin: .2rem 0 .35rem; }
