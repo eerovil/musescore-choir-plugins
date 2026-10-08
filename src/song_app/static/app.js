@@ -369,6 +369,7 @@ async function renderWorkspace(slug) {
 
   function drawPanel() {
     recordPreviewSettings = null;
+    panelEl._keepPlace = null;
     panelEl.replaceChildren();
     renderPanel(panelEl, view, song, slug, refresh, {
       // Use the same click path as the rail so rendering_state.js remembers an
@@ -426,6 +427,9 @@ async function renderWorkspace(slug) {
     const fresh = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
     Object.assign(song, fresh);
     drawStagebar();
+    // A refresh redraws the panel the person is looking at, so a panel that loads
+    // its content later says where it was first (the Fix panel, #329).
+    panelEl._keepPlace?.();
     drawPanel();
     if (tabKeys() !== builtTabs) {
       // The tab set changed (a doc appeared or vanished) → structural rebuild.
@@ -1878,6 +1882,10 @@ function staffPlace(row) {
 // cards arrive above. So the card tapped is remembered with the cards after it, and
 // once the rows are back the first of them still open is put where the tapped one
 // stood — the next card slides into its place.
+// A tap is not the only redraw: the score changing on disk sends a `state` ping, and
+// after a pick the file watcher can send one too, a moment after the tap's own
+// redraw. Every refresh therefore asks the panel to remember the card at the top of
+// what it shows (`panel._keepPlace`) unless a tap already said where to land.
 let fixPlace = null;   // {slug, rows: [row ids], offset, scrollTop}
 
 function problemList(panel, song, P, refresh) {
@@ -1892,18 +1900,48 @@ function problemList(panel, song, P, refresh) {
       rows: at < 0 ? [] : cards.slice(at).map((c) => c.dataset.row),
       offset: card ? card.getBoundingClientRect().top - sc.getBoundingClientRect().top : 0 };
   };
+  // The card at the top of what is on screen, for a redraw nobody tapped for.
+  panel._keepPlace = () => {
+    if (fixPlace?.slug === song.slug || !box.isConnected) return;
+    const sc = scroller();
+    const top = sc.getBoundingClientRect().top;
+    const cards = [...box.querySelectorAll(".issue.problem")];
+    const at = cards.findIndex((c) => c.getBoundingClientRect().bottom > top);
+    // `untapped`: with no card in view (the reader is below the list, at the slur
+    // recorder say), the scroll position itself is put back — the "decided" summary
+    // standing in for the card is only right after a tap.
+    fixPlace = { slug: song.slug, scrollTop: sc.scrollTop, untapped: true,
+      rows: at < 0 ? [] : cards.slice(at).map((c) => c.dataset.row),
+      offset: at < 0 ? 0 : cards[at].getBoundingClientRect().top - top };
+  };
   const restore = () => {
     const place = fixPlace;
     fixPlace = null;
     if (!place || place.slug !== song.slug) return;
     const sc = scroller();
     const cards = new Map([...box.querySelectorAll(".issue.problem")].map((c) => [c.dataset.row, c]));
-    const target = place.rows.map((id) => cards.get(id)).find(Boolean) || box.querySelector(".readdone");
-    if (target) {
+    const target = place.rows.map((id) => cards.get(id)).find(Boolean)
+      || (place.untapped ? null : box.querySelector(".readdone"));
+    const place_it = () => {
+      if (!target.isConnected) return;
       sc.scrollTop += target.getBoundingClientRect().top - sc.getBoundingClientRect().top - place.offset;
-    } else {
+    };
+    if (!target) {
       sc.scrollTop = Math.min(place.scrollTop, sc.scrollHeight - sc.clientHeight);
+      return;
     }
+    place_it();
+    // The page crops and engraved options load after the cards, and one above the
+    // card grows the list under it. Not every browser holds the view still for that
+    // (Safari does not), so put the card back as each picture lands — until the
+    // person scrolls or taps, after which where they are is theirs.
+    const stop = () => {
+      box.querySelectorAll("img").forEach((i) => i.removeEventListener("load", place_it));
+      ["wheel", "touchstart", "pointerdown", "keydown"].forEach((t) => sc.removeEventListener(t, stop));
+    };
+    box.querySelectorAll("img").forEach((i) => { if (!i.complete) i.addEventListener("load", place_it); });
+    ["wheel", "touchstart", "pointerdown", "keydown"].forEach((t) => sc.addEventListener(t, stop, { passive: true }));
+    setTimeout(stop, 5000);
   };
   panel.append(box);
   if (!song.has_cleaned) {
@@ -1976,6 +2014,8 @@ function problemList(panel, song, P, refresh) {
   // empty list from one still on its way.
   const loaded = () => { box.dataset.loaded = "1"; };
   getJSON(`${P}/problems`).then(({ rows }) => {
+    // Redrawn again while this was on its way: the newer list owns the place.
+    if (!box.isConnected) return;
     box.replaceChildren();
     loaded();
     const open = rows.filter((r) => r.notes.length || r.choices.some((c) => !c.decision));
@@ -2017,6 +2057,7 @@ function problemList(panel, song, P, refresh) {
     box.append(problem);
     restore();
   }).catch((e) => {
+    if (!box.isConnected) return;
     fixPlace = null;
     box.replaceChildren(el("p", { className: "lyerr readerr" }, `Could not list the problems: ${e.message}`));
     loaded();
