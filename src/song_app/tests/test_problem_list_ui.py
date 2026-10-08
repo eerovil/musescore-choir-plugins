@@ -176,7 +176,8 @@ def test_the_card_says_which_bar_staff_and_voice_is_meant(live, page):
     # Where clean_score recorded the parts were printed: B1 alone on the second staff.
     root = etree.parse(song.cleaned_path()).getroot()
     etree.SubElement(root.find("Score"), "metaTag", name="lyricsSystemMap").text = json.dumps(
-        [{"start": 1, "end": 5, "map": {"1": [2], "2": [1]}}])
+        [{"start": 1, "end": 5, "map": {"1": [2], "2": [1]}, "source": {"1": [2], "2": [1]},
+          "staves": 2}])
     etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
     pdf = os.path.join(os.path.dirname(__file__), "..", "..", "..", "fixtures",
                        "virta-venhetta-vie", "00-registered", "Virta venhettä vie.pdf")

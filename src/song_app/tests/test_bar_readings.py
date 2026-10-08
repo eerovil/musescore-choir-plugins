@@ -136,7 +136,8 @@ def _printed(song, staff_map):
     """Record where clean_score printed the parts, as a per-system clean writes it."""
     root = etree.parse(song.cleaned_path()).getroot()
     etree.SubElement(root.find("Score"), "metaTag", name="lyricsSystemMap").text = json.dumps(
-        [{"start": 1, "end": 1, "map": {"1": [1]}}, {"start": 2, "end": 3, "map": staff_map}])
+        [{"start": 1, "end": 1, "map": {"1": [1]}, "source": {"1": [1]}},
+         {"start": 2, "end": 3, "map": staff_map, "source": staff_map}])
     etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
 
 
@@ -160,11 +161,62 @@ def test_a_bar_no_part_on_that_staff_sings_is_not_offered(make_song):
 
 
 def test_a_record_that_does_not_line_up_with_the_fragment_is_not_trusted(make_song):
-    # The record says two staves were printed; homr's fragment has one, so the
-    # numbers cannot be matched up and every part stays a candidate.
+    # The record puts a part on a second staff; homr's fragment has one, so the
+    # two cannot be lined up and every part stays a candidate.
     song = make_song(staves=((1, "S2", 12), (2, "A2", 0)))
     _printed(song, {"1": [2], "2": [1]})
     assert [o["part"] for o in bar_readings.offers(song)] == ["S2"]
+
+
+def test_a_score_cleaned_before_the_page_record_restricts_nothing(make_song):
+    # Only the rank-ordered "map": it numbers staves S<A<T<B, not down the page.
+    song = make_song(staves=((1, "S2", 12), (2, "A2", 0)))
+    root = etree.parse(song.cleaned_path()).getroot()
+    etree.SubElement(root.find("Score"), "metaTag", name="lyricsSystemMap").text = json.dumps(
+        [{"start": 1, "end": 3, "map": {"1": [2]}}])
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+    assert [o["part"] for o in bar_readings.offers(song)] == ["S2"]
+
+
+def _two_staff_fragment(readings):
+    """System 2 printed as two staves, each holding C3 D3 in both bars."""
+    one = _fragment(readings)
+    part = one[one.index("<part id=\"P1\">"):one.index("</score-partwise>")]
+    return (one[:one.index("<part-list>")]
+            + "<part-list><score-part id=\"P1\"/><score-part id=\"P2\"/></part-list>"
+            + part + part.replace("\"P1\"", "\"P2\"") + "</score-partwise>")
+
+
+def test_a_bar_follows_the_grid_not_the_lyric_rank_when_staves_are_reordered(make_song):
+    """The page prints B above T1; the lyric map ranks T1 first (#310 review).
+
+    homr read the second staff, T1's. Numbering by the lyric map's rank would point
+    at B, which holds the same notes an octave down, and offer T1's bar to the basses.
+    """
+    from src.clean_score.utils.per_system import _build_lyric_map
+
+    readings = json.loads(json.dumps(READINGS))
+    readings["bars"][0]["part"] = 1  # the fragment's second part: its second staff
+    song = make_song(staves=((1, "T1", 0), (2, "B", -12)), readings=readings)
+    path = song.path("scan/system-02.musicxml")
+    with open(path, "w") as fh:
+        fh.write(_two_staff_fragment(readings))
+    song.data["scan"]["systems"]["2"]["content"] = scan.content_stamp(path)
+    song.save()
+    # The grid's answer for system 2: staff 1 is B, staff 2 is T1.
+    decls = {0: {(1, 0): "T1"}, 1: {(1, 0): "B", (2, 0): "T1"}}
+    lyric_map = _build_lyric_map([(0, 0), (1, 2)], decls, ["T1", "B"], [1, 2])
+    assert lyric_map[1]["map"] == {1: [1], 2: [2]}      # ranked: T1 first
+    assert lyric_map[1]["source"] == {1: [2], 2: [1]}   # on the page: B first
+    root = etree.parse(song.cleaned_path()).getroot()
+    etree.SubElement(root.find("Score"), "metaTag", name="lyricsSystemMap").text = \
+        json.dumps(lyric_map)
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+    assert [o["part"] for o in bar_readings.offers(song)] == ["T1"]
+    # And the card names the staff the same way: T1 is the second of two.
+    printed = bar_readings.printed_staves(root)
+    assert bar_readings.printed_place(printed, 3, 1) == (2, 2, 1, 1)
+    assert bar_readings.printed_place(printed, 3, 2) == (1, 2, 1, 1)
 
 
 def test_a_fragment_from_an_older_homr_offers_nothing(make_song):

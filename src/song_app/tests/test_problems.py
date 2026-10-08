@@ -111,20 +111,27 @@ def _marked_row(song, *meta):
             row["voice_on_staff"], row["voices_on_staff"])
 
 
+def _systems(*entries):
+    """lyricsSystemMap entries as a per-system clean writes them: (start, end, source, staves)."""
+    return json.dumps([{"start": a, "end": b, "map": source, "source": source, "staves": n}
+                       for a, b, source, n in entries])
+
+
 @pytest.mark.parametrize("meta, place", [
     # A per-system score: B1 is printed second of two in the system holding bar 3.
-    ([("lyricsSystemMap", json.dumps([{"start": 1, "end": 2, "map": {"1": [1]}},
-                                      {"start": 3, "end": 6, "map": {"1": [2], "2": [1]}}]))],
+    ([("lyricsSystemMap", _systems((1, 2, {"1": [1]}, 1), (3, 6, {"1": [2], "2": [1]}, 2)))],
      (2, 2, 1, 1)),
     # Two parts on one printed staff, B1 the lower of them.
-    ([("lyricsSystemMap", json.dumps([{"start": 1, "end": 6, "map": {"1": [2, 1]}}]))],
-     (1, 1, 2, 2)),
+    ([("lyricsSystemMap", _systems((1, 6, {"1": [2, 1]}, 1)))], (1, 1, 2, 2)),
     # An ordinary clean: one map for the whole score, the split staff's upper voice first.
     ([("lyricsStaffMap", "1:1,2;2:3")], (1, 2, 1, 2)),
     # The system map wins over the identity staff map a per-system clean also writes.
     ([("lyricsStaffMap", "1:1;2:2"),
-      ("lyricsSystemMap", json.dumps([{"start": 1, "end": 6, "map": {"1": [2], "2": [1]}}]))],
-     (2, 2, 1, 1)),
+      ("lyricsSystemMap", _systems((1, 6, {"1": [2], "2": [1]}, 2)))], (2, 2, 1, 1)),
+    # The page position, not the lyric rank: ranked first, printed second of three.
+    ([("lyricsSystemMap", json.dumps([{"start": 1, "end": 6, "map": {"1": [1], "2": [2]},
+                                        "source": {"1": [2], "2": [1]}, "staves": 3}]))],
+     (2, 3, 1, 1)),
 ])
 def test_a_row_says_which_staff_and_voice_of_the_system_it_is(make_song, meta, place):
     """The crop shows every staff, so the row says which one the part is on (#310)."""
@@ -133,7 +140,8 @@ def test_a_row_says_which_staff_and_voice_of_the_system_it_is(make_song, meta, p
 
 @pytest.mark.parametrize("meta", [
     [],                                                       # a score from before the maps
-    [("lyricsSystemMap", json.dumps([{"start": 1, "end": 2, "map": {"1": [1]}}]))],  # bar 3 not covered
+    [("lyricsSystemMap", _systems((1, 2, {"1": [1]}, 1)))],  # bar 3 not covered
+    [("lyricsSystemMap", json.dumps([{"start": 1, "end": 6, "map": {"1": [1]}}]))],  # cleaned before "source"
     [("lyricsStaffMap", "1:2;2:3")],                         # B1 not printed anywhere
 ])
 def test_without_a_record_of_the_page_the_staff_is_not_guessed(make_song, meta):

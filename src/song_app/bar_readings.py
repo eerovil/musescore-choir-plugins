@@ -204,29 +204,42 @@ def _shift(found, entry: Dict) -> Optional[int]:
 _NOTE_SUFFIX = re.compile(r"-m(\d+)-c(\d+)$")
 
 
-def printed_staves(root: etree._Element) -> List[Tuple[int, int, Dict[int, List[int]]]]:
-    """(first bar, last bar, {printed staff: [output staves, upper voice first]}).
+def printed_staves(root: etree._Element) -> List[Tuple[int, int, Dict[int, List[int]], int]]:
+    """(first bar, last bar, {staff on the page: [output staves, upper voice first]}, staves).
 
-    The routing clean_score writes for the lyric import says where each part was
-    printed: one entry per printed system for a per-system score, one for the whole
-    score otherwise. Empty when the score carries neither.
+    Where each part was printed, keyed by its staff's position on the page from the
+    top — the numbering homr's fragment uses. A per-system clean records it as each
+    lyric-map entry's "source" (#310); its "map" will not do, since that ranks the
+    staves S<A<T<B for the lyric JSON, and a system printing T3 above B above T1/T2
+    would be read as T3 on the third staff. A score cleaned before "source" existed
+    says nothing, rather than a guess. An ordinary clean's lyricsStaffMap is keyed by
+    the input staff, which is the page position already. Empty with no record.
     """
-    systems = lyric_txt._read_lyrics_system_map(root)
-    if systems:
-        return [(entry["start"], entry["end"], entry["map"]) for entry in systems]
+    score = root.find(".//Score") if root.tag != "Score" else root
+    tags = {m.get("name"): m.text for m in (score.findall("metaTag") if score is not None else [])}
+    if (tags.get("lyricsSystemMap") or "").strip():
+        try:
+            out = []
+            for entry in json.loads(tags["lyricsSystemMap"]):
+                source = {int(k): [int(x) for x in v] for k, v in entry["source"].items()}
+                count = int(entry.get("staves") or max(source, default=0))
+                out.append((int(entry["start"]), int(entry["end"]), source, count))
+            return out
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return []
     staves = lyric_txt._read_lyrics_staff_map(root)
-    return [(1, 10 ** 9, staves)] if staves else []
+    return [(1, 10 ** 9, staves, len(staves))] if staves else []
 
 
 def printed_place(printed, measure: Optional[int], staff: Optional[int]) -> Tuple:
     """(staff, staves, voice, voices) a part was printed on in a bar, or four Nones."""
     if measure and staff:
-        for start, end, staves in printed:
+        for start, end, staves, count in printed:
             if not start <= measure <= end:
                 continue
             for number, outputs in staves.items():
                 if staff in outputs:
-                    return (number, len(staves), outputs.index(staff) + 1, len(outputs))
+                    return (number, count, outputs.index(staff) + 1, len(outputs))
             break
     return (None, None, None, None)
 
@@ -244,18 +257,18 @@ def _printed_on(printed, measure: int, part_staves: List[int], group: Dict) -> O
     """The cleaned staves printed on the staff homr read a voice off, or None.
 
     homr names the staff by its part and the staff inside it; counted down the
-    fragment that is the printed staff of the system, the same numbering the
-    routing record uses. None when the score keeps no record, or when the record
-    and the fragment disagree on how many staves the system has, since then the
-    numbers cannot be lined up and any staff might be the one.
+    fragment that is the staff's position on the page, the key `printed_staves`
+    uses. A staff no part was assigned to is sung by nobody. None when the score
+    keeps no record, or names a staff the fragment does not have, since then the
+    two cannot be lined up and any part might be the one.
     """
     part, staff = int(group["part"]), int(group["staff"])
     if not printed or part >= len(part_staves):
         return None
     number = sum(part_staves[:part]) + staff
-    for start, end, staves in printed:
+    for start, end, staves, _ in printed:
         if start <= measure <= end:
-            if len(staves) != sum(part_staves):
+            if max(staves, default=0) > sum(part_staves):
                 return None
             return set(staves.get(number, []))
     return None
