@@ -1842,8 +1842,39 @@ function staffPlace(row) {
   return `staff ${row.staff_in_system} of ${row.staves_in_system}, ${voice}`;
 }
 
+// Where the Fix panel was when a tap redrew it (#329). A pick or a Dismiss redraws the
+// whole panel, and while the rows are fetched again the panel is short, so the
+// browser clamps its scroll to the bottom of what is left and keeps it there when the
+// cards arrive above. So the card tapped is remembered with the cards after it, and
+// once the rows are back the first of them still open is put where the tapped one
+// stood — the next card slides into its place.
+let fixPlace = null;   // {slug, rows: [row ids], offset, scrollTop}
+
 function problemList(panel, song, P, refresh) {
   const box = el("div", { className: "problems" });
+  const scroller = () => box.closest(".panel") || panel;
+  const remember = (rowId) => {
+    const sc = scroller();
+    const cards = [...box.querySelectorAll(".issue.problem")];
+    const at = cards.findIndex((c) => c.dataset.row === rowId);
+    const card = cards[at];
+    fixPlace = { slug: song.slug, scrollTop: sc.scrollTop,
+      rows: at < 0 ? [] : cards.slice(at).map((c) => c.dataset.row),
+      offset: card ? card.getBoundingClientRect().top - sc.getBoundingClientRect().top : 0 };
+  };
+  const restore = () => {
+    const place = fixPlace;
+    fixPlace = null;
+    if (!place || place.slug !== song.slug) return;
+    const sc = scroller();
+    const cards = new Map([...box.querySelectorAll(".issue.problem")].map((c) => [c.dataset.row, c]));
+    const target = place.rows.map((id) => cards.get(id)).find(Boolean) || box.querySelector(".readdone");
+    if (target) {
+      sc.scrollTop += target.getBoundingClientRect().top - sc.getBoundingClientRect().top - place.offset;
+    } else {
+      sc.scrollTop = Math.min(place.scrollTop, sc.scrollHeight - sc.clientHeight);
+    }
+  };
   panel.append(box);
   if (!song.has_cleaned) {
     box.append(el("p", { className: "empty" }, "Clean the score first."));
@@ -1852,14 +1883,16 @@ function problemList(panel, song, P, refresh) {
   }
   box.append(el("p", { className: "hint" }, "Reading the score…"));
   const problem = el("p", { className: "lyerr readerr" });
-  const pick = async (choice, letter, buttons) => {
+  const pick = async (row, choice, letter, buttons) => {
     problem.textContent = "";
     buttons.forEach((b) => { b.disabled = true; });
     try {
       const fresh = await postJSON(`${P}/problems/pick`, { choice: choice.id, kind: choice.kind, letter });
       Object.assign(song, fresh);
+      remember(row.id);
       refresh();
     } catch (e) {
+      fixPlace = null;
       problem.textContent = e.message;
       buttons.forEach((b) => { b.disabled = false; });
     }
@@ -1877,7 +1910,7 @@ function problemList(panel, song, P, refresh) {
     const buttons = [];
     const options = c.options.map((o) => {
       const b = el("button", { className: "readopt" + (o.svg ? "" : " readtext"),
-        onclick: () => pick(c, o.letter, buttons) },
+        onclick: () => pick(row, c, o.letter, buttons) },
         el("span", { className: "readletter" }, o.letter),
         o.label ? el("span", { className: "readlabel" }, " " + o.label) : "",
         o.current ? el("span", { className: "hint" }, " as read now") : "",
@@ -1901,7 +1934,7 @@ function problemList(panel, song, P, refresh) {
       block.append(el("div", { className: "row" }, more));
     }
     if (c.can_decline) {
-      const none = el("button", { className: "readnone", onclick: () => pick(c, "none", buttons) },
+      const none = el("button", { className: "readnone", onclick: () => pick(row, c, "none", buttons) },
         "None of these");
       buttons.push(none);
       block.append(el("div", { className: "row" }, none,
@@ -1932,7 +1965,7 @@ function problemList(panel, song, P, refresh) {
         const line = el("div", { className: "detail" },
           el("span", { className: "kind" }, NOTE_KIND[n.kind] || n.kind), " ", n.text);
         if (n.dismiss) line.append(" ", el("button", { className: "dismiss", onclick: async () => {
-          await postJSON(`${P}/issues/${n.dismiss}/dismiss`); refresh(); } }, "Dismiss"));
+          await postJSON(`${P}/issues/${n.dismiss}/dismiss`); remember(row.id); refresh(); } }, "Dismiss"));
         card.append(line);
       }
       const undecided = row.choices.filter((c) => !c.decision);
@@ -1952,7 +1985,9 @@ function problemList(panel, song, P, refresh) {
         ...decided.map((t) => el("div", { className: "detail" }, t))));
     }
     box.append(problem);
+    restore();
   }).catch((e) => {
+    fixPlace = null;
     box.replaceChildren(el("p", { className: "lyerr readerr" }, `Could not list the problems: ${e.message}`));
     loaded();
   });
