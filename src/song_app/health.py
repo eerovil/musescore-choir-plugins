@@ -231,10 +231,10 @@ def scan(cleaned_path: str) -> List[Dict]:
             if mi > 1 and ts is None and not uneven and sig <= _PLAUSIBLE_METER:
                 agreed = {t for t, has, _ in
                           (_voice_length(v, nominal) for v in voices) if has}
-                if len(agreed) == 1 and agreed != {sig}:
+                completes_pickup = (mi == len(measures) and pickup is not None
+                                    and agreed == {sig - pickup})
+                if len(agreed) == 1 and agreed != {sig} and not completes_pickup:
                     got = agreed.pop()
-                    if mi == len(measures) and pickup is not None and pickup + got == sig:
-                        continue
                     found = {
                         "id": f"unprinted-meter-m{mi}-s{sid}",
                         "kind": "unprinted-meter",

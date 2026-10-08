@@ -307,3 +307,10 @@ def test_the_meter_at_the_end_decides(tmp_path):
                               lens=["1/4", None, None, None, "2/4"],
                               sigs={0: (4, 4), 2: (3, 4)})
     assert not _meter_findings(path)
+
+
+def test_the_exempt_last_bar_is_still_checked_for_extra_voices(tmp_path):
+    """Only the meter finding is waived; two voices on one staff are still reported."""
+    path = _score(tmp_path, [[2]] + [[8]] * 3 + [[6, 6]], lens=["1/4", None, None, None, "3/4"])
+    assert not _meter_findings(path)
+    assert [i["measure"] for i in _kinds(path, "extra-voices")] == [5]
