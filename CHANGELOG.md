@@ -12,6 +12,10 @@ developers are listed under *Behind the scenes*.
   final barline reaches every staff, a bar's last rest no longer looks like a bar of
   its own, and after a `delbar` the system pictures start on the right bar again.
   Already-cleaned songs are drawn right without cleaning again. (#354)
+- `fixes.json` can now take a mark the scan invented off a chord (`delete`): a
+  fermata, an articulation, a breath mark, a staff text, a tempo or a rehearsal
+  mark. Mieslaulu bar 13's fermatas, where the page prints staccato dots, can now
+  be recorded away. The Fix panel's bar reading lists each chord's marks. (#352)
 - The "This parse looks unusable" warning is gone from Review, Fix and the clean's
   log. On scanned songs it was set off mostly by homr's `⚠` questions, so it called
   scores whose notes were right unusable; the issue count and the Fix rows stay. (#356)

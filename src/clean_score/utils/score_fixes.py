@@ -136,6 +136,21 @@ It needs its `from` like the others.
     {"kind": "untie", "staff": 1, "measure": 6, "index": 1, "pitch": 65, "from": [...],
      "why": "dashed tie, verse 2 only"}
 
+`delete` (#352) takes a mark the scan invented off chord `index`: `what` is one of
+`fermata`, `articulation`, `breath`, `staff text`, `tempo` or `rehearsal mark`, and
+every mark of that kind on the chord goes unless `subtype` narrows it (an
+articulation's `articStaccatoAbove`, a breath mark's symbol, a text's words). Only
+these: taking one out never needs anything else changed. A slur, a tie, a note, a red
+mark or the words have a kind of their own and are refused naming it; a clef, key,
+time signature or triplet bracket changes the bar itself and is refused too. A
+fermata or tempo mark another staff still carries at that beat is said in the log,
+since MuseScore times the beat by any staff's. It needs its `from`.
+
+    {"kind": "delete", "what": "fermata", "staff": 1, "measure": 13, "index": 2,
+     "from": [...], "why": "the page prints staccato dots here, not a fermata"}
+    {"kind": "delete", "what": "articulation", "subtype": "articAccentAbove",
+     "staff": 3, "measure": 7, "index": 0, "from": [...], "why": "..."}
+
 `delbar` (#346) takes out a bar the scan invented, on every staff: an empty bar
 homr read between a "1." and a "2." ending, say. `from` is what the bar reads now —
 one list when every staff reads the same (`["measure:R"]`), or one list per staff —
@@ -452,6 +467,123 @@ def _unslur(root: etree._Element, staff_id: int, measure_no: int, index: int,
         return f"took out the slur from chord {index} (no end half found)"
     tail.getparent().remove(tail)
     return f"took out the slur from chord {index}"
+
+
+#: What `delete` may take off a chord (#352): the element, and whether it is kept
+#: inside the chord, in the voice just ahead of it, or -- a breath mark, which MuseScore
+#: writes after the chord it follows, even at the end of a bar -- just after it. Taking any of these out never
+#: needs anything else in the score changed.
+_DELETABLE = {"fermata": ("Fermata", "before"), "articulation": ("Articulation", "inside"),
+              "breath": ("Breath", "after"), "staff text": ("StaffText", "before"),
+              "tempo": ("Tempo", "before"), "rehearsal mark": ("RehearsalMark", "before")}
+#: What `delete` refuses, and where to go instead.
+_NOT_DELETABLE = {
+    "slur": "use 'unslur', which takes out both halves",
+    "tie": "use 'untie', which takes out both halves",
+    "note": "use 'bar' to write the bar afresh", "rest": "use 'bar' to write the bar afresh",
+    "chord": "use 'bar' to write the bar afresh",
+    "mark": "use 'unmark' for a red mark", "red mark": "use 'unmark' for a red mark",
+    "lyrics": "fix the words in the lyric editor", "words": "fix the words in the lyric editor",
+    "clef": "a clef changes the bar itself", "key": "a key signature changes the bar itself",
+    "time signature": "a time signature changes the bar itself",
+    "tuplet": "a triplet bracket changes the lengths in the bar",
+}
+_PLAYED = {"Fermata", "Tempo"}
+
+
+def _mark_kind(el: etree._Element) -> str:
+    return el.findtext("subtype") or el.findtext("symbol") or ""
+
+
+def _mark_text(el: etree._Element) -> str:
+    text = el.find("text")
+    return "".join(text.itertext()).strip() if text is not None else ""
+
+
+def _marks_on(chord: etree._Element, tag: str, where: str) -> List[etree._Element]:
+    if where == "inside":
+        return chord.findall(tag)
+    out = []
+    if where == "after":
+        el = chord.getnext()
+        while el is not None and el.tag not in ("Chord", "Rest"):
+            if el.tag == tag:
+                out.append(el)
+            el = el.getnext()
+        return out
+    el = chord.getprevious()
+    while el is not None and el.tag not in ("Chord", "Rest"):
+        if el.tag == tag:
+            out.append(el)
+        el = el.getprevious()
+    return out
+
+
+def chord_marks(chord: etree._Element) -> List[str]:
+    """The marks `delete` could take off this chord, as `what[:subtype]`."""
+    out = []
+    for what, (tag, where) in _DELETABLE.items():
+        found = _marks_on(chord, tag, where)
+        for el in (reversed(found) if where == "before" else found):
+            if tag == "StaffText" and _mark_text(el).startswith("⚠"):
+                continue
+            detail = _mark_kind(el) or (_mark_text(el) if tag != "Tempo" else "")
+            out.append(f"{what}:{detail}" if detail else what)
+    return out
+
+
+def _delete_mark(root: etree._Element, staff_id: int, measure_no: int, index: int,
+                 what: str, subtype: Optional[str], expect: List[str]) -> str:
+    """Take the marks of kind `what` (narrowed by `subtype`) off chord `index`."""
+    what = (what or "").strip().lower()
+    if what in _NOT_DELETABLE:
+        raise FixError(f"cannot delete a {what}: {_NOT_DELETABLE[what]}")
+    if what not in _DELETABLE:
+        raise FixError(f"cannot delete {what!r}; 'what' is one of {', '.join(_DELETABLE)}")
+    tag, where = _DELETABLE[what]
+    measure = _measure(root, staff_id, measure_no)
+    _expect(measure, expect)
+    chords = _chords(root, staff_id, measure_no)
+    if not 0 <= index < len(chords):
+        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+    chord = chords[index]
+    found = _marks_on(chord, tag, where)
+    if tag == "StaffText":
+        red = [el for el in found if _mark_text(el).startswith("⚠")]
+        found = [el for el in found if el not in red]
+        if red and not found:
+            raise FixError("that staff text is a red mark; use 'unmark'")
+    if subtype is not None:
+        found = [el for el in found if subtype in (_mark_kind(el), _mark_text(el))]
+    if not found:
+        narrowed = f" ({subtype})" if subtype is not None else ""
+        raise FixError(f"no {what}{narrowed} on chord {index}")
+    for el in found:
+        el.getparent().remove(el)
+    done = f"took out {len(found)} {what}(s) on chord {index}"
+    if tag in _PLAYED:
+        others = _same_mark_at_beat(root, measure, chord, tag)
+        if others:
+            staves = ", ".join(str(s) for s in others)
+            done += (f" (playback still holds this beat: staff {staves} has one too)"
+                     if tag == "Fermata" else
+                     f" (playback still changes tempo here: staff {staves} has one too)")
+    return done
+
+
+def _same_mark_at_beat(root: etree._Element, measure: etree._Element,
+                       chord: etree._Element, tag: str) -> List[int]:
+    """The other staves whose same bar carries a `tag` at the beat `chord` stands on."""
+    staff = measure.getparent()
+    mi = staff.findall("Measure").index(measure)
+    at = next(pos for pos, el in _positions(staff, mi) if el is chord)
+    out = []
+    for other in root.findall(".//Score/Staff"):
+        if other is staff or len(other.findall("Measure")) <= mi:
+            continue
+        if any(el.tag == tag and pos == at for pos, el in _positions(other, mi)):
+            out.append(int(other.get("id")))
+    return out
 
 
 def _tie_spanner(side: str, bars: int, along: Fraction) -> etree._Element:
@@ -1403,6 +1535,8 @@ def read_bar(root: etree._Element, staff_id: int, measure_no: int) -> List[Dict]
     same word that entry's `from` list would carry, so what is shown and what is
     recorded cannot drift apart. `starts_slur` says a slur already begins there,
     which is the one thing a caller has to check before offering to add another.
+    `marks` lists what a `delete` entry could take off the chord (#352), and is left
+    out when there is nothing.
 
     Raises `FixError` for a staff or measure that is not there, so a caller asking
     about a bar out of range gets the same answer as a fix recorded against one.
@@ -1427,6 +1561,9 @@ def read_bar(root: etree._Element, staff_id: int, measure_no: int) -> List[Dict]
             "starts_slur": any(sp.find(".//next") is not None
                                for sp in chord.findall(".//Spanner[@type='Slur']")),
         })
+        marks = chord_marks(chord)
+        if marks:
+            out[-1]["marks"] = marks
     return out
 
 
@@ -1945,6 +2082,10 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                                   int(fix["tpc"]))
             elif kind == "unslur":
                 what = _unslur(root, staff, measure, int(fix.get("index", 0)), fix.get("from"))
+            elif kind == "delete":
+                what = _delete_mark(root, staff, measure, int(fix.get("index", 0)),
+                                    str(fix.get("what", "")), fix.get("subtype"),
+                                    fix.get("from"))
             elif kind == "tie":
                 what = _tie(root, staff, measure, int(fix.get("index", 0)), int(fix["pitch"]),
                             fix.get("from"))
