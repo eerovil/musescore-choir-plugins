@@ -2263,7 +2263,9 @@ refuses to guess. **A line left unnamed is said out loud** (#330): the rebuild t
 line, top first, so a two-voice staff answered with one name keeps the upper line and
 loses the rest — usually an answer typed once in system 1 and carried into a system
 where the page prints two lines there (Lemmen nosto lost ~150 alto notes that way).
-`per_system.dropped_voices` finds each such line with notes; the grid marks the cell
+`per_system.dropped_voices` finds each such line with notes (the lower notes of
+chords under one name are the exception: the chords are copied whole, so those stay
+in the named part with no part of their own, and are reported that way); the grid marks the cell
 and asks before cleaning, the clean logs it, and `pipeline.record_dropped_voices`
 lists it in the Fix panel (`source: "per-system-dropped"`, replaced on every clean).
 It warns and never blocks: leaving a line out can be the right reading. Answers are

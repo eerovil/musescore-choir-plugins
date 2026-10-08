@@ -473,8 +473,8 @@ def record_dropped_voices(song_dir: str, dropped: List, log: Logger = _noop) -> 
     } for one in dropped]
     _replace_recorded(song_dir, lambda fix: fix.get("source") == DROPPED_VOICE_SOURCE, written)
     if written:
-        log(f"{len(written)} line(s) the per-system answers leave unnamed were dropped "
-            "(listed in the Fix panel):")
+        log(f"{len(written)} line(s) the per-system answers leave without a part of "
+            "their own (listed in the Fix panel):")
     for one in written:
         log("  " + one["what"])
     return len(written)

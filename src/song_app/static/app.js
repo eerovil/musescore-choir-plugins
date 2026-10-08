@@ -1706,7 +1706,7 @@ async function panelClean(panel, song, slug, P, refresh) {
             const note = inp.parentElement.querySelector(".undernote");
             if (note) note.textContent = lost > 0
               ? `${inp.dataset.voices} lines here, ${inp.dataset.voices - lost} named — `
-                + (lost === 1 ? "the lowest is" : `the lowest ${lost} are`) + " dropped"
+                + (lost === 1 ? "the lowest gets" : `the lowest ${lost} get`) + " no part of its own"
               : "";
           }
         }
@@ -1780,9 +1780,9 @@ async function panelClean(panel, song, slug, P, refresh) {
             + "\n\nClean anyway?")) return;
         const lost = dropping();
         if (lost.length && !confirm(
-            `${lost.length} staff slot(s) carry more lines than they have names, and the unnamed lines will be DROPPED:\n\n`
+            `${lost.length} staff slot(s) carry more lines than they have names. An unnamed line gets no part of its own: a separate voice is DROPPED, and the lower notes of a chord stay in the named part's chords:\n\n`
             + lost.slice(0, 12).join("\n") + (lost.length > 12 ? `\n…and ${lost.length - 12} more` : "")
-            + "\n\nName each line (e.g. A1, A1b) to keep it. Clean anyway?")) return;
+            + "\n\nName each line (e.g. A1, A1b) to give it a part. Clean anyway?")) return;
         runBtn.disabled = true;
         appendLog("Saving assignments and cleaning…");
         try { await save(); await postJSON(`${P}/clean`, {}); }

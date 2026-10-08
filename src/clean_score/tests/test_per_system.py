@@ -671,11 +671,33 @@ def test_a_second_voice_of_rests_is_not_a_lost_line():
     assert dropped_voices(root, {0: {1: "A1"}}) == []
 
 
-def test_the_lower_notehead_of_a_chord_is_reported_as_one():
+def test_the_lower_notes_of_chords_under_one_name_are_reported_as_kept_in_the_chord():
+    """With one name the rebuild copies the chords whole: nothing is lost, but the
+    lower notes have no part of their own — the report says that, not "dropped"."""
+    answers = {0: {1: "S1"}}
     root = _score({1: [[["72"]], [[("72", "67"), ("74", "69")]]]}, breaks=(0,))
-    lost = dropped_voices(root, {0: {1: "S1"}})
-    assert [(d.system, d.voice, d.notes, d.stacked) for d in lost] == [(1, 1, 2, True)]
-    assert "lower notes of its chords" in lost[0].message()
+    lost = dropped_voices(root, answers)
+    assert [(d.system, d.voice, d.notes, d.stacked, d.kept_in_chord) for d in lost] == \
+        [(1, 1, 2, True, True)]
+    message = lost[0].message()
+    assert "lower notes of its chords (2 notes) stay in S1's chords" in message
+    assert "dropped" not in message and '"S1, S1b"' in message
+    clean_per_system(root, answers_from=lambda _l: answers)
+    assert _pitches(_by_part(root)["S1"], 1) == ["72", "67", "74", "69"]   # kept
+
+
+def test_a_chord_note_past_the_names_is_reported_as_dropped():
+    """Two names split the stack one notehead each, so a third notehead is lost."""
+    answers = {0: {1: "A2, A2b"}}
+    root = _score({1: [[[("74", "69", "62")]]]})
+    lost = dropped_voices(root, answers)
+    assert [(d.voice, d.notes, d.stacked, d.kept_in_chord) for d in lost] == \
+        [(2, 1, True, False)]
+    assert "note 3 from the top of its chords (1 note) was dropped" in lost[0].message()
+    assert '"A2, A2b, A2c"' in lost[0].message()
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A2"], 0) + _pitches(staves["A2b"], 0) == ["74", "69"]
 
 
 def test_a_borrowed_bar_leaves_the_base_parts_red_mark_behind():

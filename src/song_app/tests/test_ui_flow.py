@@ -165,8 +165,9 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     expect(page.get_by_role("button", name="Saved ✓")).to_be_visible()
 
     # --- clean: the server works in the background and pings the page when done ---
-    # The fixture's reading leaves two stray chord notes in system 4 unnamed, so the
-    # grid asks before dropping them (#330); this journey says yes.
+    # The fixture's reading names two of the four voices system 4 has on staff 1, so
+    # the grid asks before the other two (one note each) are dropped (#330); this
+    # journey says yes.
     page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Run clean").click()
     # The panel re-renders on the state ping, so wait for what that leaves behind:
@@ -249,7 +250,7 @@ def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers
 
     note = lambda system, staff: cell(system, staff).locator("xpath=following-sibling::div")
     expect(cell(0, 1)).to_have_class(re.compile(r"\bundernamed\b"))
-    expect(note(0, 1)).to_have_text("2 lines here, 1 named — the lowest is dropped")
+    expect(note(0, 1)).to_have_text("2 lines here, 1 named — the lowest gets no part of its own")
     expect(cell(1, 1)).to_have_class(re.compile(r"\bundernamed\b"))   # carried over
     expect(note(1, 1)).to_be_visible()
     expect(cell(0, 2)).not_to_have_class(re.compile(r"\bundernamed\b"))
@@ -268,7 +269,7 @@ def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers
     page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
     page.get_by_role("button", name="Run clean").click()
     assert asked, "cleaning with an unnamed line must confirm first"
-    assert "will be DROPPED" in asked[0] and "staff 1 · system 1" in asked[0], asked[0]
+    assert "DROPPED" in asked[0] and "stay in the named part" in asked[0] and "staff 1 · system 1" in asked[0], asked[0]
     assert "staff 1 · system 2 —" not in asked[0], asked[0]
 
 

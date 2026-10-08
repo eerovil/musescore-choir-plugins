@@ -158,6 +158,14 @@ class DroppedVoice:
     answered_in: int  # 0-based system the answer was typed in (== system unless inherited)
     stacked: bool  # the "voice" is the lower notehead of a chord, not a voice of its own
 
+    @property
+    def kept_in_chord(self) -> bool:
+        """The lower notes of chords on a staff given one name are not lost: with
+        nothing to split them between, the rebuild copies the chords whole, so they
+        stay in the named part's chords with no part of their own. With two or more
+        names the stack is split one notehead each, and one past the names is lost."""
+        return self.stacked and len(_labels(self.answer)) == 1
+
     def message(self) -> str:
         if self.stacked:
             lost = ("the lower notes of its chords" if self.voice == 1
@@ -167,13 +175,19 @@ class DroppedVoice:
         said = (f'"{self.answer}"' if self.answered_in == self.system
                 else f'"{self.answer}" (carried over from system {self.answered_in + 1})')
         names = _labels(self.answer)
+        named = names[0]
         names += [names[0] + chr(ord("a") + k) for k in range(len(names), self.voice + 1)]
         count = f"{self.notes} note" + ("" if self.notes == 1 else "s")
+        where = (f"System {self.system + 1} (bars {self.start}–{self.end}), staff "
+                 f"{self.staff_id}: {lost} ({count})")
+        if self.kept_in_chord:
+            return (f"{where} stay in {named}'s chords with no part of their own, because "
+                    f"the staff is named only {said}. Name them in the Clean grid "
+                    f'(e.g. "{", ".join(names)}") to split them, and clean again.')
         verb = "were" if self.stacked and self.voice == 1 else "was"
-        return (f"System {self.system + 1} (bars {self.start}–{self.end}), staff "
-                f"{self.staff_id}: {lost} ({count}) {verb} dropped, because the "
-                f"staff is named only {said}. Name every line in the Clean grid "
-                f'(e.g. "{", ".join(names)}") and clean again.')
+        return (f"{where} {verb} dropped, because the staff is named only {said}. "
+                f'Name every line in the Clean grid (e.g. "{", ".join(names)}") and '
+                f"clean again.")
 
     def to_dict(self) -> Dict:
         return {"system": self.system, "start": self.start, "end": self.end,
