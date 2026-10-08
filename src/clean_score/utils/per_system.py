@@ -651,7 +651,8 @@ def _fill_from_fallbacks(
 # --------------------------------------------------------------------------- #
 
 def _build_lyric_map(
-    bounds: List[Tuple[int, int]], decls: _Decls, parts: List[str]
+    bounds: List[Tuple[int, int]], decls: _Decls, parts: List[str],
+    staves: Optional[List[int]] = None,
 ) -> List[Dict]:
     """
     Per-system printed-staff -> output-staff(s) map for lyric placement.
@@ -671,6 +672,12 @@ def _build_lyric_map(
     words whichever lane of the printed staff S1 is on. It is kept out of "map" because
     "map" is the printed grouping: S1b is not on that staff, and a third id beside a
     divisi pair would break its above/below split.
+
+    Every entry also carries "source": {source staff id: [output ids, upper voice
+    first]} — which parts the grid put on which staff of the scanned input, in page
+    order rather than rank order — and, given `staves`, "staves": how many staves that
+    system prints. "map" ranks the staves, which is what the lyric JSON numbers; the
+    Fix panel needs the page position instead, to know which part homr read (#310).
     """
     part_id = {name: i + 1 for i, name in enumerate(parts)}
     fallbacks = _fallback_of(parts)
@@ -690,6 +697,11 @@ def _build_lyric_map(
             if ids:
                 pmap[printed_no] = ids
         entry: Dict = {"start": a + 1, "end": b + 1, "map": pmap}
+        source = {sid: [part_id[n] for _, n in sorted(items) if n in part_id]
+                  for sid, items in sorted(groups.items())}
+        entry["source"] = {sid: ids for sid, ids in source.items() if ids}
+        if staves is not None and sidx < len(staves):
+            entry["staves"] = staves[sidx]
         follow: Dict[int, List[int]] = {}
         for child, base in fallbacks.items():
             if child not in declared and base in declared:
@@ -773,6 +785,6 @@ def clean_per_system(
     for selector in _STRIP_SELECTORS:
         delete_all_elements_by_selector(root, selector)
 
-    lyric_map = _build_lyric_map(bounds, decls, parts)
+    lyric_map = _build_lyric_map(bounds, decls, parts, [len(l.staves) for l in layouts])
     _write_lyric_metadata(root, parts, lyric_map)
     return PerSystemResult(parts=parts, lyric_map=lyric_map)

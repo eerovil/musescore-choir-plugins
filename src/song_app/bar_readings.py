@@ -49,7 +49,7 @@ from src.clean_score import lyric_txt
 from src.clean_score.utils import score_fixes
 from src.clean_score.utils.score_fixes import FixError
 
-from . import pipeline, state
+from . import omr_systems, pipeline, state
 
 FIELD = "homr-bar-readings"
 #: What marks a `fixes.json` entry as a pick made here.
@@ -204,6 +204,76 @@ def _shift(found, entry: Dict) -> Optional[int]:
 _NOTE_SUFFIX = re.compile(r"-m(\d+)-c(\d+)$")
 
 
+def printed_staves(root: etree._Element) -> List[Tuple[int, int, Dict[int, List[int]], int]]:
+    """(first bar, last bar, {staff on the page: [output staves, upper voice first]}, staves).
+
+    Where each part was printed, keyed by its staff's position on the page from the
+    top — the numbering homr's fragment uses. A per-system clean records it as each
+    lyric-map entry's "source" (#310); its "map" will not do, since that ranks the
+    staves S<A<T<B for the lyric JSON, and a system printing T3 above B above T1/T2
+    would be read as T3 on the third staff. A score cleaned before "source" existed
+    says nothing, rather than a guess. An ordinary clean's lyricsStaffMap is keyed by
+    the input staff, which is the page position already. Empty with no record.
+    """
+    score = root.find(".//Score") if root.tag != "Score" else root
+    tags = {m.get("name"): m.text for m in (score.findall("metaTag") if score is not None else [])}
+    if (tags.get("lyricsSystemMap") or "").strip():
+        try:
+            out = []
+            for entry in json.loads(tags["lyricsSystemMap"]):
+                source = {int(k): [int(x) for x in v] for k, v in entry["source"].items()}
+                count = int(entry.get("staves") or max(source, default=0))
+                out.append((int(entry["start"]), int(entry["end"]), source, count))
+            return out
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return []
+    staves = lyric_txt._read_lyrics_staff_map(root)
+    return [(1, 10 ** 9, staves, len(staves))] if staves else []
+
+
+def printed_place(printed, measure: Optional[int], staff: Optional[int]) -> Tuple:
+    """(staff, staves, voice, voices) a part was printed on in a bar, or four Nones."""
+    if measure and staff:
+        for start, end, staves, count in printed:
+            if not start <= measure <= end:
+                continue
+            for number, outputs in staves.items():
+                if staff in outputs:
+                    return (number, count, outputs.index(staff) + 1, len(outputs))
+            break
+    return (None, None, None, None)
+
+
+def _fragment_staves(path: str) -> List[int]:
+    """How many staves each part of a fragment holds, in page order."""
+    try:
+        root = etree.parse(path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return []
+    return [len(omr_systems._staff_numbers(part)) for part in root.findall("part")]
+
+
+def _printed_on(printed, measure: int, part_staves: List[int], group: Dict) -> Optional[set]:
+    """The cleaned staves printed on the staff homr read a voice off, or None.
+
+    homr names the staff by its part and the staff inside it; counted down the
+    fragment that is the staff's position on the page, the key `printed_staves`
+    uses. A staff no part was assigned to is sung by nobody. None when the score
+    keeps no record, or names a staff the fragment does not have, since then the
+    two cannot be lined up and any part might be the one.
+    """
+    part, staff = int(group["part"]), int(group["staff"])
+    if not printed or part >= len(part_staves):
+        return None
+    number = sum(part_staves[:part]) + staff
+    for start, end, staves, _ in printed:
+        if start <= measure <= end:
+            if max(staves, default=0) > sum(part_staves):
+                return None
+            return set(staves.get(number, []))
+    return None
+
+
 def _staves(root: etree._Element) -> List[Tuple[int, str, etree._Element]]:
     names = {p.id: p.name for p in lyric_txt.lyric_parts(root)}
     out = []
@@ -354,11 +424,13 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
         return []
     root = etree.parse(cleaned).getroot()
     staves = _staves(root)
+    printed = printed_staves(root)
     picks, declined = _picks(song.dir), _declined(song)
     out: List[Dict] = []
     for system, start in systems:
         path = os.path.join(song.dir, system["musicxml"])
         claimed: Dict[int, set] = {}
+        part_staves = _fragment_staves(path)
         for oid, group in _groups(system, path).items():
             bars = whole_bars(group)
             if len(bars) < 2:
@@ -392,9 +464,14 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
                 continue
             # Doubled voices (one notehead, two stems) read alike, so the first
             # staff that matches and has not been offered this bar yet takes it.
+            # Without a record of where the parts were printed every staff is a
+            # candidate, as before.
             taken = claimed.setdefault(measure, set())
+            # Only the parts printed on the staff homr read: the same notes an
+            # octave away on another staff are another singer (#310).
+            allowed = _printed_on(printed, measure, part_staves, group)
             for sid, name, staff in staves:
-                if sid in taken:
+                if sid in taken or (allowed is not None and sid not in allowed):
                     continue
                 bar = _bar(staff, measure)
                 shift = _shift(_bar_reading(bar), {"moments": now}) if bar is not None else None

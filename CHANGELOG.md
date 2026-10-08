@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A problem card in the Fix stage also says which staff of the printed system the
+  part is on, and which voice of that staff ("Bar 3 of 7 · staff 2 of 4, only
+  voice"). A per-system song shows it after its next clean. (#310)
+- homr's other readings of an unsure bar are offered only on a part printed on
+  the staff homr read, so the same notes an octave away on another singer's staff
+  no longer pick up the choices. (#310)
 - When a repeat ends, the Fix stage asks whether the page prints "1." and "2."
   brackets there and how many bars the "1." covers, with one tap per length. homr
   does not read the brackets, and without them the practice track played the "1."
