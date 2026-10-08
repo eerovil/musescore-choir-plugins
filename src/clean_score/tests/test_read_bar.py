@@ -92,3 +92,78 @@ def test_a_note_is_named_the_way_the_page_spells_it(pitch, tpc, expected):
 def test_without_a_spelling_it_falls_back_to_sharps():
     assert note_name(63) == "D#4"
     assert note_name(60) == "C4"
+
+
+# #357: what an agent writing a fix through the API kept getting wrong.
+
+TIED = """<museScore><Score>
+<Part><trackName>T1</trackName><Staff id="1"/></Part>
+<Staff id="1">
+<Measure><voice>
+  <Chord><durationType>quarter</durationType><Note><pitch>60</pitch><tpc>14</tpc></Note></Chord>
+  <Rest><durationType>quarter</durationType></Rest>
+  <Tuplet><normalNotes>2</normalNotes><actualNotes>3</actualNotes></Tuplet>
+  <Chord><durationType>eighth</durationType><Note><pitch>62</pitch><tpc>16</tpc></Note></Chord>
+  <Chord><durationType>eighth</durationType><Note><pitch>64</pitch><tpc>18</tpc></Note></Chord>
+  <Chord><durationType>eighth</durationType><Note><pitch>64</pitch><tpc>18</tpc></Note></Chord>
+  <endTuplet/>
+  <Chord><durationType>quarter</durationType>
+    <Note><Spanner type="Tie"><Tie/><next><location><measures>1</measures><fractions>-1/4</fractions></location></next></Spanner><pitch>65</pitch><tpc>13</tpc></Note>
+    <Note><pitch>60</pitch><tpc>14</tpc></Note></Chord>
+</voice></Measure>
+<Measure><voice>
+  <Chord><durationType>whole</durationType>
+    <Note><Spanner type="Tie"><prev><location><measures>-1</measures><fractions>1/4</fractions></location></prev></Spanner><pitch>65</pitch><tpc>13</tpc></Note></Chord>
+</voice></Measure>
+</Staff>
+</Score></museScore>"""
+
+
+@pytest.fixture
+def tied():
+    return etree.fromstring(TIED.encode())
+
+
+def test_a_tie_across_the_barline_shows_on_both_notes(tied):
+    """Agents recorded ties that were already there, because `/bar` did not show them."""
+    last = read_bar(tied, 1, 1)[-1]
+    assert last["pitches"] == [
+        {"pitch": 65, "name": "F4", "tied_to_next": True, "tied_from_prev": False},
+        {"pitch": 60, "name": "C4", "tied_to_next": False, "tied_from_prev": False}]
+    assert read_bar(tied, 1, 2)[0]["pitches"][0]["tied_from_prev"] is True
+
+
+def test_a_tie_inside_the_bar_shows_on_both_notes(tied):
+    apply_fixes(tied, [{"kind": "tie", "staff": 1, "measure": 1, "index": 2, "pitch": 64,
+                        "from": score_fixes.bar_tokens(tied, 1, 1), "why": "..."}])
+    read = read_bar(tied, 1, 1)
+    assert read[2]["pitches"][0]["tied_to_next"] and read[3]["pitches"][0]["tied_from_prev"]
+    assert not read[1]["pitches"][0]["tied_to_next"]
+
+
+def test_each_chord_says_where_it_stands_in_from(tied):
+    """`index` counts chords, `from` lists rests and brackets too; `at` joins the two."""
+    tokens = score_fixes.bar_tokens(tied, 1, 1)
+    items = score_fixes.bar_items(tied, 1, 1)
+    assert [i["token"] for i in items] == tokens
+    assert [i["index"] for i in items] == [0, None, None, 1, 2, 3, None, 4]
+    for note in read_bar(tied, 1, 1):
+        assert tokens[note["at"]] == note["token"]
+        assert items[note["at"]]["index"] == note["index"]
+
+
+def test_a_slur_end_is_shown(bar8):
+    apply_fixes(bar8, [{"kind": "slur", "staff": 1, "measure": 1, "index": 1, "span": 1,
+                        "why": "..."}])
+    assert [n["ends_slur"] for n in read_bar(bar8, 1, 1)] == [False, False, True]
+
+
+def test_a_wrong_index_is_answered_with_the_chords(tied):
+    """A first wrong guess shows the right one: rests do not count."""
+    with pytest.raises(FixError) as err:
+        apply_fixes(tied, [{"kind": "untie", "staff": 1, "measure": 2, "index": 1,
+                            "pitch": 65, "from": ["whole:65"], "why": "..."}])
+    assert "has 1 chords, no index 1" in str(err.value)
+    assert "index counts chords only, not rests: 0 = whole:65" in str(err.value)
+    with pytest.raises(FixError, match="not rests: 0 = quarter:60, 1 = eighth:62"):
+        apply_fixes(tied, [{"kind": "undot", "staff": 1, "measure": 1, "index": 9, "why": "."}])
