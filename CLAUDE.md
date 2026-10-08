@@ -1058,7 +1058,10 @@ state model are in `DESIGN.md`.
   `refresh()` calls instead of `drawPanel()`, so the warnings, and each box's text
   (re-read off `/lyric-grid`, `_` for an empty slot), change in the boxes already
   there, the scroll and the focus stay, and the `state` ping the file watcher sends
-  after the import's own write cannot redraw it either. The hook refuses (and the
+  after the import's own write cannot redraw it either — and `api_lyrics` claims
+  that write (the new `cleaned_fingerprint` saved under `song_lock` before the slow
+  health check), so the watcher normally sends none, while the page ignores a
+  "score moved" during an import (`lyricImporting`). The hook refuses (and the
   panel is drawn afresh) when the cleaned fingerprint moved some other way. The
   viewer's cleaned-system pictures (One system, which now shows the cleaned system
   with its words under the printed one, and Compare) carry a version per system in
@@ -1068,7 +1071,8 @@ state model are in `DESIGN.md`.
   The server still renders the whole score once and crops (4.6s for Kantajani's 37
   bars); engraving one system alone was refused as not worth cutting slurs and ties
   at the seams. The old picture stays under an "Updating…" note until the new one
-  has loaded (`swapSystemImage`, two at a time). Blank cells are omitted, so this editor expresses a lyric line starting in
+  has loaded (`swapSystemImage`, two at a time); a picture that failed is asked for
+  again the next time its system is wanted. Blank cells are omitted, so this editor expresses a lyric line starting in
   a system, not an instruction to clear one isolated cell.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the

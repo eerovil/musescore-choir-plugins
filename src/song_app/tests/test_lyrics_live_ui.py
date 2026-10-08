@@ -143,6 +143,9 @@ class Song:
         self.hold = False          # hold new cleaned pictures back
         self.held = []
         self.imports = []
+        self.hold_import = False   # keep the import's reply back until the test says
+        self.held_imports = []
+        self.fail = set()          # (system, version) pictures that fail to engrave
         bounds = [{"index": i, "page": 1, "top": (i - 1) / SYSTEMS, "bottom": i / SYSTEMS,
                    "measure_start": 4 * i - 3, "measure_end": 4 * i}
                   for i in range(1, SYSTEMS + 1)]
@@ -161,6 +164,12 @@ class Song:
             route.fulfill(response=res, body=json.dumps(data))
 
         def lyrics(route):
+            if self.hold_import:
+                self.held_imports.append(route)
+                return
+            answer(route)
+
+        def answer(route):
             self.imports.append(json.loads(route.request.post_data))
             for si, row in self.imports[-1]["cells"].items():
                 grid["cells"].setdefault(si, {}).update(row)
@@ -179,12 +188,17 @@ class Song:
         def cleaned(route):
             m = re.search(r"/cleaned-system/(\d+)\?.*v=([^&]*)", route.request.url)
             self.cleaned.append((int(m.group(1)), m.group(2)))
-            if self.hold:
+            if (int(m.group(1)), m.group(2)) in self.fail:
+                self.fail.discard((int(m.group(1)), m.group(2)))
+                route.fulfill(status=500, content_type="application/json",
+                              body=json.dumps({"detail": "MuseScore said no"}))
+            elif self.hold:
                 self.held.append(route)
             else:
                 route.fulfill(body=OLD if m.group(2) == "fp1" else NEW,
                               content_type="image/png")
 
+        self.answer = answer
         page.route(re.compile(rf"/api/songs/{re.escape(slug)}$"), song_json)
         page.route(re.compile(rf"/api/songs/{re.escape(slug)}/lyrics$"), lyrics)
         page.route(re.compile(r"/lyric-grid$"), lambda route: route.fulfill(
@@ -331,3 +345,47 @@ def test_a_phone_keeps_its_place_too(live, page):
     page.locator(".onesystem .muted", has_text="Cleaned system 7, with lyrics").wait_for()
     page.locator(".onesystem .cmpcleaned img").wait_for()
     _shot(page, "phone-one-system-after-import.png")
+
+
+def test_a_ping_before_the_import_answers_does_not_reload_everything(live, page):
+    """The watcher can tell the page the score moved before the import's own reply
+    arrives. The page waits for the import to say what it changed."""
+    page.set_viewport_size(DESKTOP)
+    song = Song(page, live[1])
+    _open(page, live)
+    page.locator(".viewtabs .vtab", has_text=re.compile(r"^Compare$")).first.click()
+    _wait_for(page, lambda: page.locator(".compare .cmpimg[alt^='cleaned system']").count()
+              == SYSTEMS, what="the cleaned systems never all arrived")
+    seen = len(song.cleaned)
+
+    song.hold_import = True
+    _box(page, 5, "T").fill("la-la lu lu-la")
+    _import(page)
+    _wait_for(page, lambda: song.held_imports, what="the import never left")
+    song.fingerprint = "fp2"           # the score is already rewritten on disk
+    _ping(page, live)
+    page.wait_for_timeout(300)
+    assert song.after(seen) == [], "a ping mid-import reloaded the pictures"
+
+    song.answer(song.held_imports.pop())
+    page.locator(".lyerr", has_text="m21–24").wait_for()
+    _wait_for(page, lambda: song.after(seen) == [6, 7], what="the changed systems were not fetched")
+    _ping(page, live)
+    page.wait_for_timeout(300)
+    assert song.after(seen) == [6, 7]
+
+
+def test_a_picture_that_failed_is_asked_for_again(live, page):
+    page.set_viewport_size(DESKTOP)
+    song = Song(page, live[1])
+    song.fail.add((3, "fp1"))
+    _open(page, live)
+    _box(page, 2, "B").click()
+    one = page.locator(".onesystem")
+    one.locator(".liveerr", has_text="MuseScore said no").wait_for()
+    asked = song.cleaned.count((3, "fp1"))
+
+    _box(page, 2, "T").click()        # the same system, wanted again
+    one.locator(".cmpcleaned img").wait_for()
+    assert song.cleaned.count((3, "fp1")) == asked + 1
+    assert one.locator(".liveerr").count() == 0

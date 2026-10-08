@@ -698,6 +698,9 @@ const shownSystem = {};
 // nobody announced (a re-clean, an edit in MuseScore) moves on every system.
 const LYRICS_EVENT = "song-lyrics-imported";
 let sysVer = { slug: null, base: "", by: {}, seen: "" };
+// Set while an import is on its way: the import names what it changed when it
+// lands, so a refresh that sees the new fingerprint first must not call it "all".
+let lyricImporting = false;
 
 function resetSysVersions(slug, fp) {
   sysVer = { slug, base: fp || "", by: {}, seen: fp || "" };
@@ -719,6 +722,7 @@ function cleanedSystemsChanged(slug, fp, systems) {
 
 // The score moved; if nobody said which systems, all of them did.
 function cleanedScoreMoved(slug, fp) {
+  if (lyricImporting) return;
   if (sysVer.slug === slug && sysVer.seen === fp) return;
   cleanedSystemsChanged(slug, fp, "all");
 }
@@ -761,13 +765,14 @@ function swapSystemImage(box, src, n) {
       };
       img.onerror = () => {
         URL.revokeObjectURL(local);
-        if (current()) { note.remove(); box.append(el("div", { className: "liveerr" }, "The picture could not be shown.")); }
+        if (current()) { box._src = null; note.remove(); box.append(el("div", { className: "liveerr" }, "The picture could not be shown.")); }
         done();
       };
       img.src = local;
     });
   }, (e) => {
     if (!current()) return;
+    box._src = null; // a failed picture is asked for again the next time it is wanted
     note.remove();
     box.append(el("div", { className: "liveerr" },
       `Could not engrave system ${n}${e.message ? ": " + e.message : "."}`));
@@ -921,6 +926,11 @@ async function compareView(view, slug) {
     for (const el_ of Object.values(byIndex)) el_.classList.remove("cmpon");
     row.classList.add("cmpon");
     queue.front(row._slow);
+    // A cleaned picture that failed is asked for again when its system is wanted.
+    if (!row._cleaned._src || row._cleaned.querySelector(".cmpslot.err")) {
+      row._cleaned._src = null;
+      swapSystemImage(row._cleaned, cleanedSystemSrc(slug, n), n);
+    }
     row.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 }
@@ -1289,7 +1299,8 @@ function viewer(song, slug, panes, rebuild, stage, previewSettings) {
           // The printed system, and under it the same system of the cleaned score
           // once it has words on it: that is the pair a lyric is checked against.
           v._setSystem = (n) => {
-            if (n === v._n && v._shownLyrics === !!song.lyrics) return; // already there
+            // Already there -- unless its cleaned picture failed, which is asked again.
+            if (n === v._n && v._shownLyrics === !!song.lyrics && (!v._box || v._box._src)) return;
             v._n = shownSystem[slug] = n;
             v._shownLyrics = !!song.lyrics;
             v._box = null;
@@ -2503,7 +2514,7 @@ async function lyricsPaste(panel, song, P, refresh) {
       el("button", { className: "primary", onclick: async (ev) => {
         const btn = ev.currentTarget;
         btn.disabled = true;
-        live.busy = true;
+        live.busy = lyricImporting = true;
         appendLog("Importing lyrics…");
         try {
           const fresh = await postJSON(`${P}/lyrics`, { json: ta.value });
@@ -2516,7 +2527,7 @@ async function lyricsPaste(panel, song, P, refresh) {
           // Pasted JSON can touch any system, so every one is fetched again.
           cleanedSystemsChanged(song.slug, song.cleaned_fingerprint, "all");
         } catch (e) { appendLog(e.message, true); }
-        live.busy = false;
+        live.busy = lyricImporting = false;
         btn.disabled = false;
         refresh();
       }}, "3. Import lyrics")));
@@ -2660,7 +2671,7 @@ async function lyricsManual(panel, song, P, refresh) {
       appendLog("Nothing typed yet.", true); return;
     }
     btn.disabled = true;
-    live.busy = true;
+    live.busy = lyricImporting = true;
     appendLog("Importing lyrics…");
     try {
       const fresh = await postJSON(`${P}/lyrics`, { cells: map });
@@ -2673,7 +2684,7 @@ async function lyricsManual(panel, song, P, refresh) {
       imported = map;
       await showLanded();
     } catch (e) { appendLog(e.message, true); }
-    live.busy = false;
+    live.busy = lyricImporting = false;
     btn.disabled = false;
     // Pressing the button took the focus (and disabling it dropped it on the page);
     // give it back to the box being typed in, without scrolling to it.
