@@ -878,7 +878,9 @@ state model are in `DESIGN.md`.
   because everything that does can be satisfied by a self-consistent wrong answer:
   a repair pass once "fixed" a 4/4 bar by padding every voice to 9/8, and health,
   the lyric arithmetic and the tests were all happy. Measure 1 is exempt (an
-  anacrusis prints no signature) and an already-uneven bar is left to
+  anacrusis prints no signature), and so is a last bar that completes it — its
+  length plus the pickup's makes one bar of the meter in force at the end (#355).
+  An already-uneven bar is left to
   `malformed-measure` rather than reported twice. It also stays out of music with
   no meter to violate: a score carrying an oversized nominal in place of a
   signature (one here declares 16/2 — eight whole notes — for music printed

@@ -247,3 +247,63 @@ def test_a_grace_note_takes_no_time_in_the_bar(tmp_path):
     voice.insert(0, grace)
     etree.ElementTree(root).write(path, encoding="UTF-8", xml_declaration=True)
     assert _kinds(path, "malformed-measure") == []
+
+
+def _meter_findings(path):
+    """Listed and collapsed alike, so an exemption cannot pass by being collapsed."""
+    return [i for i in health.scan(path) if i["kind"] in ("unprinted-meter", "meter-collapsed")]
+
+
+def _score_with_meters(tmp_path, measures, lens, sigs):
+    """Like `_score`, with a TimeSig at every bar `sigs` names ({index: (n, d)})."""
+    path = _score(tmp_path, measures, sig=None, lens=lens)
+    tree = etree.parse(path)
+    for mi, measure in enumerate(tree.getroot().find("Score/Staff").findall("Measure")):
+        if mi in sigs:
+            for v in measure.findall("voice"):
+                ts = etree.Element("TimeSig")
+                etree.SubElement(ts, "sigN").text = str(sigs[mi][0])
+                etree.SubElement(ts, "sigD").text = str(sigs[mi][1])
+                v.insert(0, ts)
+    tree.write(path, encoding="UTF-8", xml_declaration=True)
+    return path
+
+
+def test_a_last_bar_that_completes_the_pickup_is_exempt(tmp_path):
+    """1/4 pickup, closing 3/4 bar in 4/4: correct engraving, not a finding (#355)."""
+    path = _score(tmp_path, [[2]] + [[8]] * 3 + [[6]], lens=["1/4", None, None, None, "3/4"])
+    assert not _meter_findings(path)
+
+
+def test_a_compound_meter_pickup_is_completed_the_same_way(tmp_path):
+    """Metsämiehen juomalaulu's shape: 9/8 with a 4/8 pickup and a 5/8 last bar."""
+    path = _score(tmp_path, [[4]] + [[9]] * 3 + [[5]], sig=(9, 8),
+                  lens=["4/8", None, None, None, "5/8"])
+    assert not _meter_findings(path)
+
+
+def test_a_last_bar_that_does_not_complete_the_pickup_is_flagged(tmp_path):
+    """Maamme's shape: a 3/8 pickup and a 2/4 last bar make 7/8, not 3/4."""
+    path = _score(tmp_path, [[3]] + [[6]] * 3 + [[4]], sig=(3, 4),
+                  lens=["3/8", None, None, None, "2/4"])
+    found = _kinds(path, "unprinted-meter")
+    assert [i["measure"] for i in found] == [5]
+
+
+def test_a_short_last_bar_without_a_pickup_is_flagged(tmp_path):
+    path = _score(tmp_path, [[8], [8], [6]], lens=[None, None, "3/4"])
+    assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [3]
+
+
+def test_only_the_last_bar_completes_the_pickup(tmp_path):
+    """The same 3/4 bar in the middle of the song is still flagged."""
+    path = _score(tmp_path, [[2], [6], [8], [8], [8]], lens=["1/4", "3/4", None, None, None])
+    assert [i["measure"] for i in _kinds(path, "unprinted-meter")] == [2]
+
+
+def test_the_meter_at_the_end_decides(tmp_path):
+    """4/4 changing to 3/4: a 1/4 pickup is completed by a 2/4 last bar."""
+    path = _score_with_meters(tmp_path, [[2], [8], [6], [6], [4]],
+                              lens=["1/4", None, None, None, "2/4"],
+                              sigs={0: (4, 4), 2: (3, 4)})
+    assert not _meter_findings(path)

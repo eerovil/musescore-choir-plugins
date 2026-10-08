@@ -11,7 +11,8 @@ Validation only; never mutates the score. Findings:
     here can be satisfied by a wrong answer that is merely self-consistent. It
     exists because a repair pass once "fixed" a 4/4 bar by padding every voice to
     9/8 and passed everything. It stays out of music that has no meter to violate:
-    scores carrying an oversized nominal instead of a signature.
+    scores carrying an oversized nominal instead of a signature. Bar 1 (a
+    pickup) is exempt, and so is a last bar that completes it (#355).
   - meter-collapsed: the same finding, counted instead of listed, for a score
     whose bars mostly declare their own length. See below — this used to be
     silence, and silence was the bug.
@@ -142,6 +143,21 @@ def _voice_length(voice: etree._Element, nominal: Fraction) -> tuple[Fraction, b
     return total, has_chord, measure_rest
 
 
+def _pickup_length(measure: etree._Element) -> Optional[Fraction]:
+    """The length of bar 1 when it is a pickup, i.e. shorter than its signature."""
+    length = _parse_fraction(measure.get("len"))
+    if length is None:
+        return None
+    sig = Fraction(4, 4)                 # what `scan` assumes before any TimeSig
+    ts = measure.find(".//TimeSig")
+    if ts is not None:
+        n = _parse_fraction(ts.findtext("sigN"))
+        d = _parse_fraction(ts.findtext("sigD"))
+        if n and d:
+            sig = Fraction(int(n), int(d))
+    return length if length < sig else None
+
+
 def scan(cleaned_path: str) -> List[Dict]:
     """Return a list of issue dicts (without status) for the cleaned score."""
     with open(cleaned_path, "r", encoding="utf-8") as f:
@@ -168,7 +184,9 @@ def scan(cleaned_path: str) -> List[Dict]:
         sid = int(staff.get("id", "0"))
         label = staff_name.get(sid) or f"staff {sid}"
         sig = Fraction(4, 4)
-        for mi, measure in enumerate(staff.findall("Measure"), start=1):
+        measures = staff.findall("Measure")
+        pickup = _pickup_length(measures[0]) if measures else None
+        for mi, measure in enumerate(measures, start=1):
             # Time signature can change at a measure (in any voice).
             ts = measure.find(".//TimeSig")
             if ts is not None:
@@ -207,12 +225,16 @@ def scan(cleaned_path: str) -> List[Dict]:
             # exempt: an anacrusis is a real engraving feature with no signature.
             # Only when the bar is otherwise sound: an uneven bar is already
             # reported, and this is about the case nothing else can see -- every
-            # voice agreeing on a meter that was never printed.
+            # voice agreeing on a meter that was never printed. The last bar is
+            # the other half of the pickup when the two add up to one bar of the
+            # meter in force at the end, and is exempt on the same terms (#355).
             if mi > 1 and ts is None and not uneven and sig <= _PLAUSIBLE_METER:
                 agreed = {t for t, has, _ in
                           (_voice_length(v, nominal) for v in voices) if has}
                 if len(agreed) == 1 and agreed != {sig}:
                     got = agreed.pop()
+                    if mi == len(measures) and pickup is not None and pickup + got == sig:
+                        continue
                     found = {
                         "id": f"unprinted-meter-m{mi}-s{sid}",
                         "kind": "unprinted-meter",

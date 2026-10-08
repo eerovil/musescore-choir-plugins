@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The health check no longer flags a song's short last bar when it completes the
+  opening pickup (the two add up to one full bar). Every song starting with a
+  pickup had one open finding per staff on its last bar that no fix could answer;
+  a last bar that does not add up is still flagged. (#355)
 - A `bar` fix can now give a voice the scan made too long a bar that fills the
   time signature. False triplets had left Lasinkuultava laulu's T1 bar 9 7/6 long
   in 4/4, a length no writable bar adds up to, so MuseScore reset it to a rest and
