@@ -55,15 +55,15 @@ BARS = {
         + _chord("quarter", 62),
         _chord("quarter", 56) + _chord("eighth", 55) + _chord("eighth", 56)
         + _chord("half", 58),
-        RED + _chord("quarter", 55, inside=STACCATO + ACCENT) + BREATH
-        + _chord("quarter", 55) + DOLCE + _chord("quarter", 55) + _chord("quarter", 55)],
+        RED + _chord("quarter", 55, inside=STACCATO + ACCENT) + _chord("quarter", 55)
+        + BREATH + DOLCE + _chord("quarter", 55) + _chord("quarter", 55)],
     # B1: Mieslaulu's fermata on the B flat, and Annin laulu's two in bar 19 — the
     # one on the third eighth is the scan's.
     3: [HEAD + _chord("quarter", 53) + _chord("quarter", 46) + FERMATA
         + _chord("quarter", 58) + _chord("quarter", 59),
         _chord("eighth", 51) + _chord("eighth", 53) + FERMATA + _chord("eighth", 51)
         + _chord("eighth", 53) + FERMATA + _chord("quarter", 55) + _rest("quarter"),
-        _chord("whole", 48)],
+        _chord("whole", 48) + BREATH],
 }
 
 
@@ -132,6 +132,7 @@ def test_subtype_narrows_what_goes(root):
 @pytest.mark.parametrize("staff, measure, index, what, tag", [
     (2, 3, 0, "articulation", "Articulation"),
     (2, 3, 1, "breath", "Breath"),
+    (3, 3, 0, "breath", "Breath"),
     (2, 3, 2, "staff text", "StaffText"),
     (1, 3, 0, "tempo", "Tempo"),
     (1, 3, 0, "rehearsal mark", "RehearsalMark"),
@@ -160,6 +161,12 @@ def test_a_red_mark_is_refused_and_pointed_at_unmark(root):
     with pytest.raises(FixError, match="red mark; use 'unmark'"):
         apply_fixes(root, [_fix(root, 2, 3, 0, "staff text")])
     assert _count(root, 2, 3, "StaffText") == 2
+
+
+def test_a_breath_is_read_off_the_chord_it_follows_not_the_next_one(root):
+    with pytest.raises(FixError, match="no breath on chord 2"):
+        apply_fixes(root, [_fix(root, 2, 3, 2, "breath")])
+    assert _count(root, 2, 3, "Breath") == 1
 
 
 @pytest.mark.parametrize("staff, measure, index, says", [
@@ -195,10 +202,13 @@ def test_read_bar_lists_each_chords_marks(root):
     bar = read_bar(root, 2, 3)
     assert bar[0]["marks"] == ["articulation:articStaccatoAbove",
                                "articulation:articAccentAbove"]
+    # MuseScore writes a breath mark after the chord it follows (#352 review).
     assert bar[1]["marks"] == ["breath:breathMarkComma"]
     assert bar[2]["marks"] == ["staff text:dolce"]
     assert "marks" not in bar[3]
     assert read_bar(root, 1, 1)[2]["marks"] == ["fermata:fermataAbove"]
+    # One at the end of a bar belongs to its last chord.
+    assert read_bar(root, 3, 3)[0]["marks"] == ["breath:breathMarkComma"]
     assert read_bar(root, 1, 3)[0]["marks"] == ["tempo", "rehearsal mark:A"]
 
 

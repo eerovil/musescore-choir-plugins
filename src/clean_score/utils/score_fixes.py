@@ -457,10 +457,11 @@ def _unslur(root: etree._Element, staff_id: int, measure_no: int, index: int,
 
 
 #: What `delete` may take off a chord (#352): the element, and whether it is kept
-#: inside the chord or in the voice just ahead of it. Taking any of these out never
+#: inside the chord, in the voice just ahead of it, or -- a breath mark, which MuseScore
+#: writes after the chord it follows, even at the end of a bar -- just after it. Taking any of these out never
 #: needs anything else in the score changed.
 _DELETABLE = {"fermata": ("Fermata", "before"), "articulation": ("Articulation", "inside"),
-              "breath": ("Breath", "before"), "staff text": ("StaffText", "before"),
+              "breath": ("Breath", "after"), "staff text": ("StaffText", "before"),
               "tempo": ("Tempo", "before"), "rehearsal mark": ("RehearsalMark", "before")}
 #: What `delete` refuses, and where to go instead.
 _NOT_DELETABLE = {
@@ -490,6 +491,13 @@ def _marks_on(chord: etree._Element, tag: str, where: str) -> List[etree._Elemen
     if where == "inside":
         return chord.findall(tag)
     out = []
+    if where == "after":
+        el = chord.getnext()
+        while el is not None and el.tag not in ("Chord", "Rest"):
+            if el.tag == tag:
+                out.append(el)
+            el = el.getnext()
+        return out
     el = chord.getprevious()
     while el is not None and el.tag not in ("Chord", "Rest"):
         if el.tag == tag:
