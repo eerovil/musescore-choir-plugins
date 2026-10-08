@@ -568,7 +568,9 @@ Key test modules:
   not losing the pitch offer), and the slur answers (drawn across the barline, marks
   off, back after a re-clean, "no slur" adding nothing, refusals). The second is the
   browser: one card for a bar with both kinds of doubt, a slur answered in words, and
-  a phone. #295 rewrote their reading half around whole bars: the ranking, the second
+  a phone. A tap keeps the reader's place (#329): the next card lands where the
+  answered one stood, desktop and phone, since a redraw otherwise left the panel at
+  its bottom. #295 rewrote their reading half around whole bars: the ranking, the second
   reading always **b**, picking it writing the bar afresh and coming back on a rebuild,
   an octave-shifted tenor, an earlier pick counting as decided, and in the browser six
   shown with the rest behind "More". `test_bar_fix.py` pins the `bar` kind itself.
