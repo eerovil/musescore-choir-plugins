@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- When a repeat ends, the Fix stage asks whether the page prints "1." and "2."
+  brackets there and how many bars the "1." covers, with one tap per length. homr
+  does not read the brackets, and without them the practice track played the "1."
+  bars on both passes. (#319)
 - Each part video uploaded to YouTube says in its description which staff the part
   is sung from (`stemmanauha-staff: 2/5`), so the practice site can zoom a phone to
   the right staff even when two parts share one. `backfill_staff_lines.py` adds the

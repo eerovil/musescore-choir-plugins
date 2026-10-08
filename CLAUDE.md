@@ -537,6 +537,12 @@ Key test modules:
   refuses a bar that already opens one. The browser half is the card on a phone.
   `test_omr_systems.py` carries the assembly half (a sign read on some staves written
   on all, and MuseScore keeping it).
+- `src/song_app/tests/test_volta_question.py` / `test_volta_question_ui.py` — added for
+  #319: an end repeat with no bracket over it is asked about once, offering a "1."
+  bracket of 1-4 bars (never reaching the repeat's own first bar) and "2." over the bar
+  after; a pick writes both and comes back on a re-clean; **a** stays answered; the
+  `volta` kind writes the same elements MuseScore wrote for Shakkitarina's hand-made
+  brackets, refuses what it cannot draw, and (with MuseScore) exports as real endings.
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index
@@ -1234,6 +1240,15 @@ state model are in `DESIGN.md`.
   The choices are the first bar of each printed system in between, as words; a pick
   is a `repeat` entry in `fixes.json` (a start sign on every staff), and **a**, "no
   start sign on the page", is kept in `.song.json` (`repeats.kept`) so it is asked once.
+  **So is a repeat with no brackets** (#319, `problems.volta_questions`): homr reads no
+  volta brackets at all — on Shakkitarina they stand above the chord names, past the
+  room homr keeps above a staff — and a repeat without them looks the same in the
+  score, so **every** end repeat with no bracket over it is asked once. The choices are
+  "1." over the last 1-4 bars; a pick is a `volta` entry (`score_fixes._add_volta`,
+  on the top staff, where MuseScore keeps voltas) and "2." is always one bar, since
+  only the "1." length changes what is played. **a**, no brackets, is kept in
+  `.song.json` (`voltas.kept`). Kantajani bar 18's "1. kerta / 2. kerta" is not a
+  volta — it is two versions of one bar for one voice, printed as text.
   **#295 replaced the separate length and pitch choices with whole bars**, because
   picking them one after the other mixed them up (the pitch options were drawn with
   the old lengths). `bar_readings.whole_bars` pairs every reading of the lengths with

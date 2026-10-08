@@ -96,6 +96,15 @@ already opens a repeat refuses it.
 
     {"kind": "repeat", "measure": 46, "why": "the page prints |: at bar 46"}
 
+`volta` (#319) puts the "1." and "2." brackets over an end repeat: "1." over the
+`bars` bars ending at `measure`, which must carry the end repeat, and "2." over the
+one bar after it. Only the "1." length changes what is played -- the second pass
+skips those bars -- so the "2." bracket is always one bar. MuseScore keeps a volta
+on the top staff only, so that is where it goes. A bar already under a bracket
+refuses it, and so does a "2." bracket with no bar after it to close on.
+
+    {"kind": "volta", "measure": 13, "bars": 2, "why": "the page prints 1. over 12-13"}
+
 Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
@@ -114,7 +123,7 @@ that the judgement survives the next rebuild.
 """
 import logging
 from fractions import Fraction
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
 
@@ -858,6 +867,71 @@ def _start_repeat(root: etree._Element, measure_no: int) -> str:
     return f"repeat starts here on all {len(bars)} staves"
 
 
+def volta_spans(staff: etree._Element) -> List[Tuple[int, int]]:
+    """Each volta on a staff as ``(first bar, last bar)``, bars numbered from 1."""
+    spans = []
+    for number, measure in enumerate(staff.findall("Measure"), start=1):
+        for spanner in measure.iter("Spanner"):
+            if spanner.get("type") != "Volta" or spanner.find("Volta") is None:
+                continue
+            length = spanner.findtext("next/location/measures")
+            spans.append((number, number + max(int(length or 1), 1) - 1))
+    return spans
+
+
+def _volta_spanner(volta: Optional[Dict[str, str]], step: int) -> etree._Element:
+    """One end of a volta: the start carries the bracket, the end only points back."""
+    spanner = etree.Element("Spanner", type="Volta")
+    if volta is not None:
+        body = etree.SubElement(spanner, "Volta")
+        for tag, text in volta.items():
+            etree.SubElement(body, tag).text = text
+    link = etree.SubElement(spanner, "next" if volta is not None else "prev")
+    etree.SubElement(etree.SubElement(link, "location"), "measures").text = str(step)
+    return spanner
+
+
+def _add_volta(root: etree._Element, measure_no: int, bars: int) -> str:
+    """Put "1." over ``bars`` bars ending at ``measure_no`` and "2." over the next bar."""
+    staff = next((s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None),
+                 None)
+    if staff is None:
+        raise FixError("the score has no staves")
+    measures = staff.findall("Measure")
+    first = measure_no - bars + 1
+    if bars < 1 or first < 1:
+        raise FixError(f"a 1. bracket of {bars} bar(s) cannot end at bar {measure_no}")
+    if measure_no + 2 > len(measures):
+        raise FixError("the 2. bracket needs a bar after it to close on")
+    if measures[measure_no - 1].find("endRepeat") is None:
+        raise FixError("no repeat ends here")
+    taken = [(a, b) for a, b in volta_spans(staff) if a <= measure_no + 1 and b >= first]
+    if taken:
+        raise FixError(f"bars {taken[0][0]}-{taken[0][1]} already have a bracket")
+
+    def at_head(bar: etree._Element, *spanners: etree._Element) -> None:
+        voice = bar.find("voice")
+        if voice is None:
+            voice = etree.SubElement(bar, "voice")
+        # After the spanners already there, so an end still comes before a start.
+        at = 0
+        for index, child in enumerate(voice):
+            if child.tag == "Spanner":
+                at = index + 1
+            else:
+                break
+        for offset, spanner in enumerate(spanners):
+            voice.insert(at + offset, spanner)
+
+    at_head(measures[first - 1], _volta_spanner(
+        {"endHookType": "1", "beginText": "1.", "endings": "1"}, bars))
+    at_head(measures[measure_no], _volta_spanner(None, -bars),
+            _volta_spanner({"beginText": "2.", "endings": "2"}, 1))
+    at_head(measures[measure_no + 1], _volta_spanner(None, -1))
+    span = f"bar {first}" if bars == 1 else f"bars {first}-{measure_no}"
+    return f"1. over {span}, 2. over bar {measure_no + 1}"
+
+
 def free_text(fixes: List[Dict]) -> List[str]:
     """The sentences among the recorded fixes, in file order.
 
@@ -896,6 +970,14 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 what = _start_repeat(root, measure)
             except FixError as exc:
                 raise FixError(f"m{measure} (repeat): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind == "volta":
+            measure = int(fix["measure"])
+            try:
+                what = _add_volta(root, measure, int(fix["bars"]))
+            except FixError as exc:
+                raise FixError(f"m{measure} (volta): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         staff, measure = int(fix["staff"]), int(fix["measure"])
