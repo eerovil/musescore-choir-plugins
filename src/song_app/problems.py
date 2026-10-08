@@ -244,7 +244,11 @@ def problems(song: state.Song) -> List[Dict]:
     `bar_in_system` / `bars_in_system`: which bar of its printed system the row is
     about, and how many that system holds (#310) — the crop shows the whole line, so
     without them a person counts bars to find the one meant. Both are None when the
-    bar or the system's range is not known.
+    bar or the system's range is not known. And `staff_in_system` / `staves_in_system`
+    / `voice_on_staff` / `voices_on_staff`: which printed staff of that system the part
+    is on, and which voice of that staff, counted from the top (#310) — the crop shows
+    every staff, so the part name alone does not say which one to read. All four are
+    None when the score does not record where its parts were printed.
     """
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
@@ -375,11 +379,16 @@ def problems(song: state.Song) -> List[Dict]:
             "decision": decision, "can_decline": False})
 
     ranges = {index: (start, end) for index, start, end in bounds}
+    ids = {name: sid for sid, name in names.items()}
+    printed = bar_readings.printed_staves(root)
     for target in rows.values():
         start, end = ranges.get(target["system"], (0, 0))
         inside = bool(target["measure"]) and start <= target["measure"] <= end
         target["bar_in_system"] = target["measure"] - start + 1 if inside else None
         target["bars_in_system"] = end - start + 1 if inside else None
+        place = bar_readings.printed_place(printed, target["measure"], ids.get(target["part"]))
+        (target["staff_in_system"], target["staves_in_system"],
+         target["voice_on_staff"], target["voices_on_staff"]) = place
 
     return sorted(rows.values(), key=lambda r: (
         r["measure"] is None, r["measure"] or 0, order.get(r["part"], 99), r["part"]))
