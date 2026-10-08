@@ -10,6 +10,10 @@ developers are listed under *Behind the scenes*.
 - The "This parse looks unusable" warning is gone from Review, Fix and the clean's
   log. On scanned songs it was set off mostly by homr's `⚠` questions, so it called
   scores whose notes were right unusable; the issue count and the Fix rows stay. (#356)
+- `fixes.json` can now take off a time signature the scan invented, or write
+  another of the same bar length in its place (`timesig`), on every staff. Kesäaamu's
+  stray 3/4 at bar 22 is recorded this way. Health also stops flagging a song's last
+  bar when it completes the opening pickup. (#353)
 - A `bar` fix can now give a voice the scan made too long a bar that fills the
   time signature. False triplets had left Lasinkuultava laulu's T1 bar 9 7/6 long
   in 4/4, a length no writable bar adds up to, so MuseScore reset it to a rest and

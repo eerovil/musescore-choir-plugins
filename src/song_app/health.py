@@ -168,7 +168,9 @@ def scan(cleaned_path: str) -> List[Dict]:
         sid = int(staff.get("id", "0"))
         label = staff_name.get(sid) or f"staff {sid}"
         sig = Fraction(4, 4)
-        for mi, measure in enumerate(staff.findall("Measure"), start=1):
+        measures = staff.findall("Measure")
+        pickup = None  # bar 1's length, when it is an anacrusis shorter than its meter
+        for mi, measure in enumerate(measures, start=1):
             # Time signature can change at a measure (in any voice).
             ts = measure.find(".//TimeSig")
             if ts is not None:
@@ -181,6 +183,8 @@ def scan(cleaned_path: str) -> List[Dict]:
             len_attr = _parse_fraction(measure.get("len"))
             if len_attr is not None:
                 nominal = len_attr
+                if mi == 1 and len_attr < sig:
+                    pickup = len_attr
 
             voices = measure.findall("voice")
             note_bearing = 0
@@ -211,7 +215,11 @@ def scan(cleaned_path: str) -> List[Dict]:
             if mi > 1 and ts is None and not uneven and sig <= _PLAUSIBLE_METER:
                 agreed = {t for t, has, _ in
                           (_voice_length(v, nominal) for v in voices) if has}
-                if len(agreed) == 1 and agreed != {sig}:
+                # The closing bar of a song that opens with a pickup is printed short
+                # by the pickup's length, so the two make one bar between them (#353).
+                closes_pickup = (mi == len(measures) and pickup is not None
+                                 and agreed == {sig - pickup})
+                if len(agreed) == 1 and agreed != {sig} and not closes_pickup:
                     got = agreed.pop()
                     found = {
                         "id": f"unprinted-meter-m{mi}-s{sid}",
