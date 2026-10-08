@@ -132,6 +132,41 @@ def test_two_voices_reading_alike_go_to_one_staff_each(make_song):
     assert sorted(o["part"] for o in bar_readings.offers(song)) == ["B1", "B2"]
 
 
+def _printed(song, staff_map):
+    """Record where clean_score printed the parts, as a per-system clean writes it."""
+    root = etree.parse(song.cleaned_path()).getroot()
+    etree.SubElement(root.find("Score"), "metaTag", name="lyricsSystemMap").text = json.dumps(
+        [{"start": 1, "end": 1, "map": {"1": [1]}}, {"start": 2, "end": 3, "map": staff_map}])
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+
+
+def test_a_bar_goes_only_to_a_part_printed_on_the_staff_homr_read(make_song):
+    """The same notes an octave up on another staff are another singer (#310).
+
+    Lemmen nosto m106: homr read the fourth staff, and its lower voice matched S2,
+    printed second, an octave up. With the record of where the parts were printed
+    it goes to the part on the staff homr read, or nowhere.
+    """
+    song = make_song(staves=((1, "S2", 12), (2, "A2", 0)))
+    assert [o["part"] for o in bar_readings.offers(song)] == ["S2"]  # no record: first match
+    _printed(song, {"1": [2]})  # homr's only staff in that system is A2's
+    assert [o["part"] for o in bar_readings.offers(song)] == ["A2"]
+
+
+def test_a_bar_no_part_on_that_staff_sings_is_not_offered(make_song):
+    song = make_song(staves=((1, "S2", 12), (2, "A2", 2)))
+    _printed(song, {"1": [2]})
+    assert bar_readings.offers(song) == []
+
+
+def test_a_record_that_does_not_line_up_with_the_fragment_is_not_trusted(make_song):
+    # The record says two staves were printed; homr's fragment has one, so the
+    # numbers cannot be matched up and every part stays a candidate.
+    song = make_song(staves=((1, "S2", 12), (2, "A2", 0)))
+    _printed(song, {"1": [2], "2": [1]})
+    assert [o["part"] for o in bar_readings.offers(song)] == ["S2"]
+
+
 def test_a_fragment_from_an_older_homr_offers_nothing(make_song):
     assert bar_readings.offers(make_song(readings=None)) == []
 

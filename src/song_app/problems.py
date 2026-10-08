@@ -43,7 +43,6 @@ from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from src.clean_score.lyric_txt import _read_lyrics_staff_map, _read_lyrics_system_map
 from src.clean_score.utils import score_fixes
 from src.clean_score.utils.cross_voice_slurs import removed_slurs
 from src.clean_score.utils.problem_marks import marks
@@ -69,33 +68,6 @@ def _system_of(bounds: List[Tuple[int, int, int]], measure: Optional[int]) -> Op
         if start <= measure <= end:
             return index
     return None
-
-
-def _printed_staves(root: etree._Element) -> List[Tuple[int, int, Dict[int, List[int]]]]:
-    """(first bar, last bar, {printed staff: [output staves, upper voice first]}).
-
-    The routing clean_score writes for the lyric import says where each part was
-    printed: one entry per printed system for a per-system score, one for the whole
-    score otherwise. Empty when the score carries neither.
-    """
-    systems = _read_lyrics_system_map(root)
-    if systems:
-        return [(entry["start"], entry["end"], entry["map"]) for entry in systems]
-    staves = _read_lyrics_staff_map(root)
-    return [(1, 10 ** 9, staves)] if staves else []
-
-
-def _printed_place(printed, measure: Optional[int], staff: Optional[int]) -> Tuple:
-    """(staff, staves, voice, voices) a part was printed on in a bar, or four Nones."""
-    if measure and staff:
-        for start, end, staves in printed:
-            if not start <= measure <= end:
-                continue
-            for number, outputs in staves.items():
-                if staff in outputs:
-                    return (number, len(staves), outputs.index(staff) + 1, len(outputs))
-            break
-    return (None, None, None, None)
 
 
 def _slur_id(rec: Dict) -> str:
@@ -408,13 +380,13 @@ def problems(song: state.Song) -> List[Dict]:
 
     ranges = {index: (start, end) for index, start, end in bounds}
     ids = {name: sid for sid, name in names.items()}
-    printed = _printed_staves(root)
+    printed = bar_readings.printed_staves(root)
     for target in rows.values():
         start, end = ranges.get(target["system"], (0, 0))
         inside = bool(target["measure"]) and start <= target["measure"] <= end
         target["bar_in_system"] = target["measure"] - start + 1 if inside else None
         target["bars_in_system"] = end - start + 1 if inside else None
-        place = _printed_place(printed, target["measure"], ids.get(target["part"]))
+        place = bar_readings.printed_place(printed, target["measure"], ids.get(target["part"]))
         (target["staff_in_system"], target["staves_in_system"],
          target["voice_on_staff"], target["voices_on_staff"]) = place
 
