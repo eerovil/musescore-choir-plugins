@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The "This parse looks unusable" warning is gone from Review, Fix and the clean's
+  log. On scanned songs it was set off mostly by homr's `⚠` questions, so it called
+  scores whose notes were right unusable; the issue count and the Fix rows stay. (#356)
 - A `bar` fix can now give a voice the scan made too long a bar that fills the
   time signature. False triplets had left Lasinkuultava laulu's T1 bar 9 7/6 long
   in 4/4, a length no writable bar adds up to, so MuseScore reset it to a rest and
