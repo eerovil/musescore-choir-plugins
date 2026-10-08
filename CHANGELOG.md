@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A `duration` fix that gives a bar its time signature back now also takes out the
+  back-step cleaning had squeezed the other voices into the short bar with, so those
+  voices are no longer reset to rests by the MuseScore check. Gute Nacht bar 6 and
+  Annin laulu bars 9, 10 and 21 now come out right from `fixes.json` alone. (#344)
 - `fixes.json` can now take out a slur (`unslur`), tie two notes (`tie`) and give
   a note another length, double dots included (`duration`); a length change that
   makes the bar fit its time signature again gives the bar that length on every

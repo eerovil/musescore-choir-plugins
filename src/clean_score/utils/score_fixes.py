@@ -112,8 +112,9 @@ the note `pitch` of chord `index` to the same pitch in the next chord, in this b
 at the head of the next one, so playback holds the note. `duration` gives chord
 `index` the length `to` (`quarter..` for a double-dotted quarter); when that makes the
 voice fill the time signature in force, the bar takes that length again on every
-staff, and a total that neither fills the bar nor the signature refuses. Each needs
-its `from`.
+staff, and a total that neither fills the bar nor the signature refuses. Then the
+back-steps cleaning squeezed the other voices into the short bar with go as well,
+where a voice's own notes fill the restored bar (#344). Each needs its `from`.
 
     {"kind": "unslur", "staff": 3, "measure": 1, "index": 2, "from": [...], "why": "..."}
     {"kind": "tie", "staff": 2, "measure": 10, "index": 2, "pitch": 60, "from": [...],
@@ -520,6 +521,7 @@ def _set_duration(root: etree._Element, staff_id: int, measure_no: int, index: i
 
     said = f"set chord {index} to {to}"
     if new_total != bar_length:
+        closed = []
         for other in root.findall(".//Score/Staff"):
             bars_of = other.findall("Measure")
             if mi >= len(bars_of):
@@ -534,8 +536,92 @@ def _set_duration(root: etree._Element, staff_id: int, measure_no: int, index: i
                     node = rest_el.find("duration")
                     if node is not None:
                         node.text = f"{new_total.numerator}/{new_total.denominator}"
+            if _close_back_steps(other, mi, bar_length, new_total):
+                closed.append(other.get("id"))
         said += f"; the bar is {new_total} again on every staff"
+        if closed:
+            said += f", and the back-step squeezing staff {', '.join(closed)} into it is gone"
     return said
+
+
+def _close_back_steps(staff: etree._Element, mi: int, was: Fraction, now: Fraction) -> bool:
+    """Take out the back-steps that squeezed a voice into a bar `was` long, now `now`.
+
+    Cleaning fits a voice the page prints correctly into a bar the scan read short by
+    stepping it backwards (a `location` of -1/16): Annin laulu's T1 in bar 9 is 12/16
+    of music squeezed into the scan's 11/16, Gute Nacht's T1 in bar 6 is 4/4 in 7/8
+    (#344). Once a `duration` fix gives the bar its length back the back-step is
+    wrong, MuseScore reads the voice as too long and resets it to a rest — after every
+    recorded fix has run, so nothing in `fixes.json` could put it back. So when the
+    voice's own notes fill the bar exactly as it now is, the back-steps go, and the
+    ties and slurs on the notes after them move with them. Any other voice is left as
+    it is, for MuseScore's check to report.
+    """
+    from .rejected_bars import _bar_lengths, _walk  # noqa: PLC0415 - a cycle
+    measures = staff.findall("Measure")
+    if mi >= len(measures):
+        return False
+    lengths = _bar_lengths(staff)
+    closed = False
+    for voice in measures[mi].findall("voice") or [measures[mi]]:
+        steps = [el for el in voice if el.tag == "location"]
+        if not steps:
+            continue
+        if any(_relative(step)[0] or _relative(step)[1] >= 0 for step in steps):
+            continue
+        old = list(_walk(voice, was))
+        moments = [(at, el) for at, el in old if el.tag in ("Chord", "Rest")]
+        if not moments:
+            continue
+        shift = Fraction(0)
+        new_at = {}
+        for at, el in old:
+            if el.tag == "location":
+                shift -= _relative(el)[1]
+            new_at[id(el)] = at + shift
+        if sum((_length(el) for _, el in moments), Fraction(0)) != now:
+            continue
+        end = now + sum((_relative(step)[1] for step in steps), Fraction(0))
+        if any((el.findtext("durationType") or "").strip() == "measure" or el.tag == "Tuplet"
+               for _, el in old):
+            continue
+        # Where each onset in the bar goes. Two moments at one old onset would make
+        # a spanner's target ambiguous, and a guessed target is worse than a reset.
+        onsets: Dict[Fraction, Fraction] = {}
+        for at, el in moments:
+            if at in onsets and onsets[at] != new_at[id(el)]:
+                onsets = {}
+                break
+            onsets[at] = new_at[id(el)]
+        if not onsets:
+            continue
+        onsets[end] = now
+        moves = []
+        for home, body in enumerate(measures):
+            for vbody in body.findall("voice") or [body]:
+                if home == mi and vbody is not voice:
+                    continue
+                for at, el in _walk(vbody, lengths[home]):
+                    spanners = ([el] if el.tag == "Spanner" else
+                                list(el.iter("Spanner")) if el.tag in ("Chord", "Rest") else [])
+                    for spanner in spanners:
+                        for side in ("next", "prev"):
+                            location = spanner.find(f"{side}/location")
+                            if location is None:
+                                continue
+                            bars, along = _relative(location)
+                            pos = new_at[id(el)] if vbody is voice else at
+                            target_bar, target = home + bars, at + along
+                            if target_bar == mi:
+                                target = onsets.get(target, target)
+                            if target - pos != along:
+                                moves.append((location, target - pos))
+        for step in steps:
+            voice.remove(step)
+        for location, fractions in moves:
+            _set_fractions(location, fractions)
+        closed = True
+    return closed
 
 
 def tpc_of(step: str, alter: int) -> int:

@@ -163,7 +163,11 @@ the words right and still sings the note twice. `duration` (`index`, `to`, a len
 like `quarter..`) gives one chord another length, double dots included, and when that
 makes the voice fill the time signature the bar gets that length back **on every
 staff** (its `len` goes and a whole-bar rest is lengthened with it); any other total
-refuses. All three take a `from` and refuse without one. `GET /bar` now also returns
+refuses. When it does, the **back-steps** cleaning used to squeeze the other voices into
+the short bar (a negative `<location>`) go too, wherever that voice's own notes fill the
+restored bar exactly (#344): otherwise MuseScore's check, which runs after the fixes,
+reads those voices as too long and resets them to rests nothing recorded could undo —
+Gute Nacht bar 6 and Annin laulu bars 9, 10 and 21. All three take a `from` and refuse without one. `GET /bar` now also returns
 the bar's `from` (rests included), and the lyric import's reply carries `mismatches`.
 
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
@@ -564,6 +568,11 @@ Key test modules:
   the held note's syllable, a double dot gives the 11/16 bar back its 3/4 on every
   staff while ties out of it keep their notes, a length no signature prints refuses,
   and (with MuseScore) the bar it had refused opens once the dot is back.
+- `test_duration_back_steps.py` — added for #344, on the shapes of Gute Nacht bar 6
+  and Annin laulu bar 10: a `duration` fix that restores the bar takes the back-step out
+  of the voices it squeezed, a tie after the step still reaches its note, a voice the
+  step did not squeeze to the bar and a forward gap are left alone, and (with
+  MuseScore) every voice of the bar opens.
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index
