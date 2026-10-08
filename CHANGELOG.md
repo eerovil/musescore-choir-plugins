@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The cleaned score is drawn the way the page prints it: rests the scan hid
+  because two voices shared them now show on each part's own staff, a double or
+  final barline reaches every staff, a bar's last rest no longer looks like a bar of
+  its own, and after a `delbar` the system pictures start on the right bar again.
+  Already-cleaned songs are drawn right without cleaning again. (#354)
 - A `bar` fix can now give a voice the scan made too long a bar that fills the
   time signature. False triplets had left Lasinkuultava laulu's T1 bar 9 7/6 long
   in 4/4, a length no writable bar adds up to, so MuseScore reset it to a rest and

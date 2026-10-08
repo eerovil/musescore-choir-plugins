@@ -310,6 +310,7 @@ def _extract_staff(part: etree._Element, number: int) -> Staff:
     clef = key = time = None
     per_bar: List[List[_Placed]] = []
     tails: List[List[etree._Element]] = []
+    ends: List[int] = []
 
     for source in part.findall("measure"):
         measure = etree.Element("measure", number=source.get("number") or "")
@@ -356,12 +357,24 @@ def _extract_staff(part: etree._Element, number: int) -> Staff:
 
         per_bar.append(notes)
         tails.append(trailing)
+        # Where this staff's music ends, read off its own notes: another staff of
+        # the part running long must not stretch this one.
+        ends.append(max((p.onset + _duration(p.note) for p in notes), default=0))
         measures.append(measure)
 
     numbering = _voice_numbering(per_bar)
-    for measure, notes, trailing in zip(measures, per_bar, tails):
-        for element in _voiced(notes, numbering):
+    for measure, notes, trailing, end in zip(measures, per_bar, tails, ends):
+        voiced = _voiced(notes, numbering)
+        for element in voiced:
             measure.append(element)
+        # MuseScore puts a barline where the cursor stands, not at the bar's end.
+        # A voice that stops early -- its last rest printed once for both voices,
+        # so written into the other -- would otherwise close the bar part-way
+        # through, and the music after it reads as a bar of its own (#354).
+        short = end - _cursor(voiced)
+        if trailing and short > 0:
+            move = etree.SubElement(measure, "forward")
+            etree.SubElement(move, "duration").text = str(short)
         for element in trailing:
             measure.append(element)
 
@@ -465,6 +478,19 @@ def _voiced(notes: List["_Placed"], numbering: Dict[str, int]) -> List[etree._El
             at += _duration(note)
             out.append(note)
     return out
+
+
+def _cursor(elements: Sequence[etree._Element]) -> int:
+    """Where the cursor stands after ``elements``, by the same rule they were read by."""
+    at = 0
+    for element in elements:
+        if element.tag == "note":
+            at += _duration(element)
+        elif element.tag == "backup":
+            at -= _int(element.findtext("duration"))
+        elif element.tag == "forward":
+            at += _int(element.findtext("duration"))
+    return at
 
 
 def _voice_key(voice: str):

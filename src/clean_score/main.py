@@ -24,6 +24,7 @@ from .utils.shared_rests import share_rests
 from .utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
 from .utils.long_bars import trim_long_bars
 from .utils.measure_rests import centre_measure_rests
+from .utils.staff_display import fix_staff_display
 from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.spurious_timesigs import fix_spurious_timesigs
 from .utils.interactive import resolve_voice_anomalies
@@ -72,6 +73,15 @@ def _centre_measure_rests(root: etree._Element) -> None:
     changed = centre_measure_rests(root)
     if changed:
         logger.info("Wrote %s whole-bar rest(s) as bar rests", changed)
+
+
+def _fix_staff_display(root: etree._Element) -> None:
+    """Draw what a staff of its own needs: its rests and its barlines (#354)."""
+    changed = fix_staff_display(root)
+    if any(changed.values()):
+        logger.info("Staff display: %s hidden rest(s) shown, %s barline(s) moved to the "
+                    "bar end, %s plain final barline(s) dropped, %s barline(s) shared",
+                    changed["rests"], changed["moved"], changed["dropped"], changed["shared"])
 
 
 def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
@@ -275,6 +285,7 @@ def main(
             return
         mark_scan_damage(root)
         _centre_measure_rests(root)
+        _fix_staff_display(root)
         output_content = etree.tostring(
             root, pretty_print=True, encoding="UTF-8"
         ).decode("UTF-8")
@@ -585,6 +596,7 @@ def main(
 
     mark_scan_damage(root)
     _centre_measure_rests(root)
+    _fix_staff_display(root)
 
     # Serialize the output XML
     output_content: str = etree.tostring(
