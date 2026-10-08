@@ -677,8 +677,7 @@ def test_the_lower_notes_of_chords_under_one_name_are_reported_as_kept_in_the_ch
     answers = {0: {1: "S1"}}
     root = _score({1: [[["72"]], [[("72", "67"), ("74", "69")]]]}, breaks=(0,))
     lost = dropped_voices(root, answers)
-    assert [(d.system, d.voice, d.notes, d.stacked, d.kept_in_chord) for d in lost] == \
-        [(1, 1, 2, True, True)]
+    assert [(d.system, d.voice, d.notes, d.kind) for d in lost] == [(1, 1, 2, "kept")]
     message = lost[0].message()
     assert "lower notes of its chords (2 notes) stay in S1's chords" in message
     assert "dropped" not in message and '"S1, S1b"' in message
@@ -691,8 +690,7 @@ def test_a_chord_note_past_the_names_is_reported_as_dropped():
     answers = {0: {1: "A2, A2b"}}
     root = _score({1: [[[("74", "69", "62")]]]})
     lost = dropped_voices(root, answers)
-    assert [(d.voice, d.notes, d.stacked, d.kept_in_chord) for d in lost] == \
-        [(2, 1, True, False)]
+    assert [(d.voice, d.notes, d.kind) for d in lost] == [(2, 1, "chord")]
     assert "note 3 from the top of its chords (1 note) was dropped" in lost[0].message()
     assert '"A2, A2b, A2c"' in lost[0].message()
     clean_per_system(root, answers_from=lambda _l: answers)
@@ -713,3 +711,29 @@ def test_a_borrowed_bar_leaves_the_base_parts_red_mark_behind():
     assert _pitches(staves["S1b"], 0) == ["72"]
     assert first("S1").find(".//StaffText") is not None
     assert first("S1b").find(".//StaffText") is None
+
+
+def test_a_dropped_voice_and_kept_chord_notes_in_one_system_are_said_apart():
+    """Review of #332: bar 1 has two voices, bar 2 one stacked voice, under one name.
+    Bar 1's lower voice is lost, bar 2's lower note stays in the chord — two reports."""
+    answers = {0: {1: "A1"}}
+    root = _score({1: [[["72"], ["67"]], [[("72", "67")]]]})
+    lost = dropped_voices(root, answers)
+    assert [(d.kind, d.voice, d.notes) for d in lost] == [("voice", 1, 1), ("kept", 1, 1)]
+    assert "lower voice (1 note) was dropped" in lost[0].message()
+    assert "stay in A1's chords" in lost[1].message()
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A1"], 0) == ["72"]           # the lower voice is gone
+    assert _pitches(staves["A1"], 1) == ["72", "67"]     # the chord is whole
+
+
+def test_a_voice_under_an_all_rest_voice_is_counted_by_its_written_index():
+    """Review of #332: the rebuild copies voice 0 (all rests) to the one name and
+    drops voice 1, so the report has to count voice 1 too."""
+    answers = {0: {1: "A1"}}
+    root = _score({1: [[["r"], ["67"]]]})
+    lost = dropped_voices(root, answers)
+    assert [(d.kind, d.voice, d.notes) for d in lost] == [("voice", 1, 1)]
+    clean_per_system(root, answers_from=lambda _l: answers)
+    assert _pitches(_by_part(root)["A1"], 0) == []

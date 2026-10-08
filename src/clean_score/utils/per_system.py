@@ -140,38 +140,42 @@ class PerSystemResult:
 
 @dataclass(frozen=True)
 class DroppedVoice:
-    """A voice with notes in a system that its staff's answer gives no name (#330).
+    """A line with notes in a system that its staff's answer gives no part of its own
+    (#330).
 
     The rebuild takes one name per voice, top first, so a two-voice staff answered
     with one name keeps the upper voice and loses the lower one. The usual way in is
     inheritance: a staff named once in system 1 carries that one name into a later
-    system where the page prints two lines on it.
+    system where the page prints two lines on it. Three kinds, because the rebuild
+    treats them differently (`_build_parts`):
+
+    - ``voice``: a voice past the names is not copied — dropped.
+    - ``chord``: a stacked chord split one notehead per name loses the noteheads past
+      the names — dropped.
+    - ``kept``: a stacked chord under a single name is copied whole, so its lower
+      notes stay in that part's chords with no part of their own — not lost.
     """
 
     system: int  # 0-based system index
     start: int  # 1-based measure range of the system
     end: int
     staff_id: int
-    voice: int  # 0-based, counted from the top
-    notes: int  # notes in that voice over the system
+    voice: int  # 0-based voice index (``voice``) or notehead from the top (``chord``/``kept``)
+    notes: int  # notes of that line over the system
     answer: str  # the answer in force for the staff in this system
     answered_in: int  # 0-based system the answer was typed in (== system unless inherited)
-    stacked: bool  # the "voice" is the lower notehead of a chord, not a voice of its own
+    kind: str = "voice"  # "voice" | "chord" | "kept"
 
     @property
     def kept_in_chord(self) -> bool:
-        """The lower notes of chords on a staff given one name are not lost: with
-        nothing to split them between, the rebuild copies the chords whole, so they
-        stay in the named part's chords with no part of their own. With two or more
-        names the stack is split one notehead each, and one past the names is lost."""
-        return self.stacked and len(_labels(self.answer)) == 1
+        return self.kind == "kept"
 
     def message(self) -> str:
-        if self.stacked:
+        if self.kind == "voice":
+            lost = "the lower voice" if self.voice == 1 else f"voice {self.voice + 1} from the top"
+        else:
             lost = ("the lower notes of its chords" if self.voice == 1
                     else f"note {self.voice + 1} from the top of its chords")
-        else:
-            lost = "the lower voice" if self.voice == 1 else f"voice {self.voice + 1} from the top"
         said = (f'"{self.answer}"' if self.answered_in == self.system
                 else f'"{self.answer}" (carried over from system {self.answered_in + 1})')
         names = _labels(self.answer)
@@ -180,11 +184,11 @@ class DroppedVoice:
         count = f"{self.notes} note" + ("" if self.notes == 1 else "s")
         where = (f"System {self.system + 1} (bars {self.start}–{self.end}), staff "
                  f"{self.staff_id}: {lost} ({count})")
-        if self.kept_in_chord:
+        if self.kind == "kept":
             return (f"{where} stay in {named}'s chords with no part of their own, because "
                     f"the staff is named only {said}. Name them in the Clean grid "
                     f'(e.g. "{", ".join(names)}") to split them, and clean again.')
-        verb = "were" if self.stacked and self.voice == 1 else "was"
+        verb = "were" if self.kind == "chord" and self.voice == 1 else "was"
         return (f"{where} {verb} dropped, because the staff is named only {said}. "
                 f'Name every line in the Clean grid (e.g. "{", ".join(names)}") and '
                 f"clean again.")
@@ -193,7 +197,7 @@ class DroppedVoice:
         return {"system": self.system, "start": self.start, "end": self.end,
                 "staff_id": self.staff_id, "voice": self.voice, "notes": self.notes,
                 "answer": self.answer, "answered_in": self.answered_in,
-                "stacked": self.stacked, "message": self.message()}
+                "kind": self.kind, "message": self.message()}
 
 
 # An adapter that turns the layout into answers (the CLI prompt, or a test double).
@@ -454,28 +458,44 @@ def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls
     return decls
 
 
-def _notes_in_voice(staff: etree._Element, a: int, b: int, vidx: int) -> Tuple[int, bool]:
-    """How many notes voice `vidx` (top first) sings over measures a..b, and whether
-    they are the lower noteheads of chords in a single voice rather than a voice.
+def _unnamed_lines(staff: etree._Element, a: int, b: int, named: int) -> Dict[Tuple[str, int], int]:
+    """{(kind, line): notes} the rebuild leaves without a part, over measures a..b.
 
-    Counted the way the rebuild reads a staff: a bar with several voices offers them
-    as voices, a bar with one voice offers its stacked noteheads (`_max_voices_in_range`).
+    Mirrors `_build_parts` bar by bar, with `named` parts declared on the staff: a bar
+    whose one voice stacks chords and has fewer voices than names is split one
+    notehead per name; any other bar hands its voices out by their index as written,
+    rest-only voices included, so a sung voice under an all-rest one is still the
+    second voice. Kinds are those of `DroppedVoice`.
     """
-    measures = staff.findall("Measure")
-    count, stacked = 0, False
-    for m in range(a, b + 1):
-        voices = [v for v in measures[m].findall("voice") if v.find("Chord") is not None]
-        if len(voices) > vidx and len(voices) > 1:
-            count += sum(len(ch.findall("Note")) for ch in voices[vidx].findall("Chord"))
-        elif len(voices) == 1 and vidx > 0:
-            here = sum(1 for ch in voices[0].findall("Chord") if len(ch.findall("Note")) > vidx)
-            count += here
-            stacked = stacked or here > 0
-    return count, stacked
+    found: Dict[Tuple[str, int], int] = {}
+
+    def add(kind: str, line: int, n: int) -> None:
+        if n:
+            found[(kind, line)] = found.get((kind, line), 0) + n
+
+    def notes_of(voice: etree._Element) -> int:
+        return sum(len(ch.findall("Note")) for ch in voice.findall("Chord"))
+
+    for measure in staff.findall("Measure")[a:b + 1]:
+        voices = measure.findall("voice")
+        if not voices:
+            continue
+        if named > len(voices) and _has_chord_stack(voices[0]):
+            for chord in voices[0].findall("Chord"):
+                for rank in range(named, len(chord.findall("Note"))):
+                    add("chord", rank, 1)
+            continue
+        for vidx in range(named, len(voices)):
+            add("voice", vidx, notes_of(voices[vidx]))
+        if named == 1 and len([v for v in voices if v.find("Chord") is not None]) == 1:
+            # Copied whole: a single voice's stacked noteheads stay in the one part.
+            add("kept", 1, sum(len(ch.findall("Note")) - 1
+                               for ch in voices[0].findall("Chord")))
+    return found
 
 
 def dropped_voices(root: etree._Element, answers: Answers) -> List[DroppedVoice]:
-    """Every voice with notes that the answers leave unnamed on a staff they do name.
+    """Every line with notes that the answers leave without a part, on a staff they name.
 
     A staff named nowhere is not reported here: the grid already asks about that
     before cleaning. This is the quieter case — named, but with fewer names than the
@@ -486,18 +506,18 @@ def dropped_voices(root: etree._Element, answers: Answers) -> List[DroppedVoice]
     layouts = system_layout(root)
     out: List[DroppedVoice] = []
     for layout, row, raw, typed_in in _answers_in_force(layouts, answers):
-        named = len(_labels(raw))
+        # The rebuild declares no more names than the staff's voice count.
+        named = min(len(_labels(raw)), row.voices)
         if not named:
             continue
-        for vidx in range(named, row.voices):
-            notes, stacked = _notes_in_voice(staves[row.staff_id], layout.start - 1,
-                                             layout.end - 1, vidx)
-            if notes:
-                out.append(DroppedVoice(
-                    system=layout.index, start=layout.start, end=layout.end,
-                    staff_id=row.staff_id, voice=vidx, notes=notes, answer=raw,
-                    answered_in=typed_in, stacked=stacked,
-                ))
+        lines = _unnamed_lines(staves[row.staff_id], layout.start - 1, layout.end - 1, named)
+        order = {"voice": 0, "chord": 1, "kept": 2}
+        for (kind, line), notes in sorted(lines.items(), key=lambda kv: (order[kv[0][0]], kv[0][1])):
+            out.append(DroppedVoice(
+                system=layout.index, start=layout.start, end=layout.end,
+                staff_id=row.staff_id, voice=line, notes=notes, answer=raw,
+                answered_in=typed_in, kind=kind,
+            ))
     return out
 
 
