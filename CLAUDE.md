@@ -916,7 +916,13 @@ state model are in `DESIGN.md`.
   review. YouTube uploads report live percentage via a `progress` WS message,
   are recorded into `record.uploads` (title/id/url) for review + delete/re-upload
   (`/youtube-delete`), use the human song name for titles, and remember used
-  playlists globally in `.playlists.json` (`/api/playlists`). The song's display
+  playlists globally in `.playlists.json` (`/api/playlists`). **Which playlists a song is in can be
+  changed after the upload** (#338, `playlists.py`): the Upload panel's *Playlists*
+  list ticks each remembered playlist holding every one of the song's videos, read
+  live from YouTube (the app never recorded the extra playlist, and YouTube's own
+  app can edit one), and `POST /playlists` adds the missing videos or removes this
+  song's items, never touching the song's own playlist. Per-song playlists
+  ("… Stemmanauhat - <date>") are no longer remembered or offered. The song's display
   name is editable on the Start panel (`POST /rename`); if videos are already
   uploaded, it retitles them (and the playlist) on YouTube in the background via
   `rename_uploads` (each upload stores its `part`, so titles rebuild as

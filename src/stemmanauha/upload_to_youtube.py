@@ -160,6 +160,37 @@ def add_video_to_playlist(youtube, playlist_id, video_id):
     _execute(request)
 
 
+def _all_items(make_request, log=None):
+    """Every item of a paged list call; make_request(page_token) builds one page."""
+    items, token = [], None
+    while True:
+        resp = _execute(make_request(token), log=log)
+        items += resp.get("items", [])
+        token = resp.get("nextPageToken")
+        if not token:
+            return items
+
+
+def own_playlists(youtube, log=None):
+    """The account's own playlists as [{id, title}], in YouTube's order."""
+    items = _all_items(lambda token: youtube.playlists().list(
+        part="snippet", mine=True, maxResults=50, pageToken=token), log=log)
+    return [{"id": i["id"], "title": i["snippet"]["title"]} for i in items]
+
+
+def playlist_video_items(youtube, playlist_id, log=None):
+    """{video_id: playlistItem id} for every video in a playlist. Removing a video
+    from a playlist needs the item id, not the video id."""
+    items = _all_items(lambda token: youtube.playlistItems().list(
+        part="contentDetails", playlistId=playlist_id, maxResults=50,
+        pageToken=token), log=log)
+    return {i["contentDetails"]["videoId"]: i["id"] for i in items}
+
+
+def remove_from_playlist(youtube, item_id, log=None):
+    _execute(youtube.playlistItems().delete(id=item_id), log=log)
+
+
 def upload_to_youtube(song_dir, video_paths, extra_playlist_id=None, log=None,
                       progress=None, display_name=None, on_uploaded=None):
     """Upload merged videos.
