@@ -12,7 +12,7 @@ developers are listed under *Behind the scenes*.
   change in place. The One system view shows the cleaned system with its words
   under the printed one, and after an import only the systems whose words changed
   are drawn again, the old picture staying until the new one is ready. Compare
-  does the same. (#PR)
+  does the same. (#337)
 - In per-system cleaning, a chord with more notes than part names no longer loses
   the extra notes: the lowest named part keeps them as its chord, and the Clean grid
   and the Fix stage no longer warn about it. (#330)
