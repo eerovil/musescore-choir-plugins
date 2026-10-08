@@ -14,6 +14,7 @@ from lxml import etree
 
 from src.clean_score.utils.per_system import (
     clean_per_system,
+    dropped_voices,
     layout_for_file,
     save_answers,
     saved_answers,
@@ -628,3 +629,50 @@ def test_a_tie_from_a_borrowed_bar_into_an_own_bar_is_cut():
     assert staves["S1"].findall(".//Spanner") and len(staves["S1"].findall(".//Spanner")) == 2
     assert staves["S1b"].findall(".//Spanner") == []   # its bar 1 is a different note
     assert _pitches(staves["S1b"], 0) == ["67"]
+
+
+# --------------------------------------------------------------------------- #
+# A line the answers leave unnamed is said out loud (#330)
+# --------------------------------------------------------------------------- #
+
+def _two_voice_later():
+    """Staff 1 prints one line in system 0 and two in system 1 (Lemmen nosto's shape)."""
+    return _score({1: [[["72"]], [["72"], ["67"]]]}, breaks=(0,))
+
+
+def test_an_inherited_single_name_on_a_two_voice_staff_is_reported():
+    lost = dropped_voices(_two_voice_later(), {0: {1: "A1"}, 1: {1: ""}})
+    assert [(d.system, d.staff_id, d.voice, d.notes, d.answered_in) for d in lost] == \
+        [(1, 1, 1, 1, 0)]
+    message = lost[0].message()
+    assert "System 2" in message and "lower voice" in message
+    assert "carried over from system 1" in message and '"A1, A1b"' in message
+
+
+def test_the_rebuild_still_drops_it_and_logs_why(caplog):
+    root = _two_voice_later()
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "A1"}, 1: {1: ""}})
+    assert list(_by_part(root)) == ["A1"]
+    assert any("lower voice" in r.getMessage() for r in caplog.records)
+
+
+def test_naming_every_line_reports_nothing():
+    assert dropped_voices(_two_voice_later(), {0: {1: "A1"}, 1: {1: "A1, A1b"}}) == []
+
+
+def test_a_cleared_or_never_named_staff_is_not_this_report():
+    # The grid already asks about a staff named nowhere; this is the quieter case.
+    assert dropped_voices(_two_voice_later(), {0: {1: "A1"}, 1: {1: "-"}}) == []
+    assert dropped_voices(_two_voice_later(), {}) == []
+
+
+def test_a_second_voice_of_rests_is_not_a_lost_line():
+    root = _score({1: [[["72"]], [["72"], ["r"]]]}, breaks=(0,))
+    assert dropped_voices(root, {0: {1: "A1"}}) == []
+
+
+def test_the_lower_notehead_of_a_chord_is_reported_as_one():
+    root = _score({1: [[["72"]], [[("72", "67"), ("74", "69")]]]}, breaks=(0,))
+    lost = dropped_voices(root, {0: {1: "S1"}})
+    assert [(d.system, d.voice, d.notes, d.stacked) for d in lost] == [(1, 1, 2, True)]
+    assert "lower notes of its chords" in lost[0].message()

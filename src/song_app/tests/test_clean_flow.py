@@ -167,3 +167,32 @@ def test_import_reports_a_too_short_line_against_its_own_system(song_dir):
     assert m.measure_start == system.start          # attaches to the system it starts in
     assert m.staff_ids == (1,)                      # T1 is output staff 1
     assert m.syllables == 1 and m.slots > 1
+
+
+def _fixes(song_dir):
+    path = os.path.join(song_dir, "fixes.json")
+    return json.load(open(path)) if os.path.exists(path) else []
+
+
+def test_a_line_left_unnamed_is_listed_until_it_is_named(song_dir):
+    """#330: a two-voice staff given one name loses its lower voice, and says so."""
+    src = _source(song_dir)
+    typed = {"kind": "text", "what": "somebody's own note"}
+    with open(os.path.join(song_dir, "fixes.json"), "w") as f:
+        json.dump([typed], f)
+    pipeline.save_system_answers(src, {**ANSWERS, 0: {1: "T1", 2: "B"}})
+    logged = []
+    pipeline.run_clean(src, song_dir, per_system=True, log=logged.append)
+
+    dropped = [f for f in _fixes(song_dir) if f.get("source") == pipeline.DROPPED_VOICE_SOURCE]
+    # m16: the fixture's reading itself leaves two stray noteheads of a chord unnamed.
+    assert [f["measure"] for f in dropped] == [1, 16, 16]
+    assert "System 1 (bars 1–6), staff 1: the lower voice" in dropped[0]["what"]
+    assert any("staff 1: the lower voice" in line for line in logged)
+    assert pipeline.free_text_fixes(song_dir).count(dropped[0]["what"]) == 1
+
+    pipeline.save_system_answers(src, ANSWERS)
+    pipeline.run_clean(src, song_dir, per_system=True)
+    assert [f["measure"] for f in _fixes(song_dir)
+            if f.get("source") == pipeline.DROPPED_VOICE_SOURCE] == [16, 16]
+    assert typed in _fixes(song_dir)

@@ -180,6 +180,9 @@ table.grid th, table.grid td { border: 1px solid var(--line); padding: 6px 8px; 
 table.grid th { background: var(--panel2); color: var(--muted); font-weight: 600; }
 table.grid input { width: 100%; }
 table.grid input.unset { border-color: var(--warn); }
+table.grid input.undernamed { border-color: var(--warn); }
+table.grid .undernote { color: var(--warn); font-size: 12px; }
+table.grid .undernote:empty { display: none; }
 .sysblock { margin-bottom: 18px; }
 .sysblock h4 { margin: 0 0 6px; }
 .syshead { justify-content: space-between; margin-bottom: 6px; }

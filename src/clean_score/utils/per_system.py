@@ -137,6 +137,49 @@ class PerSystemResult:
         return bool(self.parts)
 
 
+@dataclass(frozen=True)
+class DroppedVoice:
+    """A voice with notes in a system that its staff's answer gives no name (#330).
+
+    The rebuild takes one name per voice, top first, so a two-voice staff answered
+    with one name keeps the upper voice and loses the lower one. The usual way in is
+    inheritance: a staff named once in system 1 carries that one name into a later
+    system where the page prints two lines on it.
+    """
+
+    system: int  # 0-based system index
+    start: int  # 1-based measure range of the system
+    end: int
+    staff_id: int
+    voice: int  # 0-based, counted from the top
+    notes: int  # notes in that voice over the system
+    answer: str  # the answer in force for the staff in this system
+    answered_in: int  # 0-based system the answer was typed in (== system unless inherited)
+    stacked: bool  # the "voice" is the lower notehead of a chord, not a voice of its own
+
+    def message(self) -> str:
+        if self.stacked:
+            lost = ("the lower notes of its chords" if self.voice == 1
+                    else f"note {self.voice + 1} from the top of its chords")
+        else:
+            lost = "the lower voice" if self.voice == 1 else f"voice {self.voice + 1} from the top"
+        said = (f'"{self.answer}"' if self.answered_in == self.system
+                else f'"{self.answer}" (carried over from system {self.answered_in + 1})')
+        first = self.answer.split(",")[0].strip()
+        count = f"{self.notes} note" + ("" if self.notes == 1 else "s")
+        verb = "were" if self.stacked and self.voice == 1 else "was"
+        return (f"System {self.system + 1} (bars {self.start}–{self.end}), staff "
+                f"{self.staff_id}: {lost} ({count}) {verb} dropped, because the "
+                f"staff is named only {said}. Name every line in the Clean grid "
+                f'(e.g. "{first}, {first}b") and clean again.')
+
+    def to_dict(self) -> Dict:
+        return {"system": self.system, "start": self.start, "end": self.end,
+                "staff_id": self.staff_id, "voice": self.voice, "notes": self.notes,
+                "answer": self.answer, "answered_in": self.answered_in,
+                "stacked": self.stacked, "message": self.message()}
+
+
 # An adapter that turns the layout into answers (the CLI prompt, or a test double).
 AnswerSource = Callable[[List[SystemLayout]], Answers]
 
@@ -355,6 +398,31 @@ def _fallback_of(parts: List[str]) -> Dict[str, str]:
     return {child: base for child, base in links.items() if base not in links}
 
 
+def _answers_in_force(
+    layouts: List[SystemLayout], answers: Answers
+) -> Iterator[Tuple[SystemLayout, StaffRow, str, int]]:
+    """Each (system, staff) with the answer that applies there and where it was typed.
+
+    A staff left unanswered in a system inherits its answer from the previous system;
+    CLEARED is yielded as itself and stops that inheritance.
+    """
+    last_answer: Dict[int, Tuple[str, int]] = {}
+    for layout in layouts:
+        sys_ans = answers.get(layout.index, {})
+        for row in layout.staves:
+            raw = sys_ans.get(row.staff_id, "")
+            if raw == "":
+                raw, typed_in = last_answer.get(row.staff_id, ("", layout.index))
+            else:
+                typed_in = layout.index
+                last_answer[row.staff_id] = (raw, typed_in)
+            yield layout, row, raw, typed_in
+
+
+def _labels(raw: str) -> List[str]:
+    return [n.strip() for n in raw.split(",")] if raw and raw != CLEARED else []
+
+
 def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls:
     """Resolve answer strings ("T1,T2") into {(staff_id, voice_index): part} per system.
 
@@ -363,22 +431,66 @@ def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls
     it is answered again). Names beyond the staff's voice count are ignored.
     """
     decls: _Decls = {}
-    last_answer: Dict[int, str] = {}
-    for layout in layouts:
-        sys_ans = answers.get(layout.index, {})
-        for row in layout.staves:
-            raw = sys_ans.get(row.staff_id, "")
-            if raw == "":
-                raw = last_answer.get(row.staff_id, "")  # inherit previous system
-            else:
-                last_answer[row.staff_id] = raw
-            if raw == CLEARED:
-                continue
-            labels = [n.strip() for n in raw.split(",")] if raw else []
-            for vidx, name in enumerate(labels):
-                if vidx < row.voices and name and name != CLEARED:
-                    decls.setdefault(layout.index, {})[(row.staff_id, vidx)] = name
+    for layout, row, raw, _ in _answers_in_force(layouts, answers):
+        for vidx, name in enumerate(_labels(raw)):
+            if vidx < row.voices and name and name != CLEARED:
+                decls.setdefault(layout.index, {})[(row.staff_id, vidx)] = name
     return decls
+
+
+def _notes_in_voice(staff: etree._Element, a: int, b: int, vidx: int) -> Tuple[int, bool]:
+    """How many notes voice `vidx` (top first) sings over measures a..b, and whether
+    they are the lower noteheads of chords in a single voice rather than a voice.
+
+    Counted the way the rebuild reads a staff: a bar with several voices offers them
+    as voices, a bar with one voice offers its stacked noteheads (`_max_voices_in_range`).
+    """
+    measures = staff.findall("Measure")
+    count, stacked = 0, False
+    for m in range(a, b + 1):
+        voices = [v for v in measures[m].findall("voice") if v.find("Chord") is not None]
+        if len(voices) > vidx and len(voices) > 1:
+            count += sum(len(ch.findall("Note")) for ch in voices[vidx].findall("Chord"))
+        elif len(voices) == 1 and vidx > 0:
+            here = sum(1 for ch in voices[0].findall("Chord") if len(ch.findall("Note")) > vidx)
+            count += here
+            stacked = stacked or here > 0
+    return count, stacked
+
+
+def dropped_voices(root: etree._Element, answers: Answers) -> List[DroppedVoice]:
+    """Every voice with notes that the answers leave unnamed on a staff they do name.
+
+    A staff named nowhere is not reported here: the grid already asks about that
+    before cleaning. This is the quieter case — named, but with fewer names than the
+    lines the page prints there — which used to cost the lower voice in silence.
+    """
+    score = _score_of(root)
+    staves = {int(s.get("id", "0")): s for s in score.findall("Staff")}
+    layouts = system_layout(root)
+    out: List[DroppedVoice] = []
+    for layout, row, raw, typed_in in _answers_in_force(layouts, answers):
+        named = len(_labels(raw))
+        if not named:
+            continue
+        for vidx in range(named, row.voices):
+            notes, stacked = _notes_in_voice(staves[row.staff_id], layout.start - 1,
+                                             layout.end - 1, vidx)
+            if notes:
+                out.append(DroppedVoice(
+                    system=layout.index, start=layout.start, end=layout.end,
+                    staff_id=row.staff_id, voice=vidx, notes=notes, answer=raw,
+                    answered_in=typed_in, stacked=stacked,
+                ))
+    return out
+
+
+def dropped_voices_for_file(mscx_path: str) -> List[DroppedVoice]:
+    """`dropped_voices` for a score on disk, against its recorded answers."""
+    answers = saved_answers(mscx_path) or {}
+    with open(mscx_path, "r", encoding="utf-8") as f:
+        root = etree.fromstring(f.read().encode("utf-8"))
+    return dropped_voices(root, answers)
 
 
 # --------------------------------------------------------------------------- #
@@ -773,6 +885,8 @@ def clean_per_system(
             return PerSystemResult()
 
     bounds = [(l.start - 1, l.end - 1) for l in layouts]
+    for lost in dropped_voices(root, answers):
+        logger.warning("Per-system: %s", lost.message())
     decls = _decls_from_answers(layouts, answers)
     parts = _build_parts(root, bounds, decls)
     if not parts:

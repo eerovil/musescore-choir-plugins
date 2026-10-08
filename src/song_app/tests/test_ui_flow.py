@@ -233,6 +233,42 @@ def test_grid_marks_cleared_and_inherited_staves(live_app, own_answers, page):
     assert "staff 1 · system 4" in dropped[0], dropped[0]
 
 
+def test_grid_warns_when_a_staff_has_more_lines_than_names(live_app, own_answers, page):
+    """#330: a two-voice staff named once — typed, or carried over from an earlier
+    system — loses its lower line, and the grid says so before cleaning."""
+    _new_song(page, live_app, "Lines and names")
+    cell = lambda system, staff: page.locator(f'input[data-sys="{system}"][data-staff="{staff}"]')
+    cell(0, 1).fill("T1")          # system 1 prints two lines on staff 1
+    cell(0, 2).fill("B")
+    cell(4, 3).fill("T2, T3")
+    cell(6, 4).fill("B")
+    cell(0, 1).blur()
+
+    note = lambda system, staff: cell(system, staff).locator("xpath=following-sibling::div")
+    expect(cell(0, 1)).to_have_class(re.compile(r"\bundernamed\b"))
+    expect(note(0, 1)).to_have_text("2 lines here, 1 named — the lowest is dropped")
+    expect(cell(1, 1)).to_have_class(re.compile(r"\bundernamed\b"))   # carried over
+    expect(note(1, 1)).to_be_visible()
+    expect(cell(0, 2)).not_to_have_class(re.compile(r"\bundernamed\b"))
+    expect(note(0, 2)).to_be_hidden()
+    if evidence := os.getenv("EVIDENCE_DIR"):
+        os.makedirs(evidence, exist_ok=True)
+        cell(0, 1).scroll_into_view_if_needed()
+        page.screenshot(path=os.path.join(evidence, "undernamed-grid.png"))
+
+    cell(1, 1).fill("T1, T2")      # naming both lines clears that cell and not the first
+    cell(1, 1).blur()
+    expect(cell(1, 1)).not_to_have_class(re.compile(r"\bundernamed\b"))
+    expect(cell(0, 1)).to_have_class(re.compile(r"\bundernamed\b"))
+
+    asked = []
+    page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+    page.get_by_role("button", name="Run clean").click()
+    assert asked, "cleaning with an unnamed line must confirm first"
+    assert "will be DROPPED" in asked[0] and "staff 1 · system 1" in asked[0], asked[0]
+    assert "staff 1 · system 2 —" not in asked[0], asked[0]
+
+
 def test_grid_says_a_b_part_sings_its_base_part(live_app, own_answers, page):
     """The S1b -> S1 fallback (#293) is only usable if the grid says it exists."""
     _new_song(page, live_app, "Fallback hint")
