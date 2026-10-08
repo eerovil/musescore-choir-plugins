@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import zipfile
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -26,8 +27,8 @@ from src.clean_score.utils import per_system
 from src.clean_score.utils.per_system import dropped_voices_for_file
 from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.rejected_bars import clear_bar, staff_names
-from src.clean_score.utils.score_fixes import (FixError, apply_fixes, bar_tokens, free_text,
-                                                read_bar)
+from src.clean_score.utils.score_fixes import (FixError, apply_fixes, bar_items, bar_tokens,
+                                                free_text, read_bar)
 from src.clean_score.utils.utils import starts_new_system
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
@@ -182,6 +183,14 @@ def system_ranges(root: etree._Element) -> List[per_system.SystemRange]:
     return per_system.system_ranges(root)
 
 
+#: Held across `clean_main`, so two cleans take turns. `clean_score` keeps its staff
+#: mapping and reversed-voice table in one process-wide `GLOBALS`, and `main()` empties
+#: both as it starts: a second song's clean starting 0.1s into the first one's emptied
+#: the table under it, and the first died with the bare `KeyError: 3` (#357). A clean
+#: is seconds; the fixes, the MuseScore check and the renders stay outside the lock.
+_CLEAN_LOCK = threading.Lock()
+
+
 def run_clean(
     input_path: str,
     out_dir: str,
@@ -202,18 +211,24 @@ def run_clean(
     base = os.path.splitext(os.path.basename(mscx_path))[0]
     cleaned = os.path.join(out_dir, base + "_cleaned.mscx")
     log("Cleaning score" + (" (per-system)" if per_system else ""))
+    if not _CLEAN_LOCK.acquire(blocking=False):
+        log("Waiting for another clean to finish")
+        _CLEAN_LOCK.acquire()
     # Build beside the real file and move it in only once the recorded fixes have
     # gone back on. A fix that no longer matches then leaves the previous cleaned
     # score exactly where it was, instead of a freshly rebuilt one with the
     # page-verified edits missing and nothing on disk saying so.
     building = cleaned + ".building"
-    clean_main(
-        mscx_path, building,
-        add_staffs=add_staffs or "",
-        interactive=False,
-        per_system=per_system,
-        voicing=voicing,
-    )
+    try:
+        clean_main(
+            mscx_path, building,
+            add_staffs=add_staffs or "",
+            interactive=False,
+            per_system=per_system,
+            voicing=voicing,
+        )
+    finally:
+        _CLEAN_LOCK.release()
     if not os.path.exists(building):
         raise RuntimeError("Cleaning produced no output (no parts declared?).")
     try:
@@ -381,6 +396,14 @@ def reset_rejected_bars(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
         if key in done:
             done[key]["message"] += "; " + one["message"]
             continue
+        staves = root.findall(".//Score/Staff")
+        staff_id = staves[key[0] - 1].get("id") if 0 < key[0] <= len(staves) else None
+        # The bar as the recorded fixes left it, which is what the next one meets.
+        try:
+            scanned_from = bar_tokens(root, int(staff_id), key[1])
+            scanned_notes = read_bar(root, int(staff_id), key[1])
+        except (FixError, TypeError, ValueError):
+            scanned_from, scanned_notes = None, None
         removed = clear_bar(root, *key)
         if removed is None:
             continue
@@ -389,7 +412,9 @@ def reset_rejected_bars(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
                  f"{' '.join(removed) or 'nothing'}")
         done[key] = {"measure": one["measure"], "staff": one["staff"],
                      "part": names.get(one["staff"], f"staff {one['staff']}"),
-                     "message": one["message"], "removed": removed}
+                     "message": one["message"], "removed": removed,
+                     "staff_id": staff_id, "scanned_from": scanned_from,
+                     "scanned_notes": scanned_notes}
     if done:
         tree.write(mscx_path, encoding="UTF-8", xml_declaration=True)
     return sorted(done.values(), key=lambda d: (d["measure"], d["staff"]))
@@ -404,8 +429,9 @@ def record_musescore_resets(song_dir: str, resets: List[Dict]) -> int:
     rather than adding to them -- a bar a better reading has since fixed stops being
     listed. A sentence somebody typed is never touched.
     """
-    written = [
-        {
+    written = []
+    for one in resets:
+        entry = {
             "kind": "text",
             "source": MUSESCORE_CHECK_SOURCE,
             "measure": one["measure"],
@@ -417,8 +443,12 @@ def record_musescore_resets(song_dir: str, resets: List[Dict]) -> int:
                 "Put the notes back from the page."
             ),
         }
-        for one in resets
-    ]
+        # What a fix for this bar has to carry as its `from` (#357): fixes replay
+        # before the check, so they meet the bar as it read before the reset.
+        if one.get("scanned_from") is not None:
+            entry.update(staff_id=one["staff_id"], scanned_from=one["scanned_from"],
+                         scanned_notes=one["scanned_notes"])
+        written.append(entry)
     _replace_recorded(song_dir, lambda fix: fix.get("source") == MUSESCORE_CHECK_SOURCE, written)
     return len(written)
 
@@ -636,9 +666,38 @@ def bar_for_fix(cleaned_path: str, staff: int, measure: int) -> Dict:
         note["carries_syllable"] = slots[note["index"]] if note["index"] < len(slots) else None
     # `notes` are the chords only, in the numbering `index` uses; `from` is what a
     # fix recorded against this bar has to carry, rests and brackets included (#340).
-    return {"staff": staff, "measure": measure, "notes": notes,
-            "from": bar_tokens(root, staff, measure),
-            "syllables": sum(1 for f in slots if f)}
+    out = {"staff": staff, "measure": measure, "notes": notes,
+           "from": bar_tokens(root, staff, measure),
+           "items": bar_items(root, staff, measure),
+           "syllables": sum(1 for f in slots if f)}
+    reset = _reset_as_scanned(root, os.path.dirname(cleaned_path), staff, measure)
+    if reset:
+        out["reset"] = reset
+    return out
+
+
+def _reset_as_scanned(root: etree._Element, song_dir: str, staff: int,
+                      measure: int) -> Optional[Dict]:
+    """The bar as a fix meets it, when MuseScore's check reset it after the fixes ran.
+
+    Fixes replay *before* that check, so a new entry for a reset bar has to carry the
+    bar as it read then, not the whole-bar rest on the score now — which before #357
+    only showed up in the error of a clean that failed. Cleaning keeps it in the bar's
+    `musescore-check` entry. The top-level `from` stays what the score reads now,
+    because the Fix panel's slur recorder writes to the score as it is.
+    """
+    ids = [st.get("id") for st in root.findall(".//Score/Staff")]
+    for fix in _recorded_fixes(song_dir):
+        if fix.get("source") != MUSESCORE_CHECK_SOURCE or "scanned_from" not in fix:
+            continue
+        position = int(fix.get("staff", 0))
+        staff_id = fix.get("staff_id") or (ids[position - 1] if 0 < position <= len(ids) else None)
+        if str(staff_id) == str(staff) and int(fix.get("measure", 0)) == measure:
+            return {"from": fix["scanned_from"], "notes": fix.get("scanned_notes", []),
+                    "why": ("MuseScore 3 refused this bar and cleaning reset it to a rest "
+                            "after the recorded fixes ran. A fix for it replays before "
+                            "that, so its `from` must be this one, not the bar above.")}
+    return None
 
 
 def score_parts_and_measures(cleaned_path: str) -> Tuple[List[Dict], int]:

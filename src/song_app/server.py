@@ -583,6 +583,17 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
     return {"ok": True}
 
 
+def _error_text(exc: BaseException) -> str:
+    """What a failed job says. Our own errors are sentences; anything else names its type.
+
+    A bare `str(KeyError(3))` is `"3"`, and that was the whole of what one failed
+    clean told anybody — the traceback only reaches the service journal (#357).
+    """
+    if isinstance(exc, (RuntimeError, FixError)):
+        return str(exc)
+    return f"{type(exc).__name__}: {exc}"
+
+
 def _run_clean(slug: str) -> None:
     song = _require(slug)
     xml = song.source_path("xml")
@@ -633,8 +644,8 @@ def _run_clean(slug: str) -> None:
         hub.emit(slug, {"type": "state"})
     except Exception as exc:  # surface to the UI rather than dying silently
         traceback.print_exc()
-        _job_emit(slug, "clean", str(exc), "error")
-        _job_finish(song, "clean", str(exc))
+        _job_emit(slug, "clean", _error_text(exc), "error")
+        _job_finish(song, "clean", _error_text(exc))
         hub.emit(slug, {"type": "state"})
 
 

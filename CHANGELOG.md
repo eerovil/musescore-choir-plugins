@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Writing fixes is harder to get wrong: the bar reader now shows ties, where each
+  chord sits among the rests, and the bar as a fix meets it when MuseScore reset it;
+  added notes are spelt with flats in a flat key; and two songs cleaning at once no
+  longer fail with the bare error "3". (#357)
 - A `bar` fix can now give a voice the scan made too long a bar that fills the
   time signature. False triplets had left Lasinkuultava laulu's T1 bar 9 7/6 long
   in 4/4, a length no writable bar adds up to, so MuseScore reset it to a rest and
