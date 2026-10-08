@@ -189,6 +189,14 @@ class DroppedVoice:
                     f"the staff is named only {said}. Name them in the Clean grid "
                     f'(e.g. "{", ".join(names)}") to split them, and clean again.')
         verb = "were" if self.kind == "chord" and self.voice == 1 else "was"
+        if self.kind == "voice" and self.voice < len(_labels(self.answer)):
+            # Named, but in a bar whose top voice stacks a chord: the names are split
+            # across those noteheads and this voice is never copied. More names do
+            # not help; the bar's voices have to be put right.
+            return (f"{where} {verb} dropped: in a bar where the top voice stacks a "
+                    f"chord, the names {said} are split across its notes and the other "
+                    f"voices are not copied. Put the bar's lines into separate voices "
+                    f"(or one chord) in the score, and clean again.")
         return (f"{where} {verb} dropped, because the staff is named only {said}. "
                 f'Name every line in the Clean grid (e.g. "{", ".join(names)}") and '
                 f"clean again.")
@@ -484,6 +492,10 @@ def _unnamed_lines(staff: etree._Element, a: int, b: int, named: int) -> Dict[Tu
             for chord in voices[0].findall("Chord"):
                 for rank in range(named, len(chord.findall("Note"))):
                     add("chord", rank, 1)
+            # Every part is cut from the top voice's chords, so the other voices of
+            # this bar are not copied at all, however many names there are.
+            for vidx in range(1, len(voices)):
+                add("voice", vidx, notes_of(voices[vidx]))
             continue
         for vidx in range(named, len(voices)):
             add("voice", vidx, notes_of(voices[vidx]))
