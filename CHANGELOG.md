@@ -12,6 +12,9 @@ developers are listed under *Behind the scenes*.
   chord note, so the practice track sang both; the track now sings the main note.
   Kauan, Love Me Tender and Minä laulan sun iltasi tähtihin have their bracketed bass
   notes taken off this way. (#358)
+- The "This parse looks unusable" warning is gone from Review, Fix and the clean's
+  log. On scanned songs it was set off mostly by homr's `⚠` questions, so it called
+  scores whose notes were right unusable; the issue count and the Fix rows stay. (#356)
 - `fixes.json` can now take off a time signature the scan invented, or write
   another of the same bar length in its place (`timesig`), on every staff. Kesäaamu's
   stray 3/4 at bar 22 is recorded this way. Health also stops flagging a song's last

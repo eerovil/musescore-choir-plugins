@@ -990,7 +990,7 @@ def test_a_broken_fixes_file_costs_the_record_and_not_the_reading(songs, reader,
 
 # --- where the findings fell ------------------------------------------------
 #
-# The verdict on a parse is made two stages along, off the cleaned score. What this
+# Health is checked two stages along, off the cleaned score. What this
 # stage can add is the system numbers, because this is the screen with a re-read
 # button on it. All of it is attribution, so all of it is about refusing to
 # attribute when the numbering cannot be trusted.
