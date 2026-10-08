@@ -326,3 +326,47 @@ def test_a_pick_keeps_the_place_in_the_list(live, page, size, late):
     if out and size["width"] < 800 and late == "ping-after-loading":
         page.screenshot(path=os.path.join(out, "after-pick-and-late-refresh-phone.png"))
     assert errors == []
+
+
+@pytest.mark.parametrize("where", ["mid-list", "below-the-list"])
+def test_a_refresh_nobody_tapped_for_leaves_the_view_alone(live, page, where):
+    """A `state` ping redraws the panel; the reader stays where they were (#329).
+
+    Below the last card (the slur recorder, "Re-check now") there is no card to hold
+    on to, so the scroll position itself comes back — not the "decided" summary,
+    which stands in for a card only after a tap.
+    """
+    base, song, _ = live
+    served = []
+
+    def problems(route):
+        served.append(1)
+        route.fulfill(json={"rows": _many_rows({"row-1", "row-2"})})
+    page.route("**/problems", problems)
+    page.set_viewport_size({"width": 390, "height": 844})
+    errors = _open_fix(page, base, song.slug)
+    page.wait_for_selector('.problems[data-loaded="1"] .readdone')
+    panel = page.locator(".panel")
+    if where == "mid-list":
+        panel.evaluate("(p) => { const c = p.querySelector('[data-row=\"row-7\"]');"
+                       " p.scrollTop += c.getBoundingClientRect().top - p.getBoundingClientRect().top - 90; }")
+        stood = page.locator('[data-row="row-7"]').bounding_box()["y"]
+    else:
+        panel.evaluate("p => { p.scrollTop = p.scrollHeight; }")
+        assert page.locator(".problem").last.bounding_box()["y"] + \
+            page.locator(".problem").last.bounding_box()["height"] < 0, "no card in view"
+    before = panel.evaluate("p => p.scrollTop")
+
+    server.hub.emit(song.slug, {"type": "state"})
+    deadline = time.time() + 10
+    while len(served) < 2 and time.time() < deadline:
+        page.wait_for_timeout(50)
+    assert len(served) == 2, "the ping did not redraw the panel"
+    page.wait_for_selector('.problems[data-loaded="1"] .readdone')
+    page.wait_for_timeout(300)
+
+    if where == "mid-list":
+        assert abs(page.locator('[data-row="row-7"]').bounding_box()["y"] - stood) <= 4
+    else:
+        assert abs(panel.evaluate("p => p.scrollTop") - before) <= 2
+    assert errors == []

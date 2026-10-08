@@ -1906,7 +1906,10 @@ function problemList(panel, song, P, refresh) {
     const top = sc.getBoundingClientRect().top;
     const cards = [...box.querySelectorAll(".issue.problem")];
     const at = cards.findIndex((c) => c.getBoundingClientRect().bottom > top);
-    fixPlace = { slug: song.slug, scrollTop: sc.scrollTop,
+    // `untapped`: with no card in view (the reader is below the list, at the slur
+    // recorder say), the scroll position itself is put back — the "decided" summary
+    // standing in for the card is only right after a tap.
+    fixPlace = { slug: song.slug, scrollTop: sc.scrollTop, untapped: true,
       rows: at < 0 ? [] : cards.slice(at).map((c) => c.dataset.row),
       offset: at < 0 ? 0 : cards[at].getBoundingClientRect().top - top };
   };
@@ -1916,7 +1919,8 @@ function problemList(panel, song, P, refresh) {
     if (!place || place.slug !== song.slug) return;
     const sc = scroller();
     const cards = new Map([...box.querySelectorAll(".issue.problem")].map((c) => [c.dataset.row, c]));
-    const target = place.rows.map((id) => cards.get(id)).find(Boolean) || box.querySelector(".readdone");
+    const target = place.rows.map((id) => cards.get(id)).find(Boolean)
+      || (place.untapped ? null : box.querySelector(".readdone"));
     const place_it = () => {
       if (!target.isConnected) return;
       sc.scrollTop += target.getBoundingClientRect().top - sc.getBoundingClientRect().top - place.offset;
