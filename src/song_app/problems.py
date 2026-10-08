@@ -140,8 +140,36 @@ def _slur_marks(rec: Dict) -> List[Tuple[int, int, str]]:
 
 
 def _slur_decisions(song_dir: str) -> Dict[str, str]:
-    return {fix["offer"]: fix.get("choice", "?") for fix in pipeline._recorded_fixes(song_dir)
-            if fix.get("source") == SLUR_SOURCE and fix.get("offer")}
+    """Each answered slur question, keyed by its id in the cleaned score's numbering.
+
+    An answer names the bars as they stood when it was recorded; a `delbar` or
+    `insbar` later in the file moves them (#346), so the id is moved with them.
+    """
+    entries = pipeline._recorded_fixes(song_dir)
+    out: Dict[str, str] = {}
+    for n, fix in enumerate(entries):
+        if fix.get("source") != SLUR_SOURCE or not fix.get("offer"):
+            continue
+        cid = _moved_slur_id(fix["offer"], score_fixes.bar_moves(entries[n + 1:]))
+        if cid is not None:
+            out[cid] = fix.get("choice", "?")
+    return out
+
+
+def _moved_slur_id(cid: str, moves) -> Optional[str]:
+    """`_slur_id` with both bars moved past `moves`; None when one was deleted."""
+    if not moves:
+        return cid
+    parts = cid.split("-")
+    if len(parts) != 7 or parts[0] != "slur":
+        return cid
+    for at in (2, 5):
+        if parts[at].isdigit():
+            moved = score_fixes.after_moves(int(parts[at]), moves)
+            if moved is None:
+                return None
+            parts[at] = str(moved)
+    return "-".join(parts)
 
 
 def _repeat_id(end: int) -> str:

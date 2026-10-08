@@ -396,3 +396,27 @@ def test_a_pitch_pick_answering_the_whole_mark_takes_it_off(make_song):
     root = _marked_bar(song, "pitch? accidental?")
     score_fixes.apply_fixes(root, [_pitch_entry(song)])
     assert marks(root) == []
+
+
+def test_a_slur_answer_still_counts_after_a_bar_is_put_in_after_it(tmp_path, monkeypatch):
+    # The answer names the bars as they stood; an `insbar` later in the file moves
+    # the slur's end a bar on (#346), and the question must not come back undecided.
+    song = _slur_song(tmp_path, monkeypatch)
+    [choice] = problems.problems(song)[0]["choices"]
+    problems.record_slur_choice(song, choice["id"], "d")
+    root = etree.parse(song.cleaned_path()).getroot()
+    first = [score_fixes.bar_tokens(root, int(s.get("id")), 1)
+             for s in root.findall(".//Score/Staff")]
+    entries = _fixes(song) + [{"kind": "insbar", "measure": 1, "from": first, "why": "page"}]
+    with open(song.path("fixes.json"), "w") as fh:
+        json.dump(entries, fh)
+    rebuilt = _slur_score()
+    store_removed(rebuilt, drop_cross_voice_slurs(rebuilt))
+    etree.ElementTree(rebuilt).write(song.cleaned_path(), encoding="UTF-8")
+    pipeline.apply_recorded_fixes(song.cleaned_path(), song.dir)
+    [row] = problems.problems(song)
+    [again] = row["choices"]
+    assert again["id"] != choice["id"]  # the end bar moved on
+    assert again["decision"] == {"picked": "d"}
+    with pytest.raises(FixError):
+        problems.record_slur_choice(song, again["id"], "b")
