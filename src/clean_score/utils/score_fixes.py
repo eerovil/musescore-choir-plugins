@@ -1504,25 +1504,42 @@ def before_deletions(measure: int, deleted: List[int]) -> int:
             measure += 1
     return measure
 
-def _shift_system_map(root: etree._Element, measure_no: int) -> None:
-    """Take bar ``measure_no`` out of the per-system lyric map's bar ranges."""
-    import json  # noqa: PLC0415 - only a per-system score carries the map
+def _renumber_meta(root: etree._Element, measure_no: int) -> None:
+    """Take bar ``measure_no`` out of every bar number the score keeps in a metaTag.
+
+    The per-system lyric map's bar ranges, and where each slur cleaning removed stood
+    (`removedSlurs`, which the Fix panel's slur questions read): a record with a half
+    in the deleted bar goes, since that note went with it.
+    """
+    import json  # noqa: PLC0415 - only these metaTags are JSON
+
+    def moved(bar):
+        return bar - 1 if isinstance(bar, int) and bar > measure_no else bar
+
     score = root.find(".//Score") if root.tag != "Score" else root
     for meta in score.findall("metaTag") if score is not None else []:
-        if meta.get("name") != "lyricsSystemMap" or not (meta.text or "").strip():
+        name = meta.get("name")
+        if name not in ("lyricsSystemMap", "removedSlurs") or not (meta.text or "").strip():
             continue
         try:
             entries = json.loads(meta.text)
         except ValueError:
-            return
+            continue
         kept = []
         for entry in entries:
-            start, end = int(entry["start"]), int(entry["end"])
-            entry["start"] = start - 1 if start > measure_no else start
-            entry["end"] = end - 1 if end >= measure_no else end
-            if entry["start"] <= entry["end"]:
+            if not isinstance(entry, dict):
                 kept.append(entry)
-        meta.text = json.dumps(kept, separators=(",", ":"))
+            elif name == "lyricsSystemMap":
+                start, end = int(entry["start"]), int(entry["end"])
+                entry["start"] = start - 1 if start > measure_no else start
+                entry["end"] = end - 1 if end >= measure_no else end
+                if entry["start"] <= entry["end"]:
+                    kept.append(entry)
+            elif measure_no not in (entry.get("measure"), entry.get("end_measure")):
+                entry["measure"] = moved(entry.get("measure"))
+                entry["end_measure"] = moved(entry.get("end_measure"))
+                kept.append(entry)
+        meta.text = json.dumps(kept, separators=(",", ":"), ensure_ascii=False)
 
 
 def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
@@ -1620,7 +1637,7 @@ def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
             if before is not None and before.find("LayoutBreak") is None:
                 before.append(brk)
         staff.remove(bar)
-    _shift_system_map(root, measure_no)
+    _renumber_meta(root, measure_no)
     said = f"bar deleted from all {len(staves)} staves, later bars move up one"
     if shortened:
         said += f"; {shortened} spanner(s) across it shortened"

@@ -215,3 +215,17 @@ def test_a_bracket_starting_in_the_bar_refuses():
         apply_fixes(root, [dict(DELBAR)])
     assert volta_spans(_staff(root, 1)) == [(4, 4)]
     assert len(_staff(root, 2).findall("Measure")) == 5
+
+
+def test_the_removed_slurs_lose_the_bar():
+    # Where cleaning took out a slur between singers, which the Fix panel asks about.
+    def slur(measure, end):
+        return {"measure": measure, "staff": 1, "part": "T1", "note": 0, "pos": "0",
+                "end_measure": end, "end_staff": 2, "end_part": "T2", "end_note": 0,
+                "end_pos": "0"}
+    tag = json.dumps([slur(2, 3), slur(3, 5), slur(5, 5), slur(4, 5), slur(5, None)])
+    root = _score(meta=f'<metaTag name="removedSlurs">{tag}</metaTag>')
+    apply_fixes(root, [dict(DELBAR)])
+    shifted = json.loads(root.find(".//metaTag[@name='removedSlurs']").text)
+    assert [(r["measure"], r["end_measure"]) for r in shifted] == [
+        (2, 3), (3, 4), (4, 4), (4, None)]

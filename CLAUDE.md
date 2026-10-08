@@ -193,7 +193,7 @@ Strict about `from` like the others, and replayed on every clean.
 Kun poijat ne raitilla's scan put an empty bar between the "1." and "2." endings, so
 the "1." bracket covered two bars and the track played a bar of silence. A volta, slur
 or tie reaching across the bar is shortened by one, both halves, a "1." bracket that
-ends on the barline before it keeps its length, and a per-system lyric map loses the
+ends on the barline before it keeps its length, the removed-slur records (`removedSlurs`) move up with their bars, and a per-system lyric map loses the
 bar too; a spanner starting or ending in it, any volta starting in it, a repeat sign,
 or a clef/key/meter change refuses. Fixes apply **in file order**: an entry before a
 `delbar` counts bars with the invented one still there, an entry after it without, so
@@ -603,7 +603,7 @@ Key test modules:
 - `test_delbar.py` — added for #346: the bar goes on every staff, the "1." and "2."
   brackets close up round it, a slur across it keeps both notes, fixes count bars in
   file order, `from` is strict, a bar with music or a spanner end in it refuses, the
-  per-system lyric map loses the bar, the entry replays on a rebuild, and a pick recorded after it survives the next clean.
+  per-system lyric map and the removed-slur records lose the bar, the entry replays on a rebuild, and a pick recorded after it survives the next clean.
 - `test_duration_back_steps.py` — added for #344, on the shapes of Gute Nacht bar 6
   and Annin laulu bar 10: a `duration` fix that restores the bar takes the back-step out
   of the voices it squeezed, a tie after the step still reaches its note, a voice the
