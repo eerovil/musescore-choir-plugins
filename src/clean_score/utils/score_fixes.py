@@ -254,13 +254,66 @@ def _slur_across(root: etree._Element, staff: int, measure: int, index: int,
 
 
 def _unmark(root: etree._Element, staff: int, measure: int, text: str) -> str:
-    """Take the red mark saying `text` off a bar. Nothing to take off is fine."""
+    """Take the red mark saying `text` off a bar. Nothing to take off is fine.
+
+    The mark is looked for on every part the bar's printed staff became, because a
+    mark read off a shared staff lands on the first of them (#347).
+    """
     gone = 0
-    for el in list(_measure(root, staff, measure).iter("StaffText")):
-        if (el.findtext("text") or "") == "⚠ " + text:
-            el.getparent().remove(el)
-            gone += 1
+    for bar in _sibling_bars(root, staff, measure):
+        for el in list(bar.iter("StaffText")):
+            if (el.findtext("text") or "") == "⚠ " + text:
+                el.getparent().remove(el)
+                gone += 1
     return f"took the red mark off ({text})" if gone else f"no red mark left ({text})"
+
+
+def _siblings(root: etree._Element, staff: int, measure: int) -> List[int]:
+    """The staves the printed staff that `staff` came from became, in bar `measure`.
+
+    Read off the maps cleaning writes for the lyrics: the per-system one when there
+    is one for that bar, else the score-wide one. A staff neither names is its own.
+    """
+    from ..lyric_txt import (_read_lyrics_staff_map,  # noqa: PLC0415 - a cycle
+                             _read_lyrics_system_map)
+    maps = [entry["map"] for entry in _read_lyrics_system_map(root) or []
+            if entry["start"] <= measure <= entry["end"]] or [_read_lyrics_staff_map(root)]
+    for outs in maps[0].values():
+        if staff in outs:
+            return sorted(set(outs))
+    return [staff]
+
+
+def _sibling_bars(root: etree._Element, staff: int, measure: int) -> List[etree._Element]:
+    bars = []
+    for sid in _siblings(root, staff, measure):
+        try:
+            bars.append(_measure(root, sid, measure))
+        except FixError:
+            continue
+    return bars or [_measure(root, staff, measure)]
+
+
+def _is_red(color: etree._Element) -> bool:
+    return color.get("r") == "255" and color.get("g") == "0" and color.get("b") == "0"
+
+
+def _settle(root: etree._Element, staff: int, measure: int) -> int:
+    """Turn the bar's red notes black once no red mark is left on it. Returns how many.
+
+    homr and the app colour the notes a mark is about (#274), and the mark lands on
+    the first part of a shared staff while the notes stay on both. Once every mark on
+    the bar is answered, nothing is left for a red note to point at (#347).
+    """
+    bars = _sibling_bars(root, staff, measure)
+    if any((el.findtext("text") or "").startswith("⚠ ")
+           for bar in bars for el in bar.iter("StaffText")):
+        return 0
+    found = [c for bar in bars for note in bar.iter("Note")
+             for c in note.findall("color") if _is_red(c)]
+    for color in found:
+        color.getparent().remove(color)
+    return len(found)
 
 
 # The three kinds an LLM fixing a song needed and could not write (#340): taking a
@@ -623,7 +676,7 @@ def _set_pitch(root: etree._Element, staff: int, measure: int, index: int,
     for color in note.findall("color"):
         note.remove(color)
     return (f"set chord {index}'s {note_name(was)} to {note_name(to, tpc)}"
-            + _answered(_strike_words(bar, _PITCH_WORDS)))
+            + _answered(_strike(root, staff, measure, _PITCH_WORDS)))
 
 
 #: The words of homr's red mark each kind of pick answers. A pitch answers the note's
@@ -667,6 +720,20 @@ def _strike_words(bar: etree._Element, words) -> List[str]:
             node.text = "⚠ " + " ".join(left)
         else:
             el.getparent().remove(el)
+    return struck
+
+
+#: The words of homr's mark the other kinds answer: a tie written or taken out has
+#: been read against the page, and so has a slur, and a length (#347).
+_KIND_WORDS = {"tie": ("tie?",), "untie": ("tie?",), "slur": ("slur?",),
+               "unslur": ("slur?",), "duration": ("rhythm?",)}
+
+
+def _strike(root: etree._Element, staff: int, measure: int, words) -> List[str]:
+    """`_strike_words` on every part the bar's printed staff became (#347)."""
+    struck: List[str] = []
+    for bar in _sibling_bars(root, staff, measure):
+        struck.extend(w for w in _strike_words(bar, words) if w not in struck)
     return struck
 
 
@@ -1003,7 +1070,7 @@ def _rewrite_rhythm(root: etree._Element, staff_id: int, measure_no: int,
         timeline[last][0].addnext(etree.Element("endTuplet"))
     for location, fractions in moves:
         _set_fractions(location, fractions)
-    return f"set the lengths to {list(values)}" + _answered(_strike_words(measure, _RHYTHM_WORDS))
+    return f"set the lengths to {list(values)}" + _answered(_strike(root, staff_id, measure_no, _RHYTHM_WORDS))
 
 
 def _same_shape(timeline: List, to: List[Dict]) -> bool:
@@ -1095,7 +1162,7 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
                 _set_pitches(el, new.get("pitches") or [], new.get("tpcs") or [])
         said = said.replace("set the lengths to", "set the bar to").split(" and took ")[0]
         return (f"{said} {_bar_tokens(measure)}"
-                + _answered(_strike_words(measure, _BAR_WORDS)))
+                + _answered(_strike(root, staff_id, measure_no, _BAR_WORDS)))
 
     from .rejected_bars import _bar_lengths, _cut_spanners_into  # noqa: PLC0415 - a cycle
 
@@ -1133,7 +1200,7 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
         chord.insert(list(chord).index(chord.find("Note")), lyric)
     _cut_spanners_into(measures, lengths, measures.index(measure))
     return (f"wrote the bar afresh as {_bar_tokens(measure)}"
-            + _answered(_strike_words(measure, _BAR_WORDS)))
+            + _answered(_strike(root, staff_id, measure_no, _BAR_WORDS)))
 
 
 # Reading a bar back out, so a fix can be *picked* rather than typed. The indexing
@@ -1388,6 +1455,10 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             # Say which entry, not just what went wrong: two bars of the same song can
             # read identically, and the message is all the reader gets.
             raise FixError(f"staff {staff} m{measure} ({kind}): {exc}") from None
+        if kind in _KIND_WORDS:
+            what += _answered(_strike(root, staff, measure, _KIND_WORDS[kind]))
+        if _settle(root, staff, measure):
+            what += " and turned its red notes black"
         line = f"staff {staff} m{measure}: {what} — {fix.get('why', 'no reason recorded')}"
         logger.debug(line)
         done.append(line)

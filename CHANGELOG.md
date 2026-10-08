@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A bar a recorded fix has answered stops showing red. An `unmark` or a pick now
+  finds the bar's red mark on either part of a shared staff (the mark sits on the
+  first part, the red notes on both), a `tie`/`untie`, `slur`/`unslur` or `duration`
+  answers the mark's `tie?`, `slur?` or `rhythm?`, and once no mark is left on the
+  bar its red notes turn black. Cleaning no longer copies each red mark into
+  `fixes.json`, and the next clean removes the copies already there. (#347)
 - `fixes.json` can now take out a tie (`untie`), for the dashed ties a strophic song
   prints for a later verse only, which the scan reads as real ties. (#343)
 - `fixes.json` can now take out a slur (`unslur`), tie two notes (`tie`) and give

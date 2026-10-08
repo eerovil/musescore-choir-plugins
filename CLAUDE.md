@@ -166,6 +166,17 @@ staff** (its `len` goes and a whole-bar rest is lengthened with it); any other t
 refuses. All three take a `from` and refuse without one. `GET /bar` now also returns
 the bar's `from` (rests included), and the lyric import's reply carries `mismatches`.
 
+**A bar a fix has answered stops showing red** (#347). homr marks a printed staff, so
+on a staff two parts share the `⚠` mark lands on the first part while the red notes stay
+on both. `unmark` and the word-striking picks (`pitch`, `rhythm`, `bar`) therefore look
+for the mark on every part that printed staff became in that bar (`score_fixes._siblings`,
+read off `lyricsSystemMap` / `lyricsStaffMap`); `tie`/`untie` answer `tie?`,
+`slur`/`unslur` answer `slur?` and `duration` answers `rhythm?`; and after any fix, a bar
+with no mark left on any of those parts loses its red notes (`_settle`). `voice?` and
+cleaning's own sentences still need an `unmark`, as #290 decided. Cleaning no longer
+copies the marks into `fixes.json` as `clean-marker` text entries — the Fix panel reads
+them off the score — and removes copies an older clean left.
+
 `untie` (#342, `index`, `pitch`) is `tie` taken back: it takes out the tie that starts on
 that note, both halves, in this bar or across the barline, so playback sings the note
 again. Strophic songs print **dashed** ties that belong to a later verse only, and homr
@@ -541,8 +552,8 @@ Key test modules:
   triplet across it goes whole, a voice off the beat grid is left short rather than
   padded wrong, a tie into the cut-away part goes, and short bars, bars printing their
   own signature and the bars either side are untouched. Then the marks: red, `⚠`,
-  listed by health until deleted, one Fix-panel sentence each replaced on every clean
-  (a typed one never touched), put on a bar MuseScore rejected, and absent from the
+  listed by health until deleted, said in the clean's log (no longer copied into
+  `fixes.json`, #347), put on a bar MuseScore rejected, and absent from the
   video.
 - `test_missing_ties.py` — a tie is copied onto a voice singing the donor's rhythm,
   not onto an ostinato on the same pitch (#284), not past a rhythm that differs
@@ -2261,8 +2272,8 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    (`utils/problem_marks.py`): a staff text starting with `⚠`, saying what was taken
    out. The app's clean also marks each bar the MuseScore check resets. Deleting a mark
    in MuseScore is how a person says the bar is fixed: until then health lists it
-   (`marked-problem`) and `pipeline.record_clean_marks` puts its sentence in the Fix
-   panel (`source: "clean-marker"`, replaced on every clean). The scrolling video
+   (`marked-problem`) and the Fix panel reads it off the score (until #347 a copy went
+   into `fixes.json` as a `clean-marker` text entry). The scrolling video
    strips marks (`scrollvideo/score.prepare`), so a forgotten one never reaches a
    practice track.
 9. `centre_measure_rests` (`utils/measure_rests.py`, #298) runs last in both modes: a
