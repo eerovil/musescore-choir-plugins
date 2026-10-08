@@ -428,28 +428,23 @@ CLEAN_MARK_SOURCE = "clean-marker"
 
 
 def record_clean_marks(mscx_path: str, song_dir: str, log: Logger = _noop) -> int:
-    """List each red mark cleaning left in the score as an outstanding fix (#238).
+    """Say each red mark left in the score in the clean's log. Returns how many.
 
-    The marks are in the bars, where somebody fixing the score in MuseScore will see
-    them; this puts the same sentences in the Fix panel, where somebody on the phone
-    will. Every clean writes the marks afresh, so this **replaces** the previous ones
-    -- a bar a better reading no longer damages stops being listed. Runs before the
-    MuseScore check, whose resets keep their own entries.
+    The marks used to be copied into `fixes.json` as one sentence each (#238), so the
+    Fix panel could list them. It reads them live off the score now (#290), and the
+    copies only buried the real fixes -- 45 of them on one song -- and went on
+    listing marks a fix had already answered (#347). So this writes nothing, and
+    takes away the copies an older clean left behind.
     """
     root = etree.parse(mscx_path).getroot()
     names, found = staff_names(root), marks(root)
-    written = [{
-        "kind": "text",
-        "source": CLEAN_MARK_SOURCE,
-        "measure": one["measure"],
-        "staff": one["staff"],
-        "what": f"Bar {one['measure']}, {names.get(one['staff'], one['staff'])} "
-                f"(red mark in the score): {one['text']}",
-    } for one in found]
-    _replace_recorded(song_dir, lambda fix: fix.get("source") == CLEAN_MARK_SOURCE, written)
-    for one in written:
-        log("  " + one["what"])
-    return len(written)
+    old_copy = lambda fix: fix.get("source") == CLEAN_MARK_SOURCE  # noqa: E731
+    if any(old_copy(fix) for fix in _recorded_fixes(song_dir)):
+        _replace_recorded(song_dir, old_copy, [])
+    for one in found:
+        log(f"  Bar {one['measure']}, {names.get(one['staff'], one['staff'])} "
+            f"(red mark in the score): {one['text']}")
+    return len(found)
 
 
 DROPPED_VOICE_SOURCE = "per-system-dropped"

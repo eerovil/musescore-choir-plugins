@@ -2,7 +2,7 @@
 
 A mark is a red staff text starting with `⚠`, put in the bar where somebody fixing the
 score in MuseScore is looking. Deleting it is how they say the bar is done: until then
-health lists it and the Fix panel names it, and the scrolling video never shows it.
+health lists it and the Fix panel reads it off the score, and the scrolling video never shows it.
 """
 import json
 import os
@@ -82,27 +82,29 @@ def test_two_marks_on_one_bar_are_two_rows(tmp_path):
         "marked-m2-s1", "marked-m2-s1-2"]
 
 
-def test_the_fix_panel_gets_one_sentence_per_mark_replaced_on_every_clean(tmp_path):
+def test_a_clean_writes_no_copy_of_its_marks_and_takes_old_copies_away(tmp_path):
+    """The Fix panel reads the marks off the score (#290), so a copy in fixes.json only
+    buried the real fixes and outlived the marks it copied (#347)."""
     typed = {"kind": "text", "what": "somebody typed this"}
-    (tmp_path / "fixes.json").write_text(json.dumps([typed]))
+    old_copy = {"kind": "text", "source": pipeline.CLEAN_MARK_SOURCE, "measure": 2,
+                "staff": 1, "what": "Bar 2, T1 (red mark in the score): first reading"}
+    (tmp_path / "fixes.json").write_text(json.dumps([typed, old_copy]))
     root = _score()
     mark_bar(_bar(root, 1, 2), "first reading")
     path = _write(root, tmp_path / "s_cleaned.mscx")
-    assert pipeline.record_clean_marks(path, str(tmp_path)) == 1
-    strip_marks(root)
-    mark_bar(_bar(root, 2, 1), "second reading")
-    _write(root, path)
-    pipeline.record_clean_marks(path, str(tmp_path))
-    fixes = json.loads((tmp_path / "fixes.json").read_text())
-    assert fixes[0] == typed
-    assert [(f["source"], f["measure"], f["staff"]) for f in fixes[1:]] == [
-        (pipeline.CLEAN_MARK_SOURCE, 1, 2)]
-    assert fixes[1]["what"].startswith("Bar 1, B1 (red mark in the score): second reading")
-    assert pipeline.free_text_fixes(str(tmp_path))[-1] == fixes[1]["what"]
-    strip_marks(root)
-    _write(root, path)
-    pipeline.record_clean_marks(path, str(tmp_path))
+    said = []
+    assert pipeline.record_clean_marks(path, str(tmp_path), said.append) == 1
     assert json.loads((tmp_path / "fixes.json").read_text()) == [typed]
+    assert pipeline.free_text_fixes(str(tmp_path)) == ["somebody typed this"]
+    assert said == ["  Bar 2, T1 (red mark in the score): first reading"]
+
+
+def test_a_clean_leaves_a_fixes_file_with_no_copies_untouched(tmp_path):
+    (tmp_path / "fixes.json").write_text('[{"kind": "text", "what": "typed"}]')
+    root = _score()
+    mark_bar(_bar(root, 1, 2), "check")
+    pipeline.record_clean_marks(_write(root, tmp_path / "s_cleaned.mscx"), str(tmp_path))
+    assert (tmp_path / "fixes.json").read_text() == '[{"kind": "text", "what": "typed"}]'
 
 
 def test_a_bar_musescore_rejects_is_marked_where_it_was_reset(tmp_path):
