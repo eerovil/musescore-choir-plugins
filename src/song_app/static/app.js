@@ -1024,8 +1024,7 @@ function scannedView(view, song, slug) {
       bad ? el("div", { className: "cmperr" }, "Could not be read: " + bad) : slow,
       // Which homr read this one, where the reading is being judged. It says so
       // and does nothing about it.
-      // What the last clean made of this system, beside the picture of it. It is a
-      // count and not a verdict: one system is too little to judge a parse on.
+      // What the last clean made of this system, beside the picture of it.
       bad || !st.findings || !st.findings[String(i)] ? ""
         : el("div", { className: "hint scanfound" },
           `${st.findings[String(i)]} health finding(s) landed in this system`),
@@ -1487,7 +1486,6 @@ function verificationView(summary) {
       `${icon[result.status] || "—"} ${part}: ${result.detail}`));
   return el("div", { className: "verify" },
     el("h3", {}, "Verification"),
-    parseVerdict(summary.health),
     el("p", { className: "hint" },
       `Expected parts: ${(summary.expected_parts || []).join(", ") || "not available"}; `
       + `printed systems: ${summary.systems || "not available"}.`),
@@ -1499,22 +1497,6 @@ function verificationView(summary) {
       row("Rendered files", media),
       ...files),
     summary.render_error ? el("div", { className: "banner err" }, "Render error: " + summary.render_error) : "");
-}
-
-// A parse rough enough is not a repair list, and a count never said so: the walk's
-// song read "60 open issue(s)" here with an approve button on the next line. This is
-// the sentence instead of the number — and it is deliberately not a gate. The
-// operator's own condition was that he would have to see it with his own eyes, so
-// refusing to go on would take a call he has reserved for himself.
-function parseVerdict(health) {
-  const v = health?.verdict;
-  if (!v || v.level !== "unusable") return "";
-  return el("div", { className: "banner warn verdict" },
-    el("strong", {}, "This reading is probably not worth repairing."),
-    el("div", {}, v.message),
-    el("div", { className: "hint" },
-      "Read it against the page in the Scan stage — a system read again there costs "
-      + "one button. Nothing is blocked: you can carry on if you disagree."));
 }
 
 const CHECK_ICON = { passed: "✓", warning: "⚠", stale: "⚠", not_checked: "—" };
@@ -1531,9 +1513,6 @@ function reviewReadiness(summary) {
   if (!summary) return { tone: "attention", title: "Needs attention" };
   const core = [summary.notes, summary.lyrics, summary.health];
   const media = summary.media;
-  if (summary.health?.verdict?.level === "unusable") {
-    return { tone: "attention", title: "Read this against the page" };
-  }
   if (core.some((result) => ["stale", "not_checked"].includes(result?.status))) {
     return { tone: "attention", title: "Needs attention" };
   }
@@ -1548,7 +1527,6 @@ function compactReview(summary) {
   const readiness = reviewReadiness(summary);
   return el("section", { className: `compact-review ${readiness.tone}` },
     el("div", { className: "review-state" }, readiness.title),
-    parseVerdict(summary?.health),
     el("ul", {},
       compactCheck("Notes", summary?.notes),
       compactCheck("MuseScore", summary?.musescore),
@@ -1734,9 +1712,8 @@ function scanProvenance(st) {
 }
 
 // Where the last clean's findings fell, said on the screen that can re-read a
-// system. The verdict itself cannot be made here — it comes off the cleaned score —
-// but once a clean has happened the damage has system numbers, and this is the one
-// place where acting on them costs a single button.
+// system. Once a clean has happened the damage has system numbers, and this is the
+// one place where acting on them costs a single button.
 function scanFindingsHint(st) {
   const byIndex = st.findings;
   if (!byIndex) return "";
@@ -1989,10 +1966,7 @@ function sysBlock(sys) {
 
 function panelFix(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Fix"),
-    el("p", { className: "sub" }, "OCR damage the auto-fixers couldn't repair. Fix in MuseScore, save, and it re-checks automatically."),
-    // Said here too, because this is the panel that offers the rows one at a time.
-    // Sixty Dismiss buttons is what a verdict looks like when nobody makes it.
-    parseVerdict(song.verification_summary?.health));
+    el("p", { className: "sub" }, "OCR damage the auto-fixers couldn't repair. Fix in MuseScore, save, and it re-checks automatically."));
   problemList(panel, song, P, refresh);
   panel.append(el("div", { className: "row" },
     el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
