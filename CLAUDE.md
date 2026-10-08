@@ -570,7 +570,8 @@ Key test modules:
   browser: one card for a bar with both kinds of doubt, a slur answered in words, and
   a phone. A tap keeps the reader's place (#329): the next card lands where the
   answered one stood, desktop and phone, since a redraw otherwise left the panel at
-  its bottom. #295 rewrote their reading half around whole bars: the ranking, the second
+  its bottom — including when a `state` ping redraws it again while or after the
+  tap's list loads, which the file watcher sends after a pick some of the time. #295 rewrote their reading half around whole bars: the ranking, the second
   reading always **b**, picking it writing the bar afresh and coming back on a rebuild,
   an octave-shifted tenor, an earlier pick counting as decided, and in the browser six
   shown with the rest behind "More". `test_bar_fix.py` pins the `bar` kind itself.

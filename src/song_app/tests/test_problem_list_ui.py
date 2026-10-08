@@ -264,18 +264,35 @@ def _many_rows(answered=()):
     return rows
 
 
+@pytest.mark.parametrize("late", ["no-ping", "ping-while-loading", "ping-after-loading"])
 @pytest.mark.parametrize("size", [{"width": 1280, "height": 800}, {"width": 390, "height": 844}],
                          ids=["desktop", "phone"])
-def test_a_pick_keeps_the_place_in_the_list(live, page, size):
-    """A tap redraws the panel; it must not leave the reader at its bottom (#329)."""
+def test_a_pick_keeps_the_place_in_the_list(live, page, size, late):
+    """A tap redraws the panel; it must not leave the reader at its bottom (#329).
+
+    The tap's own redraw is not the only one: the pick rewrites the score, and the
+    file watcher can see that and send a `state` ping of its own a moment later —
+    which redrew the panel a second time with nothing remembered, and threw it to the
+    bottom about half the time on the live app. So the ping is sent here on purpose,
+    while the tap's list is still loading and after it has landed.
+    """
     base, song, _ = live
     answered = set()
-    page.route("**/problems", lambda route: route.fulfill(
-        json={"rows": _many_rows(answered)}))
+    served = []
+
+    def problems(route):
+        served.append(1)
+        if late == "ping-while-loading" and len(served) == 2:
+            server.hub.emit(song.slug, {"type": "state"})
+            time.sleep(0.5)
+        route.fulfill(json={"rows": _many_rows(answered)})
+    page.route("**/problems", problems)
     song_json = page.request.get(f"{base}/api/songs/{song.slug}").json()
 
     def pick(route):
         answered.add("row-" + json.loads(route.request.post_data)["choice"].split("-")[1])
+        if late == "ping-after-loading":
+            threading.Timer(0.8, server.hub.emit, (song.slug, {"type": "state"})).start()
         route.fulfill(json=song_json)
     page.route("**/problems/pick", pick)
 
@@ -293,13 +310,19 @@ def test_a_pick_keeps_the_place_in_the_list(live, page, size):
     stood = tapped.bounding_box()["y"]
     tapped.locator(".readopt").nth(1).click()
     page.wait_for_selector('[data-row="row-5"]', state="detached")
+    expected = 2 if late == "no-ping" else 3
+    deadline = time.time() + 10
+    while len(served) < expected and time.time() < deadline:
+        page.wait_for_timeout(50)
+    assert len(served) == expected, f"{len(served)} lists served"
     page.wait_for_selector('.problems[data-loaded="1"] .readdone')
+    page.wait_for_timeout(300)
 
     at_bottom = panel.evaluate("p => p.scrollTop >= p.scrollHeight - p.clientHeight - 2")
     assert not at_bottom, "the pick threw the panel to its bottom"
     # The next card slid into the place of the one answered.
     assert abs(page.locator('[data-row="row-6"]').bounding_box()["y"] - stood) <= 4
     out = os.environ.get("EVIDENCE_DIR")
-    if out and size["width"] < 800:
-        page.screenshot(path=os.path.join(out, "after-pick-place-kept-phone.png"))
+    if out and size["width"] < 800 and late == "ping-after-loading":
+        page.screenshot(path=os.path.join(out, "after-pick-and-late-refresh-phone.png"))
     assert errors == []
