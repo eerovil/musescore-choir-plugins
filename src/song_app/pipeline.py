@@ -26,7 +26,8 @@ from src.clean_score.utils import per_system
 from src.clean_score.utils.per_system import dropped_voices_for_file
 from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.rejected_bars import clear_bar, staff_names
-from src.clean_score.utils.score_fixes import FixError, apply_fixes, free_text, read_bar
+from src.clean_score.utils.score_fixes import (FixError, apply_fixes, bar_tokens, free_text,
+                                                read_bar)
 from src.clean_score.utils.utils import starts_new_system
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
@@ -638,7 +639,10 @@ def bar_for_fix(cleaned_path: str, staff: int, measure: int) -> Dict:
         # A bar whose voice element is missing gives no slots at all; say nothing
         # rather than claim every note is sung.
         note["carries_syllable"] = slots[note["index"]] if note["index"] < len(slots) else None
+    # `notes` are the chords only, in the numbering `index` uses; `from` is what a
+    # fix recorded against this bar has to carry, rests and brackets included (#340).
     return {"staff": staff, "measure": measure, "notes": notes,
+            "from": bar_tokens(root, staff, measure),
             "syllables": sum(1 for f in slots if f)}
 
 

@@ -1124,7 +1124,9 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     if result.ok:
         song.set_stage("review")
     song.save()
-    return _derived(song)
+    # The bars that did not take their words, said in the reply itself rather than
+    # left for the caller to dig out of the song's `lyrics.warnings` (#340).
+    return {**_derived(song), "mismatches": song.data["lyrics"]["warnings"]}
 
 
 # --------------------------------------------------------------------------

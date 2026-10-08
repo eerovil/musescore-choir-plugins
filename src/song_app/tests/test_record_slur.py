@@ -68,6 +68,13 @@ def test_the_bar_comes_back_as_notes_a_person_can_point_at(song):
     assert bar["syllables"] == 3
 
 
+def test_the_bar_says_what_a_fix_against_it_has_to_carry_rests_and_all(song):
+    # `notes` are the chords a fix's `index` counts; `from` is the whole bar (#340).
+    _, cleaned = song
+    bar = pipeline.bar_for_fix(cleaned, 1, 2)
+    assert bar["from"] == ["half:R", "quarter:62", "eighth.:63", "16th:62"]
+
+
 def test_the_parts_offered_leave_out_the_click_staff(song):
     """The spacer a recording adds has nothing to sing, so nothing to slur either."""
     _, cleaned = song

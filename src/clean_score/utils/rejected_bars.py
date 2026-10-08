@@ -103,7 +103,8 @@ def _cut_spanners(measures: List[etree._Element], lengths: List[Fraction],
         for voice in measure.findall("voice"):
             for pos, el in list(_walk(voice, lengths[home])):
                 holders = [(voice, el)] if el.tag == "Spanner" else (
-                    [(note, tie) for note in el.findall("Note") for tie in note.findall("Spanner")]
+                    [(el, sp) for sp in el.findall("Spanner")]
+                    + [(note, tie) for note in el.findall("Note") for tie in note.findall("Spanner")]
                     if el.tag == "Chord" else [])
                 for parent, spanner in holders:
                     for side in ("next", "prev"):
