@@ -97,8 +97,11 @@ def _target_bar(home: int, pos: Fraction, pointer: etree._Element,
 
 
 def _cut_spanners(measures: List[etree._Element], lengths: List[Fraction],
-                  cut: Callable[[int, int], bool]) -> None:
-    """Drop each tie or slur end on this staff whose other end `cut(home, target)` rejects."""
+                  cut: Callable[[int, int], bool], keep: Tuple[str, ...] = ()) -> None:
+    """Drop each tie or slur end on this staff whose other end `cut(home, target)` rejects.
+
+    Spanners of a type in `keep` are left whole.
+    """
     for home, measure in enumerate(measures):
         for voice in measure.findall("voice"):
             for pos, el in list(_walk(voice, lengths[home])):
@@ -107,6 +110,8 @@ def _cut_spanners(measures: List[etree._Element], lengths: List[Fraction],
                     + [(note, tie) for note in el.findall("Note") for tie in note.findall("Spanner")]
                     if el.tag == "Chord" else [])
                 for parent, spanner in holders:
+                    if spanner.get("type") in keep:
+                        continue
                     for side in ("next", "prev"):
                         pointer = spanner.find(side)
                         if pointer is None:
@@ -118,13 +123,14 @@ def _cut_spanners(measures: List[etree._Element], lengths: List[Fraction],
 
 
 def _cut_spanners_into(measures: List[etree._Element], lengths: List[Fraction],
-                       cleared: int) -> None:
+                       cleared: int, keep: Tuple[str, ...] = ()) -> None:
     """Drop the half of any tie or slur on this staff whose other half was cleared.
 
     Only a pointer that resolves to the cleared bar is cut: a slur that passes over it
     on the way to a bar further along still has both of its ends.
     """
-    _cut_spanners(measures, lengths, lambda home, target: home != cleared and target == cleared)
+    _cut_spanners(measures, lengths, lambda home, target: home != cleared and target == cleared,
+                  keep)
 
 
 def cut_spanners_between(staff: etree._Element, source: List[object]) -> None:

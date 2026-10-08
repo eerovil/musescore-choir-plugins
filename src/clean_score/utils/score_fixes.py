@@ -133,6 +133,31 @@ It needs its `from` like the others.
     {"kind": "untie", "staff": 1, "measure": 6, "index": 1, "pitch": 65, "from": [...],
      "why": "dashed tie, verse 2 only"}
 
+`delbar` (#346) takes out a bar the scan invented, on every staff: an empty bar
+homr read between a "1." and a "2." ending, say. `from` is what the bar reads now —
+one list when every staff reads the same (`["measure:R"]`), or one list per staff —
+and it is required, because replayed against a better reading it would delete a bar
+the page prints. A volta, slur or tie reaching across the bar is shortened by one,
+both halves, and a volta ending on the barline before it keeps its length; one
+starting or ending inside it, any volta starting in it, a repeat sign, or a clef,
+key or meter change in it refuses. Fixes apply **in file order**, so an entry before a `delbar`
+counts bars as they were before the deletion and one after it counts them without
+the deleted bar — which is how fixes recorded before anyone noticed the invented bar
+keep matching, and how one recorded afterwards in the app matches too.
+
+    {"kind": "delbar", "measure": 10, "from": ["measure:R"],
+     "why": "the page prints 4 bars in system 3; the scan added an empty bar 10"}
+
+`insbar` is the other way round: the scan lost a barline and squeezed two printed
+bars into one. It puts an empty bar (a whole-bar rest in the meter in force) **after**
+bar `measure` on every staff, for `bar` fixes later in the file to fill. `from` is
+what bar `measure` reads now, as for `delbar`. A slur or volta across that barline
+is lengthened by one, a volta ending on it keeps its length, and a tie across it
+refuses. File order holds as for `delbar`: entries after it count the new bar.
+
+    {"kind": "insbar", "measure": 2, "from": [[...], [...], ...],
+     "why": "the scan lost the barline between printed bars 2 and 3"}
+
 Most edits are none of those kinds, and the shapes that are missing are not
 exotic — taking one notehead off a chord, or turning a bar-length rest into a
 whole-bar rest, both came up on one song in one sitting. So a fix can also just be
@@ -1244,9 +1269,18 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     # the page, so a bar written afresh takes it out (#344). The new bar must then
     # fill the bar's own length, since the voice's notes no longer say what that is.
     gaps = [el for el in body if el.tag == "location"]
-    timeline = _timeline([el for el in body if el.tag != "location"])
+    moments = [el for el in body if el.tag in ("Chord", "Rest")]
+    # A bar holding only a whole-bar rest -- the bar an `insbar` put in (#346) -- is
+    # written afresh to its own length.
+    empty = (len(moments) == 1 and not gaps
+             and (moments[0].findtext("durationType") or "").strip() == "measure")
+    timeline = [] if empty else _timeline([el for el in body if el.tag != "location"])
     new_total = sum((value_length(v) for v in values), Fraction(0))
-    if gaps:
+    if empty:
+        from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+        staff = measure.getparent()
+        total = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
+    elif gaps:
         from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
         staff = measure.getparent()
         total = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
@@ -1257,7 +1291,7 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
                        f"to {total}")
     for gap in gaps:
         body.remove(gap)
-    if not gaps and _same_shape(timeline, to) and not _tied_and_moving(timeline, to):
+    if not gaps and not empty and _same_shape(timeline, to) and not _tied_and_moving(timeline, to):
         said = _rewrite_rhythm(root, staff_id, measure_no, expect, values)
         for (el, _, _), new in zip(timeline, to):
             if el.tag == "Chord":
@@ -1273,11 +1307,13 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     lengths = _bar_lengths(staff)
     words = [chord.find("Lyrics") for chord, _, _ in timeline if chord.tag == "Chord"]
     words = [w for w in words if w is not None]
-    first = timeline[0][0]
+    first = moments[0] if empty else timeline[0][0]
     at = list(body).index(first)
     gone = ("Chord", "Rest", "Tuplet", "endTuplet", "Beam", "Spanner")
     for el in list(body):
-        if el.tag in gone:
+        # A volta bracket belongs to the bar, not to its notes: it stays, either half
+        # (an `insbar` bar can carry a bracket's end marker, #346).
+        if el.tag in gone and not (el.tag == "Spanner" and el.get("type") == "Volta"):
             if list(body).index(el) < at:
                 at -= 1
             body.remove(el)
@@ -1300,7 +1336,7 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     chords = [el for el in written if el.tag == "Chord"]
     for chord, lyric in zip(chords, words):
         chord.insert(list(chord).index(chord.find("Note")), lyric)
-    _cut_spanners_into(measures, lengths, measures.index(measure))
+    _cut_spanners_into(measures, lengths, measures.index(measure), keep=("Volta",))
     return (f"wrote the bar afresh as {_bar_tokens(measure)}"
             + _answered(_strike(root, staff_id, measure_no, _BAR_WORDS)))
 
@@ -1463,6 +1499,278 @@ def _add_volta(root: etree._Element, measure_no: int, bars: int) -> str:
     return f"1. over {span}, 2. over bar {measure_no + 1}"
 
 
+def bar_moves(fixes: List[Dict]) -> List[Tuple[str, int]]:
+    """The bars ``delbar`` takes out and ``insbar`` puts in, in file order.
+
+    Each is ``("del", bar)`` or ``("ins", after bar)``, in the numbering in force
+    where the entry stands in the file.
+    """
+    return [("del" if fix["kind"] == "delbar" else "ins", int(fix.get("measure", 0)))
+            for fix in fixes
+            if isinstance(fix, dict) and fix.get("kind") in ("delbar", "insbar")]
+
+
+def after_moves(measure: int, moves: List[Tuple[str, int]]) -> Optional[int]:
+    """Bar ``measure`` of the score before ``moves`` as numbered after them.
+
+    ``None`` when that bar is one a ``delbar`` takes out.
+    """
+    for kind, at in moves:
+        if kind == "del":
+            if measure == at:
+                return None
+            if measure > at:
+                measure -= 1
+        elif measure > at:
+            measure += 1
+    return measure
+
+
+def before_moves(measure: int, moves: List[Tuple[str, int]]) -> Optional[int]:
+    """`after_moves` the other way. ``None`` for a bar an ``insbar`` put in."""
+    for kind, at in reversed(moves):
+        if kind == "del":
+            if measure >= at:
+                measure += 1
+        else:
+            if measure == at + 1:
+                return None
+            if measure > at + 1:
+                measure -= 1
+    return measure
+
+
+def _renumber_meta(root: etree._Element, measure_no: int, inserted: bool = False) -> None:
+    """Move every bar number the score keeps in a metaTag past a deleted bar
+    ``measure_no``, or a bar inserted after it.
+
+    The per-system lyric map's bar ranges (an inserted bar joins the system of the
+    bar before it), and where each slur cleaning removed stood (`removedSlurs`, which
+    the Fix panel's slur questions read): a record with a half in a deleted bar goes,
+    since that note went with it.
+    """
+    import json  # noqa: PLC0415 - only these metaTags are JSON
+    step = 1 if inserted else -1
+
+    def moved(bar):
+        return bar + step if isinstance(bar, int) and bar > measure_no else bar
+
+    score = root.find(".//Score") if root.tag != "Score" else root
+    for meta in score.findall("metaTag") if score is not None else []:
+        name = meta.get("name")
+        if name not in ("lyricsSystemMap", "removedSlurs") or not (meta.text or "").strip():
+            continue
+        try:
+            entries = json.loads(meta.text)
+        except ValueError:
+            continue
+        kept = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                kept.append(entry)
+            elif name == "lyricsSystemMap":
+                start, end = int(entry["start"]), int(entry["end"])
+                entry["start"] = start + step if start > measure_no else start
+                entry["end"] = end + step if end >= measure_no else end
+                if entry["start"] <= entry["end"]:
+                    kept.append(entry)
+            elif inserted or measure_no not in (entry.get("measure"), entry.get("end_measure")):
+                entry["measure"] = moved(entry.get("measure"))
+                entry["end_measure"] = moved(entry.get("end_measure"))
+                kept.append(entry)
+        meta.text = json.dumps(kept, separators=(",", ":"), ensure_ascii=False)
+
+
+def _from_per_staff(expect, staves) -> List[List[str]]:
+    """A bar-level `from`: one token list for every staff, or one list per staff."""
+    per_staff = (list(expect) if all(isinstance(e, list) for e in expect)
+                 else [list(expect)] * len(staves))
+    if len(per_staff) != len(staves):
+        raise FixError(f"'from' names {len(per_staff)} staves, the score has {len(staves)}")
+    return per_staff
+
+
+def _insert_bar(root: etree._Element, after: int, expect) -> str:
+    """Put an empty bar after bar ``after`` on every staff; the bars after move down one.
+
+    The new bar is a whole-bar rest in the meter in force, for `bar` fixes to fill.
+    A slur or volta reaching across the barline is lengthened by one, both halves; a
+    volta that ends on that barline keeps its length (its end marker moves into the
+    new bar). A tie across it refuses: a tie cannot jump a bar.
+    """
+    staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
+    if not staves:
+        raise FixError("the score has no staves")
+    if not expect:
+        raise FixError("give the 'from' of the bar it goes after, so a re-read that "
+                       "found the missing barline does not get a second bar")
+    per_staff = _from_per_staff(expect, staves)
+    m = after  # 0-based index of the new bar
+    for staff, want in zip(staves, per_staff):
+        measures = staff.findall("Measure")
+        if not 1 <= after <= len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {after}")
+        found = _bar_tokens(measures[after - 1])
+        if found != want:
+            raise FixError(f"staff {staff.get('id')} bar {after} reads {found} now, but the "
+                           f"fix was recorded against {want}")
+    lengthen = []  # (step, partner end marker or None, span)
+    carry = []     # (volta end marker, the new bar's staff index)
+    for n, staff in enumerate(staves):
+        measures = staff.findall("Measure")
+        claimed = set()
+        for i, measure in enumerate(measures):
+            for spanner in measure.iter("Spanner"):
+                if spanner.find("next") is None:
+                    continue
+                kind = spanner.get("type")
+                step = spanner.find("next/location/measures")
+                span = int((step.text if step is not None else "0") or 0)
+                end = i + span
+                if not (i < m <= end):
+                    continue
+                partner = next(
+                    (sp for sp in measures[end].iter("Spanner")
+                     if sp.get("type") == kind and id(sp) not in claimed
+                     and sp.find("prev") is not None
+                     and (sp.findtext("prev/location/measures") or "0").strip() == str(-span)),
+                    None)
+                if partner is not None:
+                    claimed.add(id(partner))
+                if kind == "Volta" and end == m:
+                    if partner is not None:
+                        carry.append((partner, n))
+                    continue
+                if kind == "Tie":
+                    raise FixError(f"a tie from bar {i + 1} to bar {end + 1} on staff "
+                                   f"{staff.get('id')} crosses this barline")
+                lengthen.append((step, partner, span))
+    for step, partner, span in lengthen:
+        step.text = str(span + 1)
+        if partner is not None:
+            partner.find("prev/location/measures").text = str(-(span + 1))
+    for n, staff in enumerate(staves):
+        # The signature as written (4/4, not 1/1), as MuseScore writes a bar rest.
+        meter = "4/4"
+        for measure in staff.findall("Measure")[:after]:
+            ts = measure.find(".//TimeSig")
+            if ts is not None and ts.findtext("sigN") and ts.findtext("sigD"):
+                meter = f"{ts.findtext('sigN').strip()}/{ts.findtext('sigD').strip()}"
+        bar = etree.Element("Measure")
+        voice = etree.SubElement(bar, "voice")
+        rest = etree.SubElement(voice, "Rest")
+        etree.SubElement(rest, "durationType").text = "measure"
+        etree.SubElement(rest, "duration").text = meter
+        staff.findall("Measure")[after - 1].addnext(bar)
+        for marker, at in carry:
+            if at == n:
+                voice.insert(0, marker)
+    _renumber_meta(root, after, inserted=True)
+    said = f"empty bar put in after bar {after} on all {len(staves)} staves"
+    if lengthen:
+        said += f"; {len(lengthen)} spanner(s) across the barline lengthened"
+    return said
+
+
+def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
+    """Take bar ``measure_no`` out of every staff, and the bars after it move up one.
+
+    Spanners reaching across the bar (a volta, a slur, a tie over an empty bar) are
+    shortened by one bar, both halves; a volta that ends on the barline before it
+    keeps its length. One that starts or ends inside the bar, a volta starting in
+    it, a repeat sign, or a clef, key or meter change in it refuses: each says the bar is
+    part of the music, which a bar the scan invented is not.
+    """
+    staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
+    if not staves:
+        raise FixError("the score has no staves")
+    if not expect:
+        raise FixError("give the bar's 'from', so a bar that is really there is never deleted")
+    per_staff = _from_per_staff(expect, staves)
+    d = measure_no - 1
+    for staff, want in zip(staves, per_staff):
+        measures = staff.findall("Measure")
+        if not 0 <= d < len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        if len(measures) < 2:
+            raise FixError("it is the only bar")
+        bar = measures[d]
+        found = _bar_tokens(bar)
+        if found != want:
+            raise FixError(f"staff {staff.get('id')} reads {found} now, but the fix was "
+                           f"recorded against {want}")
+        for tag, what in (("startRepeat", "a repeat starts"), ("endRepeat", "a repeat ends"),
+                          ("Clef", "the clef changes"), ("KeySig", "the key changes"),
+                          ("TimeSig", "the meter changes")):
+            if bar.find(f".//{tag}") is not None:
+                raise FixError(f"{what} in this bar on staff {staff.get('id')}")
+    # Look first, change after: a refusal on the last staff must not leave the
+    # first ones half edited.
+    shorten = []  # (step, partner end marker or None, span)
+    carry = []    # (volta end marker, the bar after the deleted one)
+    for staff in staves:
+        measures = staff.findall("Measure")
+        claimed = set()
+        for i, measure in enumerate(measures):
+            for spanner in measure.iter("Spanner"):
+                if spanner.find("next") is None:
+                    continue
+                kind = spanner.get("type")
+                step = spanner.find("next/location/measures")
+                span = int((step.text if step is not None else "0") or 0)
+                end = i + span
+                where = f"on staff {staff.get('id')}"
+                if kind == "Volta" and i == d:
+                    raise FixError(f"a volta bracket starts in this bar {where}")
+                if end < d or i > d or (i == d and end == d):
+                    continue
+                partner = next(
+                    (sp for sp in measures[end].iter("Spanner")
+                     if sp.get("type") == kind and id(sp) not in claimed
+                     and sp.find("prev") is not None
+                     and (sp.findtext("prev/location/measures") or "0").strip() == str(-span)),
+                    None)
+                if partner is not None:
+                    claimed.add(id(partner))
+                if kind == "Volta" and end == d:
+                    # A bracket's end marker stands in the bar after its last bar, so
+                    # this one ends on the barline before the deleted bar: its marker
+                    # moves on into the bar that takes the deleted one's place.
+                    if partner is None or d + 1 >= len(measures):
+                        raise FixError(f"the volta over bars {i + 1}-{end} {where} has no "
+                                       "bar after this one to end on")
+                    carry.append((partner, measures[d + 1]))
+                    continue
+                if i == d or end == d:
+                    raise FixError(f"a {kind} from bar {i + 1} to bar {end + 1} {where} "
+                                   "starts or ends in this bar")
+                shorten.append((step, partner, span))
+    for step, partner, span in shorten:
+        step.text = str(span - 1)
+        if partner is not None:
+            partner.find("prev/location/measures").text = str(-(span - 1))
+    for marker, bar in carry:
+        voice = bar.find("voice")
+        if voice is None:
+            voice = etree.SubElement(bar, "voice")
+        voice.insert(0, marker)  # an end before any start in the bar
+    shortened = len(shorten)
+    for staff in staves:
+        measures = staff.findall("Measure")
+        bar = measures[d]
+        # A system break on an invented bar belongs to the bar the page ends its line on.
+        for brk in bar.findall("LayoutBreak"):
+            before = measures[d - 1] if d > 0 else None
+            if before is not None and before.find("LayoutBreak") is None:
+                before.append(brk)
+        staff.remove(bar)
+    _renumber_meta(root, measure_no)
+    said = f"bar deleted from all {len(staves)} staves, later bars move up one"
+    if shortened:
+        said += f"; {shortened} spanner(s) across it shortened"
+    return said
+
+
 def free_text(fixes: List[Dict]) -> List[str]:
     """The sentences among the recorded fixes, in file order.
 
@@ -1501,6 +1809,22 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 what = _start_repeat(root, measure)
             except FixError as exc:
                 raise FixError(f"m{measure} (repeat): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind == "insbar":
+            measure = int(fix["measure"])
+            try:
+                what = _insert_bar(root, measure, fix.get("from"))
+            except FixError as exc:
+                raise FixError(f"m{measure} (insbar): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind == "delbar":
+            measure = int(fix["measure"])
+            try:
+                what = _delete_bar(root, measure, fix.get("from"))
+            except FixError as exc:
+                raise FixError(f"m{measure} (delbar): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         if kind == "volta":
