@@ -225,6 +225,13 @@ across that barline is lengthened, a volta ending on it keeps its length, a tie 
 it refuses, and the metaTags move as for `delbar`. Both count in file order, and the
 Fix panel maps bars through both (`score_fixes.bar_moves`) — homr's offers, picks, and the slur answers it matches by bar-numbered id (`problems._slur_decisions`).
 
+`timesig` (#353, `measure`, `from`, `to`) takes a time signature the scan invented off
+every staff (`"to": null`) or writes another in its place (`"to": "6/8"`). Kesäaamu is
+printed in 6/8 and homr read a 3/4 at bar 22; the notes fit both, so `spurious_timesigs`
+cannot see it. Only a change that keeps the bar's length is allowed (3/4 and 6/8, or a
+removal where the meter in force is that length), bar 1 refuses, and it counts bars in
+file order like `delbar`.
+
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — taking one notehead off a chord and turning a
 bar-length rest into a whole-bar rest both came up on one song in one sitting, and
@@ -640,6 +647,10 @@ Key test modules:
   voice false triplets made 7/6 long in 4/4 comes back from one `bar` fix filling the
   bar, the other tenor untouched; a total that fills neither refuses naming both, and
   (with MuseScore) the bar it refused opens.
+- `test_timesig_fix.py` — added for #353: a `timesig` fix takes the signature off
+  every staff and leaves the notes, writes 6/8 over 3/4 without 3/4's beaming, refuses
+  a staff reading otherwise (changing none), bar 1, a missing `from` and a change of
+  bar length, counts bars after a `delbar`, and replays on a rebuild.
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index
@@ -891,7 +902,8 @@ state model are in `DESIGN.md`.
   because everything that does can be satisfied by a self-consistent wrong answer:
   a repair pass once "fixed" a 4/4 bar by padding every voice to 9/8, and health,
   the lyric arithmetic and the tests were all happy. Measure 1 is exempt (an
-  anacrusis prints no signature) and an already-uneven bar is left to
+  anacrusis prints no signature), and so is a last bar that makes one full bar with that
+  anacrusis (#353: Kesäaamu opens on a sixteenth in 6/8 and closes on 11/16) and an already-uneven bar is left to
   `malformed-measure` rather than reported twice. It also stays out of music with
   no meter to violate: a score carrying an oversized nominal in place of a
   signature (one here declares 16/2 — eight whole notes — for music printed

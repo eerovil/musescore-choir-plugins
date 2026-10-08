@@ -11,6 +11,10 @@ developers are listed under *Behind the scenes*.
   chord sits among the rests, and the bar as a fix meets it when MuseScore reset it;
   added notes are spelt with flats in a flat key; and two songs cleaning at once no
   longer fail with the bare error "3". (#357)
+- `fixes.json` can now take off a time signature the scan invented, or write
+  another of the same bar length in its place (`timesig`), on every staff. Kesäaamu's
+  stray 3/4 at bar 22 is recorded this way. Health also stops flagging a song's last
+  bar when it completes the opening pickup. (#353)
 - A `bar` fix can now give a voice the scan made too long a bar that fills the
   time signature. False triplets had left Lasinkuultava laulu's T1 bar 9 7/6 long
   in 4/4, a length no writable bar adds up to, so MuseScore reset it to a rest and
