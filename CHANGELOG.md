@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- In per-system cleaning, a staff carrying two lines with only one part name
+  (usually a name carried over from an earlier system) no longer loses its lower
+  line in silence: the Clean grid marks the cell and asks before cleaning, and the
+  Fix stage lists every line that was dropped until it is named. (#332)
 - Answering a problem in the Fix stage no longer throws the list to its bottom:
   the next card moves up into the place of the one answered. (#329)
 - A problem card in the Fix stage also says which staff of the printed system the
