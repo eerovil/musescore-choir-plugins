@@ -60,7 +60,7 @@ the dangerous parse is the tidy one. That check could not really be made on this
 screen, so in practice it was pressed without looking, and a re-read sent songs
 that were already cleaned and lyricked back to ``scan``. The tidy-but-wrong parse
 is now caught later and bar by bar: homr's ``⚠`` doubt marks, the Fix panel's
-other readings of an unsure bar, the health verdict, and Review's approval -- the
+other readings of an unsure bar, the health findings, and Review's approval -- the
 one approval left, which still lapses when a re-read changes a system. Only a
 hole keeps or puts a song back on ``scan``, because a score missing a system must
 not be cleaned.
@@ -262,13 +262,8 @@ def status(song: state.Song) -> Dict:
 def findings_by_system(song: state.Song) -> Optional[Dict[str, int]]:
     """How many health findings landed in each printed system, or ``None``.
 
-    The verdict on a parse is not knowable here -- it comes off the cleaned score,
-    two stages along, and this was measured rather than assumed (see the pull
-    request: on the only two scanned songs on this host, a scan-time count of bars
-    whose voices disagree ranked the known-bad song *below* the other one, so a
-    verdict said here would have been a guess dressed as a reading).
-
-    What is knowable here, once a song has been cleaned at least once, is *where*
+    Health is not knowable here -- it comes off the cleaned score, two stages
+    along. What is knowable here, once a song has been cleaned at least once, is *where*
     the findings fell -- and this is the one screen with a button that re-reads a
     system. So the findings are carried back and attributed by bar.
 
