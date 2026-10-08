@@ -11,6 +11,9 @@ developers are listed under *Behind the scenes*.
   fermata, an articulation, a breath mark, a staff text, a tempo or a rehearsal
   mark. Mieslaulu bar 13's fermatas, where the page prints staccato dots, can now
   be recorded away. The Fix panel's bar reading lists each chord's marks. (#352)
+- The "This parse looks unusable" warning is gone from Review, Fix and the clean's
+  log. On scanned songs it was set off mostly by homr's `⚠` questions, so it called
+  scores whose notes were right unusable; the issue count and the Fix rows stay. (#356)
 - `fixes.json` can now take off a time signature the scan invented, or write
   another of the same bar length in its place (`timesig`), on every staff. Kesäaamu's
   stray 3/4 at bar 22 is recorded this way. Health also stops flagging a song's last

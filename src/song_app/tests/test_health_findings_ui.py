@@ -1,10 +1,10 @@
-"""The verdict in a real browser: it has to be seen, and it must not block.
+"""Health findings in a real browser, on a score with findings on most of its bars.
 
-The defect this covers only exists on screen. The count was already on the wire and
-already rendered; what it did not do was mean anything, and a person walked past
-sixty rows and approved. So what is pinned here is that the sentence is visible on
-the two screens where the decision is made, that the approve button beside it still
-works, and that a score with a handful of findings is not shouted at.
+#170 put a "this parse looks unusable" banner on Review and Fix; #356 removed it,
+because on scanned songs homr's `⚠` questions set it off on scores whose notes were
+right. What is pinned here is that neither screen shows it any more, that the rows
+and the count are still there, that the approve button works, and that the Scan
+panel still names the systems the findings fell in.
 """
 import os
 import socket
@@ -39,8 +39,14 @@ from src.song_app import pdf_systems, scan, server, state
 
 pytestmark = pytest.mark.browser
 
-EVIDENCE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))))), "evidence")
+
+
+def _shot(page, name):
+    """Screenshots go to `EVIDENCE_DIR` when the run names one, never into the repo."""
+    where = os.environ.get("EVIDENCE_DIR")
+    if where:
+        os.makedirs(where, exist_ok=True)
+        page.screenshot(path=os.path.join(where, name), full_page=True)
 
 BARS = 52
 # The walk's own shape: 60 findings over 28 of 52 bars, concentrated in the lower
@@ -76,7 +82,7 @@ def _score(bars: int) -> str:
 
 @pytest.fixture(scope="module")
 def live(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("verdict")
+    tmp = tmp_path_factory.mktemp("findings")
     songs = tmp / "songs"
     songs.mkdir()
     previous_dir, state.SONGS_DIR = state.SONGS_DIR, str(songs)
@@ -132,34 +138,22 @@ def _open(page, base, song, stage_label):
     return errors
 
 
-def test_the_review_stage_says_the_parse_is_not_worth_repairing(live, page):
+def test_the_review_stage_shows_the_count_and_no_verdict(live, page):
     base, song = live
     _health(song, ROUGH, "review")
     errors = _open(page, base, song, "Review")
     page.wait_for_selector(".verify")
 
-    verdict = page.locator(".verify .verdict").first
-    assert verdict.is_visible()
-    assert "not worth repairing" in verdict.inner_text()
-    assert "30 of 52 bars" in verdict.inner_text()
-    # The count it explains is still on the health row beside it -- and the row
-    # does not repeat the sentence, because saying it twice on one screen is how a
-    # reader learns to skim both.
-    row = page.locator(".verify .check", has_text="Health").first.inner_text()
-    assert "44 open issue(s)" in row
-    assert "not a repair list" not in row
-    os.makedirs(EVIDENCE, exist_ok=True)
-    page.screenshot(path=os.path.join(EVIDENCE, "issue-170-review-verdict.png"),
-                    full_page=True)
+    assert page.locator(".verify .check", has_text="Health").first.is_visible()
+    assert "44 open issue(s)" in page.locator(".verify .check", has_text="Health").first.inner_text()
+    assert page.locator(".verdict").count() == 0
+    assert page.get_by_text("not worth repairing").count() == 0
+    assert page.locator(".review-state").first.inner_text() != "Read this against the page"
+    _shot(page, "issue-356-review.png")
     assert not errors, f"the panel raised: {errors}"
 
 
-def test_it_warns_and_does_not_gate(live, page):
-    """The operator's own condition was that he would have to see it with his eyes.
-
-    An app that refused would be taking a call he reserved for himself, and this
-    project has a named habit of gates people learn to click through.
-    """
+def test_findings_do_not_gate(live, page):
     base, song = live
     _health(song, ROUGH, "review")
     _open(page, base, song, "Review")
@@ -185,27 +179,23 @@ def test_a_handful_of_findings_is_left_alone(live, page):
     assert not errors, f"the panel raised: {errors}"
 
 
-def test_the_fix_panel_says_it_above_the_rows(live, page):
-    """The panel that offers the findings one at a time is where it reads worst."""
+def test_the_fix_panel_lists_the_rows_with_no_banner(live, page):
     base, song = live
     _health(song, ROUGH, "fix")
     errors = _open(page, base, song, "Fix")
     page.wait_for_selector("text=Open in MuseScore")
     page.wait_for_selector(".problems[data-loaded]", state="attached")
 
-    verdict = page.locator(".verdict").first
-    assert verdict.is_visible()
-    assert "read it against the page" in verdict.inner_text().lower()
-    # It sits above the rows it is a verdict about, not under sixty of them.
     assert page.locator(".issue").count() > 20
-    page.screenshot(path=os.path.join(EVIDENCE, "issue-170-fix-verdict.png"),
-                    full_page=True)
+    assert page.locator(".verdict").count() == 0
+    assert page.get_by_text("not worth repairing").count() == 0
+    _shot(page, "issue-356-fix.png")
     assert not errors, f"the panel raised: {errors}"
 
 
 def test_the_scan_panel_says_which_systems_to_read_again(live, page):
-    """The verdict cannot be made here, but the system numbers can — and this is
-    the one screen where acting on them costs a single button."""
+    """Where the findings fell, on the one screen where acting on them costs a
+    single button."""
     base, song = live
     _health(song, ROUGH, "scan")
     pdf_systems.save_bounds(song.dir, [
@@ -240,6 +230,5 @@ def test_the_scan_panel_says_which_systems_to_read_again(live, page):
     # 44 findings over 52 bars in four 13-bar systems: systems 1 and 2 carry them.
     assert "44 health finding(s)" in hint.inner_text()
     assert "system(s) 1 (20), 2 (19), 3 (5)" in hint.inner_text()
-    page.screenshot(path=os.path.join(EVIDENCE, "issue-170-scan-findings.png"),
-                    full_page=True)
+    _shot(page, "issue-170-scan-findings.png")
     assert not errors, f"the panel raised: {errors}"
