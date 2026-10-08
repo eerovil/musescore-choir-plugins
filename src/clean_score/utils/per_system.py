@@ -99,11 +99,16 @@ class StaffRow:
     voices: int
     summary: str
     answer: str = ""  # the saved answer for this cell ("" = never answered)
+    # Voices as written, without counting a chord's noteheads: the lines a name has to
+    # be given or they are lost. `voices` may be larger, since a stacked chord can be
+    # split between names, but unnamed noteheads stay in the lowest part's chord.
+    lines: int = 0
 
     def to_dict(self) -> Dict:
         return {
             "staff_id": self.staff_id,
             "voices": self.voices,
+            "lines": self.lines,
             "summary": self.summary,
             "answer": self.answer,
         }
@@ -154,8 +159,8 @@ class DroppedVoice:
       across is not copied either, however many names there are — dropped.
     - ``chord``: a stacked chord split one notehead per name loses the noteheads past
       the names — dropped.
-    - ``kept``: a stacked chord under a single name is copied whole, so its lower
-      notes stay in that part's chords with no part of their own — not lost.
+    - ``kept``: chord notes below the last name stay in the lowest named part's
+      chords — not lost, since one voice may sing a chord. Logged, never listed.
     """
 
     system: int  # 0-based system index
@@ -167,6 +172,7 @@ class DroppedVoice:
     answer: str  # the answer in force for the staff in this system
     answered_in: int  # 0-based system the answer was typed in (== system unless inherited)
     kind: str = "voice"  # "voice" | "beside" | "chord" | "kept"
+    holder: str = ""  # for "kept": the part whose chords keep the notes
 
     @property
     def kept_in_chord(self) -> bool:
@@ -188,9 +194,9 @@ class DroppedVoice:
         where = (f"System {self.system + 1} (bars {self.start}–{self.end}), staff "
                  f"{self.staff_id}: {lost} ({count})")
         if self.kind == "kept":
-            return (f"{where} stay in {base}'s chords with no part of their own, because "
-                    f"the staff is named only {said}. Name them in the Clean grid "
-                    f'(e.g. "{", ".join(names)}") to split them, and clean again.')
+            # Not a loss: a voice may sing a chord. Said for the log only.
+            return (f"{where} stay in {self.holder or base}'s chords, the lowest part "
+                    f"named {said}.")
         verb = "were" if self.kind == "chord" and self.voice == 1 else "was"
         if self.kind == "beside":
             # Named, but in a bar whose top voice stacks a chord: the names are split
@@ -362,6 +368,15 @@ def _max_voices_in_range(staff: etree._Element, a: int, b: int) -> int:
     return best
 
 
+def _voice_lines_in_range(staff: etree._Element, a: int, b: int) -> int:
+    """The voices up to the last one with notes, by written index — no noteheads."""
+    best = 0
+    for measure in staff.findall("Measure")[a:b + 1]:
+        sung = [i for i, v in enumerate(measure.findall("voice")) if v.find("Chord") is not None]
+        best = max(best, sung[-1] + 1 if sung else 0)
+    return best
+
+
 def _first_nonempty_summary(staff: etree._Element, a: int, b: int) -> str:
     measures = staff.findall("Measure")
     for m in range(a, b + 1):
@@ -396,6 +411,7 @@ def system_layout(
             rows.append(StaffRow(
                 staff_id=sid,
                 voices=nv,
+                lines=_voice_lines_in_range(staff, a, b),
                 summary=_first_nonempty_summary(staff, a, b),
                 answer=recorded.get(sidx, {}).get(sid, ""),
             ))
@@ -502,11 +518,14 @@ def _unnamed_lines(
         if not voices:
             continue
         if len(declared) > len(voices) and _has_chord_stack(voices[0]):
+            last = max(declared)
             for chord in voices[0].findall("Chord"):
                 size = len(chord.findall("Note"))
                 taken = {min(d, size - 1) for d in declared}
                 for rank in range(size):
-                    if rank not in taken:
+                    if rank > last:
+                        add("kept", last + 1, 1)   # the lowest part keeps them
+                    elif rank not in taken:
                         add("chord", rank, 1)
             for vidx in range(1, len(voices)):
                 add("beside" if vidx in declared else "voice", vidx, notes_of(voices[vidx]))
@@ -551,7 +570,7 @@ def dropped_voices(root: etree._Element, answers: Answers) -> List[DroppedVoice]
             out.append(DroppedVoice(
                 system=layout.index, start=layout.start, end=layout.end,
                 staff_id=row.staff_id, voice=line, notes=notes, answer=raw,
-                answered_in=typed_in, kind=kind,
+                answered_in=typed_in, kind=kind, holder=labels[max(declared)],
             ))
     return out
 
@@ -623,13 +642,17 @@ def _has_chord_stack(voice: etree._Element) -> bool:
     return any(len(ch.findall("Note")) > 1 for ch in voice.findall("Chord"))
 
 
-def _voice_at_notehead(voice: etree._Element, rank: int) -> List[etree._Element]:
+def _voice_at_notehead(
+    voice: etree._Element, rank: int, lowest: bool = False
+) -> List[etree._Element]:
     """This voice with each chord reduced to one notehead: `rank` 0 = top, 1 = next.
 
     For the bar where the engraver writes two singers as one stack of notes. A chord
     with fewer noteheads than `rank` asks for is a moment where the two converge, so
     the part takes the lowest note there rather than falling silent — silence would
-    leave a hole in that singer's practice track.
+    leave a hole in that singer's practice track. The `lowest` part named on the staff
+    keeps every notehead from `rank` down, so a chord with more notes than names
+    stays a chord in that part instead of losing the rest (#330).
     """
     out: List[etree._Element] = []
     for el in voice:
@@ -641,9 +664,14 @@ def _voice_at_notehead(voice: etree._Element, rank: int) -> List[etree._Element]
             if len(notes) > 1:
                 by_pitch = sorted(notes, key=lambda n: int(n.findtext("pitch") or 0),
                                   reverse=True)
-                keep = by_pitch[rank] if rank < len(by_pitch) else by_pitch[-1]
+                if rank >= len(by_pitch):
+                    keep = [by_pitch[-1]]
+                elif lowest:
+                    keep = by_pitch[rank:]
+                else:
+                    keep = [by_pitch[rank]]
                 for note in notes:
-                    if note is not keep:
+                    if not any(note is k for k in keep):
                         copy.remove(note)
         out.append(copy)
     return out
@@ -730,7 +758,9 @@ def _build_parts(
                     stacked = (declared_here > len(src_voices) and bool(src_voices)
                                and _has_chord_stack(src_voices[0]))
                     if stacked:
-                        for el in _voice_at_notehead(src_voices[0], src[1]):
+                        lowest = src[1] == max(v for (sid, v) in decls.get(system, {})
+                                               if sid == src[0])
+                        for el in _voice_at_notehead(src_voices[0], src[1], lowest):
                             voice.append(el)
                         placed = True
                         logger.debug(
