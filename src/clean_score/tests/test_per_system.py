@@ -766,3 +766,16 @@ def test_a_dash_answers_its_line_and_an_empty_slot_does_not():
         rebuilt = _two_voice_later()
         clean_per_system(rebuilt, answers_from=lambda _l, a=answer: {0: {1: "A1"}, 1: {1: a}})
         assert list(_by_part(rebuilt)) == ["A1"]     # both drop voice 2
+
+
+def test_naming_a_voice_under_an_all_rest_voice_gives_it_a_part():
+    """Review of #332: the line count follows the written voice index, so the second
+    name is not capped away — A1b gets the note and nothing is reported."""
+    answers = {0: {1: "A1, A1b"}}
+    root = _score({1: [[["r"], ["67"]]]})
+    assert [r.voices for r in system_layout(root)[0].staves] == [2]
+    assert dropped_voices(root, answers) == []
+    clean_per_system(root, answers_from=lambda _l: answers)
+    staves = _by_part(root)
+    assert _pitches(staves["A1b"], 0) == ["67"]
+    assert _pitches(staves["A1"], 0) == []

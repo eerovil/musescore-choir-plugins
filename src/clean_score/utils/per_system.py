@@ -341,18 +341,24 @@ def system_ranges(root: etree._Element) -> List[SystemRange]:
 def _max_voices_in_range(staff: etree._Element, a: int, b: int) -> int:
     """How many parts this staff can carry across the range.
 
-    Note-bearing voices (all-rest voices don't count), but a chord counts as one part
-    per notehead: an engraver writes two singers holding a chord together as a single
+    The voices up to the last one with notes (all-rest voices after it don't count),
+    but a chord in a lone top voice counts as one part per notehead: an engraver writes two singers holding a chord together as a single
     voice with the notes stacked, and a staff that is only ever asked for one name
     there hands both notes to the upper part and leaves the lower one silent.
+    Voices are counted by their written index, the way the rebuild hands them out:
+    a sung voice 2 under an all-rest voice 1 is two lines, or naming the second one
+    would be capped away and the lower line could never get a part (#330).
     """
     measures = staff.findall("Measure")
     best = 0
     for m in range(a, b + 1):
-        voices = [v for v in measures[m].findall("voice") if v.find("Chord") is not None]
-        stacked = max((len(ch.findall("Note"))
-                       for v in voices for ch in v.findall("Chord")), default=0)
-        best = max(best, len(voices), stacked if len(voices) == 1 else 0)
+        voices = measures[m].findall("voice")
+        sung = [i for i, v in enumerate(voices) if v.find("Chord") is not None]
+        lines = sung[-1] + 1 if sung else 0
+        # The rebuild splits a stack only in the top voice (`_build_parts`).
+        stacked = (max((len(ch.findall("Note")) for ch in voices[0].findall("Chord")),
+                       default=0) if sung == [0] else 0)
+        best = max(best, lines, stacked)
     return best
 
 
