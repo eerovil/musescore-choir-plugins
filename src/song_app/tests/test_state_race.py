@@ -151,3 +151,20 @@ def test_a_save_never_leaves_half_a_file_or_a_temp_file(client):
     song.save()
     assert not os.path.exists(song.state_path() + ".tmp")
     assert state.load(song.slug).name == song.data["name"]
+
+
+def test_the_import_reply_names_the_bars_that_did_not_take_their_words(client, monkeypatch):
+    """The reply carries the mismatches, so a caller need not read the song back (#340)."""
+    api, song = client
+    said = {"kind": "too_many", "measure_start": 9, "measure_end": 9, "staff_ids": [2],
+            "syllables": 4, "slots": 3, "message": "m9: 4 syllables for 3 notes"}
+
+    def importing(json_path, cleaned, replace=True):
+        _edit(cleaned, "<!-- lyrics -->")
+        return types.SimpleNamespace(
+            mismatches=[types.SimpleNamespace(to_dict=lambda: said)], ok=False)
+
+    monkeypatch.setattr(pipeline, "run_lyric_import", importing)
+    r = api.post(f"/api/songs/{song.slug}/lyrics", json={"json": LYRICS})
+    assert r.status_code == 200, r.text
+    assert r.json()["mismatches"] == [said]

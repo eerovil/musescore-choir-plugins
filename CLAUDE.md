@@ -151,7 +151,22 @@ and every kind checks what the bar reads **now** (`from`) before touching it, tu
 brackets included. A note's spelling is derived from its pitch: the first fixes to
 carry one by hand got three of four wrong.
 
-A fourth kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
+Three more were added for fixing a song from its page with an LLM (#340), because an
+agent on Annin laulu had to fake each of them and the fakes damaged the score.
+`unslur` (staff, measure, `index` of the chord the slur starts on) takes out a slur the
+scan invented or pinned on the wrong voice, both halves, wherever the end half sits;
+before it, the only way was to rewrite the bar twice with `bar`, which moved fermatas
+and left a slur half stored on a chord in another bar (`rejected_bars._cut_spanners`
+now cuts those too). `tie` (`index`, `pitch`) joins that note to the same pitch in the
+next chord, in this bar or the next, so playback holds it — a slur in its place lands
+the words right and still sings the note twice. `duration` (`index`, `to`, a length
+like `quarter..`) gives one chord another length, double dots included, and when that
+makes the voice fill the time signature the bar gets that length back **on every
+staff** (its `len` goes and a whole-bar rest is lengthened with it); any other total
+refuses. All three take a `from` and refuse without one. `GET /bar` now also returns
+the bar's `from` (rests included), and the lyric import's reply carries `mismatches`.
+
+A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — taking one notehead off a chord and turning a
 bar-length rest into a whole-bar rest both came up on one song in one sitting, and
 neither could be written down at all. Nothing interprets it: `apply_fixes` steps over
@@ -543,6 +558,12 @@ Key test modules:
   after; a pick writes both and comes back on a re-clean; **a** stays answered; the
   `volta` kind writes the same elements MuseScore wrote for Shakkitarina's hand-made
   brackets, refuses what it cannot draw, and (with MuseScore) exports as real endings.
+- `test_unslur_tie_duration.py` — added for #340, on Annin laulu's own bars: a
+  slur taken out loses both halves and gives the syllables back (a half written ahead
+  of its chord too), a tie lands on both notes with MuseScore's own offsets and takes
+  the held note's syllable, a double dot gives the 11/16 bar back its 3/4 on every
+  staff while ties out of it keep their notes, a length no signature prints refuses,
+  and (with MuseScore) the bar it had refused opens once the dot is back.
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index

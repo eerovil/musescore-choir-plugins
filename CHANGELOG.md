@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- `fixes.json` can now take out a slur (`unslur`), tie two notes (`tie`) and give
+  a note another length, double dots included (`duration`); a length change that
+  makes the bar fit its time signature again gives the bar that length on every
+  staff. A bar rewrite now also cuts a slur whose other half is in another bar. The
+  Fix stage's bar reply now carries the bar's `from` tokens with its rests, and the
+  lyric import's reply lists its mismatches. (#340)
 - The Upload stage lists the choir's playlists with a tick box each, read from
   YouTube: ticking puts every video of the song into that playlist and unticking
   takes them out, so a song no longer has to be re-uploaded to change its
