@@ -205,6 +205,14 @@ again. Strophic songs print **dashed** ties that belong to a later verse only, a
 reads them as real ties, so verse 1 loses a syllable (Gaudeamus igitur bars 6 and 8).
 Strict about `from` like the others, and replayed on every clean.
 
+`delete` (#352, `index`, `what`, optional `subtype`, `from`) takes a mark the scan invented
+off one chord — a fermata (Mieslaulu bar 13 has two where the page prints staccato
+dots), an articulation, a breath mark, a staff text, a tempo or a rehearsal mark. Only
+those: a slur, tie, note, red mark or the words are refused naming the kind that does
+it, and a clef, key, meter or triplet bracket because it changes the bar itself.
+MuseScore holds a beat for **any** staff's fermata, so the log says when another staff
+still carries one at that beat. `GET /bar` lists each chord's `marks`.
+
 `delbar` (#346, `measure`, `from`) takes out a bar the scan invented, on every staff —
 Kun poijat ne raitilla's scan put an empty bar between the "1." and "2." endings, so
 the "1." bracket covered two bars and the track played a bar of silence. A volta, slur
@@ -624,6 +632,11 @@ Key test modules:
   and (with MuseScore) the bar it had refused opens once the dot is back. `untie`
   (#342) takes both halves out across or inside a bar, gives the syllable back,
   leaves other ties alone, and replays on a rebuild.
+- `test_delete_mark.py` — added for #352, on the shapes of Mieslaulu bar 13 and Annin
+  laulu bar 19: the named fermata goes and the chord, its words and the bar's other
+  fermata stay; every listed kind and `subtype`; each refused kind names its tool; a
+  red mark points at `unmark`; strict `from`; the other staff's fermata said; replay
+  on a rebuild; and (with MuseScore) the MIDI shortens only once both fermatas are out.
 - `test_delbar.py` — added for #346: the bar goes on every staff, the "1." and "2."
   brackets close up round it, a slur across it keeps both notes, fixes count bars in
   file order, `from` is strict, a bar with music or a spanner end in it refuses, the
