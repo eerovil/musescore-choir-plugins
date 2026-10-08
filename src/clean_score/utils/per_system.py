@@ -43,6 +43,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from lxml import etree
 
 from .missing_ties import add_missing_ties
+from .problem_marks import PREFIX as MARK_PREFIX
 from .rejected_bars import cut_spanners_between
 from .revoice import _voice_summary
 from .utils import delete_all_elements_by_selector, starts_new_system
@@ -165,13 +166,14 @@ class DroppedVoice:
             lost = "the lower voice" if self.voice == 1 else f"voice {self.voice + 1} from the top"
         said = (f'"{self.answer}"' if self.answered_in == self.system
                 else f'"{self.answer}" (carried over from system {self.answered_in + 1})')
-        first = self.answer.split(",")[0].strip()
+        names = _labels(self.answer)
+        names += [names[0] + chr(ord("a") + k) for k in range(len(names), self.voice + 1)]
         count = f"{self.notes} note" + ("" if self.notes == 1 else "s")
         verb = "were" if self.stacked and self.voice == 1 else "was"
         return (f"System {self.system + 1} (bars {self.start}–{self.end}), staff "
                 f"{self.staff_id}: {lost} ({count}) {verb} dropped, because the "
                 f"staff is named only {said}. Name every line in the Clean grid "
-                f'(e.g. "{first}, {first}b") and clean again.')
+                f'(e.g. "{", ".join(names)}") and clean again.')
 
     def to_dict(self) -> Dict:
         return {"system": self.system, "start": self.start, "end": self.end,
@@ -720,6 +722,10 @@ def _build_parts(
     return parts
 
 
+def _is_problem_mark(el: etree._Element) -> bool:
+    return el.tag == "StaffText" and (el.findtext("text") or "").startswith(MARK_PREFIX)
+
+
 def _fill_from_fallbacks(
     parts: List[str],
     staves: List[etree._Element],
@@ -749,7 +755,9 @@ def _fill_from_fallbacks(
                     voice.remove(el)
             base_voice = base_bars[mi].find("voice")
             for el in (base_voice if base_voice is not None else []):
-                if el.tag not in _SKELETON_KEEP:
+                # The base part's red mark stays with the base part: copied, it lists the
+                # same doubt twice and has to be deleted twice (#330).
+                if el.tag not in _SKELETON_KEEP and not _is_problem_mark(el):
                     voice.append(deepcopy(el))
             origin[mi] = "borrowed"
             borrowed = True

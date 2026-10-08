@@ -676,3 +676,18 @@ def test_the_lower_notehead_of_a_chord_is_reported_as_one():
     lost = dropped_voices(root, {0: {1: "S1"}})
     assert [(d.system, d.voice, d.notes, d.stacked) for d in lost] == [(1, 1, 2, True)]
     assert "lower notes of its chords" in lost[0].message()
+
+
+def test_a_borrowed_bar_leaves_the_base_parts_red_mark_behind():
+    """S1b borrowing S1's bar takes the notes, not S1's ⚠ mark: one doubt, one row."""
+    root = _score({1: [[["72"]], [[("72", "67")]]]}, breaks=(0,))
+    voice = root.find(".//Score/Staff/Measure/voice")
+    mark = etree.Element("StaffText")
+    etree.SubElement(mark, "text").text = "⚠ rhythm?"
+    voice.insert(0, mark)
+    clean_per_system(root, answers_from=lambda _l: {0: {1: "S1"}, 1: {1: "S1, S1b"}})
+    staves = _by_part(root)
+    first = lambda part: staves[part].findall("Measure")[0]
+    assert _pitches(staves["S1b"], 0) == ["72"]
+    assert first("S1").find(".//StaffText") is not None
+    assert first("S1b").find(".//StaffText") is None

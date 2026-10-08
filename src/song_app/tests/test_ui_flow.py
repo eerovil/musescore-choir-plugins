@@ -165,6 +165,9 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     expect(page.get_by_role("button", name="Saved ✓")).to_be_visible()
 
     # --- clean: the server works in the background and pings the page when done ---
+    # The fixture's reading leaves two stray chord notes in system 4 unnamed, so the
+    # grid asks before dropping them (#330); this journey says yes.
+    page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Run clean").click()
     # The panel re-renders on the state ping, so wait for what that leaves behind:
     # the button now offers a re-clean, and the Clean step is marked done.
