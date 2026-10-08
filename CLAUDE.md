@@ -197,8 +197,17 @@ ends on the barline before it keeps its length, the removed-slur records (`remov
 bar too; a spanner starting or ending in it, any volta starting in it, a repeat sign,
 or a clef/key/meter change refuses. Fixes apply **in file order**: an entry before a
 `delbar` counts bars with the invented one still there, an entry after it without, so
-neither has to be renumbered; a Fix-panel pick is relocated (`relocate_picks`) in that numbering too, and the bars homr offered readings of are numbered off the scan, so `offers` maps them past the deleted bars (`score_fixes.after_deletions`). The printed-system bar labels (`.systems.json`) and the
+neither has to be renumbered; a Fix-panel pick is relocated (`relocate_picks`) in that numbering too, and the bars homr offered readings of are numbered off the scan, so `offers` maps them past the moved bars (`score_fixes.after_moves`). The printed-system bar labels (`.systems.json`) and the
 line breaks the previews take off the converted input still count the invented bar.
+
+`insbar` (#346, `measure`, `from`) is the other way round, for a barline the scan
+lost (Kristallen den fina squeezed printed bars 2-4 into cleaned bars 3-4): an empty
+bar, a whole-bar rest in the meter in force, goes in **after** bar `measure` on every
+staff, for `bar` fixes later in the file to write (a `bar` fix now writes a bar that
+holds only a whole-bar rest). `from` is what bar `measure` reads now. A slur or volta
+across that barline is lengthened, a volta ending on it keeps its length, a tie across
+it refuses, and the metaTags move as for `delbar`. Both count in file order, and the
+Fix panel maps bars through both (`score_fixes.bar_moves`).
 
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — taking one notehead off a chord and turning a
@@ -603,7 +612,8 @@ Key test modules:
 - `test_delbar.py` — added for #346: the bar goes on every staff, the "1." and "2."
   brackets close up round it, a slur across it keeps both notes, fixes count bars in
   file order, `from` is strict, a bar with music or a spanner end in it refuses, the
-  per-system lyric map and the removed-slur records lose the bar, the entry replays on a rebuild, and a pick recorded after it survives the next clean.
+  per-system lyric map and the removed-slur records lose the bar, `insbar` puts an
+  empty bar in with the same care (Kristallen's insert-then-delete in file order), the entry replays on a rebuild, and a pick recorded after it survives the next clean.
 - `test_duration_back_steps.py` — added for #344, on the shapes of Gute Nacht bar 6
   and Annin laulu bar 10: a `duration` fix that restores the bar takes the back-step out
   of the voices it squeezed, a tie after the step still reaches its note, a voice the

@@ -9,7 +9,8 @@ developers are listed under *Behind the scenes*.
 
 - `fixes.json` can now take out a bar the scan invented, on every staff (`delbar`):
   a volta or slur across it is shortened to match, and fixes after it in the file
-  count bars without it. (#346)
+  count bars without it. `insbar` puts in an empty bar where the scan lost a
+  barline, for `bar` fixes to fill. (#346)
 - A bar a recorded fix has answered stops showing red. An `unmark` or a pick now
   finds the bar's red mark on either part of a shared staff (the mark sits on the
   first part, the red notes on both), a `tie`/`untie`, `slur`/`unslur` or `duration`

@@ -426,8 +426,9 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
     staves = _staves(root)
     printed = printed_staves(root)
     picks, declined = _picks(song.dir), _declined(song)
-    # The scan still has any bar a `delbar` took out of the cleaned score (#346).
-    deleted = score_fixes.deleted_bars(pipeline._recorded_fixes(song.dir))
+    # The scan still has any bar a `delbar` took out of the cleaned score, and lacks
+    # any an `insbar` put in (#346).
+    moves = score_fixes.bar_moves(pipeline._recorded_fixes(song.dir))
     out: List[Dict] = []
     for system, start in systems:
         path = os.path.join(song.dir, system["musicxml"])
@@ -437,7 +438,7 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
             bars = whole_bars(group)
             if len(bars) < 2:
                 continue
-            measure = score_fixes.after_deletions(start + int(group["bar"]), deleted)
+            measure = score_fixes.after_moves(start + int(group["bar"]), moves)
             if measure is None:
                 continue  # a bar the page does not print
             now = bars[0]["moments"]
@@ -598,13 +599,15 @@ def relocate_picks(root: etree._Element, entries: List[Dict],
              if fix.get("source") == SOURCE and fix.get("kind") in ("bar", "rhythm", "pitch")]
     pick_ids = {id(fix) for fix in picks}
     taken: Dict[int, set] = {}
-    # Fixes apply in file order, so a pick after a `delbar` counts bars without the
-    # deleted one (#346); `root` still has it, so look the pick up in that numbering.
-    at_bar: Dict[int, int] = {}
+    # Fixes apply in file order, so a pick after a `delbar` or `insbar` counts bars
+    # with that change made (#346); `root` has not had it, so look the pick up in the
+    # numbering before. A pick on a bar an `insbar` put in has nothing to find here
+    # and stays as it is, strict.
+    at_bar: Dict[int, Optional[int]] = {}
     for n, fix in enumerate(entries):
         if id(fix) in pick_ids:
-            at_bar[id(fix)] = score_fixes.before_deletions(
-                int(fix.get("measure", 0)), score_fixes.deleted_bars(entries[:n]))
+            at_bar[id(fix)] = score_fixes.before_moves(
+                int(fix.get("measure", 0)), score_fixes.bar_moves(entries[:n]))
 
     def reads(sid, measure, tokens) -> bool:
         staff = next((st for s, _, st in staves if s == sid), None)
@@ -615,6 +618,9 @@ def relocate_picks(root: etree._Element, entries: List[Dict],
     staying = set()
     for fix in picks:
         measure, sid = at_bar[id(fix)], int(fix.get("staff", 0))
+        if measure is None:
+            staying.add(id(fix))
+            continue
         if sid not in taken.setdefault(measure, set()) and reads(sid, measure, fix.get("from", [])):
             taken[measure].add(sid)
             staying.add(id(fix))
