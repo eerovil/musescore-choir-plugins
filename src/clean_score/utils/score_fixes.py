@@ -81,7 +81,9 @@ they were — unless a note that changes pitch is tied, since the tie would then
 two different pitches. Otherwise the bar is written afresh, as the second reading
 of the bar can be: ties and slurs reaching into it from outside are cut, as when
 MuseScore refuses a bar (`rejected_bars`), and its words are put back on its notes
-in order, the extra ones dropped.
+in order, the extra ones dropped. A gap cleaning left in the voice (`location`) is
+taken out first and the bar is written afresh, so the new bar has to fill the bar's
+own length (#344).
 
     {"kind": "bar", "staff": 3, "measure": 12, "from": [...],
      "to": [{"value": "note_4.", "pitches": [62], "tpcs": [16]},
@@ -563,7 +565,7 @@ def _close_back_steps(staff: etree._Element, mi: int, was: Fraction, now: Fracti
         return False
     lengths = _bar_lengths(staff)
     closed = False
-    for voice in measures[mi].findall("voice") or [measures[mi]]:
+    for track, voice in enumerate(measures[mi].findall("voice") or [measures[mi]]):
         steps = [el for el in voice if el.tag == "location"]
         if not steps:
             continue
@@ -598,7 +600,9 @@ def _close_back_steps(staff: etree._Element, mi: int, was: Fraction, now: Fracti
         onsets[end] = now
         moves = []
         for home, body in enumerate(measures):
-            for vbody in body.findall("voice") or [body]:
+            # Only this voice moved, so only its own ties and slurs can point at it.
+            vbodies = body.findall("voice") or [body]
+            for vbody in vbodies[track:track + 1]:
                 if home == mi and vbody is not voice:
                     continue
                 for at, el in _walk(vbody, lengths[home]):
@@ -1111,13 +1115,25 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
     written = [_write_moment(new) for new in to]
     groups = triplet_groups(values)
     body = measure.find("voice") if measure.find("voice") is not None else measure
-    timeline = _timeline(body)
-    total = sum((length for _, _, length in timeline), Fraction(0))
+    # A gap (`location`) cleaning left in the voice -- a step back that squeezed it
+    # into a short bar, or the room a note it cut away stood in -- is no reading of
+    # the page, so a bar written afresh takes it out (#344). The new bar must then
+    # fill the bar's own length, since the voice's notes no longer say what that is.
+    gaps = [el for el in body if el.tag == "location"]
+    timeline = _timeline([el for el in body if el.tag != "location"])
     new_total = sum((value_length(v) for v in values), Fraction(0))
+    if gaps:
+        from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+        staff = measure.getparent()
+        total = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
+    else:
+        total = sum((length for _, _, length in timeline), Fraction(0))
     if new_total != total:
         raise FixError(f"the new bar adds up to {new_total} of a whole note, the bar "
                        f"to {total}")
-    if _same_shape(timeline, to) and not _tied_and_moving(timeline, to):
+    for gap in gaps:
+        body.remove(gap)
+    if not gaps and _same_shape(timeline, to) and not _tied_and_moving(timeline, to):
         said = _rewrite_rhythm(root, staff_id, measure_no, expect, values)
         for (el, _, _), new in zip(timeline, to):
             if el.tag == "Chord":

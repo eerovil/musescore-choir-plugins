@@ -1,4 +1,4 @@
-"""A `duration` fix also takes out the back-step cleaning squeezed a voice in with (#344).
+"""Recorded fixes put back a bar cleaning left a gap in (#344).
 
 The scan drops a dot in one voice, the bar is written at that short length, and
 cleaning fits the voices the page prints correctly into it by stepping them
@@ -10,7 +10,10 @@ them back.
 The scores below are the two real cases as cleaning writes them, decorations taken
 off: Gute Nacht bar 6 (4/4 read as 7/8, T1 and B1 stepped back an eighth) and Annin
 laulu bar 10 (3/4 read as 11/16, T1 stepped back a sixteenth, a tie out of its last
-note into the next bar).
+note into the next bar). And a `bar` fix writes over a gap instead of refusing it:
+Integer vitae T2 bar 9, where cutting the bar from 5/4 to 4/4 left the last quarter's
+room empty, and Jouluyö's last bar, where a voice is stepped back inside a garbled
+bar.
 """
 import os
 
@@ -19,7 +22,7 @@ from lxml import etree
 
 from src.clean_score import lyric_txt
 from src.clean_score.utils.rejected_bars import _walk
-from src.clean_score.utils.score_fixes import _measure, apply_fixes, bar_tokens
+from src.clean_score.utils.score_fixes import FixError, _measure, apply_fixes, bar_tokens
 
 
 def _chord(dur, pitch, dots=0, inside=""):
@@ -140,6 +143,78 @@ def test_a_forward_gap_is_not_a_back_step():
     assert _measure(root, 1, 2).find("voice/location") is not None
 
 
+def test_another_voice_tied_into_the_bar_keeps_its_note():
+    # A second voice on T1, tied from its unmoved note at 7/16 of bar 10 into bar 11:
+    # only the first voice lost its back-step, so this tie must not be re-pointed.
+    root = annin_laulu()
+    tie_out = TIE_OUT
+    for measure, content in ((2, _rest("quarter") + _chord("eighth", 56) + _chord("16th", 56)
+                              + _chord("eighth", 56, inside=tie_out) + _chord("16th", 56)),
+                             (3, _chord("16th", 56, inside=TIE_IN) + _rest("16th")
+                              + _rest("eighth") + _rest("half"))):
+        voice = etree.SubElement(_measure(root, 1, measure), "voice")
+        for el in etree.fromstring(f"<v>{content}</v>"):
+            voice.append(el)
+    apply_fixes(root, [_fix(root, 2, 2, "quarter..")])
+    second_out = _measure(root, 1, 2).findall("voice")[1].find(".//Spanner[@type='Tie']")
+    second_in = _measure(root, 1, 3).findall("voice")[1].find(".//Spanner[@type='Tie']")
+    assert second_out.findtext("next/location/fractions") == "-7/16"
+    assert second_in.findtext("prev/location/fractions") == "7/16"
+    # ... while the first voice's own tie still moved with its note.
+    first_in = _measure(root, 1, 3).find("voice").find(".//Spanner[@type='Tie']")
+    assert first_in.findtext("prev/location/fractions") == "1/2"
+
+
+def integer_vitae():
+    # T2 bar 9 after cleaning cut it from 5/4: the room of the last quarter is a gap.
+    whole = _chord("whole", 62)
+    root = _score((4, 4), "1", {
+        1: ("T1", [whole, _chord("half", 66) + _chord("quarter", 62) + _chord("quarter", 62),
+                   whole]),
+        2: ("T2", [whole, _chord("half", 62) + _chord("quarter", 57) + _step("1/4"), whole]),
+    })
+    for staff in (1, 2):
+        _measure(root, staff, 2).attrib.pop("len")
+    return root
+
+
+def _bar(root, staff, measure, values):
+    return {"kind": "bar", "staff": staff, "measure": measure,
+            "from": bar_tokens(root, staff, measure), "why": "read against the page",
+            "to": [{"value": v, "pitches": [p] if p else [], "tpcs": [t] if t else []}
+                   for v, p, t in values]}
+
+
+def test_a_bar_fix_writes_over_the_gap_a_cut_bar_left():
+    root = integer_vitae()
+    done = apply_fixes(root, [_bar(root, 2, 2, [("note_2", 62, 16), ("note_4", 57, 17),
+                                                 ("note_4", 57, 17)])])
+    assert "wrote the bar afresh" in done[0]
+    assert _measure(root, 2, 2).find("voice/location") is None
+    assert bar_tokens(root, 2, 2) == ["half:62", "quarter:57", "quarter:57"]
+    assert _onsets(root, 2, 2) == [0, 1 / 2, 3 / 4]
+
+
+def test_a_bar_fix_over_a_gap_still_has_to_fill_the_bar():
+    root = integer_vitae()
+    with pytest.raises(FixError, match="adds up to 3/4 .* the bar to 1"):
+        apply_fixes(root, [_bar(root, 2, 2, [("note_2", 62, 16), ("note_4", 57, 17)])])
+    assert _measure(root, 2, 2).find("voice/location") is not None
+
+
+def test_a_bar_fix_writes_over_a_back_step():
+    # Jouluyö's last bar: B2 stepped back an eighth inside the bar it was squeezed
+    # into; the page prints a dotted quarter tied to an eighth, then two eighth rests.
+    root = gute_nacht()
+    for staff in (1, 2, 3, 4):
+        _measure(root, staff, 2).attrib.pop("len")
+    done = apply_fixes(root, [_bar(root, 1, 2, [("note_4.", 60, 14), ("note_8", 60, 14),
+                                                 ("note_2", 60, 14)])])
+    assert "wrote the bar afresh" in done[0]
+    assert _measure(root, 1, 2).find("voice/location") is None
+    assert _onsets(root, 1, 2) == [0, 3 / 8, 1 / 2]
+
+
 def _musescore() -> bool:
     cli = os.getenv("MUSESCORE_CLI_PATH", "")
     return bool(cli) and os.path.exists(cli)
@@ -149,12 +224,16 @@ def _musescore() -> bool:
 @pytest.mark.parametrize("build,fixes", [
     (gute_nacht, [(2, "quarter."), (4, "quarter.")]),
     (annin_laulu, [(2, "quarter..")]),
+    (integer_vitae, []),
 ])
 def test_musescore_opens_every_voice_of_the_bar_after_the_fixes(build, fixes, tmp_path):
     from src.song_app import pipeline  # noqa: PLC0415 - only this test needs the app
 
     root = build()
     apply_fixes(root, [_fix(root, staff, 2, to) for staff, to in fixes])
+    if build is integer_vitae:
+        apply_fixes(root, [_bar(root, 2, 2, [("note_2", 62, 16), ("note_4", 57, 17),
+                                             ("note_4", 57, 17)])])
     path = tmp_path / "fixed.mscx"
     etree.ElementTree(root).write(str(path))
     assert pipeline.musescore_check(str(path)) == []
