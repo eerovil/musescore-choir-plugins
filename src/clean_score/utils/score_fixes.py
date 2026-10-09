@@ -751,35 +751,6 @@ def _tie_partner(staff: etree._Element, mi: int, chord: etree._Element,
     return None, bar
 
 
-def _key_in_force(staff: etree._Element, measure: etree._Element) -> int:
-    """The key signature in force in `measure`: sharps positive, flats negative."""
-    key = 0
-    for m in staff.findall("Measure"):
-        for sig in m.iter("KeySig"):
-            text = sig.findtext("accidental") or sig.findtext("concertKey") or "0"
-            try:
-                key = int(text.strip())
-            except ValueError:
-                pass
-        if m is measure:
-            break
-    return key
-
-
-def _tpc_pitch_class(tpc: int) -> int:
-    return (7 * (tpc - 14)) % 12
-
-
-def _spell(pitch: int, key: int) -> int:
-    """The spelling (tpc) a note of `pitch` takes in `key`: the key's own when it has
-    one, otherwise flats in a flat key and sharps in any other."""
-    pc = pitch % 12
-    for tpc in range(13 + key, 20 + key):
-        if _tpc_pitch_class(tpc) == pc:
-            return tpc
-    return _FLAT_SPELLING[pc] if key < 0 else _SPELLING[pc]
-
-
 def _drop_note(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch: int,
                expect: List[str]) -> str:
     """Take note `pitch` off chord `index`, and any tie on it, both halves.
@@ -793,7 +764,7 @@ def _drop_note(root: etree._Element, staff_id: int, measure_no: int, index: int,
     _expect(measure, expect)
     chords = _chords(root, staff_id, measure_no)
     if not 0 <= index < len(chords):
-        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+        raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
     note = _pitched(chord, pitch)
     if note is None:
@@ -821,13 +792,13 @@ def _add_note(root: etree._Element, staff_id: int, measure_no: int, index: int, 
 
     The spelling comes from `tpc` when given, else from a note of the same pitch class
     in the chord (an octave doubling, the usual optional note), else from the key in
-    force: the plain sharps table would write E flat as D sharp.
+    force by `spelling`, as every other kind spells a derived note.
     """
     measure = _measure(root, staff_id, measure_no)
     _expect(measure, expect)
     chords = _chords(root, staff_id, measure_no)
     if not 0 <= index < len(chords):
-        raise FixError(f"m{measure_no} has {len(chords)} chords, no index {index}")
+        raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
     notes = chord.findall("Note")
     if _pitched(chord, pitch) is not None:
@@ -840,7 +811,7 @@ def _add_note(root: etree._Element, staff_id: int, measure_no: int, index: int, 
                 tpc = int(text)
                 break
     if tpc is None:
-        tpc = _spell(pitch, _key_in_force(measure.getparent(), measure))
+        tpc = spelling(pitch, key_in_force(measure))
     note = etree.Element("Note")
     etree.SubElement(note, "pitch").text = str(pitch)
     etree.SubElement(note, "tpc").text = str(tpc)

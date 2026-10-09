@@ -16,8 +16,8 @@ import pytest
 from lxml import etree
 
 from src.clean_score import lyric_txt
-from src.clean_score.utils.score_fixes import (FixError, _measure, _spell, apply_fixes,
-                                               bar_tokens)
+from src.clean_score.utils.score_fixes import (FixError, _measure, apply_fixes, bar_tokens,
+                                               spelling)
 
 # Eb is spelt tpc 11, Ab 10, C 14 in A flat major.
 _TPC = {39: 11, 51: 11, 48: 14, 44: 10}
@@ -112,7 +112,7 @@ def test_dropnote_takes_the_tie_into_the_note_both_halves(root):
 @pytest.mark.parametrize("measure,index,pitch,says", [
     (1, 1, 48, "only note"),
     (1, 0, 52, "no note at pitch 52"),
-    (1, 3, 51, "no index 3"),
+    (1, 3, 51, "no index 3; index counts chords only, not rests: 0 = quarter:39\\+51"),
 ])
 def test_dropnote_refuses(root, measure, index, pitch, says):
     with pytest.raises(FixError, match=says):
@@ -184,7 +184,7 @@ def test_addnote_is_strict_about_from(root):
     (44, 0, 22),   # G# in C: sharps by default
 ])
 def test_spelling_follows_the_key(pitch, key, tpc):
-    assert _spell(pitch, key) == tpc
+    assert spelling(pitch, key) == tpc
 
 
 # --- replay and MuseScore -------------------------------------------------------
