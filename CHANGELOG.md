@@ -7,6 +7,13 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Practice videos no longer race through the opening of a song that starts on a
+  short pickup. The pickup bar also holds the clef, key and time signature, so the
+  even-spacing step read it as far too wide and stretched the next bars to match:
+  Kesäaamu's first ten bars came out up to nine times their width. Bars are now
+  measured by the distance the scroll actually covers, and a bar shorter than a
+  beat is compared as if it lasted a beat. Other songs' second and third bars stop being
+  widened a little for the same reason. (#376)
 - Record: a song whose scan left the "2." ending as an open bracket renders
   again. The scrolling video refused it as out of sync (Kristallen den fina,
   Kun poijat ne raitilla); it now follows the repeat and skips the "1." ending

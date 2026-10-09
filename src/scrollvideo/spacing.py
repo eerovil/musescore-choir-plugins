@@ -78,8 +78,16 @@ SLOT_WIDTH = 250.0
 # failure, only a plan that had one more correction in it.
 MAX_PASSES = 5
 
+# A bar shorter than this, in quarter notes, is compared with its neighbours as if
+# it lasted this long. A note has a smallest width verovio will draw it at, so a
+# sixteenth pickup is always far wider per beat than the bars after it, and taken
+# at its word it stretched them all (#376). It lasts a fraction of a second, which
+# `timing.smooth_scroll` evens out anyway. It may still be widened itself.
+SHORTEST_COMPARED = Fraction(1)
+
 SVG_NS = "http://www.w3.org/2000/svg"
 _STAFF_LINE = re.compile(r"^M\s*([-\d.]+)\s+[-\d.]+\s+L\s*([-\d.]+)\s")
+_TRANSLATE = re.compile(r"translate\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)")
 
 
 def _lcm(values) -> int:
@@ -98,15 +106,25 @@ def _tag(name: str) -> str:
 
 
 def measure_widths(svg: str) -> List[float]:
-    """How wide verovio drew each measure, in the engraving's own units.
+    """How far the scroll travels through each measure, in the engraving's own units.
 
-    Read off the staff lines rather than the barlines: verovio draws a measure's
-    staff lines from its left edge to its right one, so a measure's width is one
-    subtraction and the first measure needs no special case for having no barline
-    on its left.
+    That is the distance from where a measure's first note or rest is drawn to
+    where the next measure's is; the last measure is its staff lines' length. It is
+    deliberately not the measure's own extent. Verovio draws the clef, key and
+    time signature inside the first measure, about two thousand units of it, and
+    the scroll never crosses any of that: it starts on the first note. Counted in,
+    it made a sixteenth pickup read as eleven times too wide per beat and the
+    bars after it were stretched to match (#376). A measure with nothing that can
+    sound in it, only whole-bar rests, falls back to its staff lines' left edge.
     """
     root = etree.fromstring(svg.encode())
-    widths = []
+    offsets: dict = {}
+    for group in root.iter(_tag("g")):
+        shift = _TRANSLATE.match(group.get("transform", "") or "")
+        dx = float(shift.group(1)) if shift else 0.0
+        offsets[group] = offsets.get(group.getparent(), 0.0) + dx
+
+    spans, lines = [], []
     for measure in root.iter(_tag("g")):
         if measure.get("class") != "measure":
             continue
@@ -117,12 +135,33 @@ def measure_widths(svg: str) -> List[float]:
             for path in staff.findall(_tag("path")):
                 line = _STAFF_LINE.match(path.get("d", "") or "")
                 if line:
-                    span = (float(line.group(1)), float(line.group(2)))
+                    shift = offsets[staff]
+                    span = (float(line.group(1)) + shift, float(line.group(2)) + shift)
                     break
             break
         if span is None:
             return []
-        widths.append(span[1] - span[0])
+        lines.append(span)
+        first = None
+        for symbol in measure.iter(_tag("g")):
+            kind = symbol.get("class")
+            if kind == "note":
+                use = symbol.find(f".//{_tag('g')}[@class='notehead']/{_tag('use')}")
+            elif kind == "rest":
+                use = symbol.find(_tag("use"))
+            else:
+                continue
+            shift = _TRANSLATE.match(use.get("transform", "") or "") if use is not None else None
+            if shift:
+                x = float(shift.group(1)) + offsets[symbol]
+                first = x if first is None else min(first, x)
+        spans.append((span[0] if first is None else first, span[1]))
+    widths = [later[0] - start for (start, _), later in zip(spans, spans[1:])]
+    # The last measure has no next one to run to. It is never the one carrying the
+    # clef, key and time signature unless it is the only one, so its own staff
+    # lines are its width; reading from its first note would drop the room before
+    # that note which every other measure is counted with.
+    widths.append(lines[-1][1] - (lines[-1][0] if len(spans) > 1 else spans[-1][0]))
     return widths
 
 
@@ -176,8 +215,12 @@ def capped_targets(widths: Sequence[float], durations: Sequence[Fraction],
     sweep each way rather than the quadratic maximum. Nothing is ever narrowed:
     a bar keeps its natural width unless a bar near it is wider per beat than the
     cap allows it to be.
+
+    A bar shorter than `SHORTEST_COMPARED` is judged as if it lasted that long, so
+    its drawn minimum width does not read as a lurch. It stays in the chain and may
+    still be widened itself.
     """
-    per_beat = [w / float(d) if d else 0.0 for w, d in zip(widths, durations)]
+    per_beat = [w / float(_judged(d)) if d else 0.0 for w, d in zip(widths, durations)]
     out = list(per_beat)
     for i in range(1, len(out)):
         out[i] = max(out[i], out[i - 1] / max_ratio)
@@ -189,8 +232,14 @@ def capped_targets(widths: Sequence[float], durations: Sequence[Fraction],
 def target_widths(widths: Sequence[float], durations: Sequence[Fraction],
                   max_ratio: float) -> List[float]:
     """How wide each bar has to be drawn for the scroll to keep the cap."""
-    return [target * float(duration) for target, duration
+    return [target * float(_judged(duration)) if duration else 0.0
+            for target, duration
             in zip(capped_targets(widths, durations, max_ratio), durations)]
+
+
+def _judged(duration: Fraction) -> Fraction:
+    """How long a bar counts as when its speed is compared (`SHORTEST_COMPARED`)."""
+    return max(duration, SHORTEST_COMPARED)
 
 
 def measure_onsets(musicxml_path: str) -> List[int]:

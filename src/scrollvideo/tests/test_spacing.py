@@ -1,5 +1,6 @@
 """Spacing: the scroll should not lurch, and no bar should pay for a bar it is far from."""
 
+import re
 from fractions import Fraction
 
 import pytest
@@ -130,6 +131,23 @@ def test_no_bar_is_given_a_rest_it_does_not_need():
             assert widths[index] + slope * (count - 1 - onsets) < wanted[index]
 
 
+def test_a_bar_shorter_than_a_beat_is_judged_as_a_beat_long():
+    """A pickup's own speed is smoothed away in a fraction of a second, so it is
+    compared as if it lasted a quarter: it stops stretching its neighbours, and
+    stays in the chain, so it can still be widened itself."""
+    widths = [655.0, 2700.0, 2700.0]
+    durations = [Fraction(1, 4), Fraction(3), Fraction(3)]
+    targets = target_widths(widths, durations, 1.3)
+    assert targets[1:] == widths[1:]                     # the neighbours are left alone
+    assert targets[0] == pytest.approx(2700.0 / 3 / 1.3)  # and the pickup may widen
+
+    # Still a chain: a short bar between two others is one step from each.
+    targets = target_widths([2700.0, 300.0, 8100.0],
+                            [Fraction(3), Fraction(1, 4), Fraction(3)], 1.3)
+    assert targets[1] == pytest.approx(8100.0 / 3 / 1.3)
+    assert targets[0] == pytest.approx(8100.0 / 1.3 ** 2)
+
+
 # --- the same thing through verovio ---
 
 def test_an_ordinary_score_is_engraved_at_its_natural_width(tmp_path):
@@ -138,7 +156,53 @@ def test_an_ordinary_score_is_engraved_at_its_natural_width(tmp_path):
 
     assert spaced is False
     assert _worst_step(per_beat) < DEFAULT_MAX_RATIO
-    assert per_beat[1:] == pytest.approx([per_beat[1]] * 7)
+    assert per_beat == pytest.approx([per_beat[1]] * 8)
+
+
+def test_the_clef_key_and_meter_are_not_counted_as_the_first_bar(tmp_path):
+    """Verovio draws them inside bar 1, but the scroll starts on the first note and
+    never crosses them. Counted in, bar 1 read wider per beat than the same music
+    in bar 2 (#376)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    engraving = engrave(_score(tmp_path / "score.musicxml", [SPARSE] * 3))
+    first_line = re.search(r'class="staff">\s*<path d="M(\d+) \d+ L(\d+) ',
+                           engraving.svg)
+    left, right = float(first_line.group(1)), float(first_line.group(2))
+    widths = measure_widths(engraving.svg)
+
+    assert right - left > widths[1] * 1.1        # bar 1 is drawn wider ...
+    assert widths[0] == pytest.approx(widths[1])  # ... and scrolls like bar 2
+
+
+def _pickup_score(path, bars):
+    """A 6/8 song opening on a sixteenth pickup, the shape of Kesäaamu."""
+    eighths = _note(4, "eighth") * 6
+    attributes = ("<attributes><divisions>8</divisions><time><beats>6</beats>"
+                  "<beat-type>8</beat-type></time></attributes>")
+    body = (f'<measure number="0" implicit="yes">{attributes}{_note(2, "16th")}</measure>'
+            + "".join(f'<measure number="{i + 1}">{eighths}</measure>'
+                      for i in range(bars)))
+    path.write_text(
+        '<score-partwise version="3.1"><part-list><score-part id="P1">'
+        "<part-name>T1</part-name></score-part></part-list>"
+        f'<part id="P1">{body}</part></score-partwise>')
+    return str(path)
+
+
+def test_a_short_pickup_does_not_stretch_the_bars_after_it(tmp_path):
+    """The bug as reported on Kesäaamu: a sixteenth is drawn at a note's smallest
+    width, so per beat it is far wider than anything after it, and taken at its
+    word it stretched the next nine bars up to seven times their width (#376)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    source = _pickup_score(tmp_path / "score.musicxml", 8)
+    natural = measure_widths(engrave(source).svg)
+    engraving, _ = even_engraving(source, str(tmp_path), engrave)
+
+    assert measure_durations(source)[0] == Fraction(1, 4)
+    assert natural[0] / 0.25 > natural[1] / 3 * 1.3   # it would have lurched
+    widths = measure_widths(engraving.svg)
+    assert widths[1:] == pytest.approx(natural[1:])  # the bars after it are untouched
+    assert widths[0] >= natural[0] - 1e-6            # the pickup itself may widen
 
 
 def test_the_reported_four_against_thirty_two_stops_lurching(tmp_path):
