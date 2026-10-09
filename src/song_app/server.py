@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from typing import Dict, List, Optional, Set
@@ -20,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import (agentdeck, bar_readings, free_videos, health, heavy_slot, homr_install,
                job_state, omr,
-               pdf_systems, pipeline, playlists, problems, pwa_assets, scan, site_refresh,
+               pdf_systems, pipeline, playlists, problems, publish, pwa_assets, scan, site_refresh,
                state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
@@ -222,6 +223,8 @@ def _derived(song: state.Song) -> Dict:
         "media": _media_list(song),
         # Which videos YouTube has and whether the local copies can go (#371).
         "upload_status": free_videos.status(song),
+        # Whether this host can publish to the Cloudflare site at all (#382).
+        "publish_configured": publish.Config.from_env() is not None,
         "jobs": job_state.load(song.dir),
         "verification_summary": verification.summary(song, systems),
     }
@@ -482,7 +485,7 @@ def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
         except omr.HomrMissing as exc:
             raise HTTPException(400, str(exc)) from None
     if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "scan", ("scan", "clean", "render", "upload"),
+            song.dir, "scan", ("scan", "clean", "render", "upload", "publish"),
             pdf_systems.file_version(song.source_path("pdf"))):
         raise HTTPException(409, "Another scan, clean, render, or upload is "
                                  "already running for this song.")
@@ -652,7 +655,7 @@ def _run_clean(slug: str) -> None:
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
     if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "clean", ("scan", "clean", "render", "upload"),
+            song.dir, "clean", ("scan", "clean", "render", "upload", "publish"),
             state.file_fingerprint(song.source_path("xml"))):
         raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
@@ -1979,6 +1982,69 @@ async def api_free_videos(slug: str) -> Dict:
     finally:
         hub.emit(slug, {"type": "state"})
     return _derived(_require(slug))
+
+
+# --------------------------------------------------------------------------
+# Publish to the Cloudflare stemmanauhat site (#382)
+# --------------------------------------------------------------------------
+def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
+    song = _require(slug)
+    log = lambda m: _job_emit(slug, "publish", m)
+    try:
+        cleaned = song.cleaned_path()
+        bpm = None if pipeline.has_opening_tempo(cleaned) \
+            else song.data.get("record", {}).get("bpm", 80)
+        with tempfile.TemporaryDirectory() as tmp:
+            with heavy_slot.heavy_slot(f"song app publish {song.slug}", log=log) as slot:
+                bundle = publish.build_bundle(cleaned, tmp, initial_bpm=bpm,
+                                              log=slot.guard(log))
+                slot.check()
+            record = publish.publish(
+                slug=song.slug, title=song.name, choir=choir, bundle=bundle,
+                client=publish.Cloudflare(config),
+                previous=song.data.get("publish", {}).get("site"), log=log)
+        song = _require(slug)
+        song.data["publish"] = {"site": record, "choir": choir, "error": None,
+                                "published_against": state.file_fingerprint(cleaned)}
+        song.save()
+        _job_finish(song, "publish")
+    except Exception as exc:
+        traceback.print_exc()
+        song = _require(slug)
+        song.data.setdefault("publish", {}).update({"error": str(exc), "choir": choir})
+        song.save()
+        _job_emit(slug, "publish", str(exc), "error")
+        _job_finish(song, "publish", str(exc))
+    finally:
+        hub.emit(slug, {"type": "state"})
+
+
+@app.post("/api/songs/{slug}/publish")
+async def api_publish(slug: str, body: Dict = None) -> Dict:
+    """Send the score, one MP3 per part and the timing to the site, for one choir.
+
+    Made off the approved cleaned score, like a render. YouTube is untouched:
+    the old site keeps working until the new one replaces it.
+    """
+    song = _require(slug)
+    choir = (body or {}).get("choir") or ""
+    if choir not in publish.CHOIRS:
+        raise HTTPException(400, f"Choose a choir: {', '.join(publish.CHOIRS)}")
+    config = publish.Config.from_env()
+    if config is None:
+        raise HTTPException(400, publish.MISSING_CONFIG)
+    fingerprint = state.file_fingerprint(song.cleaned_path())
+    if not fingerprint:
+        raise HTTPException(400, "Clean the score before publishing")
+    if song.data.get("review", {}).get("approved_against") != fingerprint:
+        raise HTTPException(409, "Review and approve the current score before publishing")
+    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "publish", ("scan", "clean", "render", "upload", "free", "publish"),
+            fingerprint):
+        raise HTTPException(409, "Another job is running for this song — publish "
+                                 "after it finishes.")
+    asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config)
+    return {"started": True}
 
 
 @app.post("/api/songs/{slug}/reveal-media")

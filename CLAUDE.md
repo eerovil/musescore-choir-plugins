@@ -1047,7 +1047,16 @@ state model are in `DESIGN.md`.
   `eerovil/stemmanauhat` site's *Update Videos* workflow (#321): its own schedule
   runs only a few times a day, so a new song otherwise took hours to appear there.
   Off without `STEMMANAUHAT_DISPATCH_TOKEN` in `.env`; a failure is a log line and
-  never fails the upload. All YouTube API calls go
+  never fails the upload. **Publish** (#382, `publish.py`, `POST /publish`, the
+  Upload panel's *New site* section) sends the song to the Cloudflare
+  stemmanauhat site instead of YouTube: MusicXML, one MP3 per part *alone* (the
+  site mixes them) and `timing.json`, all off one `scrollvideo.score.prepare`
+  copy so parts and clock match the videos; the clock is MuseScore's `.mpos` bar
+  order plus its MIDI tempo map, cross-checked. Files go to R2 under a fresh
+  version prefix, then one D1 row per (choir, slug) is upserted. Needs
+  `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `STEMMANAUHAT_D1_DATABASE_ID`
+  in `.env`; the contract with the site is `docs/stemmanauhat-site.md`. YouTube
+  stays until the new site replaces it. All YouTube API calls go
   through `_with_retry`/`_execute` (`upload_to_youtube.py`): 429 / 5xx / rate-limit
   reasons are retried with exponential backoff + jitter (6 tries; the resumable
   upload's `next_chunk` resumes on retry), while a daily-quota 403 raises

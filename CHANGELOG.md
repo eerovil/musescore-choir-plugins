@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Upload stage: **Publish** sends a song to the new Cloudflare stemmanauhat site
+  for one choir (jm, naiskuoro or the public demo): the score as MusicXML, one MP3
+  per part (each part on its own, from the same MuseScore as the videos) and a
+  timing file for the moving cursor. YouTube uploads are unchanged. Needs the
+  Cloudflare keys in `.env`; the formats are in `docs/stemmanauhat-site.md`. (#382)
 - Practice videos: a fermata now holds about one beat longer than written instead
   of three times its length, which kept a held dotted half going for six seconds
   (Jumalan kunnia luonnossa). Render a song again to get it; no re-clean needed. (#380)
