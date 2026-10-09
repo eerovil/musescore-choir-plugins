@@ -24,6 +24,7 @@ from . import (agentdeck, bar_readings, free_videos, health, heavy_slot, homr_in
                state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import format_groups, parse_groups
+from src.media_root import media_dir
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -158,7 +159,7 @@ def _media_version(path: str) -> str:
 
 def _media_list(song: state.Song) -> List[Dict]:
     """Merged per-voice videos (and the raw recording) available for review."""
-    vdir = song.path("media", "video")
+    vdir = song.media_path("video")
     if not os.path.isdir(vdir):
         return []
     out = []
@@ -266,7 +267,7 @@ def _import_one(name: str) -> bool:
     pdf = next((f for f in files if f.lower().endswith(".pdf") and not f.endswith(".render.pdf")), None)
     lyrics = "lyrics.json" if "lyrics.json" in files else None
 
-    vdir = os.path.join(d, "media", "video")
+    vdir = os.path.join(media_dir(d), "video")
     outputs = []
     if os.path.isdir(vdir):
         outputs = [f for f in sorted(os.listdir(vdir))
@@ -1902,7 +1903,7 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
     opts["_source_fingerprint"] = source_fingerprint
     if opts.get("upload_only"):
         opts["_existing_outputs"] = [
-            song.path("media", "video", os.path.basename(name))
+            song.media_path("video", os.path.basename(name))
             for name in song.data.get("record", {}).get("outputs", [])
         ]
     asyncio.get_running_loop().run_in_executor(None, _run_record, slug, opts)
@@ -1913,7 +1914,7 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
 def api_media(slug: str, name: str):
     song = _require(slug)
     safe = os.path.basename(name)
-    path = song.path("media", "video", safe)
+    path = song.media_path("video", safe)
     if not os.path.exists(path):
         raise HTTPException(404, "No such media")
     kind = "video/mp4" if safe.lower().endswith(".mp4") else "video/quicktime"
@@ -1983,7 +1984,7 @@ async def api_free_videos(slug: str) -> Dict:
 @app.post("/api/songs/{slug}/reveal-media")
 def api_reveal_media(slug: str) -> Dict:
     song = _require(slug)
-    vdir = song.path("media", "video")
+    vdir = song.media_path("video")
     if not os.path.isdir(vdir):
         raise HTTPException(404, "No media yet")
     subprocess.Popen(["open", vdir])

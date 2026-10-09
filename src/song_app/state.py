@@ -16,6 +16,7 @@ import unicodedata
 from typing import Dict, List, Optional
 
 from . import health
+from src.media_root import media_dir
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
@@ -74,6 +75,10 @@ class Song:
 
     def path(self, *parts: str) -> str:
         return os.path.join(self.dir, *parts)
+
+    def media_path(self, *parts: str) -> str:
+        """A path in this song's media folder, which `MEDIA_ROOT` may put elsewhere."""
+        return os.path.join(media_dir(self.dir), *parts)
 
     def state_path(self) -> str:
         return self.path(STATE_FILE)

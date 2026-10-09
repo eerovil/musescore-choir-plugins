@@ -31,6 +31,7 @@ from src.clean_score.utils.score_fixes import (FixError, after_moves, apply_fixe
                                                 bar_moves, bar_tokens, free_text, read_bar)
 from src.clean_score.utils.staff_display import fix_staff_display
 from src.clean_score.utils.utils import starts_new_system
+from src.media_root import media_dir
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
 Logger = Callable[[str], None]
@@ -1296,8 +1297,8 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
     from src.scrollvideo import build_videos
 
     width, height, fps = SCROLL_QUALITY.get(quality, SCROLL_QUALITY["4k"])
-    out_dir = os.path.join(song_dir, "media", "video")
-    audio_cache_dir = os.path.join(song_dir, "media", ".scrollvideo-audio")
+    out_dir = os.path.join(media_dir(song_dir), "video")
+    audio_cache_dir = os.path.join(media_dir(song_dir), ".scrollvideo-audio")
     return build_videos(cleaned_path, out_dir, basename=name,
                         width=width, height=height, fps=fps, log=log,
                         progress=progress, hardware_encoding=hardware_encoding,
@@ -1438,7 +1439,7 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
             detail += f" (left out because silent: {', '.join(dropped)})"
         raise ValueError(detail)
 
-    audio_cache = os.path.join(song_dir, "media", ".scrollvideo-audio")
+    audio_cache = os.path.join(media_dir(song_dir), ".scrollvideo-audio")
     result = render_mix_cached(source, None if mix == COMBINED else mix, audio_cache)
 
     # MuseScore export can take minutes. Refuse the completed old mix if the score,
