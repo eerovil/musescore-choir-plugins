@@ -7,11 +7,18 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+<<<<<<< HEAD
 - The cleaned score is drawn the way the page prints it: rests the scan hid
   because two voices shared them now show on each part's own staff, a double or
   final barline reaches every staff, a bar's last rest no longer looks like a bar of
   its own, and after a `delbar` the system pictures start on the right bar again.
   Already-cleaned songs are drawn right without cleaning again. (#354)
+=======
+- Writing fixes is harder to get wrong: the bar reader now shows ties, where each
+  chord sits among the rests, and the bar as a fix meets it when MuseScore reset it;
+  added notes are spelt with flats in a flat key; and two songs cleaning at once no
+  longer fail with the bare error "3". (#357)
+>>>>>>> origin/main
 - `fixes.json` can now take a mark the scan invented off a chord (`delete`): a
   fermata, an articulation, a breath mark, a staff text, a tempo or a rehearsal
   mark. Mieslaulu bar 13's fermatas, where the page prints staccato dots, can now
