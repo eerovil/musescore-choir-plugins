@@ -60,6 +60,11 @@ class TempoMap:
                 changes.append((tick / ticks_per_beat, msg.tempo))
         return cls(changes)
 
+    @property
+    def changes(self) -> List[float]:
+        """The quarter positions where the tempo changes, the start included."""
+        return list(self._q)
+
     def seconds(self, qstamp: float) -> float:
         i = max(0, bisect_right(self._q, qstamp) - 1)
         return self._secs[i] + (qstamp - self._q[i]) * self._us[i] / 1e6

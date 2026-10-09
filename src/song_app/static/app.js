@@ -1465,6 +1465,12 @@ function updateProgress(line) {
   logBox.scrollTop = logBox.scrollHeight;
 }
 
+// The most recently started of these jobs: one panel log shows whichever ran last.
+function latestJob(jobs, kinds) {
+  return kinds.map((kind) => jobs?.[kind]).filter(Boolean)
+    .sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0];
+}
+
 function makeLog(job) {
   logBox = el("div", { className: "log" });
   for (const entry of job?.logs || []) {
@@ -3022,7 +3028,7 @@ function panelUpload(panel, song, P, refresh) {
     el("div", { className: "row" }, plPick),
     pl,
     el("div", { className: "row" }, uploadBtn),
-    makeLog(song.jobs?.upload || song.jobs?.render));
+    makeLog(latestJob(song.jobs, ["upload", "render", "publish"])));
 
   if (uploads.length) {
     panel.append(
@@ -3039,6 +3045,60 @@ function panelUpload(panel, song, P, refresh) {
         }}, "Delete from YouTube")),
       playlistSection(P, recording));
   }
+  panel.append(publishSection(P, song, refresh));
+}
+
+// The new Cloudflare site (#382): the score, one MP3 per part and the timing,
+// listed for one choir. Made off the approved score, not off the videos, so it
+// needs no render; YouTube above keeps working until the new site replaces it.
+const CHOIRS = { jm: "Joensuun Mieslaulajat (jm)", naiskuoro: "Naiskuoro", public: "Public demo" };
+
+function publishSection(P, song, refresh) {
+  const pub = song.publish || {};
+  const site = pub.site;
+  const job = song.jobs?.publish;
+  const running = job?.status === "running";
+  const guess = pub.choir || { men: "jm", women: "naiskuoro" }[song.voicing] || "";
+  const choir = el("select", { className: "publish-choir" },
+    el("option", { value: "" }, "— choir —"),
+    ...Object.entries(CHOIRS).map(([value, label]) => el("option", { value }, label)));
+  choir.value = guess;
+  const status = el("p", { className: "hint publish-status" });
+  if (!song.publish_configured) {
+    status.textContent = "Publishing is off on this host: the Cloudflare keys are not in .env.";
+  } else if (running) {
+    status.textContent = "Publishing… the log above shows how far it is.";
+  } else if (pub.error) {
+    status.className = "hint publish-status err";
+    status.textContent = "Last publish failed: " + pub.error;
+  } else if (site) {
+    const stale = pub.published_against && song.cleaned_fingerprint
+      && pub.published_against !== song.cleaned_fingerprint;
+    status.textContent = `Published to ${CHOIRS[site.choir] || site.choir} on `
+      + `${new Date(site.at * 1000).toLocaleString()} — ${site.parts.length} part(s).`
+      + (stale ? " The score has changed since; publish again to update it." : "");
+  } else {
+    status.textContent = "Not published yet.";
+  }
+  const btn = el("button", { className: "primary publish-btn",
+    disabled: !song.publish_configured || running || song.recording,
+    onclick: async () => {
+      if (!choir.value) { status.className = "hint publish-status err"; status.textContent = "Choose a choir first."; return; }
+      btn.disabled = true;
+      appendLog("Publishing to the new site…");
+      try { await postJSON(`${P}/publish`, { choir: choir.value }); refresh(); }
+      catch (e) {
+        status.className = "hint publish-status err";
+        status.textContent = e.message;
+        btn.disabled = false;
+      }
+    } }, site ? "Publish again" : "Publish");
+  return el("div", { className: "publish-section" },
+    el("h3", {}, "New site (Cloudflare)"),
+    el("p", { className: "hint" }, "Sends the score, one MP3 per part and the timing for the moving cursor, and lists the song for the choir."),
+    el("label", {}, "Choir"),
+    el("div", { className: "row" }, choir, btn),
+    status);
 }
 
 // The local videos are a cache once YouTube has them (#371): 4K, ~150 MB a
