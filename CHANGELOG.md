@@ -7,6 +7,8 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- `fixes.json`'s `delete` can now take an arpeggio sign off a chord, for a
+  printed sharp the scan read as one (Trinklied B1 bar 25). (#366)
 - The cleaned score is drawn the way the page prints it: rests the scan hid
   because two voices shared them now show on each part's own staff, a double or
   final barline reaches every staff, a bar's last rest no longer looks like a bar of
