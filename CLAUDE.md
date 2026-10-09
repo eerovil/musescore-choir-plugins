@@ -249,6 +249,14 @@ head is dropped and an optional note the scan missed stays out (owner's call on 
 `dropnote` also takes out a tie on the note, both halves, and refuses a chord's only
 note; `addnote` spells the note from `tpc`, an octave in the chord, or the key in force.
 
+`unvolta` (#378, `measure`, optional `text`) and `unrepeat` (`measure`, `which`: `end` or
+`start`) take out a volta bracket or a repeat sign the scan invented, on every staff, both
+halves of a bracket; each refuses when there is nothing to take. Suomalainen rukous came
+back with the organ's "1." ending and end repeat copied onto an extra bar, and the scroll
+render refused it. `volta` takes `second`, the bars of the "2." ending (a bracket may now
+close the score), and `barlen` (`measure`, `from`, `to`) gives a bar every staff rests
+through another length (`len`), for a 2nd ending printed 6/4 that cleaning cut to 4/4.
+
 `timesig` (#353, `measure`, `from`, `to`) takes a time signature the scan invented off
 every staff (`"to": null`) or writes another in its place (`"to": "6/8"`). Kesäaamu is
 printed in 6/8 and homr read a 3/4 at bar 22; the notes fit both, so `spurious_timesigs`
@@ -676,6 +684,10 @@ Key test modules:
   every staff and leaves the notes, writes 6/8 over 3/4 without 3/4's beaming, refuses
   a staff reading otherwise (changing none), bar 1, a missing `from` and a change of
   bar length, counts bars after a `delbar`, and replays on a rebuild.
+- `test_unvolta_barlen.py` — added for #378, on Suomalainen rukous's shape: the
+  invented bracket and repeat go, both halves, and the endings come back "1." over one
+  bar and a 6/4 + 4/4 "2." closing the score; each kind's refusals; replay on a
+  rebuild; and (with MuseScore) the export plays one repeat with those endings.
 - `test_read_bar.py` / `src/song_app/tests/test_record_slur.py` /
   `test_slur_panel_ui.py` — added by this pull request for recording a missing slur
   from the app. The first pins that reading a bar and writing a fix agree: the index

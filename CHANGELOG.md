@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Fix: a volta bracket or repeat sign the scan invented can now be taken out from
+  `fixes.json` (`unvolta`, `unrepeat`), a "2." ending can span more than one bar,
+  and a silent bar can be given its printed length (`barlen`). Suomalainen rukous,
+  whose scan copied the organ's 1st ending onto an extra bar, renders again. (#378)
 - Practice videos no longer race through the opening of a song that starts on a
   short pickup. The pickup bar also holds the clef, key and time signature, so the
   even-spacing step read it as far too wide and stretched the next bars to match:

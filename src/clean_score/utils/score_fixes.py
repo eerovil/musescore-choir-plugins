@@ -105,12 +105,36 @@ already opens a repeat refuses it.
 
 `volta` (#319) puts the "1." and "2." brackets over an end repeat: "1." over the
 `bars` bars ending at `measure`, which must carry the end repeat, and "2." over the
-one bar after it. Only the "1." length changes what is played -- the second pass
-skips those bars -- so the "2." bracket is always one bar. MuseScore keeps a volta
-on the top staff only, so that is where it goes. A bar already under a bracket
-refuses it, and so does a "2." bracket with no bar after it to close on.
+`second` bars after it (default 1). Only the "1." length changes what is played --
+the second pass skips those bars -- so `second` only changes the picture. MuseScore
+keeps a volta on the top staff only, so that is where it goes. A bar already under a
+bracket refuses it, and so does a "2." bracket longer than the bars left; one that
+closes the score ends at the end of its last bar, as MuseScore writes it.
 
     {"kind": "volta", "measure": 13, "bars": 2, "why": "the page prints 1. over 12-13"}
+
+`unvolta` and `unrepeat` (#378) take out what the scan invented: Suomalainen rukous
+came back with a second "1." bracket and end repeat on a bar the page does not print
+(copied from the organ's 1st ending), and MuseScore and the engraving then disagreed
+about which bars play. `unvolta` takes every volta bracket that **starts** in bar
+`measure` out, on every staff, both halves; `text` ("1." or "2") narrows it to the
+brackets reading that. `unrepeat` takes the `which` ("end" or "start") repeat sign off
+the bar on every staff. Each refuses when there is nothing to take, so a re-read that
+no longer invents it fails the clean rather than quietly matching. Put a bracket back
+the way the page prints it with `volta`, and take the emptied bar out with `delbar`.
+
+    {"kind": "unvolta", "measure": 19, "text": "1", "why": "..."}
+    {"kind": "unrepeat", "measure": 19, "which": "end", "why": "..."}
+
+`barlen` (#378) gives a bar that **every staff rests through** another length: each
+staff gets one bar rest of `to` (`"6/4"`), written as the scan writes a bar that
+differs from its time signature (`len`, dropped when `to` is the meter in force). A
+note anywhere in the bar refuses -- changing the length of music is `duration`'s and
+`bar`'s job. The 2nd ending above is printed 6/4 then 4/4; the scan read 3/2 and
+cleaning cut it to 4/4, which only a person reading the page can put back. `from` is
+required, as for `delbar`.
+
+    {"kind": "barlen", "measure": 19, "from": ["whole:R"], "to": "6/4", "why": "..."}
 
 Three kinds came out of fixing a song from its page with an LLM (#340), where each
 had to be faked and every fake damaged the score. `unslur` takes out the slur that
@@ -1783,8 +1807,11 @@ def volta_spans(staff: etree._Element) -> List[Tuple[int, int]]:
         for spanner in measure.iter("Spanner"):
             if spanner.get("type") != "Volta" or spanner.find("Volta") is None:
                 continue
-            length = spanner.findtext("next/location/measures")
-            spans.append((number, number + max(int(length or 1), 1) - 1))
+            length = int(spanner.findtext("next/location/measures") or 0)
+            # A bracket that closes the score ends a bar's length into its last bar.
+            if (spanner.findtext("next/location/fractions") or "").strip() not in ("", "0"):
+                length += 1
+            spans.append((number, number + max(length, 1) - 1))
     return spans
 
 
@@ -1800,8 +1827,9 @@ def _volta_spanner(volta: Optional[Dict[str, str]], step: int) -> etree._Element
     return spanner
 
 
-def _add_volta(root: etree._Element, measure_no: int, bars: int) -> str:
-    """Put "1." over ``bars`` bars ending at ``measure_no`` and "2." over the next bar."""
+def _add_volta(root: etree._Element, measure_no: int, bars: int, second: int = 1) -> str:
+    """Put "1." over ``bars`` bars ending at ``measure_no`` and "2." over the
+    ``second`` bars after it."""
     staff = next((s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None),
                  None)
     if staff is None:
@@ -1810,11 +1838,16 @@ def _add_volta(root: etree._Element, measure_no: int, bars: int) -> str:
     first = measure_no - bars + 1
     if bars < 1 or first < 1:
         raise FixError(f"a 1. bracket of {bars} bar(s) cannot end at bar {measure_no}")
-    if measure_no + 2 > len(measures):
-        raise FixError("the 2. bracket needs a bar after it to close on")
+    if second < 1:
+        raise FixError(f"a 2. bracket of {second} bar(s) cannot be drawn")
+    last = measure_no + second  # the 2. bracket's last bar, 1-based
+    if last > len(measures):
+        raise FixError("the 2. bracket needs a bar after it to close on"
+                       if second == 1 else
+                       f"the score has no bar {last} for a 2. bracket of {second} bars")
     if measures[measure_no - 1].find("endRepeat") is None:
         raise FixError("no repeat ends here")
-    taken = [(a, b) for a, b in volta_spans(staff) if a <= measure_no + 1 and b >= first]
+    taken = [(a, b) for a, b in volta_spans(staff) if a <= last and b >= first]
     if taken:
         raise FixError(f"bars {taken[0][0]}-{taken[0][1]} already have a bracket")
 
@@ -1834,11 +1867,162 @@ def _add_volta(root: etree._Element, measure_no: int, bars: int) -> str:
 
     at_head(measures[first - 1], _volta_spanner(
         {"endHookType": "1", "beginText": "1.", "endings": "1"}, bars))
-    at_head(measures[measure_no], _volta_spanner(None, -bars),
-            _volta_spanner({"beginText": "2.", "endings": "2"}, 1))
-    at_head(measures[measure_no + 1], _volta_spanner(None, -1))
+    two = _volta_spanner({"beginText": "2.", "endings": "2"}, second)
+    at_head(measures[measure_no], _volta_spanner(None, -bars), two)
+    if last < len(measures):
+        at_head(measures[last], _volta_spanner(None, -second))
+    else:
+        # Nothing after the last bar to hold the end, so it stands at the end of the
+        # last bar, a bar's length on -- the way MuseScore writes a bracket that
+        # closes the score.
+        end_bar = measures[last - 1]
+        length = (_parse_len(end_bar.get("len")) if end_bar.get("len")
+                  else _meter(staff, last - 1))
+        steps = second - 1
+        fraction = f"{length.numerator}/{length.denominator}"
+        location = two.find("next/location")
+        if steps == 0:
+            location.remove(location.find("measures"))
+        else:
+            location.find("measures").text = str(steps)
+        etree.SubElement(location, "fractions").text = fraction
+        end = _volta_spanner(None, -steps)
+        location = end.find("prev/location")
+        if steps == 0:
+            location.remove(location.find("measures"))
+        else:
+            location.find("measures").text = str(-steps)
+        etree.SubElement(location, "fractions").text = "-" + fraction
+        voice = end_bar.find("voice")
+        if voice is None:
+            voice = etree.SubElement(end_bar, "voice")
+        voice.append(end)
     span = f"bar {first}" if bars == 1 else f"bars {first}-{measure_no}"
-    return f"1. over {span}, 2. over bar {measure_no + 1}"
+    two_span = f"bar {last}" if second == 1 else f"bars {measure_no + 1}-{last}"
+    return f"1. over {span}, 2. over {two_span}"
+
+
+def _parse_len(text: str) -> Fraction:
+    n, d = (int(part) for part in text.split("/"))
+    return Fraction(n, d)
+
+
+def _all_staves(root: etree._Element) -> List[etree._Element]:
+    staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
+    if not staves:
+        raise FixError("the score has no staves")
+    return staves
+
+
+def _remove_repeat(root: etree._Element, measure_no: int, which: str) -> str:
+    """Take the start or end repeat sign off bar ``measure_no`` on every staff."""
+    tags = {"end": "endRepeat", "start": "startRepeat"}
+    if which not in tags:
+        raise FixError(f"'which' is {which!r}; say \"end\" or \"start\"")
+    found = []
+    for staff in _all_staves(root):
+        measures = staff.findall("Measure")
+        if not 1 <= measure_no <= len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        found += measures[measure_no - 1].findall(tags[which])
+    if not found:
+        raise FixError(f"no repeat {which}s in this bar")
+    for sign in found:
+        sign.getparent().remove(sign)
+    return f"{which} repeat sign taken off {len(found)} staves"
+
+
+def _volta_label(spanner: etree._Element) -> str:
+    return (spanner.findtext("Volta/beginText") or "").strip().rstrip(".")
+
+
+def _remove_volta(root: etree._Element, measure_no: int, label: Optional[str]) -> str:
+    """Take the volta brackets that start in bar ``measure_no`` out, both halves, on
+    every staff. ``label`` ("1", "2.") narrows it to brackets reading that."""
+    want = None if label is None else str(label).strip().rstrip(".")
+    doomed = []
+    for staff in _all_staves(root):
+        measures = staff.findall("Measure")
+        if not 1 <= measure_no <= len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        claimed = set()
+        for spanner in measures[measure_no - 1].iter("Spanner"):
+            if (spanner.get("type") != "Volta" or spanner.find("Volta") is None
+                    or spanner.find("next") is None):
+                continue
+            if want is not None and _volta_label(spanner) != want:
+                continue
+            span = int((spanner.findtext("next/location/measures") or "0").strip() or 0)
+            doomed.append(spanner)
+            end = measure_no - 1 + span
+            if end >= len(measures):
+                continue
+            partner = next(
+                (sp for sp in measures[end].iter("Spanner")
+                 if sp.get("type") == "Volta" and id(sp) not in claimed
+                 and sp.find("prev") is not None
+                 and int((sp.findtext("prev/location/measures") or "0").strip() or 0)
+                 == -span),
+                None)
+            if partner is not None:
+                claimed.add(id(partner))
+                doomed.append(partner)
+    starts = sum(1 for sp in doomed if sp.find("Volta") is not None)
+    if not starts:
+        named = "" if want is None else f" reading {want}."
+        raise FixError(f"no volta bracket{named} starts in this bar")
+    for spanner in doomed:
+        spanner.getparent().remove(spanner)
+    return f"{starts} volta bracket(s) taken out, both halves"
+
+
+def _set_bar_length(root: etree._Element, measure_no: int, expect, to) -> str:
+    """Give a bar every staff rests through another length: a rest of that length.
+
+    Only silence: a bar with a note in it on any staff refuses, because changing the
+    length of music is what `duration` and `bar` are for. The length is written the
+    way the scan writes one that differs from the time signature (``len``), and the
+    ``len`` goes when the new length is the meter in force.
+    """
+    staves = _all_staves(root)
+    if not expect:
+        raise FixError("give the bar's 'from', so a bar with music in it is never emptied")
+    n, d = _parse_meter(to, "to")
+    length = Fraction(n, d)
+    per_staff = _from_per_staff(expect, staves)
+    bars = []
+    for staff, want in zip(staves, per_staff):
+        measures = staff.findall("Measure")
+        if not 1 <= measure_no <= len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        bar = measures[measure_no - 1]
+        found = _bar_tokens(bar)
+        if found != want:
+            raise FixError(f"staff {staff.get('id')} reads {found} now, but the fix was "
+                           f"recorded against {want}")
+        if bar.find(".//Chord") is not None or bar.find(".//Tuplet") is not None:
+            raise FixError(f"staff {staff.get('id')} has music in this bar; only a bar "
+                           "every staff rests through can change length")
+        bars.append((staff, bar))
+    for staff, bar in bars:
+        if length == _meter(staff, measure_no - 1):
+            bar.attrib.pop("len", None)
+        else:
+            bar.set("len", f"{n}/{d}")
+        voices = bar.findall("voice")
+        for voice in voices[1:]:
+            for rest in voice.findall("Rest"):
+                voice.remove(rest)
+        voice = voices[0] if voices else etree.SubElement(bar, "voice")
+        rests = voice.findall("Rest")
+        at = voice.index(rests[0]) if rests else len(voice)
+        for rest in rests:
+            voice.remove(rest)
+        rest = etree.Element("Rest")
+        etree.SubElement(rest, "durationType").text = "measure"
+        etree.SubElement(rest, "duration").text = f"{n}/{d}"
+        voice.insert(at, rest)
+    return f"bar is {n}/{d} long on all {len(bars)} staves"
 
 
 def bar_moves(fixes: List[Dict]) -> List[Tuple[str, int]]:
@@ -2244,9 +2428,22 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
         if kind == "volta":
             measure = int(fix["measure"])
             try:
-                what = _add_volta(root, measure, int(fix["bars"]))
+                what = _add_volta(root, measure, int(fix["bars"]), int(fix.get("second", 1)))
             except FixError as exc:
                 raise FixError(f"m{measure} (volta): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind in ("unrepeat", "unvolta", "barlen"):
+            measure = int(fix["measure"])
+            try:
+                if kind == "unrepeat":
+                    what = _remove_repeat(root, measure, str(fix.get("which", "")))
+                elif kind == "unvolta":
+                    what = _remove_volta(root, measure, fix.get("text"))
+                else:
+                    what = _set_bar_length(root, measure, fix.get("from"), fix.get("to"))
+            except FixError as exc:
+                raise FixError(f"m{measure} ({kind}): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         staff, measure = int(fix["staff"]), int(fix["measure"])
