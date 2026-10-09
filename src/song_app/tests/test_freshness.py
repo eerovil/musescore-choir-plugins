@@ -44,7 +44,8 @@ def test_a_video_url_changes_when_the_video_does(tmp_path):
     video = vdir / "demo S1.mp4"
     video.write_bytes(b"first take")
 
-    song = type("S", (), {"slug": "demo", "path": lambda self, *p: str(tmp_path.joinpath(*p))})()
+    song = type("S", (), {"slug": "demo",
+                          "media_path": lambda self, *p: str(tmp_path.joinpath("media", *p))})()
     before = server._media_list(song)[0]["url"]
 
     video.write_bytes(b"a rather longer second take")

@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Song videos and their audio can live on another disk: `MEDIA_ROOT` in `.env`
+  puts each song's media in `$MEDIA_ROOT/<song>/` instead of `songs/<song>/media/`,
+  and `scripts/move_media.py` moves what is already there, checking every copied
+  file before deleting the old one and leaving a song alone while it records or
+  uploads. Unset, nothing changes. (#370)
 - `fixes.json`'s `delete` can now take an arpeggio sign off a chord, for a
   printed sharp the scan read as one (Trinklied B1 bar 25). (#366)
 - The cleaned score is drawn the way the page prints it: rests the scan hid

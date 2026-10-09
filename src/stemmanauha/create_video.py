@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import logging
 
 from .upload_to_youtube import get_authenticated_service, upload_to_youtube
+from ..media_root import media_dir as song_media_dir
 
 # === CONFIG ===
 logging.basicConfig(level=logging.INFO)
@@ -108,7 +109,7 @@ def record_video(song_dir, mp3_file, redo=False):
         raise ValueError("A valid mp3_file must be provided to record video.")
 
     if song_dir:
-        video_dir = Path(song_dir) / "media" / "video"
+        video_dir = Path(song_media_dir(song_dir)) / "video"
         if redo and video_dir.exists():
             # Re-recording: clear the raw recording AND the stale merged outputs.
             for mov in video_dir.glob("*.mov"):
@@ -150,7 +151,7 @@ def record_video(song_dir, mp3_file, redo=False):
         # Find the latest .mov file in VIDEO_EXPORT_PATH
         latest_video = get_latest_file(Path(VIDEO_EXPORT_PATH), "*.mov")
         # Move it to song_dir/media
-        target_dir = Path(song_dir) / "media" / "video"
+        target_dir = Path(song_media_dir(song_dir)) / "video"
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / latest_video.name
         logging.info(f"Moving {latest_video} to {target_path}")
@@ -208,7 +209,7 @@ def merge_mp3_to_video(song_dir, audio_delay_ms=1300, force=False):
         raise ValueError("song_dir must be set to merge MP3 to video.")
 
     # Find all mp3 files in song_dir/media
-    media_dir = Path(song_dir) / "media"
+    media_dir = Path(song_media_dir(song_dir))
     song_name = os.path.basename(song_dir)
     if not media_dir.exists():
         raise FileNotFoundError(f"Media directory {media_dir} does not exist.")
@@ -350,7 +351,7 @@ def export_mp3_from_musescore(song_dir, redo=False, log=None, progress=None):
 
     # If mp3 already exists in song_dir/mp3, skip export
     if song_dir:
-        media_dir = Path(song_dir) / "media"
+        media_dir = Path(song_media_dir(song_dir))
         if redo and media_dir.exists():
             for mp3 in media_dir.glob("*.mp3"):
                 logging.info(f"Removing {mp3} for re-export.")
@@ -379,7 +380,7 @@ def export_mp3_from_musescore(song_dir, redo=False, log=None, progress=None):
         # Move exported MP3 files to song folder/mp3
         mp3_basename = all_mp3.stem.replace(" ALL", "")
         mp3_files = get_filtered_mp3_files(mp3_basename)
-        target_dir = Path(song_dir) / "media"
+        target_dir = Path(song_media_dir(song_dir))
         target_dir.mkdir(parents=True, exist_ok=True)
         for mp3 in mp3_files:
             target_path = target_dir / mp3.name
@@ -399,7 +400,7 @@ def find_merged_outputs(song_dir):
     .mp4 as well as .mov because the scrolling renderer (src/scrollvideo) writes
     its videos here too, under the same "<song> <part>" naming.
     """
-    media_dir = Path(song_dir) / "media"
+    media_dir = Path(song_media_dir(song_dir))
     song_name = os.path.basename(song_dir)
     video_dir = media_dir / "video"
     mp3_files = list(media_dir.glob("*.mp3")) if media_dir.exists() else []
