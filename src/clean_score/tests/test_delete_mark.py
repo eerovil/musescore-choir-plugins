@@ -22,6 +22,7 @@ FERMATA = "<Fermata><subtype>fermataAbove</subtype><timeStretch>3</timeStretch><
 FERMATA_BELOW = "<Fermata><subtype>fermataBelow</subtype><timeStretch>3</timeStretch></Fermata>"
 STACCATO = "<Articulation><subtype>articStaccatoAbove</subtype></Articulation>"
 ACCENT = "<Articulation><subtype>articAccentAbove</subtype></Articulation>"
+ARPEGGIO = "<Arpeggio><subtype>0</subtype></Arpeggio>"
 BREATH = "<Breath><symbol>breathMarkComma</symbol></Breath>"
 DOLCE = "<StaffText><text>dolce</text></StaffText>"
 RED = ('<StaffText><color r="255" g="0" b="0" a="255"/>'
@@ -47,8 +48,9 @@ BARS = {
     # the beat B1's invented one stands on.
     1: [HEAD + _chord("quarter", 62) + _chord("quarter", 58) + FERMATA
         + _chord("quarter", 65, dots=1, lyric="la") + _chord("eighth", 65),
-        _chord("eighth", 60) + _chord("eighth", 58) + FERMATA + _chord("half", 63)
-        + _rest("quarter"),
+        # Trinklied B1 bar 25 (#366): a printed sharp read as an arpeggio on chord 0.
+        _chord("eighth", 60, inside=ARPEGGIO) + _chord("eighth", 58) + FERMATA
+        + _chord("half", 63) + _rest("quarter"),
         TEMPO + REHEARSAL + _chord("quarter", 60) + _chord("quarter", 60)
         + _chord("half", 60)],
     2: [HEAD + _chord("quarter", 58) + _chord("quarter", 58) + _chord("quarter", 62)
@@ -131,6 +133,7 @@ def test_subtype_narrows_what_goes(root):
 
 @pytest.mark.parametrize("staff, measure, index, what, tag", [
     (2, 3, 0, "articulation", "Articulation"),
+    (1, 2, 0, "arpeggio", "Arpeggio"),
     (2, 3, 1, "breath", "Breath"),
     (3, 3, 0, "breath", "Breath"),
     (2, 3, 2, "staff text", "StaffText"),
@@ -210,13 +213,30 @@ def test_read_bar_lists_each_chords_marks(root):
     # One at the end of a bar belongs to its last chord.
     assert read_bar(root, 3, 3)[0]["marks"] == ["breath:breathMarkComma"]
     assert read_bar(root, 1, 3)[0]["marks"] == ["tempo", "rehearsal mark:A"]
+    assert read_bar(root, 1, 2)[0]["marks"] == ["arpeggio:0"]
+
+
+def test_an_arpeggio_goes_and_the_chord_keeps_its_notes_and_words(root):
+    chord = [el for el in _measure(root, 1, 2).find("voice") if el.tag == "Chord"][0]
+    chord.append(etree.fromstring("<Lyrics><text>vii</text></Lyrics>"))
+    tokens = bar_tokens(root, 1, 2)
+    done = apply_fixes(root, [_fix(root, 1, 2, 0, "arpeggio")])
+    assert "took out 1 arpeggio(s) on chord 0" in done[0]
+    assert _count(root, 1, 2, "Arpeggio") == 0
+    assert bar_tokens(root, 1, 2) == tokens
+    assert chord.findtext("Lyrics/text") == "vii"
+    # The fermata on the next chord is not an arpeggio and stays.
+    assert _count(root, 1, 2, "Fermata") == 1
+    with pytest.raises(FixError, match="no arpeggio on chord 0"):
+        apply_fixes(root, [_fix(root, 1, 2, 0, "arpeggio")])
 
 
 def test_delete_replays_on_a_rebuild(root, tmp_path):
     from src.song_app import pipeline  # noqa: PLC0415 - only this test needs the app
     import json
 
-    fixes = [_fix(root, 1, 1, 2, "fermata"), _fix(root, 3, 1, 2, "fermata")]
+    fixes = [_fix(root, 1, 1, 2, "fermata"), _fix(root, 3, 1, 2, "fermata"),
+             _fix(root, 1, 2, 0, "arpeggio")]
     (tmp_path / "fixes.json").write_text(json.dumps(fixes))
     score = tmp_path / "score_cleaned.mscx"
     for _ in range(2):
@@ -224,6 +244,7 @@ def test_delete_replays_on_a_rebuild(root, tmp_path):
         pipeline.apply_recorded_fixes(str(score), str(tmp_path))
         again = etree.parse(str(score)).getroot()
         assert _count(again, 1, 1, "Fermata") == 0 and _count(again, 3, 1, "Fermata") == 0
+        assert _count(again, 1, 2, "Arpeggio") == 0
 
 
 def _musescore():

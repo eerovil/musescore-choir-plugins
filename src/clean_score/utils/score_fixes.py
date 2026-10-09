@@ -139,8 +139,9 @@ It needs its `from` like the others.
      "why": "dashed tie, verse 2 only"}
 
 `delete` (#352) takes a mark the scan invented off chord `index`: `what` is one of
-`fermata`, `articulation`, `breath`, `staff text`, `tempo` or `rehearsal mark`, and
-every mark of that kind on the chord goes unless `subtype` narrows it (an
+`fermata`, `articulation`, `arpeggio`, `breath`, `staff text`, `tempo` or
+`rehearsal mark` (#366: Trinklied's B1 bar 25 had a printed sharp read as an
+arpeggio), and every mark of that kind on the chord goes unless `subtype` narrows it (an
 articulation's `articStaccatoAbove`, a breath mark's symbol, a text's words). Only
 these: taking one out never needs anything else changed. A slur, a tie, a note, a red
 mark or the words have a kind of their own and are refused naming it; a clef, key,
@@ -501,6 +502,7 @@ def _unslur(root: etree._Element, staff_id: int, measure_no: int, index: int,
 #: writes after the chord it follows, even at the end of a bar -- just after it. Taking any of these out never
 #: needs anything else in the score changed.
 _DELETABLE = {"fermata": ("Fermata", "before"), "articulation": ("Articulation", "inside"),
+              "arpeggio": ("Arpeggio", "inside"),
               "breath": ("Breath", "after"), "staff text": ("StaffText", "before"),
               "tempo": ("Tempo", "before"), "rehearsal mark": ("RehearsalMark", "before")}
 #: What `delete` refuses, and where to go instead.

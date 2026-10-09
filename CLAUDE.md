@@ -207,7 +207,7 @@ Strict about `from` like the others, and replayed on every clean.
 
 `delete` (#352, `index`, `what`, optional `subtype`, `from`) takes a mark the scan invented
 off one chord — a fermata (Mieslaulu bar 13 has two where the page prints staccato
-dots), an articulation, a breath mark, a staff text, a tempo or a rehearsal mark. Only
+dots), an articulation, an arpeggio (#366: a sharp read as one), a breath mark, a staff text, a tempo or a rehearsal mark. Only
 those: a slur, tie, note, red mark or the words are refused naming the kind that does
 it, and a clef, key, meter or triplet bracket because it changes the bar itself.
 MuseScore holds a beat for **any** staff's fermata, so the log says when another staff
