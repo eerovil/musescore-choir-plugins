@@ -233,6 +233,14 @@ across that barline is lengthened, a volta ending on it keeps its length, a tie 
 it refuses, and the metaTags move as for `delbar`. Both count in file order, and the
 Fix panel maps bars through both (`score_fixes.bar_moves`) — homr's offers, picks, and the slur answers it matches by bar-numbered id (`problems._slur_decisions`).
 
+`dropnote` and `addnote` (#358, `index`, `pitch`, `from`) take one note off a chord or
+put one on, and leave its length, words and other notes alone. Pages print an optional
+note in brackets — a low octave, a divisi — and homr reads it as a real chord note, so
+the track sang both; **the default is to sing the main note only**, so the bracketed
+head is dropped and an optional note the scan missed stays out (owner's call on #358).
+`dropnote` also takes out a tie on the note, both halves, and refuses a chord's only
+note; `addnote` spells the note from `tpc`, an octave in the chord, or the key in force.
+
 `timesig` (#353, `measure`, `from`, `to`) takes a time signature the scan invented off
 every staff (`"to": null`) or writes another in its place (`"to": "6/8"`). Kesäaamu is
 printed in 6/8 and homr read a 3/4 at bar 22; the notes fit both, so `spurious_timesigs`
@@ -241,9 +249,8 @@ removal where the meter in force is that length), bar 1 refuses, and it counts b
 file order like `delbar`.
 
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
-most edits are none of the other three — taking one notehead off a chord and turning a
-bar-length rest into a whole-bar rest both came up on one song in one sitting, and
-neither could be written down at all. Nothing interprets it: `apply_fixes` steps over
+most edits are none of the other three — turning a bar-length rest into a whole-bar
+rest came up on one song in one sitting and could not be written down at all. Nothing interprets it: `apply_fixes` steps over
 it and `score_fixes.free_text` hands the sentences back, so cleaning logs them as still
 outstanding and the **Fix** panel lists them (`pipeline.free_text_fixes`, read live off
 the file, so writing one shows at once and applying it stops showing). Applying one is
@@ -642,6 +649,11 @@ Key test modules:
   file order, `from` is strict, a bar with music or a spanner end in it refuses, the
   per-system lyric map and the removed-slur records lose the bar, `insbar` puts an
   empty bar in with the same care (Kristallen's insert-then-delete in file order), the entry replays on a rebuild, and a pick recorded after it survives the next clean.
+- `test_chord_notes.py` — added for #358: `dropnote` takes one note off and keeps the
+  chord's length and words, a tie into or out of the note loses both halves, the last
+  note refuses; `addnote` lands in pitch order spelt by an octave, the key or `tpc`, and
+  ties nothing; both are strict about `from`, replay on a rebuild, and (with MuseScore)
+  the score still opens.
 - `test_duration_back_steps.py` — added for #344, on the shapes of Gute Nacht bar 6
   and Annin laulu bar 10: a `duration` fix that restores the bar takes the back-step out
   of the voices it squeezed, a tie after the step still reaches its note, a voice the
