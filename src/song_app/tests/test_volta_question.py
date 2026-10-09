@@ -188,7 +188,9 @@ def test_the_brackets_are_written_the_way_musescore_writes_them():
     ({"measure": 5, "bars": 1}, "no repeat ends here"),
     ({"measure": 4, "bars": 5}, "cannot end at bar 4"),
     ({"measure": 4, "bars": 0}, "cannot end at bar 4"),
-    ({"measure": 9, "bars": 1}, "a bar after it"),
+    # A "2." bracket may close the score (#378), but not reach past it.
+    ({"measure": 9, "bars": 1, "second": 2}, "no bar 11 for a 2. bracket of 2 bars"),
+    ({"measure": 10, "bars": 1}, "a bar after it"),
 ])
 def test_a_volta_fix_refuses_what_it_cannot_draw(fix, refusal):
     root = etree.fromstring(_score(ends=(4, 9)))
