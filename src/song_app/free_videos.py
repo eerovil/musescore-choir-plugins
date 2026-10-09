@@ -42,16 +42,25 @@ def _part_of(upload: Dict) -> Optional[str]:
 
 
 def local_videos(song: state.Song) -> Dict[str, str]:
-    """{part: path} of the merged videos on disk, newest file per part — the
-    same choice the upload makes (`create_video.find_merged_outputs`)."""
+    """{part: path} of the song's videos on disk.
+
+    The files the last render wrote (`record.outputs`) when it names any, else
+    the newest file per part — the choice the upload makes
+    (`create_video.find_merged_outputs`). An older take of a part another
+    renderer superseded is never one of them: freeing does not delete it, and it
+    must not stand in for the part's video once the real one is gone.
+    """
     vdir = song.path("media", "video")
     if not os.path.isdir(vdir):
         return {}
     prefix = song.slug + " "
+    named = {os.path.basename(n) for n in (song.data.get("record") or {}).get("outputs") or []}
     newest: Dict[str, str] = {}
     for name in os.listdir(vdir):
         stem, ext = os.path.splitext(name)
         if ext.lower() not in VIDEO_EXTS or not stem.startswith(prefix):
+            continue
+        if named and name not in named:
             continue
         part = stem[len(prefix):]
         path = os.path.join(vdir, name)

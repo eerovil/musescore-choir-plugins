@@ -1882,8 +1882,9 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
         opts.pop("bpm", None)
     if opts.get("upload_only"):
         names = song.data.get("record", {}).get("outputs", [])
-        if not names or not all(os.path.exists(song.path("media", "video", os.path.basename(n)))
-                                for n in names):
+        # An empty list is an older song: the upload finds its videos by name, as before.
+        if names and not all(os.path.exists(song.path("media", "video", os.path.basename(n)))
+                             for n in names):
             raise HTTPException(409, "The videos are not on disk (freed after an "
                                      "upload?) — record again to make them.")
     kind = "upload" if opts.get("upload_only") else "render"

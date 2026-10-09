@@ -205,3 +205,22 @@ def test_an_upload_records_the_file_it_sent(songs, monkeypatch):
     song.data["record"]["uploads"] = infos
     song.save()
     assert free_videos.status(song)["can_free"]
+
+
+def test_an_older_take_does_not_stand_in_once_the_videos_are_freed(songs):
+    """A screen-recorder .mov beside the scroll renderer's .mp4 for the same part
+    is not the song's video: freeing leaves it, and the song stays uploaded."""
+    song = _song()
+    old = song.path("media", "video", f"{song.slug} T1.mov")
+    with open(old, "wb") as f:
+        f.write(b"o" * 500)
+    past = time.time() - 3600
+    os.utime(old, (past, past))
+    assert free_videos.status(song)["can_free"]
+    free_videos.free(song, _youtube())
+    assert _on_disk(song) == [f"{song.slug} T1.mov"]
+    after = state.load(song.slug)
+    now = free_videos.status(after)
+    assert now["complete"] and now["local_count"] == 0
+    assert all(v["state"] == "uploaded" and not v["local"] for v in now["videos"])
+    assert after.to_summary()["uploaded"]
