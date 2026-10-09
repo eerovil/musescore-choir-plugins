@@ -131,18 +131,21 @@ def test_no_bar_is_given_a_rest_it_does_not_need():
             assert widths[index] + slope * (count - 1 - onsets) < wanted[index]
 
 
-def test_a_bar_shorter_than_a_beat_is_left_out_of_the_comparison():
-    """A pickup's own speed is smoothed away in a fraction of a second, so it
-    neither stretches its neighbours nor is stretched by them."""
+def test_a_bar_shorter_than_a_beat_is_judged_as_a_beat_long():
+    """A pickup's own speed is smoothed away in a fraction of a second, so it is
+    compared as if it lasted a quarter: it stops stretching its neighbours, and
+    stays in the chain, so it can still be widened itself."""
     widths = [655.0, 2700.0, 2700.0]
     durations = [Fraction(1, 4), Fraction(3), Fraction(3)]
-    assert target_widths(widths, durations, 1.3) == widths
+    targets = target_widths(widths, durations, 1.3)
+    assert targets[1:] == widths[1:]                     # the neighbours are left alone
+    assert targets[0] == pytest.approx(2700.0 / 3 / 1.3)  # and the pickup may widen
 
-    # The bars either side of it are still each other's neighbours.
-    widths = [2700.0, 300.0, 8100.0]
-    targets = target_widths(widths, [Fraction(3), Fraction(1, 4), Fraction(3)], 1.3)
-    assert targets[1] == 300.0
-    assert targets[0] == pytest.approx(8100.0 / 1.3)
+    # Still a chain: a short bar between two others is one step from each.
+    targets = target_widths([2700.0, 300.0, 8100.0],
+                            [Fraction(3), Fraction(1, 4), Fraction(3)], 1.3)
+    assert targets[1] == pytest.approx(8100.0 / 3 / 1.3)
+    assert targets[0] == pytest.approx(8100.0 / 1.3 ** 2)
 
 
 # --- the same thing through verovio ---
@@ -193,12 +196,13 @@ def test_a_short_pickup_does_not_stretch_the_bars_after_it(tmp_path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     source = _pickup_score(tmp_path / "score.musicxml", 8)
     natural = measure_widths(engrave(source).svg)
-    engraving, spaced = even_engraving(source, str(tmp_path), engrave)
+    engraving, _ = even_engraving(source, str(tmp_path), engrave)
 
     assert measure_durations(source)[0] == Fraction(1, 4)
     assert natural[0] / 0.25 > natural[1] / 3 * 1.3   # it would have lurched
-    assert spaced is False
-    assert measure_widths(engraving.svg) == pytest.approx(natural)
+    widths = measure_widths(engraving.svg)
+    assert widths[1:] == pytest.approx(natural[1:])  # the bars after it are untouched
+    assert widths[0] >= natural[0] - 1e-6            # the pickup itself may widen
 
 
 def test_the_reported_four_against_thirty_two_stops_lurching(tmp_path):

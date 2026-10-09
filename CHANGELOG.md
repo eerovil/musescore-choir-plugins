@@ -12,7 +12,7 @@ developers are listed under *Behind the scenes*.
   even-spacing step read it as far too wide and stretched the next bars to match:
   Kesäaamu's first ten bars came out up to nine times their width. Bars are now
   measured by the distance the scroll actually covers, and a bar shorter than a
-  beat is left out of the comparison. Other songs' second and third bars stop being
+  beat is compared as if it lasted a beat. Other songs' second and third bars stop being
   widened a little for the same reason. (#376)
 - The Upload stage lists which of a song's videos are on YouTube, and a **Free
   space** button deletes the local copies (about 150 MB a voice) once YouTube

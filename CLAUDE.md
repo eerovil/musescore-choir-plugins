@@ -2708,8 +2708,9 @@ to `entry["tstamp"]`.
   draws the clef, key and time signature inside bar 1, which the scroll never
   crosses, and counting them made Kesäaamu's sixteenth pickup read 11x too wide per
   beat and stretch the next nine bars up to 9x (#376). A bar shorter than a quarter
-  (`SHORTEST_COMPARED`) is also left out of the comparison: a note has a smallest
-  drawn width, so a pickup is always "too fast", and smoothing absorbs it anyway.
+  (`SHORTEST_COMPARED`) is also compared as if it lasted a quarter: a note has a
+  smallest drawn width, so a pickup is always "too fast", and smoothing absorbs it
+  anyway. It stays in the chain, so it can still be widened to match its neighbours.
   A bar's length is read by following the MusicXML cursor (`note`/`forward` advance
   it, `backup` winds it back), not by adding up every note: a two-voice bar is
   written as one voice after the other and summing reports it as twice as long, so

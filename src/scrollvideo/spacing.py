@@ -78,11 +78,11 @@ SLOT_WIDTH = 250.0
 # failure, only a plan that had one more correction in it.
 MAX_PASSES = 5
 
-# A bar shorter than this, in quarter notes, is left out of the comparison. A note
-# has a smallest width verovio will draw it at, so a sixteenth pickup is always far
-# wider per beat than the bars after it, and taken at its word it stretched them
-# all (#376). Nor is it widened to match them: it lasts a fraction of a second,
-# which `timing.smooth_scroll` evens out on its own.
+# A bar shorter than this, in quarter notes, is compared with its neighbours as if
+# it lasted this long. A note has a smallest width verovio will draw it at, so a
+# sixteenth pickup is always far wider per beat than the bars after it, and taken
+# at its word it stretched them all (#376). It lasts a fraction of a second, which
+# `timing.smooth_scroll` evens out anyway. It may still be widened itself.
 SHORTEST_COMPARED = Fraction(1)
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -216,24 +216,30 @@ def capped_targets(widths: Sequence[float], durations: Sequence[Fraction],
     a bar keeps its natural width unless a bar near it is wider per beat than the
     cap allows it to be.
 
-    A bar shorter than `SHORTEST_COMPARED` takes no part: it keeps its own width,
-    and the bars either side of it are compared with each other as neighbours.
+    A bar shorter than `SHORTEST_COMPARED` is judged as if it lasted that long, so
+    its drawn minimum width does not read as a lurch. It stays in the chain and may
+    still be widened itself.
     """
-    per_beat = [w / float(d) if d else 0.0 for w, d in zip(widths, durations)]
-    compared = [i for i, d in enumerate(durations) if d >= SHORTEST_COMPARED]
+    per_beat = [w / float(_judged(d)) if d else 0.0 for w, d in zip(widths, durations)]
     out = list(per_beat)
-    for before, at in zip(compared, compared[1:]):
-        out[at] = max(out[at], out[before] / max_ratio)
-    for after, at in zip(compared[::-1], compared[::-1][1:]):
-        out[at] = max(out[at], out[after] / max_ratio)
+    for i in range(1, len(out)):
+        out[i] = max(out[i], out[i - 1] / max_ratio)
+    for i in range(len(out) - 2, -1, -1):
+        out[i] = max(out[i], out[i + 1] / max_ratio)
     return out
 
 
 def target_widths(widths: Sequence[float], durations: Sequence[Fraction],
                   max_ratio: float) -> List[float]:
     """How wide each bar has to be drawn for the scroll to keep the cap."""
-    return [target * float(duration) for target, duration
+    return [target * float(_judged(duration)) if duration else 0.0
+            for target, duration
             in zip(capped_targets(widths, durations, max_ratio), durations)]
+
+
+def _judged(duration: Fraction) -> Fraction:
+    """How long a bar counts as when its speed is compared (`SHORTEST_COMPARED`)."""
+    return max(duration, SHORTEST_COMPARED)
 
 
 def measure_onsets(musicxml_path: str) -> List[int]:
