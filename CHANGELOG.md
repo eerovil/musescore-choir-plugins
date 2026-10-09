@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The cleaned score is drawn the way the page prints it: rests the scan hid
+  because two voices shared them now show on each part's own staff, a double or
+  final barline reaches every staff, a bar's last rest no longer looks like a bar of
+  its own, and after a `delbar` the system pictures start on the right bar again.
+  Already-cleaned songs are drawn right without cleaning again. (#354)
 - `fixes.json` can now take one note off a chord or put one on (`dropnote`,
   `addnote`). A note the page prints in brackets as optional was read as a real
   chord note, so the practice track sang both; the track now sings the main note.

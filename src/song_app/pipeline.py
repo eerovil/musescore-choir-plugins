@@ -27,8 +27,9 @@ from src.clean_score.utils import per_system
 from src.clean_score.utils.per_system import dropped_voices_for_file
 from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.rejected_bars import clear_bar, staff_names
-from src.clean_score.utils.score_fixes import (FixError, apply_fixes, bar_items, bar_tokens,
-                                                free_text, read_bar)
+from src.clean_score.utils.score_fixes import (FixError, after_moves, apply_fixes, bar_items,
+                                                bar_moves, bar_tokens, free_text, read_bar)
+from src.clean_score.utils.staff_display import fix_staff_display
 from src.clean_score.utils.utils import starts_new_system
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
@@ -820,6 +821,46 @@ def printed_system_starts(mscx_path: str) -> List[int]:
     return [0] + [i + 1 for i in breaks] if breaks else []
 
 
+def cleaned_line_breaks(song_dir: str, input_mscx: str) -> List[int]:
+    """The printed line breaks, in the cleaned score's bar numbering (#354).
+
+    The breaks are read off the converted input, which still counts a bar a
+    ``delbar`` took out and lacks one an ``insbar`` put in; applied as they stand,
+    every system after the move starts a bar off. A break on a bar that was taken
+    out moves to the bar before it.
+    """
+    breaks = line_break_measures(input_mscx)
+    if not breaks:
+        return []
+    try:
+        moves = bar_moves(_recorded_fixes(song_dir))
+    except RuntimeError:
+        moves = []
+    return moved_breaks(breaks, moves)
+
+
+def moved_breaks(breaks: List[int], moves) -> List[int]:
+    """0-based break indices of the score before ``moves``, as numbered after them."""
+    if not moves:
+        return list(breaks)
+    out: List[int] = []
+    for index in breaks:
+        bar = index + 1
+        moved = after_moves(bar, moves)
+        while moved is None and bar > 1:
+            bar -= 1
+            moved = after_moves(bar, moves)
+        if moved is not None and moved - 1 not in out:
+            out.append(moved - 1)
+    return sorted(out)
+
+
+def cleaned_system_starts(song_dir: str, input_mscx: str) -> List[int]:
+    """`printed_system_starts`, in the cleaned score's bar numbering."""
+    breaks = cleaned_line_breaks(song_dir, input_mscx)
+    return [0] + [i + 1 for i in breaks] if breaks else []
+
+
 def _apply_line_breaks(root: etree._Element, indices: List[int]) -> int:
     """Put line breaks on the top staff at `indices`. Returns how many were added.
 
@@ -853,7 +894,7 @@ def score_staff_count(mscx_path: str) -> int:
 
 
 def _scaled_staff_mscx(mscx_path: str, breaks: Optional[List[int]] = None,
-                       scale: Optional[float] = None) -> Optional[str]:
+                       scale: Optional[float] = None, tidy: bool = False) -> Optional[str]:
     """Write a temp copy of the score for rendering: the printed line breaks put
     back if `breaks` is given, and otherwise the staff size reduced by
     SPATIUM_SCALE.
@@ -863,17 +904,23 @@ Breaks alone are not enough to keep the printed layout: at full size a system
     its own break. The caller therefore renders at a scale and checks the result;
     `scale` is which one to use, defaulting to SPATIUM_SCALE.
 
+    `tidy` is for a cleaned score: its rests and barlines are drawn the way a staff
+    of its own needs (`fix_staff_display`, #354), so a score cleaned before that
+    pass existed is drawn right without being cleaned again.
+
     Returns the temp path, or None if there is nothing to change (caller then
     renders the original). Caller must delete the temp file.
     """
     if scale is None:
         scale = SPATIUM_SCALE
-    if scale >= 1.0 and not breaks:
+    if scale >= 1.0 and not breaks and not tidy:
         return None
     with open(mscx_path, "r", encoding="utf-8") as f:
         root = etree.fromstring(f.read().encode("utf-8"))
     score = root if root.tag == "Score" else root.find(".//Score")
     added = _apply_line_breaks(root, breaks or [])
+    if tidy:
+        added += sum(fix_staff_display(root).values())
     style = score.find("Style") if score is not None else None
     if style is None or scale >= 1.0:
         if not added:
@@ -995,19 +1042,36 @@ def compare_systems(song_dir: str, mscx_path: str, breaks: List[int]) -> List[Di
     stored = [b for b in pdf_systems.load_bounds(song_dir) if b.measure_start]
     if not stored or not breaks:
         return []
-    pdf = render_score_pdf(mscx_path, breaks)
+    pdf = render_score_pdf(mscx_path, breaks, tidy=True)
     staves = score_staff_count(mscx_path)
     bands = pdf_systems.rendered_system_bands(pdf, staves, _page_cache(song_dir))
     if len(bands) != len(stored):
         return []
+    # The stored labels count the bars of the scan; the render is cut by the breaks
+    # moved into the cleaned numbering, so label it by those (#354).
+    if len(breaks) + 1 == len(stored):
+        last = _measure_count(mscx_path)
+        starts = [1] + [i + 2 for i in breaks]
+        ends = [i + 1 for i in breaks] + [last]
+        return [{"index": b.index, "measure_start": start, "measure_end": end}
+                for b, start, end in zip(stored, starts, ends)]
     return [{"index": b.index, "measure_start": b.measure_start,
              "measure_end": b.measure_end} for b in stored]
+
+
+def _measure_count(mscx_path: str) -> int:
+    try:
+        root = etree.parse(mscx_path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return 0
+    staff = root.find(".//Score/Staff")
+    return len(staff.findall("Measure")) if staff is not None else 0
 
 
 def cleaned_system_crop(song_dir: str, mscx_path: str, breaks: List[int],
                         index: int, dpi: int) -> str:
     """One system of the cleaned render, cropped."""
-    pdf = render_score_pdf(mscx_path, breaks)
+    pdf = render_score_pdf(mscx_path, breaks, tidy=True)
     staves = score_staff_count(mscx_path)
     cache = _page_cache(song_dir)
     bands = pdf_systems.rendered_system_bands(pdf, staves, cache)
@@ -1064,7 +1128,12 @@ def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str
     return out
 
 
-def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None) -> str:
+#: Bump when what a render draws changes, so renders cached before it are redone.
+RENDER_VERSION = "2"
+
+
+def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
+                     tidy: bool = False) -> str:
     """Render a .mscx to a PDF via the MuseScore CLI (cached; re-renders if stale).
 
     Returns the rendered PDF path. The render lives next to the score as
@@ -1075,11 +1144,23 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None) -> str:
     strips them, so without this the preview reflows into MuseScore's own systems
     and cannot be read against the page it came from. Rendered to its own cache
     file, so the two versions do not overwrite each other.
+
+    `tidy` draws a cleaned score's rests and barlines as its own staves need
+    (`_scaled_staff_mscx`). A sidecar ``.key`` holds the breaks, `tidy` and
+    `RENDER_VERSION` the render was made with: the score's mtime alone does not
+    move when a recorded ``delbar`` moves the breaks (#354).
     """
     stem = os.path.splitext(mscx_path)[0]
     out = f"{stem}.breaks.render.pdf" if breaks else f"{stem}.render.pdf"
+    key = json.dumps([RENDER_VERSION, list(breaks or []), bool(tidy)])
+    key_path = out + ".key"
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(mscx_path):
-        return out
+        try:
+            with open(key_path, encoding="utf-8") as f:
+                if f.read() == key:
+                    return out
+        except OSError:
+            pass
     cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
 
     # Without breaks there is one render at the configured scale. With them, the
@@ -1093,7 +1174,7 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None) -> str:
     cache = os.path.join(os.path.dirname(mscx_path) or ".", ".pages")
 
     for i, scale in enumerate(scales):
-        src = _scaled_staff_mscx(mscx_path, breaks, scale) or mscx_path
+        src = _scaled_staff_mscx(mscx_path, breaks, scale, tidy) or mscx_path
         try:
             result = subprocess.run([cli, src, "-o", out], capture_output=True, text=True)
         finally:
@@ -1109,6 +1190,8 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None) -> str:
         got = len(pdf_systems.rendered_system_bands(out, staves, cache))
         if got == want:
             break
+    with open(key_path, "w", encoding="utf-8") as f:
+        f.write(key)
     return out
     cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
     src = _scaled_staff_mscx(mscx_path, breaks) or mscx_path

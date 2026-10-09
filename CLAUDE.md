@@ -879,6 +879,11 @@ state model are in `DESIGN.md`.
   source has breaks; without them the render is unchanged. They are applied by
   measure index, so nothing is applied unless the score is long enough, and the
   two variants cache to separate files (`.render.pdf` / `.breaks.render.pdf`);
+  **The breaks are moved into the cleaned numbering** (`cleaned_line_breaks`, #354):
+  the converted input still counts a bar a `delbar` took out, so applied as read,
+  every system after it started a bar late. The render's cache is keyed on the breaks
+  too (a `.key` file beside it, with `RENDER_VERSION`), since a recorded fix moves the
+  breaks without the cleaned score's mtime saying so.
   `strip_lyrics_copy` writes a lyrics-removed copy (cached) so the "Cleaned MSCX"
   (no-lyrics) view always reflects the live structure rather than a stale snapshot.
 - `pdf_systems.py` cuts the **original PDF** into one image per printed system, so
@@ -2326,6 +2331,20 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    `<rest measure="yes"/>`, and MuseScore draws that at the start of the bar rather
    than centred. Only the length changes; a rest that does not fill the bar exactly,
    a dotted one, one in a tuplet, or one a `location` shifts off beat one is left alone.
+10. `fix_staff_display` (`utils/staff_display.py`, #354) runs after it, in both modes,
+   and changes only what is drawn. A rest the page prints once for two voices is
+   written hidden into the second (homr's `print-object="no"`), right on a shared
+   staff and missing from the picture once that voice has a staff of its own, so a
+   bar with one voice shows its rests. A barline with music after it in its voice moves
+   to the bar's end (MuseScore puts a barline where the cursor stands, and a voice
+   that stopped early drew a fake bar). A double or repeat barline (never a final one) goes on
+   every staff of the bar that has none, since the split left it with the upper
+   voice. A plain barline on the last bar goes, since it overrides the final barline
+   MuseScore draws there. The same pass runs on the copy every cleaned preview
+   (`render_score_pdf(tidy=True)`) and every video (`scrollvideo/score.prepare`)
+   renders from, so a song cleaned before it is drawn right without a re-clean,
+   which would cost its lyrics. `omr_systems.flatten` also steps to the bar's end
+   before a right barline now, so new scans do not write the fake bar at all.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
 (which makes an upper/lower pair) and is either an OCR glitch or a real multi-way

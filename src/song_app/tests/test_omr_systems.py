@@ -1537,3 +1537,51 @@ def test_a_same_pitch_pair_from_a_bar_before_the_last_is_a_slur_not_a_tie(tmp_pa
         (1, "F", "start"), (3, "F", "stop")]
     assert not list(etree.parse(out).iter("tied"))
     assert _paired(out)
+
+
+# --- the closing barline (#354) -------------------------------------------
+
+
+def cursor_before_barline(measure):
+    """Where the cursor stands when the right barline is written."""
+    at = 0
+    for child in measure:
+        if child.tag == "barline":
+            return at
+        if child.tag == "backup":
+            at -= int(child.findtext("duration"))
+        elif child.tag == "forward":
+            at += int(child.findtext("duration"))
+        elif child.tag == "note" and child.find("chord") is None:
+            at += int(child.findtext("duration") or 0)
+    return None
+
+
+def test_a_right_barline_closes_the_bar_after_a_voice_that_stopped_early():
+    """Laulajain lippu bar 18: the closing rest is printed once for both voices,
+    so homr gives it to voice 1 and voice 2 stops a beat short. Written as it
+    stood, the barline came after voice 2 and MuseScore drew it part-way through
+    the bar, the rest after it reading as a bar of its own."""
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1">'
+        "<attributes><divisions>1</divisions></attributes>"
+        + "".join(a_note(s, duration=1, voice="1") for s in "CDEF")
+        + "<backup><duration>4</duration></backup>"
+        + "".join(a_note(s, duration=1, voice="2") for s in "ABC")
+        + '<barline location="right"><bar-style>light-light</bar-style></barline>'
+        + "</measure></part>")
+    measure = omr_systems.flatten_part(part)[0].measures[0]
+    assert cursor_before_barline(measure) == 4
+    assert measure[-1].tag == "barline"
+
+
+def test_a_bar_that_ends_full_gets_no_extra_step():
+    part = etree.fromstring(
+        '<part id="P1"><measure number="1">'
+        "<attributes><divisions>1</divisions></attributes>"
+        + "".join(a_note(s, duration=1, voice="1") for s in "CDEF")
+        + '<barline location="right"><bar-style>light-heavy</bar-style></barline>'
+        + "</measure></part>")
+    measure = omr_systems.flatten_part(part)[0].measures[0]
+    assert measure.find("forward") is None
+    assert cursor_before_barline(measure) == 4

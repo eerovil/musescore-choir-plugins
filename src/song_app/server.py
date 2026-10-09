@@ -1281,7 +1281,7 @@ def _printed_systems(song) -> list:
     the page's systems were. Empty when the source never had breaks — the renderer
     then falls back to numbering at a regular interval.
     """
-    return pipeline.printed_system_starts(_bounds_score(song))
+    return pipeline.cleaned_system_starts(song.dir, _bounds_score(song))
 
 
 def _cleaned_breaks(song) -> tuple:
@@ -1289,7 +1289,7 @@ def _cleaned_breaks(song) -> tuple:
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         return None, []
-    return cleaned, pipeline.line_break_measures(_bounds_score(song))
+    return cleaned, pipeline.cleaned_line_breaks(song.dir, _bounds_score(song))
 
 
 @app.get("/api/songs/{slug}/compare")
@@ -1358,6 +1358,7 @@ def api_render(slug: str, doc: str = "cleaned"):
     song = _require(slug)
     try:
         breaks = None
+        tidy = False
         if doc == "original":
             xml = song.source_path("xml")
             if not xml or not os.path.exists(xml):
@@ -1373,9 +1374,10 @@ def api_render(slug: str, doc: str = "cleaned"):
             # usually has them -- when it does not, the render is unchanged.
             xml = song.source_path("xml")
             if xml and os.path.exists(xml):
-                breaks = pipeline.line_break_measures(
-                    pipeline.convert_to_mscx(xml, song.dir)) or None
-        rendered = pipeline.render_score_pdf(mscx, breaks)
+                breaks = pipeline.cleaned_line_breaks(
+                    song.dir, pipeline.convert_to_mscx(xml, song.dir)) or None
+            tidy = True
+        rendered = pipeline.render_score_pdf(mscx, breaks, tidy=tidy)
     except HTTPException:
         raise
     except Exception as exc:
