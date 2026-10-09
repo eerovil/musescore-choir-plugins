@@ -21,6 +21,7 @@ import pytest
 from PIL import Image
 
 from src.scrollvideo import build, preview as preview_mod, video as video_mod
+from src.scrollvideo import score as score_mod
 from src.scrollvideo.preview import AUDIO_SOURCE, PREVIEW_HEIGHT, preview
 from src.scrollvideo.video import BACKGROUND_ALPHA, BAND_ALPHA, HIGHLIGHT
 
@@ -222,15 +223,15 @@ def test_the_scroll_curve_is_the_renderers_own(fermata_mscx, payload):
 def test_a_fermata_is_timed_on_musescores_clock(fermata_mscx, payload):
     """The whole reason the video keeps time: verovio's own timestamps are wrong.
 
-    Measure 1 ends on a chord stretched three times over, which MuseScore plays
-    and verovio does not know about. A preview on verovio's clock would run a
-    second short and drift away from the audio it is previewing.
+    Measure 1 ends on a fermata, held one beat longer (#380), which MuseScore
+    plays and verovio does not know about. A preview on verovio's clock would run
+    half a second short and drift away from the audio it is previewing.
     """
     ready = _prepared(fermata_mscx)
     verovio_seconds = max(float(entry.get("tstamp", 0.0))
                           for entry in ready.engraving.timemap) / 1000.0
     assert payload["duration"] == round(ready.duration, 3)
-    assert payload["duration"] - build.TAIL_SECONDS > verovio_seconds + 0.5
+    assert payload["duration"] - build.TAIL_SECONDS > verovio_seconds + 0.4
 
 
 def test_margins_move_the_preview_exactly_as_they_move_the_video(fermata_mscx, tmp_path):
@@ -335,8 +336,9 @@ def test_nothing_is_encoded_and_no_voice_is_mixed(fermata_mscx, tmp_path, monkey
         AUDIO_SOURCE,
         *[name for name in os.listdir(out) if name.endswith(".png")],
     }
+    prepared, _ = score_mod.prepare(fermata_mscx, str(tmp_path))
     assert open(os.path.join(out, AUDIO_SOURCE), "rb").read() == open(
-        fermata_mscx, "rb").read()
+        prepared, "rb").read()
 
 
 def test_a_long_score_is_sent_as_tiles_a_browser_can_decode(fermata_mscx, tmp_path,
