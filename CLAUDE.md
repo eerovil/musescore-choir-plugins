@@ -2949,7 +2949,12 @@ Three behaviours worth knowing:
   *forward* to a coda is no bigger a step than ordinary music on a long page. A bar
   count that differs between MuseScore and the engraving, or a bar MuseScore plays
   that verovio never timed, is refused by name; the 98% alignment check below still
-  has the last word. A score without a `Jump` takes exactly the old path.
+  has the last word. A score without a `Jump` takes exactly the old path, except
+  that a score with repeat signs or voltas asks for the `.mpos` too and follows it
+  when verovio's bar order differs (#374): a scan writes a "2." ending as a bracket
+  that opens and never closes, MuseScore plays the repeat as printed, and verovio
+  then expands no repeat at all (Kristallen den fina 74%, Kun poijat ne raitilla 65%).
+  `test_files/voltas.mscx` is that shape.
 - **Every render is verified against the audio before it ships.** `build.alignment`
   checks what fraction of highlights land within 200ms of a note MuseScore actually
   strikes, and refuses below 98%. That is the real property, so it catches timeline

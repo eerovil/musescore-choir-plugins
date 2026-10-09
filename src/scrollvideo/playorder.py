@@ -1,10 +1,16 @@
-"""Follow a D.C./D.S. jump: lay the engraved bars out in the order MuseScore plays them.
+"""Lay the engraved bars out in the order MuseScore plays them.
 
 Verovio expands section repeats and voltas in its timemap, but a D.C. or D.S.
 jump it follows only sometimes: it gets *Illan viimeinen tango*'s D.S. al Coda
 right and plays *Jouluriemua*'s two D.C.s as two passes where MuseScore plays
 three. The audio and the clock both come from MuseScore, so the timeline has to
 follow MuseScore's order whatever verovio made of it.
+
+Section repeats go wrong the same way when the score is not tidy (#374): the
+scan writes a "2." ending as a bracket that opens and never closes, MuseScore
+plays the repeat as printed, and verovio does not expand the repeat at all. So
+a score with any repeat sign is checked too: when verovio's bar order is not
+MuseScore's, MuseScore's is followed.
 
 MuseScore says what that order is. Its ``.mpos`` export ("measure positions",
 meant for score-following players) lists every bar in the order it is played,
@@ -41,6 +47,24 @@ def has_jumps(root: etree._Element) -> bool:
     return root.find(".//Jump") is not None
 
 
+def has_repeats(root: etree._Element) -> bool:
+    """Whether the score carries a section repeat or a volta bracket."""
+    return any(root.find(f".//{tag}") is not None
+               for tag in ("startRepeat", "endRepeat", "Volta"))
+
+
+def verovio_order(timemap: Sequence[dict], measures: Sequence[str],
+                  measure_of: Mapping[str, str]) -> List[int]:
+    """The 0-based printed bars in the order verovio's timemap plays them."""
+    index = {bar: i for i, bar in enumerate(measures)}
+    order = []
+    for entry in timemap:
+        timed = entry.get("measureOn")
+        if timed:
+            order.append(index.get(measure_of.get(timed, timed), -1))
+    return order
+
+
 def read_mpos(path: str) -> Tuple[int, List[int]]:
     """(how many bars MuseScore counts, the 0-based bars in played order)."""
     root = etree.parse(path).getroot()
@@ -49,7 +73,7 @@ def read_mpos(path: str) -> Tuple[int, List[int]]:
     if not order:
         raise NotImplementedError(
             "MuseScore did not say in which order it plays this score's bars, so the "
-            "D.C./D.S. jump cannot be followed.")
+            "repeats and jumps cannot be followed.")
     return count, order
 
 
@@ -94,7 +118,7 @@ def _bar_templates(timemap: Sequence[dict], measure_of: Mapping[str, str]
         spans.append((kind, nid, q_on, last_q))
     if not visits:
         raise NotImplementedError(
-            "The engraving's timeline names no bars, so the D.C./D.S. jump cannot "
+            "The engraving's timeline names no bars, so MuseScore's play order cannot "
             "be followed.")
 
     ends = [start for start, _ in visits[1:]] + [max(last_q, visits[-1][0])]
@@ -145,7 +169,7 @@ def unrolled_timemap(timemap: Sequence[dict], drawn_id: Mapping[str, str],
     if count != len(measures):
         raise NotImplementedError(
             f"MuseScore counts {count} bars and the engraving has {len(measures)}, "
-            "so the D.C./D.S. jump cannot be matched to the page.")
+            "so MuseScore's play order cannot be matched to the page.")
     templates = _bar_templates(timemap, measure_of)
     missing = sorted({index + 1 for index in order
                       if not 0 <= index < len(measures) or measures[index] not in templates})
@@ -153,7 +177,7 @@ def unrolled_timemap(timemap: Sequence[dict], drawn_id: Mapping[str, str],
         raise NotImplementedError(
             "The engraving has no timing for bar(s) "
             + ", ".join(str(m) for m in missing[:8])
-            + " that MuseScore plays, so the D.C./D.S. jump cannot be followed.")
+            + " that MuseScore plays, so MuseScore's play order cannot be followed.")
 
     entries: Dict[float, dict] = {}
 

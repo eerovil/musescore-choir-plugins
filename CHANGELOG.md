@@ -14,6 +14,10 @@ developers are listed under *Behind the scenes*.
   measured by the distance the scroll actually covers, and a bar shorter than a
   beat is compared as if it lasted a beat. Other songs' second and third bars stop being
   widened a little for the same reason. (#376)
+- Record: a song whose scan left the "2." ending as an open bracket renders
+  again. The scrolling video refused it as out of sync (Kristallen den fina,
+  Kun poijat ne raitilla); it now follows the repeat and skips the "1." ending
+  the way MuseScore plays it. (#375)
 - The Upload stage lists which of a song's videos are on YouTube, and a **Free
   space** button deletes the local copies (about 150 MB a voice) once YouTube
   confirms it has every one. The links stay; recording again makes the videos
