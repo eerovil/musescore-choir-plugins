@@ -150,7 +150,7 @@ def verify_media(song: state.Song, outputs: Iterable[str], parts: Iterable[str])
     by_part: Dict[str, Dict] = {}
     prefix = song.slug + " "
     for name in outputs:
-        path = song.path("media", "video", os.path.basename(name))
+        path = song.media_path("video", os.path.basename(name))
         label = os.path.splitext(os.path.basename(name))[0]
         if label.startswith(prefix):
             label = label[len(prefix):]
@@ -262,7 +262,7 @@ def summary(song: state.Song, systems: int) -> Dict:
         media_result = dict(media)
         for result in media_result.get("files", {}).values():
             name = result.get("name")
-            path = song.path("media", "video", name) if name else ""
+            path = song.media_path("video", name) if name else ""
             if not path or not os.path.exists(path):
                 result.update(status="warning", detail="File is missing.")
                 media_result["status"] = "warning"

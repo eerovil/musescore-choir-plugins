@@ -83,7 +83,15 @@ CHANGELOG.md             What changed, by merge date — add a line for each use
 - Config is via `.env` (falls back to `.env.default`). Keys:
   `MUSESCORE_CLI_PATH`, `MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
   `YOUTUBE_CLIENT_SECRETS_PATH`, and optionally `STEMMANAUHAT_DISPATCH_TOKEN` /
-  `STEMMANAUHAT_REPO` (site refresh after upload). Never commit real secrets;
+  `STEMMANAUHAT_REPO` (site refresh after upload), and `MEDIA_ROOT` (#370,
+  `src/media_root.py`): where song media goes — `$MEDIA_ROOT/<slug>/` instead of
+  `songs/<slug>/media/`, about 150 MB per voice video at 4K. Code asks
+  `Song.media_path(...)` / `media_root.media_dir(song_dir)`, never
+  `songs/<slug>/media` directly. A song not moved yet is read where it is, and
+  `scripts/move_media.py` moves it (copy, SHA-256 check, one rename, then delete;
+  skips a song whose `.recording.lock` is live). The root `conftest.py` blanks it so
+  tests never write to the real media disk. On this host it is
+  `/var/mnt/ssd/choir-media`. Never commit real secrets;
   `.env`, `client_secrets.json`, and `token.pickle` are gitignored.
 - The CLI wrappers import the package via `from src.clean_score... import ...`,
   so **run them from the repo root** (e.g. `./clean_score.py ...`). Their shebang is the

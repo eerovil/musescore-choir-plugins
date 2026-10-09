@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Song videos and their audio can live on another disk: `MEDIA_ROOT` in `.env`
+  puts each song's media in `$MEDIA_ROOT/<song>/` instead of `songs/<song>/media/`,
+  and `scripts/move_media.py` moves what is already there, checking every copied
+  file before deleting the old one and leaving a song alone while it records or
+  uploads. Unset, nothing changes. (#370)
 - Fix panel: a bar a recorded fix in `fixes.json` already wrote is no longer offered
   as an a/b/c reading; it shows as "answered by fixes.json" with the reason. The
   remaining choices name the bar and part, box that bar on the page picture, say when
