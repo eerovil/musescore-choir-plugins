@@ -15,7 +15,8 @@ import pytest
 from lxml import etree
 
 from src.scrollvideo import build
-from src.scrollvideo.playorder import has_jumps, read_mpos, unrolled_timemap
+from src.scrollvideo.playorder import (has_jumps, has_repeats, read_mpos,
+                                       unrolled_timemap, verovio_order)
 from src.scrollvideo.timing import TempoMap, note_events
 from .conftest import FILES, needs_musescore
 
@@ -101,14 +102,31 @@ def test_a_bar_the_engraving_never_timed_is_refused():
         unrolled_timemap(timemap, DRAWN, BARS, PRINTED, 4, [0, 1, 2, 3])
 
 
-def test_only_a_jump_chooses_musescores_order():
-    """A Marker alone is a label; repeats and voltas stay verovio's to expand."""
+def test_only_a_jump_chooses_musescores_order_outright():
+    """A Marker alone is a label; repeats and voltas are only checked (#374)."""
     assert has_jumps(etree.fromstring(
         "<museScore><Measure><Jump><jumpTo>start</jumpTo></Jump></Measure></museScore>"))
     for plain in ("<museScore><Measure><Marker><label>fine</label></Marker></Measure>"
                   "</museScore>",
                   "<museScore><Measure><startRepeat/></Measure></museScore>"):
         assert not has_jumps(etree.fromstring(plain))
+
+
+def test_repeat_signs_and_voltas_count_as_repeats():
+    for tag in ("startRepeat", "endRepeat>2</endRepeat", "Volta"):
+        name = tag.split(">")[0]
+        xml = f"<museScore><Measure><{tag if '>' in tag else tag + '/'}></Measure></museScore>"
+        assert has_repeats(etree.fromstring(xml)), name
+    assert not has_repeats(etree.fromstring(
+        "<museScore><Measure><Marker><label>fine</label></Marker></Measure></museScore>"))
+
+
+def test_verovio_order_reads_the_bars_off_the_timemap():
+    """A repeat pass times a bar again under another id; it maps to the printed bar."""
+    timemap = [{"qstamp": 0.0, "measureOn": "m0"}, {"qstamp": 4.0, "measureOn": "m1"},
+               {"qstamp": 8.0, "measureOn": "m1-rend2"}, {"qstamp": 12.0, "measureOn": "m3"}]
+    printed = {**PRINTED, "m1-rend2": "m1"}
+    assert verovio_order(timemap, BARS, printed) == [0, 1, 1, 3]
 
 
 def test_the_mpos_export_is_read_in_played_order(tmp_path):
@@ -125,7 +143,11 @@ def test_the_mpos_export_is_read_in_played_order(tmp_path):
 
 # Five bars made from fermata.mscx: D.S. al Coda plays 0 1 2 3 1 2 4, and
 # D.C. al Fine plays 0 1 2 3 4 0 1 (MuseScore's own .mpos says so).
-SCORES = {"dal_segno.mscx": 2, "da_capo.mscx": 1}
+# voltas.mscx is Kristallen den fina's shape (#374): 3/8, an eighth pickup, a
+# start repeat at bar 2, "1." over bars 4-5 with the end repeat, and "2." at bar
+# 6 written as the scan leaves it, a bracket that opens and never closes. Verovio
+# then expands no repeat at all; MuseScore plays 0 1 2 3 4 1 2 5 6.
+SCORES = {"dal_segno.mscx": 2, "da_capo.mscx": 1, "voltas.mscx": 2}
 
 
 @pytest.fixture(scope="module", params=sorted(SCORES))
@@ -168,3 +190,27 @@ def test_the_scroll_lands_at_each_jump_instead_of_sliding(jumped):
     for i in big:
         assert times[i + 1] - times[i] < 1 / 60
         assert any(abs(times[i + 1] - cut) < 1 / 60 for cut in ready.cuts)
+
+
+@needs_musescore
+def test_the_first_ending_is_skipped_on_the_second_pass(jumped):
+    """voltas.mscx, per staff: the pickup once, bars 2-3 twice, "1." (bars 4-5)
+    once, then "2." and the last bar once -- 25 notes, 6 of them heard twice.
+    Played through without the repeat it would be 19; repeating "1." too, 31."""
+    name, ready, _, _ = jumped
+    if name != "voltas.mscx":
+        pytest.skip("only voltas.mscx has endings")
+    assert len(ready.notes) == 2 * 25
+    heard = {}
+    for event in ready.notes:
+        heard[event.note_id] = heard.get(event.note_id, 0) + 1
+    assert sorted(heard.values()).count(2) == 2 * 6
+    assert set(heard.values()) == {1, 2}
+
+
+@needs_musescore
+def test_repeats_verovio_expands_keep_its_own_timeline():
+    """repeat.mscx's plain repeat: verovio agrees with MuseScore, so no cut is made."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ready = build.prepare(os.path.join(FILES, "repeat.mscx"), tmp, fps=60)
+    assert ready.cuts == ()

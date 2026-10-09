@@ -40,7 +40,10 @@ Logger = Callable[[str], None]
 # page. A D.C./D.S. jump it follows only sometimes (on Jouluriemua verovio plays 181
 # quarters where MuseScore plays 257.5), so a score with one is laid out in the bar
 # order MuseScore reports instead (`playorder`). A Marker (segno, coda, fine) on its
-# own is just a label and changes nothing without a Jump.
+# own is just a label and changes nothing without a Jump. A score with repeats
+# is checked against that bar order too, and follows it when verovio's differs:
+# a scan's "2." bracket that opens and never closes stops verovio expanding the
+# repeat at all (#374).
 
 # How closely the highlights must track the audio before we are willing to ship a
 # video: nearly every onset within a fifth of a second.
@@ -201,7 +204,7 @@ class Prepared:
     view_start: float       # top of the frame, in verovio units
     view_end: float         # ... and its bottom
     duration: float         # seconds of video, including the tail past the last note
-    cuts: tuple = ()        # seconds where a D.C./D.S. jump lands somewhere else
+    cuts: tuple = ()        # seconds where MuseScore's play order jumps elsewhere
 
     @property
     def layout(self):
@@ -248,7 +251,8 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
     the returned `Prepared`, whose `source` the audio mixes are rendered from.
 
     A score with a D.C./D.S. jump has its timeline laid out in the bar order
-    MuseScore plays (`playorder`); every other score keeps verovio's own.
+    MuseScore plays (`playorder`), and so does a score with repeats whose bars
+    verovio plays in another order; every other score keeps verovio's own.
 
     The refusals live here rather than in the renderer so that a preview fails the
     same way a render would, before either has spent any time: a jump whose bars
@@ -306,13 +310,19 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
 
     tempo = TempoMap.from_midi(midi)
     timemap, drawn_id, cuts = eng.timemap, eng.drawn_id, ()
-    if playorder.has_jumps(etree.parse(source).getroot()):
+    source_root = etree.parse(source).getroot()
+    jumps = playorder.has_jumps(source_root)
+    if jumps or playorder.has_repeats(source_root):
         count, order = playorder.played_measures(source, tmp)
-        timemap, drawn_id, cut_qs = playorder.unrolled_timemap(
-            eng.timemap, eng.drawn_id, eng.measures, eng.measure_of, count, order)
-        cuts = tuple(tempo.seconds(q) for q in cut_qs)
-        log(f"Following the D.C./D.S. jump: {len(order)} bars played from "
-            f"{count} printed")
+        # Repeats alone stay verovio's to expand while it agrees with MuseScore;
+        # an open "2." bracket from a scan stops it expanding at all (#374).
+        if jumps or order != playorder.verovio_order(
+                eng.timemap, eng.measures, eng.measure_of):
+            timemap, drawn_id, cut_qs = playorder.unrolled_timemap(
+                eng.timemap, eng.drawn_id, eng.measures, eng.measure_of, count, order)
+            cuts = tuple(tempo.seconds(q) for q in cut_qs)
+            what = "the D.C./D.S. jump" if jumps else "MuseScore's repeats"
+            log(f"Following {what}: {len(order)} bars played from {count} printed")
     notes = note_events(timemap, tempo, drawn_id)
     rests = rest_events(timemap, tempo, drawn_id)
     events = sorted([*notes, *rests], key=lambda event: (event.on, event.off))
