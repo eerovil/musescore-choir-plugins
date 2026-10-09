@@ -2,7 +2,7 @@
 
 Render-only edits live here: dropping staves that carry no music, taking out the
 red marks cleaning leaves for a person, supplying an opening tempo when the
-score has none, and letting two parts share a staff in the picture. The source score is never changed.
+score has none, holding each fermata one beat longer than written, and letting two parts share a staff in the picture. The source score is never changed.
 """
 
 from __future__ import annotations
@@ -58,6 +58,77 @@ def add_opening_tempo(root: etree._Element, bpm: int) -> bool:
                   if child.tag in ("Chord", "Rest", "location")), len(voice))
     voice.insert(index, tempo)
     return True
+
+
+# How long a fermata holds (#380). Cleaning writes `timeStretch` 3, which made a
+# held dotted half last six seconds at 90 bpm; the owner asked for "around one
+# beat more, always". Part of the preview's cache key, so changing it rebuilds.
+FERMATA_HOLD = "one beat"
+
+
+def _beat(sig_n: int, sig_d: int) -> Fraction:
+    """One beat of this meter as a fraction of a whole note: the written unit,
+    except a compound meter (6/8, 9/8, 12/8) counts in dotted quarters."""
+    if sig_d >= 8 and sig_n > 3 and sig_n % 3 == 0:
+        return Fraction(3, sig_d)
+    return Fraction(1, sig_d)
+
+
+def hold_fermatas(root: etree._Element) -> int:
+    """Set every fermata's `timeStretch` so it adds one beat. Returns how many.
+
+    MuseScore slows the tempo by the stretch from the fermata's beat until the
+    next note or rest starts on *any* staff, so the stretch is worked out from
+    that span rather than from the held note: a held half over two moving
+    quarters gets one beat added to the first quarter's span. A fermata standing
+    where nothing starts (on a barline) and one marked not to play are left alone.
+    """
+    staves = root.findall("./Score/Staff")
+    if not staves:
+        return 0
+    bars = [staff.findall("Measure") for staff in staves]
+    sig_n, sig_d = 4, 4
+    changed = 0
+    for index, top in enumerate(bars[0]):
+        starts, ends, fermatas = set(), [], []
+        for staff_bars in bars:
+            if index >= len(staff_bars):
+                continue
+            measure = staff_bars[index]
+            for sig in measure.iter("TimeSig"):
+                if staff_bars is bars[0]:
+                    sig_n = int(_fraction(sig.findtext("sigN")) or sig_n)
+                    sig_d = int(_fraction(sig.findtext("sigD")) or sig_d)
+            for voice in measure.findall("voice"):
+                for element, at in _walk(voice):
+                    if element.tag in ("Chord", "Rest") and not any(
+                            element.find(tag) is not None for tag in _GRACE):
+                        starts.add(at)
+                    elif element.tag == "Fermata":
+                        fermatas.append((element, at))
+                ends.append(_voice_end(voice))
+        length = _fraction(top.get("len")) if top.get("len") else Fraction(sig_n, sig_d)
+        end = max(ends + [length]) if ends else length
+        beat = _beat(sig_n, sig_d)
+        for fermata, at in fermatas:
+            if fermata.findtext("play", "1").strip() == "0" or at not in starts:
+                continue
+            span = min([s for s in starts if s > at] + [end]) - at
+            if span <= 0:
+                continue
+            stretch = fermata.find("timeStretch")
+            if stretch is None:
+                stretch = etree.SubElement(fermata, "timeStretch")
+            stretch.text = format(float((span + beat) / span), ".6g")
+            changed += 1
+    return changed
+
+
+def _voice_end(voice: etree._Element) -> Fraction:
+    """Where this voice's last chord or rest ends in the bar."""
+    # `_walk` says where each child starts, so a marker after the last one says
+    # where it ends.
+    return list(_walk([*voice, etree.Element("end")]))[-1][1]
 
 
 def _part_name(part: etree._Element, index: int) -> str:
@@ -160,6 +231,7 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     changed = any(fix_staff_display(root).values()) or changed
     if initial_bpm is not None:
         changed = add_opening_tempo(root, initial_bpm) or changed
+    changed = bool(hold_fermatas(root)) or changed
     if not changed:
         return mscx_path, []
 

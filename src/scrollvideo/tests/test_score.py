@@ -1,9 +1,11 @@
 """Leaving out staves that carry no music."""
 
+import pytest
 from lxml import etree
 
 from src.scrollvideo.score import (add_opening_tempo, drop_parts,
-                                   has_opening_tempo, prepare, silent_parts)
+                                   has_opening_tempo, hold_fermatas, prepare,
+                                   silent_parts)
 
 SCORE = """<museScore><Score>
   <Part><trackName>T1</trackName><Staff id="1"/></Part>
@@ -108,3 +110,71 @@ def test_prepare_does_not_override_an_existing_opening_tempo(tmp_path):
 
     assert (path, dropped) == (str(original), [])
     assert etree.parse(path).findtext(".//Tempo/tempo") == "1.5"
+
+
+# A fermata holds one beat longer than written (#380) -----------------------
+
+def _bar(sig, *voices, staves=1):
+    """One bar per staff; each voice a list of ("half", fermata?) or ("half.", ...)."""
+    def chord(kind, held):
+        dots = "<dots>1</dots>" if kind.endswith(".") else ""
+        fermata = ("<Fermata><subtype>fermataAbove</subtype>"
+                   "<timeStretch>3</timeStretch></Fermata>") if held else ""
+        return (f"{fermata}<Chord>{dots}<durationType>{kind.rstrip('.')}</durationType>"
+                "<Note><pitch>60</pitch></Note></Chord>")
+    n, d = sig
+    staff_xml = []
+    for staff, voice in enumerate(voices, 1):
+        tsig = f"<TimeSig><sigN>{n}</sigN><sigD>{d}</sigD></TimeSig>"
+        body = "".join(chord(kind, held) for kind, held in voice)
+        staff_xml.append(f'<Staff id="{staff}"><Measure><voice>{tsig}{body}'
+                         "</voice></Measure></Staff>")
+    return etree.fromstring("<museScore><Score>" + "".join(staff_xml)
+                            + "</Score></museScore>")
+
+
+def _stretches(root):
+    return [float(t.text) for t in root.iter("timeStretch")]
+
+
+def test_a_fermata_adds_one_beat_whatever_the_note():
+    root = _bar((4, 4), [("half", True), ("quarter", True), ("quarter", False)])
+    assert hold_fermatas(root) == 2
+    # A half is two beats, held three; a quarter one, held two.
+    assert _stretches(root) == [1.5, 2.0]
+
+    root = _bar((4, 4), [("half.", True), ("quarter", False)])
+    hold_fermatas(root)
+    assert _stretches(root) == [pytest.approx(4 / 3, abs=1e-5)]
+
+
+def test_the_beat_is_the_one_moving_on_any_staff():
+    """MuseScore stretches until the next note on any staff starts, so a held half
+    over two moving quarters adds its beat to the first quarter's span."""
+    root = _bar((4, 4), [("half", True), ("half", False)],
+                [("quarter", False), ("quarter", False), ("half", False)])
+    hold_fermatas(root)
+    assert _stretches(root) == [2.0]
+
+
+def test_a_compound_meter_counts_in_dotted_quarters():
+    root = _bar((6, 8), [("quarter.", True), ("quarter.", False)])
+    hold_fermatas(root)
+    assert _stretches(root) == [2.0]
+
+
+def test_a_fermata_marked_not_to_play_is_left_alone():
+    root = _bar((4, 4), [("whole", True)])
+    etree.SubElement(root.find(".//Fermata"), "play").text = "0"
+    assert hold_fermatas(root) == 0
+    assert _stretches(root) == [3.0]
+
+
+def test_prepare_holds_fermatas_only_in_its_copy(tmp_path):
+    original = tmp_path / "score.mscx"
+    original.write_bytes(etree.tostring(_bar((4, 4), [("whole", True)])))
+    before = original.read_bytes()
+    path, _ = prepare(str(original), str(tmp_path))
+    assert path != str(original)
+    assert _stretches(etree.parse(path).getroot()) == [1.25]
+    assert original.read_bytes() == before

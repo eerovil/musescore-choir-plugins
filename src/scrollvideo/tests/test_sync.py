@@ -88,3 +88,11 @@ def test_the_fermata_note_is_held_three_times_as_long(rendered):
     """The stretched note's own duration, not just the notes after it."""
     durations = sorted(e.off - e.on for e in rendered["events"])
     assert durations[-1] == pytest.approx(1.5, abs=0.05)
+
+
+def test_a_fermata_plays_one_beat_longer_than_written(fermata_mscx, tmp_path):
+    """#380: the fixture's quarter fermata was written 3x (4.00s -> 5.00s at 120
+    bpm). Rendered, it holds one beat more: half a second, not a whole one."""
+    source, _ = prepare(fermata_mscx, str(tmp_path))
+    midi = mido.MidiFile(audio_mod.run_musescore(source, str(tmp_path / "s.mid")))
+    assert midi.length == pytest.approx(4.5, abs=0.01)

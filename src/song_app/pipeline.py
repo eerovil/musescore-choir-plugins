@@ -1322,9 +1322,11 @@ def _preview_key(cleaned_path: str, settings: Dict) -> str:
     """What a cached preview is a preview *of*: this score, under these settings."""
     from . import state
     from src.scrollvideo.audio import musescore_identity
+    from src.scrollvideo.score import FERMATA_HOLD
 
     return json.dumps({"score": state.file_fingerprint(cleaned_path),
-                       "musescore": musescore_identity(), **settings}, sort_keys=True)
+                       "musescore": musescore_identity(),
+                       "fermata": FERMATA_HOLD, **settings}, sort_keys=True)
 
 
 def _preview_revision(key: str) -> str:

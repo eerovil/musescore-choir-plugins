@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Practice videos: a fermata now holds about one beat longer than written instead
+  of three times its length, which kept a held dotted half going for six seconds
+  (Jumalan kunnia luonnossa). Render a song again to get it; no re-clean needed. (#380)
 - Fix: a volta bracket or repeat sign the scan invented can now be taken out from
   `fixes.json` (`unvolta`, `unrepeat`), a "2." ending can span more than one bar,
   and a silent bar can be given its printed length (`barlen`). Suomalainen rukous,

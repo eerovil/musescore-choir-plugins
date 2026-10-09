@@ -2738,6 +2738,13 @@ to `entry["tstamp"]`.
   them. Verovio's own spacing options cannot do this job — `spacingNonLinear: 1.0`
   gets the spread to 1.04x but makes the page 7x wider, leaving less than one bar on
   screen.
+- **A fermata holds one beat longer than written** (#380, `score.hold_fermatas`).
+  Cleaning writes `timeStretch=3`, which held a dotted half for six seconds at 90
+  bpm. The render's copy rewrites every fermata's stretch so it adds one beat (a
+  dotted quarter in 6/8), worked out from the span MuseScore stretches: from the
+  fermata's beat to the next note or rest on *any* staff. The clock, the audio and
+  the preview all come off that copy, so a re-render is enough — no re-clean.
+  `FERMATA_HOLD` is in the preview's cache key.
 - `score.py` is the only edit made to the score before engraving: parts with nothing
   to sing (percussion, or a staff of only rests — the click track
   `add_rest_track.qml` adds) are dropped, along with the staves they own. They would
@@ -3081,7 +3088,8 @@ without it, like the browser tests:
   *not* refused, and the alignment measure itself (full when highlights match the
   MIDI, falling when they drift).
 - `tests/test_files/fermata.mscx` — `simple_1_output` with a `timeStretch=3` fermata
-  added to measure 1 (4.00s -> 5.00s of MIDI). `fermata.musicxml` is the same score
+  added to measure 1 (4.00s -> 5.00s of MIDI as written; 4.50s once `score.prepare`
+  holds it one beat, which `test_sync` pins). `fermata.musicxml` is the same score
   pre-converted so engraving tests need no MuseScore.
 
 ## Reading a scanned score (playbook)
