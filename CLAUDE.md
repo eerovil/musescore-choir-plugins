@@ -1385,6 +1385,23 @@ state model are in `DESIGN.md`.
   otherwise the bar is written afresh, ties and slurs reaching in are cut, and the words
   go back on its notes in order. `rhythm` and `pitch` entries already recorded still
   replay, and their bar shows as decided.
+  **A bar a recorded fix already wrote is not offered** (#368). An offer lands on
+  whichever part holds homr's notes *now*, so on Annin laulu bar 8, after page-checked
+  `bar` fixes had un-swapped the basses, homr's B2 line was offered on B1 and picking
+  "a" wrote the swap back; the clean then failed on the clash. So a bar a `bar`,
+  `pitch`, `rhythm`, `duration`, `undot`, `append`, `drop`, `dropnote` or `addnote`
+  entry (or an `unmark` of `notes?`/`rhythm?`/`pitch?`/`accidental?`) has written is
+  decided as `{"answered": ...}` and listed as "answered by fixes.json" with the fix's
+  `why` (`bar_readings.ANSWERING`, counted in file order past `delbar`/`insbar`). Each
+  remaining choice names the bar and part in its title, marks an option that is another
+  part's current line ("the line B2 has now — gives it to B1", `line_of`), lists what
+  `fixes.json` already does to that bar on this part and the parts printed with it
+  (`fixes`), and boxes the bar on the page crop: `GET /system/{n}/where` →
+  `system_finder.bar_box`, which finds the staff by its lines and the bar by barlines
+  that stand clear of noteheads **and** at the same x on every staff, drawn only when
+  their count is the system's bar count (else the whole staff, dashed; nothing when the
+  crop shows other staves than the score records). Measured on ten songs' crops, about
+  60% of systems get the bar.
 - **The score can be taken away and brought back**, which this pull request proposes
   (#216). Both editing routes the app had assumed MuseScore was on *this* host:
   `open-score` shells out to `open -a`, and the file watcher re-checks a score saved
