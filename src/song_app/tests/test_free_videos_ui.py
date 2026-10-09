@@ -64,7 +64,7 @@ LATER = (datetime.datetime.now(datetime.timezone.utc)
 
 def _make(name, uploaded):
     song = state.create(name, per_system=False)
-    vdir = song.path("media", "video")
+    vdir = song.media_path("video")
     os.makedirs(vdir)
     uploads = []
     for part in PARTS:
@@ -148,7 +148,7 @@ def test_free_space_deletes_the_videos_and_keeps_the_links(live, page):
     expect(page.locator(".videostate li").first).to_contain_text("not on disk")
     expect(page.locator("ul.uploads a")).to_have_count(5)  # the links stay
     expect(page.get_by_text("record again to make them", exact=False)).to_be_visible()
-    assert not os.listdir(os.path.join(state.SONGS_DIR, slugs["all"], "media", "video"))
+    assert not os.listdir(state.load(slugs["all"]).media_path("video"))
     page.locator(".free-note").scroll_into_view_if_needed()
     _shot(page, "2-free-space-after.png")
     assert not errors, errors
@@ -162,4 +162,4 @@ def test_a_song_not_fully_uploaded_cannot_be_freed(live, page):
     expect(page.locator(".videostate li.not_uploaded")).to_have_count(3)
     expect(page.locator(".free-note")).to_contain_text("Every video has to be on YouTube")
     _shot(page, "3-free-space-partial-phone.png")
-    assert len(os.listdir(os.path.join(state.SONGS_DIR, slugs["some"], "media", "video"))) == 5
+    assert len(os.listdir(state.load(slugs["some"]).media_path("video"))) == 5

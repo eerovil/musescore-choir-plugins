@@ -50,7 +50,7 @@ def local_videos(song: state.Song) -> Dict[str, str]:
     renderer superseded is never one of them: freeing does not delete it, and it
     must not stand in for the part's video once the real one is gone.
     """
-    vdir = song.path("media", "video")
+    vdir = song.media_path("video")
     if not os.path.isdir(vdir):
         return {}
     prefix = song.slug + " "

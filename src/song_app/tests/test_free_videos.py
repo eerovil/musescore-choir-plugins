@@ -31,7 +31,7 @@ def songs(tmp_path, monkeypatch):
 
 def _song(parts=PARTS, uploaded=PARTS, stamped=True, name="Laulu"):
     song = state.create(name, per_system=False)
-    vdir = song.path("media", "video")
+    vdir = song.media_path("video")
     os.makedirs(vdir)
     uploads = []
     for part in parts:
@@ -65,7 +65,7 @@ def _youtube(parts=PARTS, published=LATER, processed=True):
 
 
 def _on_disk(song):
-    return sorted(os.listdir(song.path("media", "video")))
+    return sorted(os.listdir(song.media_path("video")))
 
 
 def test_every_video_uploaded_frees_them_all_and_keeps_the_links(songs):
@@ -99,7 +99,7 @@ def test_one_video_not_uploaded_keeps_every_video(songs):
 
 def test_a_video_rendered_again_after_the_upload_is_not_uploaded(songs):
     song = _song()
-    path = song.path("media", "video", f"{song.slug} T2.mp4")
+    path = song.media_path("video", f"{song.slug} T2.mp4")
     with open(path, "wb") as f:
         f.write(b"y" * 2000)
     states = {v["part"]: v["state"] for v in free_videos.status(song)["videos"]}
@@ -133,7 +133,7 @@ def test_an_old_entry_older_than_the_file_keeps_every_video(songs):
 
 def test_a_raw_recording_is_never_touched(songs):
     song = _song()
-    raw = song.path("media", "video", "Screen Recording.mov")
+    raw = song.media_path("video", "Screen Recording.mov")
     with open(raw, "wb") as f:
         f.write(b"r")
     free_videos.free(song, _youtube())
@@ -197,7 +197,7 @@ def test_an_upload_records_the_file_it_sent(songs, monkeypatch):
     monkeypatch.setattr(yt, "create_playlist", lambda youtube, title: None)
     monkeypatch.setattr(yt, "upload_video", lambda youtube, path, title, **kw: "vid" + title.split()[-1])
     infos = []
-    videos = [song.path("media", "video", f"{song.slug} {p}.mp4") for p in PARTS]
+    videos = [song.media_path("video", f"{song.slug} {p}.mp4") for p in PARTS]
     yt.upload_to_youtube(song.dir, videos, log=lambda m: None, display_name="Laulu",
                          on_uploaded=infos.append)
     assert [(i["part"], i["file"], i["size"]) for i in infos] == [
@@ -211,7 +211,7 @@ def test_an_older_take_does_not_stand_in_once_the_videos_are_freed(songs):
     """A screen-recorder .mov beside the scroll renderer's .mp4 for the same part
     is not the song's video: freeing leaves it, and the song stays uploaded."""
     song = _song()
-    old = song.path("media", "video", f"{song.slug} T1.mov")
+    old = song.media_path("video", f"{song.slug} T1.mov")
     with open(old, "wb") as f:
         f.write(b"o" * 500)
     past = time.time() - 3600
@@ -224,3 +224,13 @@ def test_an_older_take_does_not_stand_in_once_the_videos_are_freed(songs):
     assert now["complete"] and now["local_count"] == 0
     assert all(v["state"] == "uploaded" and not v["local"] for v in now["videos"])
     assert after.to_summary()["uploaded"]
+
+
+def test_videos_on_the_media_disk_are_freed_there(songs, tmp_path, monkeypatch):
+    """With MEDIA_ROOT set (#370) the videos live outside the song folder."""
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "ssd"))
+    song = _song()
+    assert song.media_path("video").startswith(str(tmp_path / "ssd"))
+    assert free_videos.status(song)["can_free"]
+    free_videos.free(song, _youtube())
+    assert _on_disk(song) == []
