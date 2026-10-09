@@ -145,10 +145,17 @@ class Song:
             ),
             "lyric_warnings": len(self.data.get("lyrics", {}).get("warnings", [])),
             "recorded": bool(rec.get("outputs")),
-            "uploaded": bool(rec.get("uploads")),
+            # Every video has a YouTube id, not merely one: an upload that stopped
+            # half-way leaves some entries (#371).
+            "uploaded": _upload_complete(self) if rec.get("uploads") else False,
             "created_at": self.data.get("created_at") or self.data.get("updated_at") or 0,
             "updated_at": self.data.get("updated_at") or 0,
         }
+
+
+def _upload_complete(song: "Song") -> bool:
+    from . import free_videos  # it reads songs, so it imports this module
+    return free_videos.status(song)["complete"]
 
 
 _LOCKS: Dict[str, threading.RLock] = {}

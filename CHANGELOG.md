@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The Upload stage lists which of a song's videos are on YouTube, and a **Free
+  space** button deletes the local copies (about 150 MB a voice) once YouTube
+  confirms it has every one. The links stay; recording again makes the videos
+  back. A song counts as uploaded only when every video is. (#371)
 - Song videos and their audio can live on another disk: `MEDIA_ROOT` in `.env`
   puts each song's media in `$MEDIA_ROOT/<song>/` instead of `songs/<song>/media/`,
   and `scripts/move_media.py` moves what is already there, checking every copied

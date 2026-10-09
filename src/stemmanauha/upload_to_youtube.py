@@ -239,10 +239,37 @@ def upload_to_youtube(song_dir, video_paths, extra_playlist_id=None, log=None,
         if extra_playlist_id:
             add_video_to_playlist(youtube, extra_playlist_id, video_id)
         if on_uploaded:
+            # Which file went up, by name, size and mtime: a later render rewrites
+            # the same name, and only these say the local copy is what YouTube has
+            # (#371: freeing the local videos depends on it).
+            st = os.stat(video_path)
             on_uploaded({"title": title, "part": part, "video_id": video_id, "url": url,
-                         "playlist_id": playlist_id, "playlist_title": playlist_title})
+                         "playlist_id": playlist_id, "playlist_title": playlist_title,
+                         "file": os.path.basename(video_path), "size": st.st_size,
+                         "mtime_ns": st.st_mtime_ns, "uploaded_at": time.time()})
 
     log("All videos uploaded.")
+
+
+def confirm_uploads(video_ids, log=None):
+    """What YouTube says about these videos: {id: {"processed", "published_at"}}.
+
+    Ids YouTube does not know (deleted, or never there) are left out. One list
+    call per 50 ids, 1 quota unit each.
+    """
+    youtube = get_authenticated_service()
+    out = {}
+    ids = list(video_ids)
+    for start in range(0, len(ids), 50):
+        resp = _execute(youtube.videos().list(part="status,snippet",
+                                              id=",".join(ids[start:start + 50]),
+                                              maxResults=50), log=log)
+        for item in resp.get("items", []):
+            out[item["id"]] = {
+                "processed": item.get("status", {}).get("uploadStatus") == "processed",
+                "published_at": item.get("snippet", {}).get("publishedAt"),
+            }
+    return out
 
 
 def _update_video_title(youtube, video_id, title, log=None):

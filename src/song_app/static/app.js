@@ -355,7 +355,7 @@ async function renderWorkspace(slug) {
   function drawStagebar() {
     const rec = song.record || {};
     const recorded = !!(rec.outputs && rec.outputs.length);
-    const uploaded = !!(rec.uploads && rec.uploads.length);
+    const uploaded = !!song.upload_status?.complete;
     const done = (st, i) =>
       i < song.stage_index || (st === "record" && recorded) || (st === "upload" && uploaded);
     stagebarEl.replaceChildren(...song.stages.map((st, i) => el("div", {
@@ -2969,11 +2969,15 @@ function panelUpload(panel, song, P, refresh) {
   const recording = song.recording;
   const recorded = !!(rec.outputs && rec.outputs.length);
   const uploads = rec.uploads || [];
+  const ups = song.upload_status || { videos: [], local_count: 0 };
+  const onDisk = ups.local_count > 0;
 
   if (recording) {
     panel.append(el("div", { className: "banner" }, "● Working… leave this running."));
-  } else if (uploads.length) {
+  } else if (ups.complete) {
     panel.append(el("div", { className: "banner good" }, "✓ Uploaded to YouTube."));
+  } else if (uploads.length) {
+    panel.append(el("div", { className: "banner" }, "Only some of the videos are on YouTube."));
   }
   if (rec.error) {
     panel.append(el("div", { className: "banner err" }, "Last run failed: " + rec.error));
@@ -2983,6 +2987,10 @@ function panelUpload(panel, song, P, refresh) {
   }
   if (!recorded) {
     panel.append(el("p", { className: "hint" }, "Nothing to upload yet — record the videos first."));
+  } else if (!onDisk) {
+    panel.append(el("p", { className: "hint" }, rec.freed
+      ? "The local videos were freed after the upload. Record again to make them."
+      : "The videos are not on disk. Record again to make them."));
   }
 
   // playlist picker
@@ -2998,7 +3006,7 @@ function panelUpload(panel, song, P, refresh) {
     };
   }).catch(() => {});
 
-  const uploadBtn = el("button", { className: "primary", disabled: recording || !recorded,
+  const uploadBtn = el("button", { className: "primary", disabled: recording || !recorded || !onDisk,
     onclick: async () => {
       appendLog("Uploading to YouTube…");
       try {
@@ -3021,6 +3029,7 @@ function panelUpload(panel, song, P, refresh) {
       el("h3", {}, "Uploaded videos"),
       el("ul", { className: "uploads" }, uploads.map((u) =>
         el("li", {}, el("a", { href: u.url, target: "_blank", rel: "noopener" }, u.title || u.url)))),
+      freeSpaceSection(P, song, ups, recording, refresh),
       el("div", { className: "row" },
         el("button", { disabled: recording, onclick: async () => {
           if (!confirm("Delete these videos from YouTube? You can then re-upload.")) return;
@@ -3030,6 +3039,44 @@ function panelUpload(panel, song, P, refresh) {
         }}, "Delete from YouTube")),
       playlistSection(P, recording));
   }
+}
+
+// The local videos are a cache once YouTube has them (#371): 4K, ~150 MB a
+// voice. Freeing asks YouTube first and deletes nothing unless every video is
+// there; the server says which one is missing when it refuses.
+const VIDEO_STATE = { uploaded: "on YouTube", changed: "rendered again since the upload",
+  not_uploaded: "not uploaded" };
+
+function freeSpaceSection(P, song, ups, recording, refresh) {
+  const gb = (bytes) => (bytes / 2 ** 30).toFixed(2) + " GB";
+  const rows = el("ul", { className: "videostate" }, ups.videos.map((v) =>
+    el("li", { className: v.state },
+      el("b", {}, v.part), " — ", VIDEO_STATE[v.state] || v.state,
+      v.local ? ` · on disk (${(v.size / 2 ** 20).toFixed(0)} MB)` : " · not on disk")));
+  const note = el("p", { className: "hint free-note" });
+  const freed = song.record?.freed;
+  if (freed && !ups.local_count) {
+    note.textContent = `Freed ${gb(freed.bytes)} on ${new Date(freed.at * 1000).toLocaleDateString()}. `
+      + "Recording again renders the videos afresh.";
+  } else if (ups.local_count && !ups.complete) {
+    note.textContent = "Every video has to be on YouTube before the local copies can go.";
+  }
+  const btn = el("button", { className: "free-videos", disabled: recording || !ups.can_free,
+    onclick: async () => {
+      if (!confirm(`Delete the ${ups.local_count} local video(s), ${gb(ups.local_bytes)}? `
+        + "YouTube is checked first; recording again makes them back.")) return;
+      btn.disabled = true;
+      note.className = "hint free-note";
+      note.textContent = "Checking YouTube…";
+      try { await postJSON(`${P}/free-videos`); refresh(); }
+      catch (e) {
+        note.className = "hint free-note err";
+        note.textContent = e.message;
+        btn.disabled = false;
+      }
+    } }, ups.local_count ? `Free space (${gb(ups.local_bytes)})` : "Free space");
+  return el("div", { className: "free-section" },
+    el("h3", {}, "Local videos"), rows, el("div", { className: "row" }, btn), note);
 }
 
 // Which of the choir's playlists hold this song (#338). Read from YouTube each
