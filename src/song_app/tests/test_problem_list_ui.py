@@ -146,7 +146,7 @@ def test_an_unsure_bar_offers_whole_bars(live, page):
     card = page.locator(".problem")
     assert "m3" in card.inner_text() and "B1" in card.inner_text()
     [pick] = card.locator(".readpick").all()
-    assert "Which bar does the page print?" in pick.inner_text()
+    assert "Bar 3, B1: which notes does the page print for B1?" in pick.inner_text()
     # Six shown: the bar as read, homr's second reading, then the likeliest others.
     shown = pick.locator(".readopt:visible")
     assert shown.count() == 6
@@ -194,10 +194,10 @@ def test_the_card_says_which_bar_staff_and_voice_is_meant(live, page):
     errors = _open_fix(page, base, song.slug)
     card = page.locator(".problem")
     assert "system 2 · bar 2/4" in card.locator(".top").inner_text()
-    assert card.locator(".barpos").inner_text() == "Bar 2 of 4 · staff 2 of 2, only voice"
+    assert card.locator(".barpos").inner_text() == "B1: Bar 2 of 4 · staff 2 of 2, only voice"
     # Said right above the crop it is about.
     # Waited for rather than counted once: the panel can redraw between reads (CI saw 0).
-    expect(card.locator(".barpos + .readcrop")).to_have_count(1)
+    expect(card.locator(".barpos + .cropwrap .readcrop")).to_have_count(1)
     page.wait_for_function("() => { const i = document.querySelector('.readcrop');"
                            " return i && i.complete && i.naturalWidth > 0; }")
     out = os.environ.get("EVIDENCE_DIR")
