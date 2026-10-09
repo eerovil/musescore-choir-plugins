@@ -18,7 +18,8 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_state, omr,
+from . import (agentdeck, bar_readings, free_videos, health, heavy_slot, homr_install,
+               job_state, omr,
                pdf_systems, pipeline, playlists, problems, pwa_assets, scan, site_refresh,
                state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
@@ -218,6 +219,8 @@ def _derived(song: state.Song) -> Dict:
         "scan_status": scan.status(song),
         "scan_discarded": [scan.said(line) for line in discarded],
         "media": _media_list(song),
+        # Which videos YouTube has and whether the local copies can go (#371).
+        "upload_status": free_videos.status(song),
         "jobs": job_state.load(song.dir),
         "verification_summary": verification.summary(song, systems),
     }
@@ -1723,6 +1726,7 @@ def _run_record(slug: str, opts: Dict) -> None:
             rec["verification"] = verification.verify_media(
                 song, rec["outputs"], verification.singing_parts(cleaned))
             rec["error"] = None
+            rec.pop("freed", None)  # the videos are on disk again
             song.set_stage("upload")
             song.save()
             log(f"Done. {len(outputs)} video(s) ready.")
@@ -1766,6 +1770,7 @@ def _run_record(slug: str, opts: Dict) -> None:
         song = _require(slug)
         rec = song.data.setdefault("record", {})
         if not upload_only:
+            rec.pop("freed", None)  # the videos are on disk again
             rec["exported"] = True
             rec["renderer"] = "screen"
             rec["audio_delay_ms"] = int(opts.get("audio_delay_ms", 1300))
@@ -1852,9 +1857,15 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
         _remember_record_settings(song, **settings)
     else:
         opts.pop("bpm", None)
+    if opts.get("upload_only"):
+        names = song.data.get("record", {}).get("outputs", [])
+        if not names or not all(os.path.exists(song.path("media", "video", os.path.basename(n)))
+                                for n in names):
+            raise HTTPException(409, "The videos are not on disk (freed after an "
+                                     "upload?) — record again to make them.")
     kind = "upload" if opts.get("upload_only") else "render"
     if not job_state.start_if_idle(
-            song.dir, kind, ("scan", "clean", "render", "upload"), source_fingerprint):
+            song.dir, kind, ("scan", "clean", "render", "upload", "free"), source_fingerprint):
         raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
     # The durable start above is the atomic gate; the PID lock keeps the existing
     # process-aware recording indicator and stale-lock recovery behavior.
@@ -1893,6 +1904,8 @@ def api_youtube_delete(slug: str) -> Dict:
     ids = [u.get("video_id") for u in uploads if u.get("video_id")]
     if not ids:
         raise HTTPException(400, "Nothing uploaded to delete")
+    if job_state.is_running(song.dir, "free"):
+        raise HTTPException(409, "The local videos are being freed — try again in a moment.")
     try:
         from src.stemmanauha.upload_to_youtube import delete_videos
         delete_videos(ids, log=lambda m: hub.emit(slug, {"type": "log", "line": m}))
@@ -1904,6 +1917,43 @@ def api_youtube_delete(slug: str) -> Dict:
     # The site would otherwise list the deleted videos until its schedule runs.
     site_refresh.refresh_stemmanauhat(lambda m: hub.emit(slug, {"type": "log", "line": m}))
     return _derived(song)
+
+
+def _free_videos(slug: str) -> Dict:
+    song = _require(slug)
+    log = lambda m: _job_emit(slug, "free", m)
+    try:
+        from src.stemmanauha.upload_to_youtube import confirm_uploads
+        freed = free_videos.free(song, lambda ids: confirm_uploads(ids, log=log), log=log)
+        _job_finish(song, "free")
+        return freed
+    except Exception as exc:
+        _job_emit(slug, "free", str(exc), "error")
+        _job_finish(song, "free", str(exc))
+        raise
+
+
+@app.post("/api/songs/{slug}/free-videos")
+async def api_free_videos(slug: str) -> Dict:
+    """Delete the local videos once YouTube is confirmed to have every one (#371).
+
+    Holds the song's job gate while it runs, so no render, upload or second free
+    starts underneath it, and refuses while one is running.
+    """
+    song = _require(slug)
+    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "free", ("scan", "clean", "render", "upload", "free")):
+        raise HTTPException(409, "A recording or upload is running — free the "
+                                 "videos after it finishes.")
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _free_videos, slug)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except Exception as exc:
+        raise HTTPException(502, f"Could not confirm with YouTube: {exc}") from None
+    finally:
+        hub.emit(slug, {"type": "state"})
+    return _derived(_require(slug))
 
 
 @app.post("/api/songs/{slug}/reveal-media")

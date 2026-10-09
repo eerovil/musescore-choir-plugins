@@ -1005,7 +1005,14 @@ state model are in `DESIGN.md`.
   review. YouTube uploads report live percentage via a `progress` WS message,
   are recorded into `record.uploads` (title/id/url) for review + delete/re-upload
   (`/youtube-delete`), use the human song name for titles, and remember used
-  playlists globally in `.playlists.json` (`/api/playlists`). **Which playlists a song is in can be
+  playlists globally in `.playlists.json` (`/api/playlists`). **Local videos can be
+  freed after upload** (#371, `free_videos.py`, `POST /free-videos`, the Upload
+  panel's *Free space* button, never automatic): each upload entry now records the
+  file it sent (`file`, `size`, `mtime_ns`), a video counts as uploaded when its
+  part has a `video_id` and (when stamped) the file is unchanged, and freeing asks
+  YouTube (`confirm_uploads`: exists, processed, published after the file) and
+  deletes nothing unless every video passes. It holds the song's job gate
+  (`free`), keeps `uploads`, records `record.freed`, and a render clears it. **Which playlists a song is in can be
   changed after the upload** (#338, `playlists.py`): the Upload panel's *Playlists*
   list ticks each remembered playlist holding every one of the song's videos, read
   live from YouTube (the app never recorded the extra playlist, and YouTube's own

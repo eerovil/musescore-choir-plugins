@@ -267,6 +267,9 @@ table.grid .undernote:empty { display: none; }
 .result video { width: 100%; border-radius: 8px; background: #000; }
 .uploads { margin: 4px 0 8px; padding-left: 18px; }
 .uploads li { margin: 2px 0; }
+.videostate { margin: 4px 0 8px; padding-left: 18px; }
+.videostate li.changed, .videostate li.not_uploaded { color: #b3261e; }
+.free-note.err { color: #b3261e; }
 .playlists .plrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
 .playlists .plrow label { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .playlists .plnote { color: var(--muted); font-size: 0.9em; }

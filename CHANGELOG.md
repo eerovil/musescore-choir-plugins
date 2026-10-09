@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The Upload stage lists which of a song's videos are on YouTube, and a **Free
+  space** button deletes the local copies (about 150 MB a voice) once YouTube
+  confirms it has every one. The links stay; recording again makes the videos
+  back. A song counts as uploaded only when every video is. (#371)
 - `fixes.json`'s `delete` can now take an arpeggio sign off a chord, for a
   printed sharp the scan read as one (Trinklied B1 bar 25). (#366)
 - The cleaned score is drawn the way the page prints it: rests the scan hid

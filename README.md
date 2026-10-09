@@ -43,7 +43,8 @@ stage at any time; redoing one clears only what depended on it.
    first, adjust tempo, margins and which parts share a staff, then render every
    part (plus an *ALL* mix) unattended.
 8. **Upload** — send the videos to YouTube, into a playlist if you like. Renaming
-   the song later retitles the uploaded videos too.
+   the song later retitles the uploaded videos too. Once YouTube has every video,
+   **Free space** deletes the local copies; recording again makes them back.
 
 <img src="docs/images/scan.png" width="400" alt="Scan stage: proposed system bands drawn over the page"> <img src="docs/images/review.png" width="400" alt="Review stage with the original PDF beside it">
 
