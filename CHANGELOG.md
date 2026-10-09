@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Writing fixes is harder to get wrong: the bar reader now shows ties, where each
+  chord sits among the rests, and the bar as a fix meets it when MuseScore reset it;
+  added notes are spelt with flats in a flat key; and two songs cleaning at once no
+  longer fail with the bare error "3". (#357)
 - `fixes.json` can now take a mark the scan invented off a chord (`delete`): a
   fermata, an articulation, a breath mark, a staff text, a tempo or a rehearsal
   mark. Mieslaulu bar 13's fermatas, where the page prints staccato dots, can now
