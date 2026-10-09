@@ -1341,6 +1341,29 @@ def api_system_image(slug: str, index: int, dpi: int = 400):
     return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
+@app.get("/api/songs/{slug}/system/{index}/where")
+def api_system_where(slug: str, index: int, staff: int, staves: int,
+                     bar: Optional[int] = None, bars: Optional[int] = None, dpi: int = 200):
+    """Where one staff, and one bar of it, is in a printed system's crop (#368).
+
+    `{"box": {top, bottom, left, right, bar}}` in fractions of the crop at `dpi`, or
+    `{"box": null}` when the crop does not show the staves the score says it prints.
+    """
+    from PIL import Image
+
+    song = _require(slug)
+    pdf = _song_pdf(song)
+    try:
+        path = pipeline.system_crop(song.dir, pdf, index, max(50, min(dpi, 600)))
+        with Image.open(path) as image:
+            box = system_finder.bar_box(image, staff, staves, bar, bars)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return {"box": box}
+
+
 @app.get("/api/songs/{slug}/pdf")
 def api_pdf(slug: str):
     song = _require(slug)

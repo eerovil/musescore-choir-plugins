@@ -354,16 +354,24 @@ def problems(song: state.Song) -> List[Dict]:
         target = row(offer["measure"], offer["part"] or "")
         if target["system"] is None:
             target["system"] = offer["system"]
-        title = "Which bar does the page print?"
-        options = [{"letter": o["letter"], "current": o["current"],
-                    "label": "second reading" if o["second"] else ""}
-                   for o in offer["options"]]
+        part = offer["part"] or "this part"
+        title = f"Bar {offer['measure']}, {part}: which notes does the page print for {part}?"
+        options = []
+        for o in offer["options"]:
+            label = ["second reading" if o["second"] else "",
+                     f"the line {o['line_of']} has now — gives it to {part}"
+                     if o.get("line_of") else ""]
+            options.append({"letter": o["letter"], "current": o["current"],
+                            "label": "; ".join(x for x in label if x),
+                            "line_of": o.get("line_of")})
         for option in options:
             option["svg"] = f"readings/{offer['id']}/{option['letter']}.svg"
         target["choices"].append({"id": offer["id"], "kind": offer["kind"],
                                   "title": title, "options": options,
                                   "shown": bar_readings.SHOWN,
-                                  "decision": offer["decision"], "can_decline": True})
+                                  "decision": offer["decision"], "can_decline": True,
+                                  "part": offer["part"], "measure": offer["measure"],
+                                  "fixes": offer.get("fixes", [])})
 
     decided = _slur_decisions(song.dir)
     for rec in slurs:

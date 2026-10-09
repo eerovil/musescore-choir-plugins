@@ -18,7 +18,7 @@ import os
 import re
 import subprocess
 from contextlib import nullcontext
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from . import heavy_slot, omr, pdf_systems
 from .omr import Engine, HomrError, HomrMissing
@@ -321,3 +321,119 @@ def quick_bands(pdf_path: str, out_dir: str, log: Logger = _noop) -> List[System
             proposed.append(SystemBounds(index=len(proposed) + 1, page=page,
                                          top=top, bottom=bottom))
     return proposed
+
+
+# ---------------------------------------------------------------- one bar of one staff
+#
+# The Fix panel shows a whole printed system beside homr's readings of one bar, and
+# a crop of four staves and five bars does not say which of them a choice is about
+# (#368). This finds the box to draw round it, with the same staff-line finder as
+# above. It answers only what it can check: the staff when the crop has exactly the
+# staves the score says the system prints, and the bar when exactly as many
+# barlines are found as the system has bars. Otherwise the whole staff, or nothing;
+# a box round the wrong bar would be worse than none.
+#
+# A barline is a column of ink from a staff's top line to its bottom one. So is a
+# stem, and two things tell them apart: a stem has its notehead beside it where a
+# barline has only the staff lines, and a barline stands at the same x on every
+# staff of the system, where stems line up only when the voices move together.
+# Measured on the crops of ten songs here, the two together find every bar on about
+# 60% of the systems, and the count check turns the rest into a staff-wide box.
+
+_BARLINE_FILL = 0.9      # share of a staff's height a barline column covers
+_BARLINE_CLEAR = 0.25    # share of the rows beside it a barline may have ink in
+
+
+def _barline_candidates(ink, top: float, bottom: float, space: float) -> List[tuple]:
+    """(x, clear) for each full-height column of ink across one staff.
+
+    `clear` is whether nothing but staff lines stands within most of a staff space
+    either side of it (or only paper to its right: the closing line).
+    """
+    import numpy as np
+
+    rows = ink[int(round(top)):int(round(bottom)) + 1]
+    if rows.shape[0] < 4:
+        return []
+    width = rows.shape[1]
+    lean = rows.copy()
+    lean[:, 1:-1] = rows[:, :-2] | rows[:, 1:-1] | rows[:, 2:]   # a barline can lean a pixel
+    groups: List[List[int]] = []
+    # Columns closer than a staff space are one line: a thick barline, a double
+    # barline, or a repeat sign's two strokes.
+    for x in np.flatnonzero(lean.mean(axis=0) >= _BARLINE_FILL).tolist():
+        if groups and x - groups[-1][-1] <= space:
+            groups[-1].append(x)
+        else:
+            groups.append([x])
+    lines = rows.mean(axis=1) >= 0.3
+    lines = lines | np.roll(lines, 1) | np.roll(lines, -1)
+    between = rows[~lines]
+    reach = max(3, int(0.9 * space))
+
+    def busy(a: int, b: int) -> float:
+        window = between[:, max(0, a):min(width, b)]
+        return float(window.any(axis=1).mean()) if window.size else 0.0
+
+    out = []
+    for g in groups:
+        left = busy(g[0] - 2 - reach, g[0] - 2)
+        right = busy(g[-1] + 3, g[-1] + 3 + reach)
+        closing = not between[:, g[-1] + 3:].any()
+        out.append(((g[0] + g[-1]) / 2,
+                    left <= _BARLINE_CLEAR and (right <= _BARLINE_CLEAR or closing)))
+    return out
+
+
+def _staff_start(ink, top: float, bottom: float) -> float:
+    """The x where the staff lines begin."""
+    import numpy as np
+
+    rows = ink[int(round(top)):int(round(bottom)) + 1]
+    filled = np.flatnonzero(rows.mean(axis=0) >= 0.3).tolist()
+    return float(filled[0]) if filled else 0.0
+
+
+def barlines(ink, staves: List[tuple]) -> List[float]:
+    """The x of every barline of a system after its opening line, left to right."""
+    import numpy as np
+
+    if not staves:
+        return []
+    space = float(np.median([s[2] for s in staves]))
+    per = [_barline_candidates(ink, *s) for s in staves]
+    start = max(_staff_start(ink, s[0], s[1]) for s in staves)
+    out = []
+    for x, _ in per[0]:
+        if x - start <= 2 * space:
+            continue  # the opening line, with a bracket or clef against it
+        hits = [next((clear for y, clear in p if abs(x - y) <= 0.6 * space), None) for p in per]
+        if all(h is not None for h in hits) and 2 * sum(hits) >= len(hits):
+            out.append(x)
+    return out
+
+
+def bar_box(image: "Image.Image", staff: int, staves: int,
+            bar: Optional[int] = None, bars: Optional[int] = None) -> Optional[Dict]:
+    """Where staff `staff` of `staves` (and bar `bar` of `bars`) is in a system crop.
+
+    Fractions of the image, `{top, bottom, left, right, bar}`; `bar` says whether the
+    box is narrowed to the bar or covers the whole staff. None when the crop does not
+    show `staves` staves, so the one meant cannot be told.
+    """
+    import numpy as np
+
+    ink = np.asarray(image.convert("L")) < _INK
+    height, width = ink.shape
+    found = _staves(ink)
+    if len(found) != staves or not 1 <= staff <= staves:
+        return None
+    top, bottom, space = found[staff - 1]
+    box = {"top": max(0.0, top - 1.5 * space) / height,
+           "bottom": min(float(height), bottom + 1.5 * space) / height,
+           "left": 0.0, "right": 1.0, "bar": False}
+    if bar and bars and 1 <= bar <= bars:
+        lines = [_staff_start(ink, top, bottom)] + barlines(ink, found)
+        if len(lines) == bars + 1:
+            box.update(left=lines[bar - 1] / width, right=lines[bar] / width, bar=True)
+    return {k: round(v, 4) if isinstance(v, float) else v for k, v in box.items()}

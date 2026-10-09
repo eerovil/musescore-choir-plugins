@@ -2089,6 +2089,9 @@ function problemList(panel, song, P, refresh) {
   const decidedText = (row, c) => {
     const d = c.decision;
     if (d.none) return `${where(row)}: none of these — fix it in MuseScore`;
+    // A bar a recorded fix already wrote is not asked about again (#368).
+    if (d.answered) return `${where(row)}: answered by fixes.json (${d.answered.kind})`
+      + (d.answered.why ? ` — ${d.answered.why}` : "");
     const word = { slur: "slur answer", repeat: "repeat answer", volta: "bracket answer" }[c.kind] || "reading";
     if (d.picked === "earlier") return `${where(row)}: picked before whole bars were offered`;
     const opt = c.options.find((o) => o.letter === d.picked);
@@ -2100,7 +2103,7 @@ function problemList(panel, song, P, refresh) {
       const b = el("button", { className: "readopt" + (o.svg ? "" : " readtext"),
         onclick: () => pick(row, c, o.letter, buttons) },
         el("span", { className: "readletter" }, o.letter),
-        o.label ? el("span", { className: "readlabel" }, " " + o.label) : "",
+        o.label ? el("span", { className: "readlabel" + (o.line_of ? " readswap" : "") }, " " + o.label) : "",
         o.current ? el("span", { className: "hint" }, " as read now") : "",
         o.svg ? el("img", { className: "readsvg", loading: "lazy", alt: `option ${o.letter}`,
           src: `${P}/${o.svg.split("/").map(encodeURIComponent).join("/")}` }) : "");
@@ -2111,7 +2114,17 @@ function problemList(panel, song, P, refresh) {
     // rest wait behind "More", so a card stays short on a phone.
     const opts = el("div", { className: "readopts" }, ...options);
     const block = el("div", { className: "readpick", "data-offer": c.id },
-      el("div", { className: "readtitle" }, c.title), opts);
+      el("div", { className: "readtitle" }, c.title));
+    // What fixes.json already says about this bar: a pick can undo a slur or tie
+    // here, or give this part the line a fix put on the part beside it (#368).
+    if (c.fixes && c.fixes.length) {
+      block.append(el("div", { className: "readwarn" },
+        el("strong", {}, `fixes.json already changes bar ${c.measure}:`),
+        el("ul", {}, ...c.fixes.map((f) => el("li", {},
+          `${f.part} (${f.kind})${f.why ? ": " + f.why : ""}`))),
+        "Picking here may undo or contradict it."));
+    }
+    block.append(opts);
     if (c.shown && options.length > c.shown) {
       const hidden = options.slice(c.shown);
       hidden.forEach((b) => { b.hidden = true; });
@@ -2129,6 +2142,27 @@ function problemList(panel, song, P, refresh) {
         el("span", { className: "hint" }, "keeps it as read and the red mark; fix the bar in MuseScore")));
     }
     return block;
+  };
+  // The printed system with the bar and staff the row is about boxed (#368): the
+  // crop shows every staff and bar of the line. The box comes from the page itself
+  // and is drawn only as far as it can be found — the staff alone when the bar's
+  // barlines cannot all be told from stems, nothing when the staves cannot.
+  const cropWithMark = (row) => {
+    const wrap = el("div", { className: "cropwrap" },
+      el("img", { className: "readcrop", loading: "lazy", alt: `printed system ${row.system}`,
+        src: `${P}/system/${row.system}?dpi=200` }));
+    if (!row.staff_in_system) return wrap;
+    const q = new URLSearchParams({ staff: row.staff_in_system, staves: row.staves_in_system, dpi: 200 });
+    if (row.bar_in_system) { q.set("bar", row.bar_in_system); q.set("bars", row.bars_in_system); }
+    getJSON(`${P}/system/${row.system}/where?${q}`).then(({ box }) => {
+      if (!box || !wrap.isConnected) return;
+      const pct = (v) => `${(v * 100).toFixed(2)}%`;
+      wrap.append(el("div", { className: "cropmark" + (box.bar ? "" : " staffonly"),
+        title: box.bar ? `bar ${row.bar_in_system}, ${row.part}` : `${row.part}'s staff`,
+        style: `top:${pct(box.top)};height:${pct(box.bottom - box.top)};`
+          + `left:${pct(box.left)};width:${pct(box.right - box.left)}` }));
+    }).catch(() => {});
+    return wrap;
   };
   // Said once the rows are in, so whoever reads the panel (a test, say) can tell an
   // empty list from one still on its way.
@@ -2162,9 +2196,9 @@ function problemList(panel, song, P, refresh) {
       if (undecided.length && row.system != null && song.has_pdf) {
         const where = [barOf && `Bar ${row.bar_in_system} of ${row.bars_in_system}`, staffPlace(row)]
           .filter(Boolean).join(" · ");
-        if (where) card.append(el("p", { className: "sub barpos" }, where));
-        card.append(el("img", { className: "readcrop", loading: "lazy", alt: `printed system ${row.system}`,
-          src: `${P}/system/${row.system}?dpi=200` }));
+        if (where) card.append(el("p", { className: "sub barpos" },
+          row.part && row.staff_in_system ? `${row.part}: ${where}` : where));
+        card.append(cropWithMark(row));
       }
       for (const c of undecided) card.append(choiceBlock(row, c));
       box.append(card);

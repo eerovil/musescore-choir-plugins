@@ -166,6 +166,16 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); }
 .readtitle { font-weight: 600; margin-bottom: 4px; }
 .readtext { white-space: normal; }
 .readcrop { display: block; width: 100%; margin: 8px 0; background: #fff; }
+.cropwrap { position: relative; margin: 8px 0; }
+.cropwrap .readcrop { margin: 0; }
+.cropmark { position: absolute; border: 3px solid #e5a000; background: rgba(255, 200, 0, 0.18);
+  border-radius: 4px; pointer-events: none; box-sizing: border-box; }
+.cropmark.staffonly { border-style: dashed; background: rgba(255, 200, 0, 0.1); }
+.readswap { color: var(--warn); font-weight: 600; }
+.readwarn { background: var(--panel2); border-left: 4px solid var(--warn); padding: 6px 8px;
+  margin: 6px 0; font-size: 0.9em; }
+.readwarn strong { color: var(--warn); }
+.readwarn ul { margin: 4px 0; padding-left: 18px; }
 .problem .barpos { margin: 8px 0 0; font-weight: 600; }
 .readopts { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 .readopt[hidden] { display: none; }
