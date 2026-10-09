@@ -12,6 +12,11 @@ developers are listed under *Behind the scenes*.
   and `scripts/move_media.py` moves what is already there, checking every copied
   file before deleting the old one and leaving a song alone while it records or
   uploads. Unset, nothing changes. (#370)
+- Fix panel: a bar a recorded fix in `fixes.json` already wrote is no longer offered
+  as an a/b/c reading; it shows as "answered by fixes.json" with the reason. The
+  remaining choices name the bar and part, box that bar on the page picture, say when
+  an option is the line another part has now, and warn when `fixes.json` already
+  changes that bar. (#368)
 - `fixes.json`'s `delete` can now take an arpeggio sign off a chord, for a
   printed sharp the scan read as one (Trinklied B1 bar 25). (#366)
 - The cleaned score is drawn the way the page prints it: rests the scan hid

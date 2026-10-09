@@ -290,6 +290,51 @@ def _staves(root: etree._Element) -> List[Tuple[int, str, etree._Element]]:
 # ---------------------------------------------------------------- what is on offer
 
 
+#: The kinds of recorded fix that write a bar's notes or lengths. A bar one of them
+#: has written was read against the page by a person, so homr's readings of it are
+#: not offered again (#368): matched by content, they land on whichever part holds
+#: those notes now, and on Annin laulu bar 8 picking "a" wrote the scan's swap of
+#: the two basses back over the page-checked fix.
+ANSWERING = ("bar", "pitch", "rhythm", "duration", "undot", "append", "drop",
+             "dropnote", "addnote")
+#: An `unmark` taking off one of these says the bar's notes were checked and are
+#: right, which is what a pick would have said (#290 lists the same doubts).
+ANSWERED_DOUBTS = ("notes?", "rhythm?", "pitch?", "accidental?")
+
+
+def _placed(fixes: List[Dict]) -> List[Tuple[Dict, int, int]]:
+    """(fix, staff, bar as numbered now) for every recorded fix naming one staff's bar.
+
+    A fix counts bars in file order, so a `delbar` or `insbar` after it moves it.
+    """
+    out = []
+    for i, fix in enumerate(fixes):
+        if not isinstance(fix, dict) or fix.get("kind") == "text":
+            continue
+        try:
+            staff, measure = int(fix["staff"]), int(fix["measure"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        now = score_fixes.after_moves(measure, score_fixes.bar_moves(fixes[i + 1:]))
+        if now is not None:
+            out.append((fix, staff, now))
+    return out
+
+
+def _answers(fix: Dict) -> bool:
+    """Whether a recorded fix has already said what a bar's notes are."""
+    if fix.get("source") == SOURCE:
+        return False
+    if fix.get("kind") == "unmark":
+        return any(doubt in (fix.get("text") or "") for doubt in ANSWERED_DOUBTS)
+    return fix.get("kind") in ANSWERING
+
+
+def _said(fix: Dict, names: Dict[int, str], staff: int) -> Dict:
+    return {"kind": fix.get("kind"), "part": names.get(staff, f"staff {staff}"),
+            "why": fix.get("why") or fix.get("what") or ""}
+
+
 def _picks(song_dir: str) -> Dict[str, Dict]:
     return {fix["offer"]: fix for fix in pipeline._recorded_fixes(song_dir)
             if fix.get("source") == SOURCE and fix.get("offer")}
@@ -413,8 +458,12 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
     Each offer: `id`, `kind` ("bar"), `system`, `measure`, `staff` (the cleaned staff
     id), `part`, `from` (the bar as tokens, what a recorded pick is checked against),
     `options` (each `{letter, current, second, moments, to, differs}`; `to` is what a
-    pick writes, `None` when the offer is no longer on the score) and `decision`
-    (`None`, `{"picked": letter}` or `{"none": True}`).
+    pick writes, `None` when the offer is no longer on the score; `line_of` the other
+    part whose bar holds that option's notes now), `fixes` (what fixes.json already
+    says about this bar on this part and the parts printed with it, each `{kind,
+    part, why, same_staff}`) and `decision` (`None`, `{"picked": letter}`,
+    `{"none": True}` or `{"answered": {kind, part, why}}` when a recorded fix has
+    already written the bar's notes, #368).
     """
     cleaned = cleaned or song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
@@ -426,9 +475,38 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
     staves = _staves(root)
     printed = printed_staves(root)
     picks, declined = _picks(song.dir), _declined(song)
+    recorded = pipeline._recorded_fixes(song.dir)
     # The scan still has any bar a `delbar` took out of the cleaned score, and lacks
     # any an `insbar` put in (#346).
-    moves = score_fixes.bar_moves(pipeline._recorded_fixes(song.dir))
+    moves = score_fixes.bar_moves(recorded)
+    names = {sid: name for sid, name, _ in staves}
+    placed: Dict[Tuple[int, int], List[Dict]] = {}
+    for fix, sid, measure in _placed(recorded):
+        placed.setdefault((sid, measure), []).append(fix)
+
+    # The staves a pick or "none of these" already speaks for, bar by bar.
+    spoken = {(d.get("staff"), d.get("measure"))
+              for d in list(picks.values()) + list(declined.values())}
+
+    def answered(sid: int, measure: int) -> Optional[Dict]:
+        found = [fix for fix in placed.get((sid, measure), []) if _answers(fix)]
+        # The fix that wrote the notes says more than the unmark beside it.
+        found.sort(key=lambda fix: fix.get("kind") != "unmark")
+        return _said(found[-1], names, sid) if found else None
+
+    def nearby(sid: int, measure: int, siblings: Iterable[int]) -> List[Dict]:
+        """What fixes.json already says about this bar that a pick could undo.
+
+        On this staff, a slur, tie or mark a bar written afresh would cut; on the
+        other parts of the same printed staff, anything, since a pick that gives
+        this part their line repeats or undoes it.
+        """
+        out = [{**_said(fix, names, sid), "same_staff": True}
+               for fix in placed.get((sid, measure), []) if fix.get("kind") != "unmark"]
+        for other in siblings:
+            out += [{**_said(fix, names, other), "same_staff": False}
+                    for fix in placed.get((other, measure), []) if fix.get("kind") != "unmark"]
+        return out
     out: List[Dict] = []
     for system, start in systems:
         path = os.path.join(song.dir, system["musicxml"])
@@ -443,10 +521,12 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
                 continue  # a bar the page does not print
             now = bars[0]["moments"]
 
-            def options(shift: Optional[int]) -> List[Dict]:
+            def options(shift: Optional[int], others=()) -> List[Dict]:
                 return [{"letter": LETTERS[i], "current": i == 0, "second": bar["second"],
                          "moments": bar["moments"], "differs": _differs(now, bar["moments"]),
-                         "to": None if shift is None else _to(bar["moments"], shift)}
+                         "to": None if shift is None else _to(bar["moments"], shift),
+                         "line_of": None if i == 0 or shift is None
+                         else _line_of(bar["moments"], shift, others, measure)}
                         for i, bar in enumerate(bars)]
 
             base = {"id": oid, "kind": "bar", "system": int(system["index"]),
@@ -475,6 +555,7 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
             # Only the parts printed on the staff homr read: the same notes an
             # octave away on another staff are another singer (#310).
             allowed = _printed_on(printed, measure, part_staves, group)
+            landed = False
             for sid, name, staff in staves:
                 if sid in taken or (allowed is not None and sid not in allowed):
                     continue
@@ -483,10 +564,50 @@ def offers(song: state.Song, cleaned: Optional[str] = None) -> List[Dict]:
                 if shift is None:
                     continue
                 taken.add(sid)
-                out.append({**base, "options": options(shift), "staff": sid, "part": name,
-                            "from": score_fixes._bar_tokens(bar), "decision": None})
+                landed = True
+                done = answered(sid, measure)
+                if done is not None:
+                    out.append({**base, "options": options(None), "staff": sid, "part": name,
+                                "from": [], "decision": {"answered": done}})
+                    break
+                # The other parts printed on the same staff, or every other part
+                # when the score does not say where they were printed.
+                others = [(o, oname, ostaff) for o, oname, ostaff in staves if o != sid
+                          and (allowed is None or o in allowed)]
+                siblings = [o for o, _, _ in others] if allowed is not None else []
+                out.append({**base, "options": options(shift, others), "staff": sid,
+                            "part": name, "from": score_fixes._bar_tokens(bar),
+                            "fixes": nearby(sid, measure, siblings), "decision": None})
                 break
+            if not landed and allowed:
+                # A fix rewrote the bar, so it matches homr's reading nowhere now:
+                # said as answered, on the part the fix wrote, rather than left out.
+                for sid in sorted(allowed - taken):
+                    if (sid, measure) in spoken:
+                        continue
+                    done = answered(sid, measure)
+                    if done is not None:
+                        taken.add(sid)
+                        out.append({**base, "options": options(None), "staff": sid,
+                                    "part": names.get(sid, ""), "from": [],
+                                    "decision": {"answered": done}})
+                        break
     return out
+
+
+def _line_of(moments: List[Dict], shift: int, others, measure: int) -> Optional[str]:
+    """The other part whose bar holds these notes now, if one does.
+
+    Two voices of one staff read swapped differ only by which of them sings which
+    line, so the option that "fixes" one of them is the other's line, and picking it
+    gives this part what that one sings (#368). Said, so the choice is seen for what
+    it is.
+    """
+    for _, name, staff in others:
+        bar = _bar(staff, measure)
+        if bar is not None and _shift(_bar_reading(bar), {"moments": moments}) == shift:
+            return name
+    return None
 
 
 def _to(moments: List[Dict], shift: int) -> List[Dict]:
