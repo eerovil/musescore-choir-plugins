@@ -3200,7 +3200,7 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   ```
 
   `jm` is the men's choir; only public-domain songs go in `public`. Several slugs can go in one
-  run. The bundle script passes the saved tempo changes only from eerovil/stemmanauhat-cf#30 on.
+  run. The bundle script passes the saved tempo changes (eerovil/stemmanauhat-cf#32).
 - Leave the Review approval to Eero.
 
 ## MuseScore plugins (`plugins/`)
