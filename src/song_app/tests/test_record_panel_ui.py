@@ -526,5 +526,16 @@ def test_tempo_changes_are_listed_kept_and_rendered(record_panel):
         view.locator(".tempo-row").first.locator("[data-tempo-bar]").fill("1")
         view.get_by_role("button", name="Save settings").click()
         expect(view.locator("[data-save-note]")).to_contain_text("bar 1")
+
+        # A fraction is refused, not rounded down to another bar or speed.
+        first = view.locator(".tempo-row").first
+        first.locator("[data-tempo-bar]").fill("13.5")
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_contain_text("whole bar number")
+        first.locator("[data-tempo-bar]").fill("13")
+        first.locator("[data-tempo-bpm]").fill("112.5")
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_contain_text("whole number")
+        assert state.load(slug).data["record"]["tempo_changes"] == expected[:2]
     finally:
         _forget_settings(slug)

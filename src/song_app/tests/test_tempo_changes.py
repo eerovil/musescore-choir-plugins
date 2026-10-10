@@ -71,6 +71,12 @@ def test_the_same_list_as_text_is_read_the_same(client, song):
     assert _record(song)["tempo_changes"] == CHANGES
 
 
+def test_whole_numbers_written_as_floats_or_text_are_read(client, song):
+    client.post(f"/api/songs/{song.slug}/record-settings",
+                json={"tempo_changes": [{"measure": 13.0, "bpm": "112"}]})
+    assert _record(song)["tempo_changes"] == [{"measure": 13, "bpm": 112}]
+
+
 def test_saving_other_settings_keeps_the_changes(client, song):
     client.post(f"/api/songs/{song.slug}/record-settings", json={"tempo_changes": CHANGES})
     client.post(f"/api/songs/{song.slug}/record-settings", json={"top_margin": 3})
@@ -82,7 +88,12 @@ def test_saving_other_settings_keeps_the_changes(client, song):
     ([{"measure": 41, "bpm": 100}], "to 40"),
     ([{"measure": 5, "bpm": 10}], "between 20 and 300"),
     ([{"measure": 5, "bpm": "fast"}], "whole number"),
-    ([{"bpm": 100}], "bar number"),
+    ([{"bpm": 100}], "whole bar number"),
+    ([{"measure": 13.5, "bpm": 100}], "whole bar number"),
+    ([{"measure": "13.5", "bpm": 100}], "whole bar number"),
+    ([{"measure": True, "bpm": 100}], "whole bar number"),
+    ([{"measure": 13, "bpm": 112.5}], "whole number"),
+    ([{"measure": 13, "bpm": "112.5"}], "whole number"),
     ([{"measure": 5, "bpm": 90}, {"measure": 5, "bpm": 100}], "two tempo changes"),
     ("not json", "not readable"),
 ])

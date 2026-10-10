@@ -1514,6 +1514,20 @@ def _staff_groups(cleaned: str, text) -> str:
         raise HTTPException(400, str(exc)) from None
 
 
+def _whole_number(value) -> int:
+    """`value` as an int when it is a whole number, or ValueError. `int()` alone
+    would turn bar 13.5 into 13 and play the change in the wrong place."""
+    if isinstance(value, bool):
+        raise ValueError(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+        return int(value)
+    raise ValueError(value)
+
+
 def _tempo_changes(cleaned: str, value) -> List[Dict]:
     """Tempo changes (#387) checked against this score, in the one way they are
     stored: `[{"measure": 13, "bpm": 112}, {"measure": 23, "bpm": "start"}]`,
@@ -1530,16 +1544,16 @@ def _tempo_changes(cleaned: str, value) -> List[Dict]:
     out: Dict[int, Dict] = {}
     for item in value:
         try:
-            measure = int(item.get("measure"))
+            measure = _whole_number(item.get("measure"))
         except (AttributeError, TypeError, ValueError):
-            raise HTTPException(400, "Each tempo change needs a bar number") from None
+            raise HTTPException(400, "Each tempo change needs a whole bar number") from None
         if not 2 <= measure <= bars:
             raise HTTPException(400, f"Tempo change at bar {measure}: pick a bar from 2 "
                                      f"to {bars} (bar 1 plays at the opening tempo)")
         bpm = item.get("bpm")
         if bpm != START_TEMPO:
             try:
-                bpm = int(bpm)
+                bpm = _whole_number(bpm)
             except (TypeError, ValueError):
                 raise HTTPException(400, f"Tempo change at bar {measure}: BPM must be "
                                          "a whole number or back to start") from None
