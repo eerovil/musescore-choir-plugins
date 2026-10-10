@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Publish: a song can now be in the public list and a choir's list at once.
+  Publishing to public no longer takes it off the choir's list, and publishing to
+  a choir no longer takes it off the public one; moving it between jm and
+  naiskuoro still moves it. The Upload panel lists every choir it is in. (#384)
 - Upload stage: **Publish** sends a song to the new Cloudflare stemmanauhat site
   for one choir (jm, naiskuoro or the public demo): the score as MusicXML, one MP3
   per part (each part on its own, from the same MuseScore as the videos) and a

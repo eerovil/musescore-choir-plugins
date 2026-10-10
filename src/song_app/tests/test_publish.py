@@ -121,12 +121,67 @@ def test_publishing_again_replaces_the_old_version_and_a_new_choir_moves_the_son
     time.sleep(1.1)  # a new version is a new second
     second = publish.publish(slug="laulu", title="Laulu", choir="naiskuoro",
                              bundle=_bundle(tmp_path, parts=("S1", "S2", "A1")),
-                             client=client, previous=first)
+                             client=client, published={"jm": first})
 
     assert cf.listed("jm") == []
     [(_slug, _title, prefix, parts)] = cf.listed("naiskuoro")
     assert prefix == second["prefix"] and len(json.loads(parts)) == 3
     assert sorted(cf.objects) == sorted(second["files"])
+    assert publish.replaced("naiskuoro", {"jm": first}) == ["jm"]
+
+
+def test_a_song_can_be_in_the_public_list_and_a_choirs_list_at_once(tmp_path):
+    cf = FakeCloudflare()
+    client = publish.Cloudflare(CONFIG, cf)
+    jm = publish.publish(slug="maamme", title="Maamme", choir="jm",
+                         bundle=_bundle(tmp_path), client=client)
+    public = publish.publish(slug="maamme", title="Maamme", choir="public",
+                             bundle=_bundle(tmp_path), client=client,
+                             published={"jm": jm})
+    # Publishing to public takes nothing away.
+    assert [r[0] for r in cf.listed("jm")] == ["maamme"]
+    assert [r[0] for r in cf.listed("public")] == ["maamme"]
+    assert sorted(cf.objects) == sorted(jm["files"] + public["files"])
+
+    # And publishing to the choir again keeps the public listing and its files,
+    # while the choir's own old version goes.
+    time.sleep(1.1)
+    jm2 = publish.publish(slug="maamme", title="Maamme", choir="jm",
+                          bundle=_bundle(tmp_path), client=client,
+                          published={"jm": jm, "public": public})
+    assert cf.listed("jm")[0][2] == jm2["prefix"]
+    assert cf.listed("public")[0][2] == public["prefix"]
+    assert sorted(cf.objects) == sorted(jm2["files"] + public["files"])
+
+
+def test_a_move_between_choirs_keeps_the_public_listing_and_drops_an_unrecorded_choir(tmp_path):
+    cf = FakeCloudflare()
+    client = publish.Cloudflare(CONFIG, cf)
+    jm = publish.publish(slug="maamme", title="Maamme", choir="jm",
+                         bundle=_bundle(tmp_path), client=client)
+    public = publish.publish(slug="maamme", title="Maamme", choir="public",
+                             bundle=_bundle(tmp_path), client=client,
+                             published={"jm": jm})
+    log = []
+    nais = publish.publish(slug="maamme", title="Maamme", choir="naiskuoro",
+                           bundle=_bundle(tmp_path), client=client,
+                           published={"public": public}, log=log.append)
+    # jm was not in the record handed in (published by hand, say): its row goes
+    # anyway, as the site's own script does, and public stays.
+    assert cf.listed("jm") == []
+    assert [r[0] for r in cf.listed("naiskuoro")] == ["maamme"]
+    assert [r[0] for r in cf.listed("public")] == ["maamme"]
+    assert "Removed it from the jm list." in log
+    assert set(public["files"]) <= set(cf.objects) and set(nais["files"]) <= set(cf.objects)
+
+
+def test_records_reads_a_song_published_before_there_was_one_per_choir():
+    old = {"site": {"choir": "jm", "files": []}, "choir": "jm"}
+    assert publish.records(old) == {"jm": old["site"]}
+    assert publish.records({"sites": {"public": {"choir": "public"}}}) == {
+        "public": {"choir": "public"}}
+    assert publish.records(None) == {} and publish.records({"error": "x"}) == {}
+    assert publish.replaced("public", {"jm": {}, "naiskuoro": {}}) == []
 
 
 def test_a_refused_upload_registers_nothing(tmp_path):
@@ -289,9 +344,23 @@ def test_publishing_from_the_app_lists_the_song_for_its_choir(app_song, monkeypa
     assert seen["cleaned"] == app_song.cleaned_path()
     [(slug, title, prefix, _parts)] = cf.listed("jm")
     assert (slug, title) == (app_song.slug, "Hanget soi")
-    assert data["publish"]["site"]["prefix"] == prefix
+    assert data["publish"]["sites"]["jm"]["prefix"] == prefix
     assert data["publish"]["choir"] == "jm" and data["publish"]["error"] is None
     assert prefix + "timing.json" in cf.objects
+
+    # Publishing to public keeps the jm record and row (#384) ...
+    assert client.post(f"/api/songs/{app_song.slug}/publish",
+                       json={"choir": "public"}).status_code == 200
+    data = _job_done(client, app_song.slug)
+    assert sorted(data["publish"]["sites"]) == ["jm", "public"]
+    assert cf.listed("jm") and cf.listed("public")
+
+    # ... and a move to naiskuoro drops jm and keeps public.
+    assert client.post(f"/api/songs/{app_song.slug}/publish",
+                       json={"choir": "naiskuoro"}).status_code == 200
+    data = _job_done(client, app_song.slug)
+    assert sorted(data["publish"]["sites"]) == ["naiskuoro", "public"]
+    assert cf.listed("jm") == [] and cf.listed("public")
 
 
 def test_publish_refuses_an_unapproved_score_an_unknown_choir_and_no_keys(
