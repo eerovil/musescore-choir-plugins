@@ -40,8 +40,8 @@ stage at any time; redoing one clears only what depended on it.
 6. **Review** — one place that says whether the score is ready: health, lyrics,
    whether MuseScore 3 will open the file. Approve it to move on.
 7. **Record** — render the videos. Preview the scrolling picture in the browser
-   first, adjust tempo, margins and which parts share a staff, then render every
-   part (plus an *ALL* mix) unattended.
+   first, adjust tempo (and the bars where it changes), margins and which parts
+   share a staff, then render every part (plus an *ALL* mix) unattended.
 8. **Upload** — send the videos to YouTube, into a playlist if you like. Renaming
    the song later retitles the uploaded videos too. Once YouTube has every video,
    **Free space** deletes the local copies; recording again makes them back.

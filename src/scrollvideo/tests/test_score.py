@@ -3,7 +3,7 @@
 import pytest
 from lxml import etree
 
-from src.scrollvideo.score import (add_opening_tempo, drop_parts,
+from src.scrollvideo.score import (START, add_opening_tempo, add_tempo_changes, drop_parts,
                                    has_opening_tempo, hold_fermatas, prepare,
                                    silent_parts)
 
@@ -178,3 +178,84 @@ def test_prepare_holds_fermatas_only_in_its_copy(tmp_path):
     assert path != str(original)
     assert _stretches(etree.parse(path).getroot()) == [1.25]
     assert original.read_bytes() == before
+
+
+# Tempo changes a person records (#387) -------------------------------------
+
+def _bars(count, staves=2, opening=None):
+    tempo = (f"<Tempo><tempo>{opening}</tempo></Tempo>" if opening else "")
+    def staff(i):
+        bars = "".join(
+            f"<Measure><voice>{tempo if (n == 0 and i == 1) else ''}"
+            "<Chord><durationType>whole</durationType></Chord></voice></Measure>"
+            for n in range(count))
+        return f'<Staff id="{i}">{bars}</Staff>'
+    return etree.fromstring(
+        f"<museScore><Score>{''.join(staff(i) for i in range(1, staves + 1))}"
+        "</Score></museScore>")
+
+
+def _tempos(root):
+    """(bar, bpm) of every tempo mark, top staff first."""
+    out = []
+    for staff in root.findall("./Score/Staff"):
+        for n, measure in enumerate(staff.findall("Measure"), 1):
+            for tempo in measure.iter("Tempo"):
+                out.append((n, round(float(tempo.findtext("tempo")) * 60, 3)))
+    return out
+
+
+def test_a_tempo_change_lands_at_the_start_of_its_bar_on_the_top_staff():
+    root = _bars(4)
+    assert add_tempo_changes(root, [{"measure": 3, "bpm": 112}]) == 1
+
+    assert _tempos(root) == [(3, 112.0)]
+    voice = root.find("./Score/Staff/Measure[3]/voice")
+    assert voice[0].tag == "Tempo" and voice[1].tag == "Chord"
+    assert voice[0].findtext("visible") == "0"
+
+
+def test_back_to_start_plays_at_the_opening_tempo():
+    root = _bars(5)
+    add_opening_tempo(root, 80)
+    add_tempo_changes(root, [{"measure": 2, "bpm": 120}, {"measure": 4, "bpm": START}])
+
+    assert _tempos(root) == [(1, 80.0), (2, 120.0), (4, 80.0)]
+
+
+def test_back_to_start_follows_a_score_that_carries_its_own_opening():
+    root = _bars(3, opening="1.5")
+    add_tempo_changes(root, [{"measure": 3, "bpm": START}])
+    assert _tempos(root) == [(1, 90.0), (3, 90.0)]
+
+
+def test_a_mark_already_at_that_bar_is_replaced_on_every_staff():
+    root = _bars(3)
+    lower = root.find("./Score/Staff[2]/Measure[2]/voice")
+    lower.insert(0, etree.fromstring("<Tempo><tempo>2</tempo></Tempo>"))
+
+    add_tempo_changes(root, [{"measure": 2, "bpm": 60}])
+    assert _tempos(root) == [(2, 60.0)]
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"measure": 1, "bpm": 100}, "bar 1"),
+    ({"measure": 9, "bpm": 100}, "bars 1-3"),
+    ({"measure": 2, "bpm": START}, "has none"),
+])
+def test_a_change_the_score_cannot_take_is_refused(change, message):
+    with pytest.raises(ValueError, match=message):
+        add_tempo_changes(_bars(3), [change])
+
+
+def test_prepare_puts_the_changes_only_in_its_copy(tmp_path):
+    original = tmp_path / "score.mscx"
+    original.write_bytes(etree.tostring(_bars(3)))
+    before = original.read_text()
+
+    path, _ = prepare(str(original), str(tmp_path), initial_bpm=80,
+                      tempo_changes=[{"measure": 2, "bpm": 132},
+                                     {"measure": 3, "bpm": START}])
+
+    assert _tempos(etree.parse(path).getroot()) == [(1, 80.0), (2, 132.0), (3, 80.0)]
+    assert original.read_text() == before

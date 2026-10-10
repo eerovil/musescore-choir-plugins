@@ -282,6 +282,9 @@ table.grid .undernote:empty { display: none; }
 .free-note.err { color: #b3261e; }
 .playlists .plrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
 .playlists .plrow label { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.tempo-row { flex-wrap: nowrap; }
+.tempo-row input[type=number] { min-width: 0; }
+.tempo-row label.tempo-start { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--text); white-space: nowrap; }
 .playlists .plnote { color: var(--muted); font-size: 0.9em; }
 .playlists .plhide { flex: none; font-size: 0.85em; padding: 2px 8px; }
 

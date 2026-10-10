@@ -96,3 +96,18 @@ def test_a_fermata_plays_one_beat_longer_than_written(fermata_mscx, tmp_path):
     source, _ = prepare(fermata_mscx, str(tmp_path))
     midi = mido.MidiFile(audio_mod.run_musescore(source, str(tmp_path / "s.mid")))
     assert midi.length == pytest.approx(4.5, abs=0.01)
+
+
+def test_a_recorded_tempo_change_reaches_musescores_playback_clock(fermata_mscx, tmp_path):
+    """#387: the bar a change names plays at its BPM, on the clock and the audio."""
+    source, _ = prepare(fermata_mscx, str(tmp_path), initial_bpm=80,
+                        tempo_changes=[{"measure": 2, "bpm": 140}])
+    tempo = TempoMap.from_midi(audio_mod.run_musescore(source, str(tmp_path / "c.mid")))
+
+    def bpm_at(quarter):
+        return 60 * 0.5 / (tempo.seconds(quarter + 0.5) - tempo.seconds(quarter))
+
+    # 4/4: bar 2 starts at quarter 4. Bar 1 opens at 80 (its fermata comes later).
+    assert round(bpm_at(0)) == 80
+    assert round(bpm_at(4)) == 140
+    assert round(bpm_at(7)) == 140

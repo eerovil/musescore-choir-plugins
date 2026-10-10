@@ -261,8 +261,9 @@ def _publish_client(monkeypatch, tmp_path):
     monkeypatch.setattr(publish.urllib.request, "urlopen", cf)
     seen = {}
 
-    def fake_bundle(cleaned, out_dir, *, initial_bpm=None, log=lambda m: None):
-        seen.update(cleaned=cleaned, initial_bpm=initial_bpm)
+    def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None,
+                    log=lambda m: None):
+        seen.update(cleaned=cleaned, initial_bpm=initial_bpm, tempo_changes=tempo_changes)
         return _bundle(tmp_path)
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)
     return TestClient(server.app), cf, seen

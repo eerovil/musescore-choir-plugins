@@ -1247,6 +1247,12 @@ SCROLL_QUALITY = {
 }
 
 
+def bar_count(mscx_path: str) -> int:
+    """How many bars the score has, counted on its first staff."""
+    staff = etree.parse(mscx_path).getroot().find("Score/Staff")
+    return len(staff.findall("Measure")) if staff is not None else 0
+
+
 def has_opening_tempo(mscx_path: str) -> bool:
     """Whether the score supplies its own tempo at the opening."""
     from src.scrollvideo.score import has_opening_tempo as score_has_opening_tempo
@@ -1279,9 +1285,16 @@ def _staves_setting(groups) -> Dict:
     return {"staves": [list(g) for g in groups]} if groups else {}
 
 
+def _tempo_setting(changes) -> Dict:
+    """The preview-key entry for recorded tempo changes (#387); nothing when there
+    are none, so a song without any keeps the previews it already has."""
+    return {"tempos": [dict(c) for c in changes]} if changes else {}
+
+
 def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                      quality: str = "4k", hardware_encoding: bool = True,
                      initial_bpm: Optional[int] = None,
+                     tempo_changes: Optional[List[Dict]] = None,
                      top_margin_percent: float = 0.0,
                      bottom_margin_percent: float = 0.0,
                      system_starts: Optional[List[int]] = None,
@@ -1303,6 +1316,7 @@ def run_scroll_video(song_dir: str, cleaned_path: str, name: str, *,
                         width=width, height=height, fps=fps, log=log,
                         progress=progress, hardware_encoding=hardware_encoding,
                         initial_bpm=initial_bpm,
+                        tempo_changes=tempo_changes or None,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent,
                         system_starts=system_starts,
@@ -1336,6 +1350,7 @@ def _preview_revision(key: str) -> str:
 
 def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                    initial_bpm: Optional[int] = None,
+                   tempo_changes: Optional[List[Dict]] = None,
                    top_margin_percent: float = 0.0,
                    bottom_margin_percent: float = 0.0,
                    system_starts: Optional[List[int]] = None,
@@ -1362,7 +1377,8 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
                 "bottom": bottom_margin_percent,
                 "systems": list(system_starts or []),
                 "ratio": spacing_mod.DEFAULT_MAX_RATIO,
-                **_staves_setting(staff_groups)}
+                **_staves_setting(staff_groups),
+                **_tempo_setting(tempo_changes)}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     path = os.path.join(cache_dir, PREVIEW_PAYLOAD)
@@ -1378,7 +1394,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
 
     shutil.rmtree(cache_dir, ignore_errors=True)
     payload = preview(cleaned_path, cache_dir, width=width, height=height, fps=fps,
-                      initial_bpm=initial_bpm,
+                      initial_bpm=initial_bpm, tempo_changes=tempo_changes or None,
                       spacing_ratio=settings["ratio"],
                       top_margin_percent=top_margin_percent,
                       bottom_margin_percent=bottom_margin_percent,
@@ -1395,6 +1411,7 @@ def scroll_preview(song_dir: str, cleaned_path: str, *, quality: str = "4k",
 
 def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: str, *,
                          quality: str = "4k", initial_bpm: Optional[int] = None,
+                         tempo_changes: Optional[List[Dict]] = None,
                          top_margin_percent: float = 0.0,
                          bottom_margin_percent: float = 0.0,
                          system_starts: Optional[List[int]] = None,
@@ -1419,7 +1436,8 @@ def scroll_preview_audio(song_dir: str, cleaned_path: str, mix: str, revision: s
                 "bottom": bottom_margin_percent,
                 "systems": list(system_starts or []),
                 "ratio": spacing_mod.DEFAULT_MAX_RATIO,
-                **_staves_setting(staff_groups)}
+                **_staves_setting(staff_groups),
+                **_tempo_setting(tempo_changes)}
     key = _preview_key(cleaned_path, settings)
     cache_dir = os.path.join(song_dir, PREVIEW_CACHE)
     source = os.path.join(cache_dir, AUDIO_SOURCE)

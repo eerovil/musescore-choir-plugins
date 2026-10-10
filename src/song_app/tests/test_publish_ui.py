@@ -73,7 +73,7 @@ def live(tmp_path, monkeypatch):
     cf = FakeCloudflare()
     monkeypatch.setattr(publish.urllib.request, "urlopen", cf)
     monkeypatch.setattr(publish, "build_bundle",
-                        lambda cleaned, out, initial_bpm=None, log=None: _bundle(
+                        lambda cleaned, out, initial_bpm=None, tempo_changes=None, log=None: _bundle(
                             tmp_path, parts=("T1", "T2", "B1", "B2")))
 
     song = state.create("Hanget soi", per_system=False, voicing="men")

@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Record stage: **Tempo changes** — list the bars where the page changes speed,
+  each with its BPM or "back to start" (*Tempo I*). The videos, their audio, the
+  preview and Publish all follow them. They are kept with the Record settings, so
+  a re-clean leaves them alone; render again to hear them. (#387)
 - Upload stage: **Publish** sends a song to the new Cloudflare stemmanauhat site
   for one choir (jm, naiskuoro or the public demo): the score as MusicXML, one MP3
   per part (each part on its own, from the same MuseScore as the videos) and a

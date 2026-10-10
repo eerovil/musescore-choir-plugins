@@ -200,13 +200,15 @@ def _mp3(wav: str, out: str) -> str:
 
 
 def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] = None,
+                 tempo_changes: Optional[List[Dict]] = None,
                  log: Logger = _noop) -> Bundle:
     """MusicXML, one MP3 per part and the timing, made off one prepared score."""
     from concurrent.futures import ThreadPoolExecutor
 
     from src.scrollvideo import audio, score
 
-    source, dropped = score.prepare(cleaned_path, out_dir, initial_bpm=initial_bpm)
+    source, dropped = score.prepare(cleaned_path, out_dir, initial_bpm=initial_bpm,
+                                    tempo_changes=tempo_changes)
     if dropped:
         log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
     names = audio.part_names(etree.parse(source).getroot())
