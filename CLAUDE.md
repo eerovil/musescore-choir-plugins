@@ -2754,6 +2754,16 @@ to `entry["tstamp"]`.
   fermata's beat to the next note or rest on *any* staff. The clock, the audio and
   the preview all come off that copy, so a re-render is enough — no re-clean.
   `FERMATA_HOLD` is in the preview's cache key.
+- **Tempo changes are the Record panel's, not the score's** (#387,
+  `score.add_tempo_changes`). Cleaning deletes tempo marks and a scan never had
+  any, so a song that changes speed played at one BPM. `record.tempo_changes`
+  (`[{"measure": 13, "bpm": 112}, {"measure": 23, "bpm": "start"}]`, bars counted
+  from 1, bar 1 being the opening BPM) is checked by `server._tempo_changes` and
+  written into the render's copy as hidden tempo marks at the start of each bar;
+  `"start"` is the tempo the copy opens at. The MIDI clock, the mixes, the preview
+  (its cache key carries them) and Publish all come off that copy. Kept beside the
+  BPM rather than in `fixes.json`: it is a playback setting, a re-clean must not
+  need it replayed, and changing it needs only a re-render.
 - `score.py` is the only edit made to the score before engraving: parts with nothing
   to sing (percussion, or a staff of only rests — the click track
   `add_rest_track.qml` adds) are dropped, along with the staves they own. They would

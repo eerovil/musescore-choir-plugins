@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Record stage: **Tempo changes** — list the bars where the page changes speed,
+  each with its BPM or "back to start" (*Tempo I*). The videos, their audio, the
+  preview and Publish all follow them. They are kept with the Record settings, so
+  a re-clean leaves them alone; render again to hear them. (#387)
 - Publish: a song can now be in the public list and a choir's list at once.
   Publishing to public no longer takes it off the choir's list, and publishing to
   a choir no longer takes it off the public one; moving it between jm and

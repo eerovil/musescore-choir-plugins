@@ -47,17 +47,85 @@ def add_opening_tempo(root: etree._Element, bpm: int) -> bool:
     if voice is None:
         raise ValueError("The score has no opening voice to attach a tempo to")
 
+    voice.insert(_bar_start(voice), _tempo_mark(bpm))
+    return True
+
+
+def _tempo_mark(bpm: float) -> etree._Element:
+    """An invisible tempo mark, written the way MuseScore writes "♩ = bpm"."""
     tempo = etree.Element("Tempo")
     etree.SubElement(tempo, "tempo").text = format(bpm / 60, ".12g")
     etree.SubElement(tempo, "visible").text = "0"
     text = etree.SubElement(tempo, "text")
     etree.SubElement(text, "sym").text = "metNoteQuarterUp"
-    text[-1].tail = f" = {bpm}"
+    text[-1].tail = f" = {format(bpm, 'g')}"
+    return tempo
 
-    index = next((i for i, child in enumerate(voice)
-                  if child.tag in ("Chord", "Rest", "location")), len(voice))
-    voice.insert(index, tempo)
-    return True
+
+def _bar_start(voice: etree._Element) -> int:
+    """Where a mark at the start of this voice's bar goes: before its first event."""
+    return next((i for i, child in enumerate(voice)
+                 if child.tag in ("Chord", "Rest", "location")), len(voice))
+
+
+def opening_bpm(root: etree._Element) -> Optional[float]:
+    """The tempo the score opens at, in quarter notes a minute, or None."""
+    score = root.find("Score")
+    for staff in score.findall("Staff") if score is not None else []:
+        measure = staff.find("Measure")
+        for voice in measure.findall("voice") if measure is not None else []:
+            for element in voice:
+                if element.tag == "Tempo" and element.findtext("tempo"):
+                    return float(element.findtext("tempo")) * 60
+                if element.tag in ("Chord", "Rest", "location"):
+                    break
+    return None
+
+
+# A tempo change a person records on the Record panel (#387): from this bar on,
+# play at `bpm`, or at the opening tempo when it is START ("Tempo I"). Cleaning
+# keeps no tempo marks and a scan never had any, so the render puts them back.
+START = "start"
+
+
+def add_tempo_changes(root: etree._Element, changes: Sequence[Dict]) -> int:
+    """Put an invisible tempo mark at the start of each listed bar. Returns how many.
+
+    `changes` are `{"measure": n, "bpm": 112 or "start"}`, bars counted from 1 the
+    way recorded fixes count them. A mark already standing at the start of that
+    bar is replaced, on every staff, so the bar plays at the tempo asked for.
+    "start" is the tempo the score opens at, so add the opening tempo first.
+    """
+    staves = root.findall("./Score/Staff")
+    if not changes or not staves:
+        return 0
+    start = opening_bpm(root)
+    bars = staves[0].findall("Measure")
+    added = 0
+    for change in changes:
+        measure, bpm = int(change["measure"]), change["bpm"]
+        if bpm == START:
+            if start is None:
+                raise ValueError(f"Bar {measure} goes back to the opening tempo, "
+                                 "but the score has none")
+            bpm = start
+        if not 1 < measure <= len(bars):
+            raise ValueError(f"A tempo change at bar {measure}: the score has "
+                             f"bars 1-{len(bars)}, and bar 1 is the opening tempo")
+        for staff in staves:
+            staff_bars = staff.findall("Measure")
+            if measure > len(staff_bars):
+                continue
+            for voice in staff_bars[measure - 1].findall("voice"):
+                for element in list(voice)[:_bar_start(voice)]:
+                    if element.tag == "Tempo":
+                        voice.remove(element)
+        voice = bars[measure - 1].find("voice")
+        if voice is None:
+            voice = etree.SubElement(bars[measure - 1], "voice")
+        voice.insert(_bar_start(voice), _tempo_mark(float(bpm)))
+        added += 1
+    return added
 
 
 # How long a fermata holds (#380). Cleaning writes `timeStretch` 3, which made a
@@ -212,7 +280,8 @@ def drop_parts(root: etree._Element, names: List[str]) -> int:
 
 
 def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
-            initial_bpm: Optional[int] = None) -> Tuple[str, List[str]]:
+            initial_bpm: Optional[int] = None,
+            tempo_changes: Optional[Sequence[Dict]] = None) -> Tuple[str, List[str]]:
     """Return (score to render, names dropped).
 
     The original file is never touched; when no render-only edit is needed it is
@@ -231,6 +300,7 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     changed = any(fix_staff_display(root).values()) or changed
     if initial_bpm is not None:
         changed = add_opening_tempo(root, initial_bpm) or changed
+    changed = bool(add_tempo_changes(root, tempo_changes or ())) or changed
     changed = bool(hold_fermatas(root)) or changed
     if not changed:
         return mscx_path, []

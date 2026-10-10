@@ -41,16 +41,13 @@ from src.song_app import job_state, server, state
 
 pytestmark = pytest.mark.browser
 
-SCORE = """<museScore><Score>
-<Part><trackName>S</trackName><Staff id="1"/></Part>
-<Part><trackName>A</trackName><Staff id="2"/></Part>
-<Part><trackName>T</trackName><Staff id="3"/></Part>
-<Part><trackName>B</trackName><Staff id="4"/></Part>
-<Staff id="1"><Measure><voice><Chord><Note><pitch>60</pitch></Note></Chord></voice></Measure></Staff>
-<Staff id="2"><Measure><voice><Chord><Note><pitch>55</pitch></Note></Chord></voice></Measure></Staff>
-<Staff id="3"><Measure><voice><Chord><Note><pitch>50</pitch></Note></Chord></voice></Measure></Staff>
-<Staff id="4"><Measure><voice><Chord><Note><pitch>45</pitch></Note></Chord></voice></Measure></Staff>
-</Score></museScore>"""
+# Forty bars, so a tempo change (#387) has somewhere to go.
+SCORE = "<museScore><Score>" + "".join(
+    f'<Part><trackName>{name}</trackName><Staff id="{i}"/></Part>'
+    for i, name in enumerate("SATB", 1)) + "".join(
+    f'<Staff id="{i}">' + f"<Measure><voice><Chord><Note><pitch>{pitch}</pitch></Note>"
+    "</Chord></voice></Measure>" * 40 + "</Staff>"
+    for i, pitch in ((1, 60), (2, 55), (3, 50), (4, 45))) + "</Score></museScore>"
 
 
 def _free_port():
@@ -490,3 +487,55 @@ def test_the_save_row_fits_a_phone(live, page):
     expect(page.get_by_role("button", name="Render all 4 parts")).to_be_in_viewport()
     assert not _page_overflows(page)
     _screenshot(page, "issue-301-record-390.png")
+
+
+def test_tempo_changes_are_listed_kept_and_rendered(record_panel):
+    """#387: a song that changes speed on the page says so on the Record panel."""
+    view, slug, _ = record_panel
+    try:
+        for bar, bpm in (("13", "112"), ("23", None), ("34", "132")):
+            view.get_by_role("button", name="+ Add tempo change").click()
+            row = view.locator(".tempo-row").last
+            row.locator("[data-tempo-bar]").fill(bar)
+            if bpm:
+                row.locator("[data-tempo-bpm]").fill(bpm)
+            else:
+                row.locator("[data-tempo-start]").check()
+                expect(row.locator("[data-tempo-bpm]")).to_be_disabled()
+        expect(view.locator("[data-save-note]")).to_have_text("Unsaved changes")
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_have_text("Saved")
+        expected = [{"measure": 13, "bpm": 112}, {"measure": 23, "bpm": "start"},
+                    {"measure": 34, "bpm": 132}]
+        assert state.load(slug).data["record"]["tempo_changes"] == expected
+
+        view.reload()
+        view.locator(".stagebar .step", has_text="Record").click()
+        expect(view.locator(".tempo-row")).to_have_count(3)
+        expect(view.locator(".tempo-row").nth(1).locator("[data-tempo-start]")).to_be_checked()
+        if evidence := os.getenv("ISSUE_387_EVIDENCE_DIR"):
+            os.makedirs(evidence, exist_ok=True)
+            view.locator(".record-common").screenshot(
+                path=os.path.join(evidence, "issue-387-tempo-changes.png"))
+
+        view.locator(".tempo-row").last.get_by_role("button", name="✕").click()
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_have_text("Saved")
+        assert state.load(slug).data["record"]["tempo_changes"] == expected[:2]
+
+        view.locator(".tempo-row").first.locator("[data-tempo-bar]").fill("1")
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_contain_text("bar 1")
+
+        # A fraction is refused, not rounded down to another bar or speed.
+        first = view.locator(".tempo-row").first
+        first.locator("[data-tempo-bar]").fill("13.5")
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_contain_text("whole bar number")
+        first.locator("[data-tempo-bar]").fill("13")
+        first.locator("[data-tempo-bpm]").fill("112.5")
+        view.get_by_role("button", name="Save settings").click()
+        expect(view.locator("[data-save-note]")).to_contain_text("whole number")
+        assert state.load(slug).data["record"]["tempo_changes"] == expected[:2]
+    finally:
+        _forget_settings(slug)

@@ -24,7 +24,7 @@ from . import (agentdeck, bar_readings, free_videos, health, heavy_slot, homr_in
                pdf_systems, pipeline, playlists, problems, publish, pwa_assets, scan, site_refresh,
                state, system_finder, verification)
 from src.clean_score.utils.score_fixes import FixError
-from src.scrollvideo.score import format_groups, parse_groups
+from src.scrollvideo.score import START as START_TEMPO, format_groups, parse_groups
 from src.media_root import media_dir
 
 SCRIPT_DIR = state.SCRIPT_DIR
@@ -1514,6 +1514,58 @@ def _staff_groups(cleaned: str, text) -> str:
         raise HTTPException(400, str(exc)) from None
 
 
+def _whole_number(value) -> int:
+    """`value` as an int when it is a whole number, or ValueError. `int()` alone
+    would turn bar 13.5 into 13 and play the change in the wrong place."""
+    if isinstance(value, bool):
+        raise ValueError(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+        return int(value)
+    raise ValueError(value)
+
+
+def _tempo_changes(cleaned: str, value) -> List[Dict]:
+    """Tempo changes (#387) checked against this score, in the one way they are
+    stored: `[{"measure": 13, "bpm": 112}, {"measure": 23, "bpm": "start"}]`,
+    sorted by bar. Accepts that list or the same as JSON text (a query string
+    carries it that way). A bad bar or BPM is a 400 naming it."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value.strip() else []
+        except ValueError:
+            raise HTTPException(400, "Tempo changes are not readable") from None
+    if not isinstance(value, list):
+        raise HTTPException(400, "Tempo changes must be a list")
+    bars = pipeline.bar_count(cleaned)
+    out: Dict[int, Dict] = {}
+    for item in value:
+        try:
+            measure = _whole_number(item.get("measure"))
+        except (AttributeError, TypeError, ValueError):
+            raise HTTPException(400, "Each tempo change needs a whole bar number") from None
+        if not 2 <= measure <= bars:
+            raise HTTPException(400, f"Tempo change at bar {measure}: pick a bar from 2 "
+                                     f"to {bars} (bar 1 plays at the opening tempo)")
+        bpm = item.get("bpm")
+        if bpm != START_TEMPO:
+            try:
+                bpm = _whole_number(bpm)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"Tempo change at bar {measure}: BPM must be "
+                                         "a whole number or back to start") from None
+            if not 20 <= bpm <= 300:
+                raise HTTPException(400, f"Tempo change at bar {measure}: BPM must be "
+                                         "between 20 and 300")
+        if measure in out:
+            raise HTTPException(400, f"Bar {measure} has two tempo changes")
+        out[measure] = {"measure": measure, "bpm": bpm}
+    return [out[m] for m in sorted(out)]
+
+
 def _remember_record_settings(song: state.Song, **wanted) -> None:
     """Keep the Record settings this song was last shown or rendered with.
 
@@ -1561,6 +1613,8 @@ def _scroll_settings(song: state.Song, opts: Dict) -> Dict:
     if cleaned and os.path.exists(cleaned):
         out["staff_groups"] = _staff_groups(
             cleaned, opts.get("staff_groups", remembered.get("staff_groups", "")))
+        out["tempo_changes"] = _tempo_changes(
+            cleaned, opts.get("tempo_changes", remembered.get("tempo_changes", [])))
         if not pipeline.has_opening_tempo(cleaned):
             try:
                 bpm = int(opts.get("bpm", remembered.get("bpm", 80)))
@@ -1572,11 +1626,18 @@ def _scroll_settings(song: state.Song, opts: Dict) -> Dict:
     return out
 
 
+def _remembered_tempos(song: state.Song, asked: Optional[str]):
+    """The tempo changes a preview asked for, or this song's when it named none: a
+    preview opened without them must not play, nor save, a song without them."""
+    return song.data.get("record", {}).get("tempo_changes", []) if asked is None else asked
+
+
 @app.get("/api/songs/{slug}/scroll-preview")
 async def api_scroll_preview(slug: str, quality: str = "4k",
                              top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
                              bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
-                             bpm: Optional[int] = None, staff_groups: str = ""):
+                             bpm: Optional[int] = None, staff_groups: str = "",
+                             tempo_changes: Optional[str] = None):
     """The scrolling render as pictures the browser can play, before any video exists.
 
     This is the picture without the encoding: the same engraving, viewport, clock,
@@ -1608,6 +1669,8 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
     }
     groups = _staff_groups(cleaned, staff_groups)
     settings["staff_groups"] = parse_groups(groups)
+    tempos = _tempo_changes(cleaned, _remembered_tempos(song, tempo_changes))
+    settings["tempo_changes"] = tempos
     try:
         payload = await asyncio.get_running_loop().run_in_executor(
             None, lambda: pipeline.scroll_preview(song.dir, cleaned, **settings))
@@ -1620,7 +1683,7 @@ async def api_scroll_preview(slug: str, quality: str = "4k",
     remember = {"quality": settings["quality"],
                 "top_margin": settings["top_margin_percent"],
                 "bottom_margin": settings["bottom_margin_percent"],
-                "staff_groups": groups}
+                "staff_groups": groups, "tempo_changes": tempos}
     if settings["initial_bpm"]:
         remember["bpm"] = settings["initial_bpm"]
     _remember_record_settings(_require(slug), **remember)
@@ -1647,7 +1710,8 @@ async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
                                    quality: str = "4k",
                                    top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
                                    bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
-                                   bpm: Optional[int] = None, staff_groups: str = ""):
+                                   bpm: Optional[int] = None, staff_groups: str = "",
+                                   tempo_changes: Optional[str] = None):
     """One selected MuseScore mix, prepared lazily for the browser preview."""
     song = _require(slug)
     cleaned = song.cleaned_path()
@@ -1661,6 +1725,8 @@ async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
         "system_starts": _printed_systems(song),
     }
     settings["staff_groups"] = parse_groups(_staff_groups(cleaned, staff_groups))
+    settings["tempo_changes"] = _tempo_changes(
+        cleaned, _remembered_tempos(song, tempo_changes))
     try:
         path, reused = await asyncio.get_running_loop().run_in_executor(
             None, lambda: pipeline.scroll_preview_audio(
@@ -1732,6 +1798,7 @@ def _run_record(slug: str, opts: Dict) -> None:
                                                     quality=quality,
                                                     hardware_encoding=hardware_encoding,
                                                     initial_bpm=opts.get("bpm"),
+                                                    tempo_changes=opts.get("tempo_changes"),
                                                     system_starts=_printed_systems(song),
                                                     staff_groups=parse_groups(
                                                         opts.get("staff_groups")),
@@ -1839,7 +1906,7 @@ def _run_record(slug: str, opts: Dict) -> None:
 
 
 RECORD_SETTINGS = ("quality", "hardware_encoding", "top_margin", "bottom_margin",
-                   "staff_groups", "bpm")
+                   "staff_groups", "bpm", "tempo_changes")
 
 
 @app.post("/api/songs/{slug}/record-settings")
@@ -1997,8 +2064,10 @@ def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
         published = publish.records(song.data.get("publish"))
         with tempfile.TemporaryDirectory() as tmp:
             with heavy_slot.heavy_slot(f"song app publish {song.slug}", log=log) as slot:
-                bundle = publish.build_bundle(cleaned, tmp, initial_bpm=bpm,
-                                              log=slot.guard(log))
+                bundle = publish.build_bundle(
+                    cleaned, tmp, initial_bpm=bpm,
+                    tempo_changes=song.data.get("record", {}).get("tempo_changes"),
+                    log=slot.guard(log))
                 slot.check()
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,

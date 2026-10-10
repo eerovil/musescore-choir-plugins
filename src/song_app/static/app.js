@@ -2808,6 +2808,43 @@ function panelRecord(panel, song, P, refresh, actions) {
     type: "number", value: rec.bpm ?? 80, min: 20, max: 300, step: 1,
     style: "width:120px"
   });
+  // Tempo changes printed in the score (#387): from a bar on, play at another
+  // BPM, or back at the opening one ("Tempo I"). Cleaning keeps no tempo marks,
+  // so the render puts these back; they live with the Record settings.
+  const tempoRows = el("div", { className: "tempo-changes", "data-tempo-changes": "" });
+  const tempoChanged = () => {
+    actions.previewInputsChanged();
+    saveNote.className = "hint save-note";
+    saveNote.textContent = "Unsaved changes";
+  };
+  const addTempoRow = (change = {}) => {
+    const start = change.bpm === "start";
+    const bar = el("input", { type: "number", min: 2, step: 1, value: change.measure ?? "",
+      placeholder: "bar", style: "width:64px", "data-tempo-bar": "" });
+    const speed = el("input", { type: "number", min: 20, max: 300, step: 1,
+      value: start ? "" : (change.bpm ?? ""), disabled: start, placeholder: "BPM",
+      style: "width:72px", "data-tempo-bpm": "" });
+    const back = el("input", { type: "checkbox", checked: start, "data-tempo-start": "" });
+    const row = el("div", { className: "row tempo-row" },
+      el("span", {}, "Bar"), bar, speed,
+      el("label", { className: "tempo-start" }, back, " back to start"),
+      el("button", { title: "Remove this tempo change", onclick: () => { row.remove(); tempoChanged(); } }, "✕"));
+    back.addEventListener("input", () => { speed.disabled = back.checked; });
+    for (const control of [bar, speed, back]) control.addEventListener("input", tempoChanged);
+    tempoRows.append(row);
+    return row;
+  };
+  for (const change of rec.tempo_changes || []) addTempoRow(change);
+  const tempoChanges = () => [...tempoRows.querySelectorAll(".tempo-row")]
+    .map((row) => ({
+      measure: Number(row.querySelector("[data-tempo-bar]").value),
+      start: row.querySelector("[data-tempo-start]").checked,
+      bpm: Number(row.querySelector("[data-tempo-bpm]").value),
+    }))
+    .filter((c) => c.measure)
+    .map((c) => ({ measure: c.measure, bpm: c.start ? "start" : c.bpm }));
+  const addTempo = el("button", { onclick: () => { addTempoRow().querySelector("input").focus(); } },
+    "+ Add tempo change");
   const delay = el("input", { type: "number", value: rec.audio_delay_ms ?? 1300, step: 50, style: "width:120px" });
   const redoMp3 = el("input", { type: "checkbox" });
   const redoVideo = el("input", { type: "checkbox" });
@@ -2826,6 +2863,7 @@ function panelRecord(panel, song, P, refresh, actions) {
                top_margin: Number(topMargin.value) || 0,
                bottom_margin: Number(bottomMargin.value) || 0,
                staff_groups: staffGroups.value.trim(),
+               tempo_changes: tempoChanges(),
                ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}) },
              "Rendering the scrolling video…")
       : post({ audio_delay_ms: Number(delay.value) || 1300,
@@ -2842,7 +2880,11 @@ function panelRecord(panel, song, P, refresh, actions) {
       el("label", {}, "Tempo (BPM)"),
       el("div", { className: "row" }, bpm,
         el("span", { className: "hint" }, "this score has no opening tempo marking"))
-    ] : []));
+    ] : []),
+    el("label", {}, "Tempo changes"),
+    tempoRows,
+    el("div", { className: "row" }, addTempo,
+      el("span", { className: "hint" }, "where the page changes speed; bars counted from 1")));
   const scrollAdvanced = el("div", {},
     el("label", {}, "Vertical margins"),
     el("div", { className: "row" },
@@ -2879,6 +2921,7 @@ function panelRecord(panel, song, P, refresh, actions) {
     top_margin: Number(topMargin.value) || 0,
     bottom_margin: Number(bottomMargin.value) || 0,
     staff_groups: staffGroups.value.trim(),
+    tempo_changes: JSON.stringify(tempoChanges()),
     ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
   });
   // Saved on Preview and on Save settings (#301), not only once a preview or a

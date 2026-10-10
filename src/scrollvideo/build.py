@@ -233,6 +233,7 @@ class Prepared:
 
 def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
             keep_silent: bool = False, initial_bpm: Optional[int] = None,
+            tempo_changes: Optional[Sequence[dict]] = None,
             spacing_ratio: float = spacing_mod.DEFAULT_MAX_RATIO,
             smooth_seconds: float = SMOOTH_SECONDS, fps: int = 60,
             top_margin_percent: float = 0.0, bottom_margin_percent: float = 0.0,
@@ -264,7 +265,8 @@ def prepare(mscx_path: str, tmp: str, *, parts: Optional[Sequence[str]] = None,
     _margin_viewport(1.0, top_margin_percent, bottom_margin_percent)
 
     source, dropped = score_mod.prepare(mscx_path, tmp, keep_silent=keep_silent,
-                                        initial_bpm=initial_bpm)
+                                        initial_bpm=initial_bpm,
+                                        tempo_changes=tempo_changes)
     if dropped:
         log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
 
@@ -471,6 +473,7 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
                  bottom_margin_percent: float = 0.0,
                  basename: Optional[str] = None,
                  initial_bpm: Optional[int] = None,
+                 tempo_changes: Optional[Sequence[dict]] = None,
                  system_starts: Optional[Sequence[int]] = None,
                  hardware_encoding: bool = True,
                  audio_cache_dir: Optional[str] = None,
@@ -512,7 +515,8 @@ def build_videos(mscx_path: str, out_dir: str, *, parts: Optional[Sequence[str]]
         # Everything up to the pixels, and every refusal, is decided here — the same
         # call the browser preview makes, so what a singer previews is what renders.
         ready = prepare(mscx_path, tmp, parts=parts, keep_silent=keep_silent,
-                        initial_bpm=initial_bpm, spacing_ratio=spacing_ratio,
+                        initial_bpm=initial_bpm, tempo_changes=tempo_changes,
+                        spacing_ratio=spacing_ratio,
                         smooth_seconds=smooth_seconds, fps=fps,
                         top_margin_percent=top_margin_percent,
                         bottom_margin_percent=bottom_margin_percent,
