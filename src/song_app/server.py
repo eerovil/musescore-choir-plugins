@@ -2047,6 +2047,7 @@ def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
         cleaned = song.cleaned_path()
         bpm = None if pipeline.has_opening_tempo(cleaned) \
             else song.data.get("record", {}).get("bpm", 80)
+        published = publish.records(song.data.get("publish"))
         with tempfile.TemporaryDirectory() as tmp:
             with heavy_slot.heavy_slot(f"song app publish {song.slug}", log=log) as slot:
                 bundle = publish.build_bundle(
@@ -2057,10 +2058,15 @@ def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
                 client=publish.Cloudflare(config),
-                previous=song.data.get("publish", {}).get("site"), log=log)
+                published=published, log=log)
+        record["published_against"] = state.file_fingerprint(cleaned)
         song = _require(slug)
-        song.data["publish"] = {"site": record, "choir": choir, "error": None,
-                                "published_against": state.file_fingerprint(cleaned)}
+        sites = publish.records(song.data.get("publish"))
+        for gone in publish.replaced(choir, sites):
+            del sites[gone]
+        sites[choir] = record
+        # One record per choir (#384): a song can be in public and one choir at once.
+        song.data["publish"] = {"sites": sites, "choir": choir, "error": None}
         song.save()
         _job_finish(song, "publish")
     except Exception as exc:

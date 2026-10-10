@@ -3098,7 +3098,11 @@ const CHOIRS = { jm: "Joensuun Mieslaulajat (jm)", naiskuoro: "Naiskuoro", publi
 
 function publishSection(P, song, refresh) {
   const pub = song.publish || {};
-  const site = pub.site;
+  // One record per choir (#384); a song published before that kept one, as `site`.
+  const sites = pub.sites || (pub.site ? { [pub.site.choir]: pub.site } : {});
+  const listed = Object.keys(CHOIRS).filter((c) => sites[c])
+    .concat(Object.keys(sites).filter((c) => !(c in CHOIRS)));
+  const site = sites[pub.choir] || sites[listed[0]];
   const job = song.jobs?.publish;
   const running = job?.status === "running";
   const guess = pub.choir || { men: "jm", women: "naiskuoro" }[song.voicing] || "";
@@ -3115,11 +3119,14 @@ function publishSection(P, song, refresh) {
     status.className = "hint publish-status err";
     status.textContent = "Last publish failed: " + pub.error;
   } else if (site) {
-    const stale = pub.published_against && song.cleaned_fingerprint
-      && pub.published_against !== song.cleaned_fingerprint;
-    status.textContent = `Published to ${CHOIRS[site.choir] || site.choir} on `
-      + `${new Date(site.at * 1000).toLocaleString()} — ${site.parts.length} part(s).`
-      + (stale ? " The score has changed since; publish again to update it." : "");
+    status.textContent = listed.map((c) => {
+      const s = sites[c];
+      const against = s.published_against || pub.published_against;
+      const stale = against && song.cleaned_fingerprint && against !== song.cleaned_fingerprint;
+      return `Published to ${CHOIRS[c] || c} on `
+        + `${new Date(s.at * 1000).toLocaleString()} — ${s.parts.length} part(s).`
+        + (stale ? " The score has changed since; publish again to update it." : "");
+    }).join(" ");
   } else {
     status.textContent = "Not published yet.";
   }

@@ -128,3 +128,31 @@ def test_publish_lists_the_song_for_the_chosen_choir(live, page, size):
     page.locator(".publish-section").scroll_into_view_if_needed()
     _shot(page, f"publish-after-{size[0]}.png")
     assert errors == []
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_a_song_published_to_public_and_a_choir_shows_both(live, page, size):
+    base, slug, cf = live
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.route("**/api/songs/*/playlists", lambda route: route.fulfill(
+        json={"total": 0, "playlists": []}))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    section = page.locator(".publish-section")
+    status = section.locator(".publish-status")
+    section.locator("button.publish-btn").click()
+    expect(status).to_contain_text("Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+
+    section = page.locator(".publish-section")
+    section.locator("select.publish-choir").select_option("public")
+    section.locator("button.publish-btn").click()
+    status = page.locator(".publish-section .publish-status")
+    expect(status).to_contain_text("Published to Public demo", timeout=15000)
+    expect(status).to_contain_text("Published to Joensuun Mieslaulajat (jm)")
+    assert [row[0] for row in cf.listed("jm")] == [slug]
+    assert [row[0] for row in cf.listed("public")] == [slug]
+    page.locator(".publish-section").scroll_into_view_if_needed()
+    _shot(page, f"publish-public-and-jm-{size[0]}.png")
+    assert errors == []
