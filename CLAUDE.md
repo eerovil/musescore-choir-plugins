@@ -3172,6 +3172,27 @@ a sentence.
 Worked through twice, with the wrong turn left in, in
 `fixtures/virta-venhetta-vie/STEPS.md`.
 
+## A new song from PDF to the site (agents)
+
+An errand like "new song, put it on the new stemmanauhat site" runs every stage here, then
+publishes. The playbook above is how to read the page; this is the rest, learnt on Insomnis
+(eerovil/eeron-omat-taskit#33). The running app is at `http://localhost:8123`; drive it through its API.
+
+- **Check every bar of every part** against the page with `GET /api/songs/<slug>/bar`, before
+  lyrics. On Insomnis the notes were nearly all right; the scan swapped two parts in one chord and
+  lost or merged about twenty melisma slurs.
+- **Every correction goes in `fixes.json`**, then clean again (`POST /clean`). A hand edit to the
+  cleaned score, red marks included, is gone at the next clean. An `unmark` entry, saying what
+  was checked, is how a homr `slur?`/`tie?` mark comes off.
+- **Lyrics:** set `"parts": ["T1"]` on each entry instead of relying on the mapping. Each
+  `too_many`/`too_few` left over was a slur the page prints differently (see the table above).
+- **Tempo:** save the printed tempos with `POST /record-settings` (`bpm`, `tempo_changes`);
+  the score has none after a clean.
+- **Publish:** without the Cloudflare keys in `.env`, `POST /publish` refuses. Use
+  stemmanauhat-cf's `scripts/song-app-bundle.py` and `scripts/publish-songs.sh <choir>` instead
+  (its README). `jm` is the men's choir; only public-domain songs go in `public`.
+- Leave the Review approval to Eero.
+
 ## MuseScore plugins (`plugins/`)
 
 QML for MuseScore 3.x. **Install by copying/symlinking into
