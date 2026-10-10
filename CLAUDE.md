@@ -3172,6 +3172,37 @@ a sentence.
 Worked through twice, with the wrong turn left in, in
 `fixtures/virta-venhetta-vie/STEPS.md`.
 
+## A new song from PDF to the site (agents)
+
+An errand like "new song, put it on the new stemmanauhat site" runs every stage here, then
+publishes. The playbook above is how to read the page; this is the rest, learnt on Insomnis
+(eerovil/eeron-omat-taskit#33). The running app is at `http://localhost:8123`; drive it through its API.
+
+- **Check every bar of every part** against the page with `GET /api/songs/<slug>/bar`, before
+  lyrics. On Insomnis the notes were nearly all right; the scan swapped two parts in one chord and
+  lost or merged about twenty melisma slurs.
+- **Every correction goes in `fixes.json`**, then clean again (`POST /clean`). A hand edit to the
+  cleaned score, red marks included, is gone at the next clean. An `unmark` entry, saying what
+  was checked, is how a homr `slur?`/`tie?` mark comes off.
+- **Lyrics:** give each part its own entry and name that part in `parts`, rather than relying
+  on the mapping: `{"staff_number": 1, "text": "...", "parts": ["T1"]}`, then `["T2"]`, `["B1"]`,
+  `["B2"]` for the others (one entry per part per printed system). Each `too_many`/`too_few`
+  left over was a slur the page prints differently (see the table above).
+- **Tempo:** save the printed tempos with `POST /record-settings` (`bpm`, `tempo_changes`);
+  the score has none after a clean.
+- **Publish:** without the Cloudflare keys in `.env`, `POST /publish` refuses. Use
+  stemmanauhat-cf's scripts instead (its README): build the bundle here, then upload it from the
+  stemmanauhat-cf checkout:
+
+  ```bash
+  .venv/bin/python ~/stemmanauhat-cf/scripts/song-app-bundle.py ~/musescore-choir-plugins /tmp/bundles <slug>
+  cd ~/stemmanauhat-cf && ./scripts/publish-songs.sh jm /tmp/bundles/<slug>
+  ```
+
+  `jm` is the men's choir; only public-domain songs go in `public`. Several slugs can go in one
+  run. The bundle script passes the saved tempo changes only from eerovil/stemmanauhat-cf#30 on.
+- Leave the Review approval to Eero.
+
 ## MuseScore plugins (`plugins/`)
 
 QML for MuseScore 3.x. **Install by copying/symlinking into
