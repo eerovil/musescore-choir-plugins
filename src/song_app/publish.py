@@ -318,14 +318,43 @@ def _errors(body: bytes) -> str:
 # ---------------------------------------------------------------------------
 # Publishing
 # ---------------------------------------------------------------------------
+PUBLIC = "public"
+
+
+def records(state: Optional[Dict]) -> Dict[str, Dict]:
+    """The song's publish record per choir, out of its ``publish`` state.
+
+    A song published before #384 kept one record, under ``site``.
+    """
+    state = state or {}
+    if isinstance(state.get("sites"), dict):
+        return dict(state["sites"])
+    site = state.get("site")
+    return {site["choir"]: site} if site and site.get("choir") else {}
+
+
+def replaced(choir: str, published: Dict[str, Dict]) -> List[str]:
+    """The choirs whose listing a publish for `choir` takes away.
+
+    A song may be in the public list and one choir's list at once, so
+    publishing to ``public`` takes nothing away and publishing to a choir takes
+    away only the other private choirs: a move between two choirs stays a move.
+    """
+    if choir == PUBLIC:
+        return []
+    return [c for c in published if c not in (choir, PUBLIC)]
+
+
 def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudflare,
-            previous: Optional[Dict] = None, log: Logger = _noop) -> Dict:
+            published: Optional[Dict[str, Dict]] = None, log: Logger = _noop) -> Dict:
     """Upload `bundle` and register it for `choir`. Returns the record to keep.
 
     The files go under a fresh version prefix first; the D1 row is pointed at
     them last, so the site shows either the old version or the whole new one.
-    What the previous publish left (`previous`, the record this returned last
-    time) is taken away afterwards — its row too, when the choir changed.
+    `published` is the record each choir's last publish returned
+    (``records``). What this choir's last publish left is taken away
+    afterwards, and so is the song in any other private choir — rows and files
+    — while its public listing stays (``replaced``).
     """
     if choir not in CHOIRS:
         raise PublishError(f"Unknown choir {choir!r}; choose one of {', '.join(CHOIRS)}.")
@@ -361,23 +390,28 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     record = {"choir": choir, "slug": slug, "version": version, "prefix": prefix, "at": time.time(),
               "files": [prefix + name for name, _data, _kind in uploads],
               "parts": [p["name"] for p in parts], "duration": duration}
-    _clean_up(previous, record, client, log)
+    _clean_up(published or {}, record, client, log)
     log(f"Published to the {choir} list.")
     return record
 
 
-def _clean_up(previous: Optional[Dict], current: Dict, client: Cloudflare,
+def _clean_up(published: Dict[str, Dict], current: Dict, client: Cloudflare,
               log: Logger) -> None:
-    """Take away what the last publish left. A failure here costs storage, not the song."""
-    if not previous:
-        return
+    """Take away what this publish replaces. A failure here costs storage, not the song."""
     try:
-        if previous.get("choir") and previous["choir"] != current["choir"]:
-            client.query("DELETE FROM songs WHERE choir = ? AND slug = ?",
-                         [previous["choir"], current["slug"]])
-            log(f"Removed it from the {previous['choir']} list.")
-        for key in previous.get("files") or []:
-            if key not in current["files"]:
-                client.delete(key)
+        if current["choir"] != PUBLIC:
+            # The site's own rule (stemmanauhat-cf#20): a song is in at most one
+            # private choir, and a hand-published row we hold no record of goes too.
+            gone = client.query("DELETE FROM songs WHERE slug = ? AND choir NOT IN (?, ?) "
+                                "RETURNING choir", [current["slug"], current["choir"], PUBLIC])
+            for choir in sorted({row[0] if isinstance(row, (list, tuple)) else row.get("choir")
+                                 for result in gone for row in result.get("results") or []}):
+                log(f"Removed it from the {choir} list.")
+        stale = [published.get(current["choir"])]
+        stale += [published[c] for c in replaced(current["choir"], published)]
+        for record in stale:
+            for key in (record or {}).get("files") or []:
+                if key not in current["files"]:
+                    client.delete(key)
     except PublishError as exc:
         log(f"Could not remove the previous version's files: {exc}")

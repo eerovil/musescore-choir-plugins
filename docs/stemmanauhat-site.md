@@ -21,7 +21,7 @@ STEMMANAUHAT_R2_BUCKET=stemmanauhat   # the default
 
 Each publish writes a fresh **version prefix**, and the D1 row is pointed at it
 only after every file is there, so the site sees the old version or the whole
-new one, never half. The previous version's files are deleted afterwards.
+new one, never half. That choir's previous version's files are deleted afterwards.
 
 ```
 songs/<choir>/<slug>/<version>/      version = UTC time, 20261009T120000Z
@@ -68,8 +68,13 @@ CREATE TABLE IF NOT EXISTS songs (
 
 song-app runs that `CREATE TABLE IF NOT EXISTS` before every publish, so it
 works before the site's own migration exists; the site's migration should create
-the same table. Publishing upserts one row. Publishing a song for another choir
-moves it: the old choir's row is deleted.
+the same table. Publishing upserts one row. A song can be in the `public` list and one
+choir's list at once (#384): publishing to `public` deletes nothing, and
+publishing to a choir deletes the song's row in any *other* private choir (a
+move between `jm` and `naiskuoro`) but never its `public` row — the same rule as
+the site's own hand-publish script (eerovil/stemmanauhat-cf#20). song-app keeps
+one publish record per choir, so replacing a version deletes only that choir's
+old files.
 
 ## timing.json
 
