@@ -2274,7 +2274,9 @@ state model are in `DESIGN.md`.
   the score may be a person's own edit. Before a clean replaces the score,
   `clean_backup.stash` copies it and the records made against it (`verification`,
   `health`, `lyrics`, `stage`) to `backups/<time>/` (last 10 kept; dropped if the clean
-  fails); `POST /undo-clean` puts the newest back. `fixes.json` is not restored.
+  fails); `POST /undo-clean` puts the newest back. The stash records the fingerprint
+  the clean made (`mark_made`), and Undo refuses (409) once the score differs from it,
+  since anything done after the clean would be lost. `fixes.json` is not restored.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a

@@ -12,7 +12,9 @@ developers are listed under *Behind the scenes*.
   without cleaning. A score fixed by hand no longer shows those checks as stale. It
   only reports; it changes nothing in the score. (#391)
 - Clean: **Undo last clean** puts back the cleaned score a clean replaced, with its
-  lyrics and checks. The last 10 replaced scores are kept in `backups/`. (#391)
+  lyrics and checks. It is offered only until the score is worked on again (lyrics,
+  a fix, an upload), so it never throws that work away. The last 10 replaced scores
+  are kept in `backups/`. (#391)
 - Lyrics: importing the words no longer deletes verses 2 and up. They stay in
   the score exactly as they were; the import still writes verse 1 only. (#392)
 - Record stage: **Tempo changes** — list the bars where the page changes speed,

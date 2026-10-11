@@ -633,6 +633,7 @@ def _run_clean(slug: str) -> None:
         rel = os.path.relpath(cleaned, song.dir)
         song.data["cleaned"] = rel
         song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
+        clean_backup.mark_made(backup, song.data["cleaned_fingerprint"])
         note_check = verification.compare_notes(source_mscx, cleaned)
         song.data.setdefault("verification", {})["notes"] = {
             **note_check, "checked_against": song.data["cleaned_fingerprint"],
@@ -689,6 +690,8 @@ def api_undo_clean(slug: str) -> Dict:
             clean_backup.restore(fresh)
         except clean_backup.NothingToUndo as exc:
             raise HTTPException(400, str(exc))
+        except clean_backup.ChangedSinceClean as exc:
+            raise HTTPException(409, str(exc))
         # The restored fingerprint is in the state before the watcher sees the file
         # change, so it is read as our own write and not checked a second time.
         fresh.save()

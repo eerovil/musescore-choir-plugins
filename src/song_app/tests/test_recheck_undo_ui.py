@@ -65,9 +65,10 @@ def test_check_again_answers_the_stale_rows(live, page, monkeypatch):  # noqa: F
 def test_undo_last_clean_puts_the_score_back(live, page):  # noqa: F811
     base, song, _tmp = live
     song = _stale(song)
-    clean_backup.stash(song)
+    kept = clean_backup.stash(song)
     with open(song.cleaned_path(), "w", encoding="utf-8") as fh:
         fh.write(SCORE)       # what the clean made
+    clean_backup.mark_made(kept, state.file_fingerprint(song.cleaned_path()))
     fresh = state.load(song.slug)
     fresh.data["cleaned_fingerprint"] = state.file_fingerprint(song.cleaned_path())
     fresh.set_stage("fix")
@@ -93,4 +94,14 @@ def test_no_undo_without_a_backup(live, page):  # noqa: F811
     errors = _open(page, base, song.slug, "Clean")
     page.get_by_role("button", name="Re-clean (discards manual edits)").wait_for()
     assert page.get_by_role("button", name="Undo last clean").count() == 0
+    assert not errors, f"the panel raised: {errors}"
+
+
+def test_undo_is_not_offered_after_the_score_changed(live, page):  # noqa: F811
+    base, song, _tmp = live
+    clean_backup.mark_made(clean_backup.stash(song), "sha1:what-the-clean-made")
+    errors = _open(page, base, song.slug, "Clean")
+    page.get_by_text("Undo last clean is not offered").wait_for()
+    assert page.get_by_role("button", name="Undo last clean").count() == 0
+    _evidence(page, "undo-not-offered.png")
     assert not errors, f"the panel raised: {errors}"

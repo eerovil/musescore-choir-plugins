@@ -1943,7 +1943,12 @@ async function panelClean(panel, song, slug, P, refresh) {
     panel.append(el("div", { className: "banner" }, "● Cleaning… recent messages are saved below."));
   else if (cleanJob?.status === "failed")
     panel.append(el("div", { className: "banner err" }, "Last clean failed: " + cleanJob.error));
-  if (song.clean_backup && cleanJob?.status !== "running") {
+  if (song.clean_backup?.changed && cleanJob?.status !== "running") {
+    // Worked on since the clean (lyrics, a fix, an upload): undoing would lose it.
+    panel.append(el("p", { className: "hint undoclean-off" },
+      "Undo last clean is not offered: the score has changed since that clean, "
+      + "and undoing would throw those changes away."));
+  } else if (song.clean_backup && cleanJob?.status !== "running") {
     const when = song.clean_backup.saved_at
       ? new Date(song.clean_backup.saved_at * 1000).toLocaleString() : "before the last clean";
     const undoBtn = el("button", { className: "undoclean", onclick: async () => {

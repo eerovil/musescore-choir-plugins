@@ -204,3 +204,35 @@ def test_a_score_upload_waits_for_a_running_check(song):
         files={"file": (CLEANED, SCORE.encode(), "application/octet-stream")})
     assert reply.status_code == 409
     assert open(song.cleaned_path(), encoding="utf-8").read() == EDITED
+
+
+def _clean_with(monkeypatch, body=SCORE):
+    def fake_clean(xml, out_dir, **kwargs):
+        target = os.path.join(out_dir, CLEANED)
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        kwargs["check"].update(status="passed", reset=[], rejected=[])
+        return target, xml
+
+    monkeypatch.setattr(pipeline, "run_clean", fake_clean)
+    monkeypatch.setattr(server, "_label_bounds", lambda *a: None)
+
+
+def test_undo_is_refused_once_the_score_is_worked_on_after_the_clean(song, monkeypatch):
+    _clean_with(monkeypatch)
+    server._run_clean(song.slug)
+    assert clean_backup.latest(state.load(song.slug))["changed"] is False
+
+    # Lyrics imported (or a fix, or an upload) after the clean: work Undo would lose.
+    worked_on = SCORE.replace("</Chord>", "<Lyrics><text>la</text></Lyrics></Chord>", 1)
+    with open(song.cleaned_path(), "w", encoding="utf-8") as fh:
+        fh.write(worked_on)
+
+    fresh = state.load(song.slug)
+    assert clean_backup.latest(fresh)["changed"] is True
+    reply = TestClient(server.app).post(f"/api/songs/{song.slug}/undo-clean")
+    assert reply.status_code == 409
+    assert "changed since the last clean" in reply.json()["detail"]
+    assert open(song.cleaned_path(), encoding="utf-8").read() == worked_on
+    # The kept score is still there, untouched, for whoever wants it by hand.
+    assert clean_backup.latest(fresh) is not None

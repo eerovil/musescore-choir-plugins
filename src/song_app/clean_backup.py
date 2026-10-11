@@ -4,7 +4,9 @@ Cleaning rebuilds the score from the scan, so a re-clean throws away whatever wa
 done to the cleaned score since: lyrics, edits made in MuseScore, an uploaded file.
 The button already says so. This makes pressing it by mistake cost nothing: before a
 clean replaces the score, the score and the song's records about it are copied to
-`backups/<time>/`, and **Undo last clean** puts both back.
+`backups/<time>/`, and **Undo last clean** puts both back -- but only while the
+score is still the one the clean made, since anything done to it after the clean
+(lyrics, a fix, an upload) would be lost with nothing kept of it.
 
 The records come back with the file because they were made against it. The health
 findings, the note comparison, the MuseScore check and the lyric warnings all carry
@@ -19,7 +21,7 @@ import json
 import os
 import shutil
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import state
 
@@ -33,6 +35,10 @@ KEYS = ("cleaned", "cleaned_fingerprint", "verification", "health", "lyrics", "s
 
 class NothingToUndo(Exception):
     pass
+
+
+class ChangedSinceClean(Exception):
+    """The score is no longer what the clean made, so undoing would lose that work."""
 
 
 def _root(song: state.Song) -> str:
@@ -77,16 +83,50 @@ def drop(folder: Optional[str]) -> None:
         shutil.rmtree(folder, ignore_errors=True)
 
 
-def latest(song: state.Song) -> Optional[Dict]:
-    """What Undo would put back: `{saved_at, file}`, or None."""
+def mark_made(folder: Optional[str], fingerprint: Optional[str]) -> None:
+    """Record in the stash which score the clean put in its place.
+
+    Undo is only safe while that score is still the one on disk: once lyrics are
+    imported, a fix is applied or a hand-fixed score is uploaded, putting the old
+    score back would throw that work away with nothing kept of it.
+    """
+    if not folder:
+        return
+    path = os.path.join(folder, SNAPSHOT)
+    with open(path, encoding="utf-8") as fh:
+        snapshot = json.load(fh)
+    snapshot["made"] = fingerprint
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(snapshot, fh, indent=2, ensure_ascii=False)
+
+
+def _newest(song: state.Song) -> Optional[Tuple[str, Dict]]:
     entries = _entries(song)
     if not entries:
         return None
     folder = os.path.join(_root(song), entries[-1])
     with open(os.path.join(folder, SNAPSHOT), encoding="utf-8") as fh:
-        snapshot = json.load(fh)
+        return folder, json.load(fh)
+
+
+def _changed(song: state.Song, snapshot: Dict) -> bool:
+    """True when the score on disk is not the one the clean made (or nobody knows)."""
+    made = snapshot.get("made")
+    return not made or made != state.file_fingerprint(song.cleaned_path())
+
+
+def latest(song: state.Song) -> Optional[Dict]:
+    """What Undo would put back: `{saved_at, file, changed}`, or None.
+
+    `changed` says the score has been worked on since the clean, so Undo is refused.
+    """
+    newest = _newest(song)
+    if not newest:
+        return None
+    _folder, snapshot = newest
     return {"saved_at": snapshot.get("saved_at"),
-            "file": os.path.basename(snapshot.get("cleaned") or "")}
+            "file": os.path.basename(snapshot.get("cleaned") or ""),
+            "changed": _changed(song, snapshot)}
 
 
 def restore(song: state.Song) -> Dict:
@@ -94,12 +134,15 @@ def restore(song: state.Song) -> Dict:
 
     Returns the restored records. The caller holds `state.song_lock` and saves.
     """
-    entries = _entries(song)
-    if not entries:
+    newest = _newest(song)
+    if not newest:
         raise NothingToUndo("There is no earlier cleaned score to go back to.")
-    folder = os.path.join(_root(song), entries[-1])
-    with open(os.path.join(folder, SNAPSHOT), encoding="utf-8") as fh:
-        snapshot = json.load(fh)
+    folder, snapshot = newest
+    if _changed(song, snapshot):
+        raise ChangedSinceClean(
+            "The score has changed since the last clean (lyrics imported, a fix applied "
+            "or a score uploaded). Undo would throw that work away, so it is not offered. "
+            "Download the score first if you want to keep a copy.")
     rel = snapshot.get("cleaned")
     source = os.path.join(folder, os.path.basename(rel or ""))
     if not rel or not os.path.isfile(source):
