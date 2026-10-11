@@ -765,9 +765,12 @@ def _run_check(slug: str) -> None:
 async def api_recheck(slug: str) -> Dict:
     song = _require(slug)
     _cleaned_or_400(song)
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "check", ("scan", "clean", "check")):
-        raise HTTPException(409, "A scan, clean or check is already running for this song.")
+    # Not beside a render or an upload either: each saves the whole song state, and
+    # the later save would put back the earlier one's copy of the other's result.
+    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "check", ("scan", "clean", "check", "render", "upload")):
+        raise HTTPException(409, "A scan, clean, check, render, or upload is already running "
+                                 "for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_check, slug)
     return {"started": True}
 
@@ -1563,9 +1566,11 @@ async def api_upload_score_file(slug: str, file: UploadFile = None) -> Dict:
     if not file or not file.filename:
         raise HTTPException(400, "No file was uploaded")
     if is_recording(song) or is_scanning(song) or any(
-            job_state.is_running(song.dir, kind) for kind in ("clean", "render", "upload")):
-        raise HTTPException(409, "A scan, clean, render, or upload is running for this song — "
-                                 "replacing the score underneath it would be read half-written.")
+            job_state.is_running(song.dir, kind)
+            for kind in ("clean", "check", "render", "upload")):
+        raise HTTPException(409, "A scan, clean, check, render, or upload is running for this "
+                                 "song — replacing the score underneath it would be read "
+                                 "half-written.")
     try:
         summary = pipeline.accept_uploaded_score(cleaned, file.filename, await file.read())
     except pipeline.ScoreUploadError as exc:
@@ -2039,8 +2044,9 @@ async def api_record_settings(slug: str, body: Dict = None) -> Dict:
 @app.post("/api/songs/{slug}/record")
 async def api_record(slug: str, body: Dict = None) -> Dict:
     song = _require(slug)
-    if is_recording(song) or is_scanning(song):
-        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
+    if is_recording(song) or is_scanning(song) or job_state.is_running(song.dir, "check"):
+        raise HTTPException(409, "Another scan, clean, check, render, or upload is already "
+                                 "running for this song.")
     opts = body or {}
     source_fingerprint = state.file_fingerprint(song.cleaned_path())
     if not (opts.get("upload_only") or opts.get("merge_only")):
@@ -2070,8 +2076,10 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
                                      "upload?) — record again to make them.")
     kind = "upload" if opts.get("upload_only") else "render"
     if not job_state.start_if_idle(
-            song.dir, kind, ("scan", "clean", "render", "upload", "free"), source_fingerprint):
-        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
+            song.dir, kind, ("scan", "clean", "check", "render", "upload", "free"),
+            source_fingerprint):
+        raise HTTPException(409, "Another scan, clean, check, render, or upload is already "
+                                 "running for this song.")
     # The durable start above is the atomic gate; the PID lock keeps the existing
     # process-aware recording indicator and stale-lock recovery behavior.
     try:

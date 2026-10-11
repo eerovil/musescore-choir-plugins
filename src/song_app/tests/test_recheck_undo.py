@@ -154,3 +154,53 @@ def test_only_the_newest_backups_are_kept(song, monkeypatch):
     for _ in range(5):
         clean_backup.stash(song)
     assert len(os.listdir(song.path(clean_backup.BACKUP_DIR))) == 3
+
+
+def test_undo_takes_away_records_the_old_score_never_had(song, monkeypatch):
+    # An old score with no health, checks or lyrics: the clean adds them, and they
+    # describe the clean's score, so Undo must not leave them on the restored one.
+    for key in ("verification", "health", "lyrics"):
+        song.data.pop(key, None)
+    song.save()
+
+    def fake_clean(xml, out_dir, **kwargs):
+        target = os.path.join(out_dir, CLEANED)
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(SCORE)
+        kwargs["check"].update(status="passed", reset=[], rejected=[])
+        return target, xml
+
+    monkeypatch.setattr(pipeline, "run_clean", fake_clean)
+    monkeypatch.setattr(server, "_label_bounds", lambda *a: None)
+    server._run_clean(song.slug)
+    assert "health" in state.load(song.slug).data
+
+    assert TestClient(server.app).post(f"/api/songs/{song.slug}/undo-clean").status_code == 200
+    fresh = state.load(song.slug).data
+    assert "health" not in fresh and "verification" not in fresh and "lyrics" not in fresh
+
+
+@pytest.mark.parametrize("running", ["render", "upload"])
+def test_a_check_and_a_render_or_upload_never_overlap(song, monkeypatch, running):
+    monkeypatch.setattr(server, "_run_check", lambda slug: None)
+    song.data["review"] = {"approved_against": song.data["cleaned_fingerprint"]}
+    song.save()
+    client = TestClient(server.app)
+    job_state.start(song.dir, running)
+    assert client.post(f"/api/songs/{song.slug}/recheck").status_code == 409
+    job_state.finish(song.dir, running)
+
+    assert client.post(f"/api/songs/{song.slug}/recheck").status_code == 200
+    # The stub leaves the check running: now the render or upload must wait.
+    body = {"upload_only": True} if running == "upload" else {}
+    reply = client.post(f"/api/songs/{song.slug}/record", json=body)
+    assert reply.status_code == 409 and "check" in reply.json()["detail"]
+
+
+def test_a_score_upload_waits_for_a_running_check(song):
+    job_state.start(song.dir, "check")
+    reply = TestClient(server.app).post(
+        f"/api/songs/{song.slug}/score-file",
+        files={"file": (CLEANED, SCORE.encode(), "application/octet-stream")})
+    assert reply.status_code == 409
+    assert open(song.cleaned_path(), encoding="utf-8").read() == EDITED

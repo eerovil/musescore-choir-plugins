@@ -109,9 +109,13 @@ def restore(song: state.Song) -> Dict:
     landing = target + ".restoring"
     shutil.copy2(source, landing)
     os.replace(landing, target)
+    # Exactly as they were: a record the old score never had (no health check, no
+    # lyrics yet) goes, rather than staying attached to it from the clean.
     for key in KEYS:
         if key in snapshot:
             song.data[key] = snapshot[key]
+        else:
+            song.data.pop(key, None)
     # The records name the file that is on disk now, whatever the snapshot said.
     song.data["cleaned_fingerprint"] = state.file_fingerprint(target)
     shutil.rmtree(folder, ignore_errors=True)
