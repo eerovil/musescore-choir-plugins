@@ -1,0 +1,184 @@
+<!doctype html>
+<!-- PROTOTYPE #393 — throwaway. Three ways to lay out one printed system with its
+     lyric boxes, switchable with ?variant=A|B|C (or the pill, or ← →). -->
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lyrics prototype</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:system-ui,sans-serif;color:#222;display:flex;flex-direction:column;background:#fff}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:6px 10px;border-bottom:1px solid #ddd}
+header select{font-size:14px;max-width:46vw}
+.tabs{display:flex;gap:4px;overflow-x:auto}
+.tab{padding:4px 10px;border:1px solid #bbb;border-radius:6px;font-size:13px;background:#fafafa;cursor:pointer;white-space:nowrap}
+.tab.on{background:#2b6cd4;color:#fff;border-color:#2b6cd4}
+.where{margin-left:auto;font-size:13px;color:#555}
+main{flex:1;overflow:auto;padding:8px 10px 120px}
+.wrap{max-width:1100px;margin:0 auto}
+.pic img{width:100%;display:block}
+.hint{font-size:12px;color:#666;margin:6px 0}
+label{display:block;font-size:12px;color:#555;margin:6px 0 2px}
+textarea{width:100%;font-family:ui-monospace,monospace;font-size:15px;padding:6px 8px;border:1px solid #aaa;border-radius:5px;resize:none;overflow:hidden}
+textarea.changed{border-color:#e0a020;background:#fffaf0}
+.v2{margin-left:18px;border-left:3px solid #e0a020;padding-left:8px}
+.warn{color:#b3261e;font-size:12px}
+.slice{overflow:hidden;position:relative}
+.slice img{width:100%;display:block;position:absolute;left:0}
+.stack{position:relative}
+.hl{position:absolute;left:0;right:0;border:2px solid #2b6cd4;background:rgba(43,108,212,.08);pointer-events:none}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
+footer{position:fixed;left:0;right:0;bottom:0;display:flex;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid #ddd;background:#fff}
+.btn{padding:8px 12px;border:1px solid #aaa;border-radius:6px;background:#fafafa;font-size:14px;cursor:pointer}
+.btn.p{background:#2b6cd4;color:#fff;border-color:#2b6cd4}
+.btn:disabled{opacity:.4}
+.status{flex:1;font-size:12px;color:#666;text-align:center}
+#switch{position:fixed;left:50%;transform:translateX(-50%);bottom:62px;background:#111;color:#fff;border-radius:999px;padding:5px 8px;display:flex;gap:8px;align-items:center;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.35);z-index:9}
+#switch button{background:#333;color:#fff;border:0;border-radius:999px;width:28px;height:28px;cursor:pointer}
+.busy{opacity:.5;pointer-events:none}
+</style></head><body>
+<header>
+  <select id="song"></select>
+  <div class="tabs" id="verses"></div>
+  <span class="where" id="where"></span>
+</header>
+<main><div class="wrap" id="view"></div></main>
+<footer>
+  <button class="btn" id="prev">← Previous</button>
+  <button class="btn p" id="imp">Import</button>
+  <span class="status" id="status"></span>
+  <button class="btn" id="landed">Show what landed</button>
+  <button class="btn" id="next">Next →</button>
+</footer>
+<div id="switch"><button id="vp">‹</button><span id="vl"></span><button id="vn">›</button></div>
+<script>
+const VARIANTS = {A: "Boxes under the picture", B: "Boxes under each staff", C: "One part at a time"};
+const q = new URLSearchParams(location.search);
+let S = {slug: q.get("slug"), n: +(q.get("n") || 0), verse: +(q.get("verse") || 1),
+         variant: q.get("variant") || "A", data: null, extraVerses: 0, landed: false, part: 0, loaded: {}};
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === "style") e.style.cssText = v; else if (k in e) e[k] = v; else e.setAttribute(k, v); }
+  e.append(...kids.filter((k) => k != null)); return e; };
+const save = () => { const u = new URLSearchParams({slug: S.slug, n: S.n, verse: S.verse, variant: S.variant});
+  history.replaceState(null, "", "?" + u); };
+const api = (p, o) => fetch(p, o).then(async (r) => { if (!r.ok) throw new Error(await r.text()); return r.json(); });
+
+// What is typed in the boxes now, and which boxes differ from what was loaded.
+const typed = {};
+const keyOf = (b) => `${S.verse}|${b.key}`;
+const changed = () => (S.data?.boxes || []).filter((b) => keyOf(b) in typed && typed[keyOf(b)] !== (b.text[S.verse] || ""));
+function status() {
+  const c = changed();
+  $("status").textContent = c.length ? `Not imported: ${c.map((b) => label(b)).join(", ")}` : "";
+}
+const label = (b) => b.voice === 2 ? `${b.part} · voice 2` : b.part;
+
+function box(b, big) {
+  const ta = el("textarea", {rows: big ? 3 : 1, value: typed[keyOf(b)] ?? (b.text[S.verse] || "")});
+  const grow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+  ta.oninput = () => { typed[keyOf(b)] = ta.value; ta.classList.toggle("changed", ta.value !== (b.text[S.verse] || "")); status(); grow(); };
+  ta.classList.toggle("changed", ta.value !== (b.text[S.verse] || ""));
+  setTimeout(grow);
+  const warn = S.data.warnings[b.key];
+  return el("div", {className: b.voice === 2 ? "v2" : ""},
+    el("label", {}, `${label(b)} · ${b.slots} slots`), ta,
+    warn ? el("div", {className: "warn"}, "⚠ " + warn) : null);
+}
+
+const cropUrl = () => `/api/songs/${S.slug}/system/${S.data.system.crop}?dpi=200`;
+const landedUrl = () => `/api/proto/songs/${S.slug}/landed/${S.n}?v=${encodeURIComponent(S.data.mtime)}`;
+const picture = () => el("div", {className: "pic"},
+  el("img", {src: S.landed ? landedUrl() : cropUrl(), alt: "system"}));
+const hint = () => el("p", {className: "hint"},
+  "_ = a note with no new syllable (after lei- it holds the word: e-lei- _ _ son). A word ending in - carries on into the next system. Empty a box to remove its words.");
+
+const R = {
+  A() { return [picture(), hint(), ...S.data.boxes.map((b) => box(b))]; },
+  B() {
+    const d = S.data;
+    if (S.landed || !d.rows.length || d.boxes.some((b) => b.row == null))
+      return [el("p", {className: "hint"}, S.landed ? "" : "(Staves not matched on this system — showing the list.)"), ...R.A()];
+    const out = [hint()];
+    const img = new Image(); img.src = cropUrl();
+    const pieces = [];
+    d.rows.forEach((r, i) => {
+      const top = i === 0 ? 0 : r.top, bottom = i + 1 < d.rows.length ? d.rows[i + 1].top : 1;
+      const slice = el("div", {className: "slice"}, el("img", {src: cropUrl()}));
+      pieces.push([slice, top, bottom]);
+      out.push(slice, ...d.boxes.filter((b) => b.row === i).map((b) => box(b)));
+    });
+    const size = () => { if (!img.naturalWidth) return; for (const [s, t, b] of pieces) {
+      const w = s.clientWidth, h = w * img.naturalHeight / img.naturalWidth;
+      s.style.height = (b - t) * h + "px"; s.firstChild.style.top = -t * h + "px"; } };
+    img.onload = size; addEventListener("resize", size); setTimeout(size, 50);
+    return out;
+  },
+  C() {
+    const d = S.data, b = d.boxes[S.part] || d.boxes[0];
+    const stack = el("div", {className: "stack"}, el("img", {src: S.landed ? landedUrl() : cropUrl(), style: "width:100%;display:block"}));
+    const r = d.rows[b?.row];
+    if (r && !S.landed) stack.append(el("div", {className: "hl", style: `top:${r.top * 100}%;height:${(r.bottom - r.top) * 100}%`}));
+    const chips = el("div", {className: "chips"}, ...d.boxes.map((x, i) =>
+      el("span", {className: "tab" + (i === S.part ? " on" : ""), onclick: () => { S.part = i; draw(); }}, label(x))));
+    const one = box(b, true);
+    one.querySelector("textarea").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); S.part = (S.part + 1) % d.boxes.length; draw(); focusBox(); } };
+    return [stack, chips, one, el("p", {className: "hint"}, "Enter goes to the next part. " + hint().textContent)];
+  },
+};
+const focusBox = () => setTimeout(() => document.querySelector("textarea")?.focus());
+
+function draw() {
+  const d = S.data;
+  const nv = Math.max(d.verses, S.verse) + S.extraVerses;
+  $("verses").replaceChildren(...Array.from({length: nv}, (_, i) =>
+    el("span", {className: "tab" + (i + 1 === S.verse ? " on" : ""), onclick: () => { S.verse = i + 1; save(); draw(); }}, `Verse ${i + 1}`)),
+    el("span", {className: "tab", onclick: () => { S.extraVerses++; S.verse = nv + 1; save(); draw(); }}, "+ verse"));
+  $("where").textContent = `System ${d.system.n + 1} of ${d.count} · bars ${d.system.start}–${d.system.end}`;
+  $("view").replaceChildren(...R[S.variant]());
+  $("prev").disabled = d.system.n === 0; $("next").disabled = d.system.n + 1 >= d.count;
+  $("landed").textContent = S.landed ? "Show the page" : "Show what landed";
+  $("vl").textContent = `${S.variant} — ${VARIANTS[S.variant]}`;
+  status();
+}
+
+async function load(n) {
+  document.body.classList.add("busy");
+  try { S.data = await api(`/api/proto/songs/${S.slug}/system/${n}`); S.n = n; S.part = 0; }
+  finally { document.body.classList.remove("busy"); }
+  for (const k of Object.keys(typed)) delete typed[k];
+  save(); draw();
+}
+async function doImport() {
+  const c = changed(); if (!c.length) return true;
+  document.body.classList.add("busy"); $("status").textContent = "Importing…";
+  try {
+    const boxes = Object.fromEntries(c.map((b) => [b.key, typed[keyOf(b)]]));
+    S.data = await api(`/api/proto/songs/${S.slug}/system/${S.n}`, {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({verse: S.verse, boxes})});
+    for (const b of c) delete typed[keyOf(b)];
+    draw();
+    return !Object.keys(S.data.warnings).length;
+  } catch (e) { $("status").textContent = "Import failed: " + e.message; return false; }
+  finally { document.body.classList.remove("busy"); }
+}
+// Moving imports what was typed first; a warning keeps you on the system to see it.
+async function go(step) { if (!(await doImport())) { $("status").textContent = "Imported with warnings — press again to move on"; $("next").onclick = () => load(S.n + 1); $("prev").onclick = () => load(S.n - 1); return; }
+  $("next").onclick = () => go(1); $("prev").onclick = () => go(-1); load(S.n + step); }
+$("prev").onclick = () => go(-1); $("next").onclick = () => go(1);
+$("imp").onclick = doImport;
+$("landed").onclick = () => { S.landed = !S.landed; draw(); };
+const cycle = (k) => { const ks = Object.keys(VARIANTS); S.variant = ks[(ks.indexOf(S.variant) + k + ks.length) % ks.length]; save(); draw(); };
+$("vp").onclick = () => cycle(-1); $("vn").onclick = () => cycle(1);
+addEventListener("keydown", (e) => { if (e.target.closest("textarea,input,select,[contenteditable]")) return;
+  if (e.key === "ArrowLeft") cycle(-1); if (e.key === "ArrowRight") cycle(1); });
+$("song").onchange = () => { S.slug = $("song").value; S.verse = 1; S.extraVerses = 0; load(0); };
+
+(async () => {
+  const songs = await api("/api/proto/songs");
+  S.slug ||= songs[0]?.slug;
+  $("song").replaceChildren(...songs.map((s) => el("option", {value: s.slug, selected: s.slug === S.slug}, s.name)));
+  load(S.n);
+})();
+</script>
+</body></html>

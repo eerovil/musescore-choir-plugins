@@ -36,6 +36,9 @@ dotenv.load_dotenv(_env if os.path.exists(_env) else os.path.join(SCRIPT_DIR, ".
 
 app = FastAPI(title="song")
 app.include_router(agentdeck.router)
+if os.environ.get("LYRICS_PROTOTYPE"):  # PROTOTYPE #393, throwaway
+    from src.song_app import prototype_lyrics
+    app.include_router(prototype_lyrics.router)
 
 
 # --------------------------------------------------------------------------
