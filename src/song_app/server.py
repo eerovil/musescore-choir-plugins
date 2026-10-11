@@ -1808,6 +1808,9 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     # to publish against, and the upload would fail anyway.
     if not choir:
         raise HTTPException(400, "Choose a choir first.")
+    if _publish_busy(song):
+        raise HTTPException(409, "Another job is running for this song — publish "
+                                 "after it finishes.")
     listing = await asyncio.get_running_loop().run_in_executor(
         None, publish.choirs, config, state.SONGS_DIR)
     if listing["error"]:
