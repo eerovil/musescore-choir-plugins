@@ -1186,7 +1186,8 @@ state model are in `DESIGN.md`.
   whole picture, so a box never lands under the wrong staff (measured on #393: 784 of
   853 systems match). The panel takes the viewer's width while it is open (`.ws.lyricwide`).
   One box is **one verse x one system x one part x one voice** (`lyric_txt.editor_grid`
-  → `boxes`, keys `T1` and `T1@2`); a voice-2 box exists only where that voice has notes.
+  → `boxes`, keyed by staff id, `3` and `3@2`, since two parts can share a name); a
+  voice-2 box exists only where that voice has notes.
   **Verse tabs** keep you on the system. The browser sends only the boxes changed,
   `{"verse": n, "boxes": {system: {key: text}}}` (`blocks_from_boxes`, addressed by
   staff id — a part may be named "1", or two parts the same), and an emptied box
@@ -1197,7 +1198,10 @@ state model are in `DESIGN.md`.
   its systems out like the page (Kevät's has 18 for the page's 13, so cropping "system
   9" out of it showed bars 16-18). Warnings are kept per box: an import drops only the
   earlier ones its own bars answer (`server._kept_warnings`, read off
-  `LyricImport.written`). The editor's import is written to `lyrics-editor.json`, so the
+  `LyricImport.written`), and only those made against the score as it was before the
+  import, so a re-clean's stale warnings are not carried on. The reply's `written` names
+  every system an import wrote on, a line running on into the next one included, so
+  the page refreshes those systems' pictures. The editor's import is written to `lyrics-editor.json`, so the
   paste box still opens on `lyrics.json`. Mismatches come back as **fields** (`kind`,
   `measure_start`, `measure_end`, `staff_ids`, `syllables`, `slots`, `verse`, `voice`,
   `message`) and are attached to the matching box by comparing those fields.

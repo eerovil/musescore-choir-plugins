@@ -140,7 +140,8 @@ class EditorSystem:
 class EditorBox:
     """One box of the editor: a part's voice in one printed system (#397).
 
-    `key` is the part name for voice 1 and `name@2` for its second voice. `text`
+    `key` is the part's staff id for voice 1 and `id@2` for its second voice: a
+    name would not do, since two parts can share one. `text`
     holds every verse's words, so changing the verse tab needs no new request.
     `printed` is the printed staff the part sits on in this system (from the
     clean's part-to-staff record), or None when the score does not say.
@@ -1670,7 +1671,8 @@ def editor_grid(
                 if not slots:
                     continue
                 boxes.setdefault(system.index, []).append(EditorBox(
-                    key=part.name if voice == 1 else f"{part.name}@{voice}",
+                    # By staff id: two parts can share a name (Kaipaava's two "T2").
+                    key=str(part.id) if voice == 1 else f"{part.id}@{voice}",
                     part=part.name, id=part.id, voice=voice, slots=slots,
                     printed=printed.get(part.id),
                     text={v: text_of(voice, v, part, system) for v in verses},
@@ -1710,7 +1712,7 @@ def blocks_from_boxes(
     """The by-system editor's changed boxes as lyric JSON, for one verse (#397).
 
     `boxes` is {system index: {box key: text}} — only the boxes a person changed,
-    keyed as `EditorBox.key` (`T1`, `T1@2` for the second voice). An empty box is
+    keyed as `EditorBox.key` (staff id `3`, `3@2` for its second voice). An empty box is
     sent as an empty line, which clears its words; every box not sent keeps its own.
     Each block carries its system's last bar, so a line knows where its system ends.
     A key the system has no box for is ignored. Lines name their part by staff id,

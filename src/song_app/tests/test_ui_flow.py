@@ -180,19 +180,19 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     # --- lyrics: type one short line into the first system's top part ---
     page.locator(".stagebar .step", has_text="Lyrics").click()
     page.get_by_role("button", name="Type by system").click()
-    cell = page.locator('textarea[data-box="T1"]')
+    cell = page.locator('textarea[data-box="1"]')
     expect(cell).to_be_visible()
     expect(cell.locator("xpath=preceding-sibling::label")).to_contain_text("slots")
     cell.fill("yk")  # one syllable for a whole system: too few
     page.get_by_role("button", name="Import", exact=True).click()
 
     # The mismatch is attached to the box that caused it, and says what is wrong.
-    warning = page.locator(".lyrow", has=page.locator('textarea[data-box="T1"]')).locator(".lyerr")
+    warning = page.locator(".lyrow", has=page.locator('textarea[data-box="1"]')).locator(".lyerr")
     expect(warning.first).to_be_visible(timeout=30_000)
     expect(warning.first).to_contain_text("too few tokens")
     expect(warning.first).to_contain_text("m1–")
     # ...and only there: the parts nobody typed into carry no warning.
-    other = page.locator(".lyrow", has=page.locator('textarea[data-box="T2"]')).first
+    other = page.locator(".lyrow", has=page.locator('textarea[data-box="2"]')).first
     expect(other.locator(".lyerr")).to_have_count(0)
 
     # The box shows what landed, and every remaining lyric slot is represented

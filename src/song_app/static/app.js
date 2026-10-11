@@ -2663,8 +2663,9 @@ async function lyricsManual(panel, song, P, refresh) {
   const statusEl = el("span", { className: "lyedstatus" });
   const showStatus = () => {
     const p = pending();
+    const names = Object.fromEntries(boxesOf(S.n).map((b) => [b.key, label(b)]));
     const changed = Object.entries(p).map(([v, keys]) =>
-      `${S.verses > 1 ? `verse ${v}: ` : ""}${Object.keys(keys).join(", ")}`);
+      `${S.verses > 1 ? `verse ${v}: ` : ""}${Object.keys(keys).map((k) => names[k] || k).join(", ")}`);
     statusEl.textContent = S.status || (changed.length ? `Not imported — ${changed.join("; ")}` : "");
   };
 
@@ -2788,19 +2789,26 @@ async function lyricsManual(panel, song, P, refresh) {
     let warned = 0;
     let failed = false;
     const n = S.n;
+    const written = [];
     try {
       for (const [verse, boxes] of Object.entries(unsent)) {
         const fresh = await postJSON(`${P}/lyrics`, { verse: +verse, boxes: { [n]: boxes } });
         Object.assign(song, fresh);
         live.fp = song.cleaned_fingerprint;
         warned += (fresh.imported || []).length;
+        written.push(...(fresh.written || []));
         for (const key of Object.keys(boxes)) delete S.typed[`${verse}|${n}|${key}`];
       }
       // The boxes show what landed: the words, and `_` for every note left without one.
       grid = await getJSON(`${P}/lyric-grid`);
       S.verses = Math.max(S.verses, grid.verses.length);
-      const crop = grid.systems[n]?.crop;
-      cleanedSystemsChanged(song.slug, song.cleaned_fingerprint, crop != null ? [crop] : "all");
+      // Every system the import wrote on: a long or hyphen-ended line runs on into
+      // the next system when that one's box is empty.
+      const touched = grid.systems.filter((s) =>
+        written.some((w) => w.start <= s.end && w.end >= s.start));
+      const crops = touched.map((s) => s.crop);
+      cleanedSystemsChanged(song.slug, song.cleaned_fingerprint,
+        crops.length && crops.every((c) => c != null) ? crops : "all");
       S.status = warned ? `Imported with ${warned} warning${warned === 1 ? "" : "s"} — see the boxes.`
         : "Imported.";
     } catch (e) {

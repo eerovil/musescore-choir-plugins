@@ -44,15 +44,15 @@ def _text(api, slug, system, key, verse=1):
 def test_an_import_of_one_box_changes_that_box_only(song):
     api, slug, dest = song
     r = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {
-        "T1": " ".join(["la"] * 11), "B1": " ".join(["do"] * 8)}}})
+        "1": " ".join(["la"] * 11), "3": " ".join(["do"] * 8)}}})
     assert r.status_code == 200, r.text
     assert r.json()["imported"] == []
     r = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {
-        "T1": " ".join(["mi"] * 11)}}})
+        "1": " ".join(["mi"] * 11)}}})
     assert r.status_code == 200, r.text
-    assert _text(api, slug, 0, "T1") == " ".join(["la"] * 11)
-    assert _text(api, slug, 0, "B1") == " ".join(["do"] * 8)
-    assert _text(api, slug, 1, "T1") == " ".join(["mi"] * 11)
+    assert _text(api, slug, 0, "1") == " ".join(["la"] * 11)
+    assert _text(api, slug, 0, "3") == " ".join(["do"] * 8)
+    assert _text(api, slug, 1, "1") == " ".join(["mi"] * 11)
     # The editor's import is kept beside the paste, not over it.
     assert (dest / "lyrics-editor.json").exists()
     assert api.get(f"/api/songs/{slug}/lyrics-json").text == ""
@@ -60,42 +60,42 @@ def test_an_import_of_one_box_changes_that_box_only(song):
 
 def test_a_warning_stays_until_its_own_box_is_imported_again(song):
     api, slug, _ = song
-    first = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {"T1": "yk"}}})
+    first = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {"1": "yk"}}})
     assert [w["kind"] for w in first.json()["imported"]] == ["too_few"]
-    other = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {"T2": "kak"}}})
+    other = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {"2": "kak"}}})
     kinds = sorted((w["measure_start"], w["staff_ids"][0]) for w in other.json()["mismatches"])
     assert kinds == [(1, 1), (4, 2)]                    # system 1's T1 is still short
     fixed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {
-        "T1": " ".join(["la"] * 11)}}})
+        "1": " ".join(["la"] * 11)}}})
     assert [(w["measure_start"], w["staff_ids"]) for w in fixed.json()["mismatches"]] == [(4, [2])]
     # A verse-2 import does not answer a verse-1 warning.
     v2 = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 2, "boxes": {"1": {
-        "T2": " ".join(["la"] * 10)}}})
+        "2": " ".join(["la"] * 10)}}})
     assert [(w["measure_start"], w.get("verse", 1)) for w in v2.json()["mismatches"]] == [(4, 1)]
-    assert _text(api, slug, 1, "T2", verse=2) == " ".join(["la"] * 10)
+    assert _text(api, slug, 1, "2", verse=2) == " ".join(["la"] * 10)
 
 
 def test_an_emptied_box_takes_its_words_out_and_says_nothing_changed_otherwise(song):
     api, slug, _ = song
-    api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {"T2": " ".join(["oo"] * 13)}}})
-    r = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {"T2": ""}}})
+    api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {"2": " ".join(["oo"] * 13)}}})
+    r = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {"2": ""}}})
     assert r.status_code == 200, r.text
-    assert _text(api, slug, 0, "T2") == ""
+    assert _text(api, slug, 0, "2") == ""
     nothing = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {"X9": "a"}}})
     assert nothing.status_code == 400
 
 
 def test_a_paste_changes_only_the_systems_it_names(song):
     api, slug, _ = song
-    api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {"B1": "a b"}}})
+    api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {"3": "a b"}}})
     paste = json.dumps([{"measure_start": 1, "lyrics": [
         {"parts": ["T1"], "text": " ".join(["la"] * 11)},
         {"parts": ["T1"], "verse": 2, "text": " ".join(["lu"] * 11)}]}])
     r = api.post(f"/api/songs/{slug}/lyrics", json={"json": paste})
     assert r.status_code == 200, r.text
-    assert _text(api, slug, 0, "T1") == " ".join(["la"] * 11)
-    assert _text(api, slug, 0, "T1", verse=2) == " ".join(["lu"] * 11)
-    assert _text(api, slug, 1, "B1").startswith("a b")
+    assert _text(api, slug, 0, "1") == " ".join(["la"] * 11)
+    assert _text(api, slug, 0, "1", verse=2) == " ".join(["lu"] * 11)
+    assert _text(api, slug, 1, "3").startswith("a b")
     assert api.get(f"/api/songs/{slug}/lyrics-json").text == paste
 
 
@@ -161,7 +161,7 @@ def test_what_landed_is_this_systems_bars_with_their_words(song, monkeypatch):
     api, slug, _ = song
     monkeypatch.setenv("MUSESCORE_CLI_PATH", _CLI)
     api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"2": {
-        "T1": "Pii-pa-loo"}}})
+        "1": "Pii-pa-loo"}}})
     r = api.get(f"/api/songs/{slug}/landed/2")
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("image/svg")
@@ -178,16 +178,45 @@ def test_a_warning_shared_by_two_parts_stays_on_the_part_not_fixed(song):
     keeps the warning for the other, so the song does not move on with it wrong."""
     api, slug, dest = song
     data = json.loads((dest / ".song.json").read_text())
-    data["lyrics"] = {"json": "lyrics.json", "warnings": [{
+    data["lyrics"] = {"json": "lyrics.json",
+                      "imported_against": state.file_fingerprint(str(dest / CLEANED)),
+                      "warnings": [{
         "kind": "too_many", "message": "Measures 1-3 (staffs 1, 2): too many tokens",
         "measure_start": 1, "measure_end": 3, "staff_ids": [1, 2],
         "syllables": 14, "slots": 11, "verse": 1, "voice": 1}]}
     (dest / ".song.json").write_text(json.dumps(data))
     fixed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {
-        "T1": " ".join(["la"] * 11)}}})
+        "1": " ".join(["la"] * 11)}}})
     assert fixed.status_code == 200, fixed.text
     assert fixed.json()["imported"] == []
     left = fixed.json()["mismatches"]
     assert [(w["kind"], w["measure_start"], w["staff_ids"]) for w in left] == [
         ("too_many", 1, [2])]
     assert json.loads((dest / ".song.json").read_text())["stage"] != "review"
+
+
+def test_warnings_made_against_an_older_score_are_not_carried_on(song):
+    """After a re-clean the old warnings' staves and bars may mean something else."""
+    api, slug, dest = song
+    data = json.loads((dest / ".song.json").read_text())
+    data["lyrics"] = {"json": "lyrics.json", "imported_against": "the score before a re-clean",
+                      "warnings": [{"kind": "too_few", "message": "old", "measure_start": 40,
+                                    "measure_end": 42, "staff_ids": [3], "syllables": 1,
+                                    "slots": 9}]}
+    (dest / ".song.json").write_text(json.dumps(data))
+    r = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {
+        "1": " ".join(["la"] * 11)}}})
+    assert r.json()["mismatches"] == []
+    assert json.loads((dest / ".song.json").read_text())["stage"] == "review"
+
+
+def test_the_reply_names_bars_a_line_ran_on_into(song):
+    """A hyphen-ended line runs into the next system while its box is empty, so the
+    reply's `written` covers that system too, for the page to refresh its picture."""
+    api, slug, _ = song
+    grid = api.get(f"/api/songs/{slug}/lyric-grid").json()
+    second = grid["systems"][1]
+    r = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {
+        "1": " ".join(["la"] * 13)}}})
+    spans = [(w["start"], w["end"]) for w in r.json()["written"] if w["staff"] == 1]
+    assert spans and spans[0][0] == 1 and spans[0][1] >= second["start"]

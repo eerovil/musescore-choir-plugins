@@ -1323,6 +1323,10 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
         claimed.data["cleaned_fingerprint"] = current_fingerprint
         claimed.save()
     previous = song.data.get("lyrics") or {}
+    # Earlier warnings are about the score they were made against; after a re-clean
+    # or an edit their staves and bars may mean something else.
+    if previous.get("imported_against") != previous_fingerprint:
+        previous = {**previous, "warnings": []}
     song.data["lyrics"] = {
         "json": "lyrics.json" if json_name == "lyrics.json" else previous.get("json") or json_name,
         "imported_against": current_fingerprint,
@@ -1349,9 +1353,11 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     song.save()
     # The bars that did not take their words, said in the reply itself rather than
     # left for the caller to dig out of the song's `lyrics.warnings` (#340).
-    # `imported` is what this import alone said, so a caller can tell its own.
+    # `imported` is what this import alone said, so a caller can tell its own, and
+    # `written` the bars it rewrote, which can run on past the system it was sent for.
     return {**_derived(song), "mismatches": song.data["lyrics"]["warnings"],
-            "imported": [m.to_dict() for m in result.mismatches]}
+            "imported": [m.to_dict() for m in result.mismatches],
+            "written": [w.to_dict() for w in result.written]}
 
 
 # --------------------------------------------------------------------------

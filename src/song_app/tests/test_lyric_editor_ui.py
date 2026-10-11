@@ -173,7 +173,7 @@ def test_one_printed_system_with_each_staffs_boxes_under_it(live, song, page):
     order = page.locator(".lyedbody > *").evaluate_all(
         "els => els.map(e => e.classList.contains('lyedslice') ? 'staff'"
         "  : e.querySelector('textarea')?.dataset.box)")
-    assert order == ["staff", "T1", "T2", "staff", "B1", "B2"]
+    assert order == ["staff", "1", "2", "staff", "3", "4"]
     expect(page.locator(".viewer")).to_be_hidden()
     expect(page.locator(".lyedtabs .vtab", has_text="Verse 1")).to_have_class("vtab active")
     # The second staff's slice starts with the second staff, not in the middle of it.
@@ -185,52 +185,52 @@ def test_one_printed_system_with_each_staffs_boxes_under_it(live, song, page):
 def test_next_imports_first_and_a_warning_keeps_you_on_the_system(live, song, page):
     slug, _ = song
     _open(page, live, slug)
-    _box(page, "T1").fill("Vir-ta")                    # 2 syllables for 11 notes
+    _box(page, "1").fill("Vir-ta")                    # 2 syllables for 11 notes
     expect(page.locator(".lyedstatus")).to_contain_text("Not imported — T1")
     page.get_by_role("button", name="Next →").click()
     expect(page.locator(".lyedstatus")).to_contain_text("warning", timeout=30_000)
     expect(page.locator(".lyedwhere")).to_contain_text("System 1 of 15")
-    warning = page.locator(".lyrow", has=_box(page, "T1")).locator(".lyerr")
+    warning = page.locator(".lyrow", has=_box(page, "1")).locator(".lyerr")
     expect(warning).to_contain_text("too few")
-    expect(page.locator(".lyrow", has=_box(page, "T2")).locator(".lyerr")).to_have_count(0)
+    expect(page.locator(".lyrow", has=_box(page, "2")).locator(".lyerr")).to_have_count(0)
     # The box now shows what landed: the two syllables and a `_` for each note left.
-    assert _box(page, "T1").input_value().split() == ["Vir-ta"] + ["_"] * 9
+    assert _box(page, "1").input_value().split() == ["Vir-ta"] + ["_"] * 9
     page.get_by_role("button", name="Next →").click()
     expect(page.locator(".lyedwhere")).to_contain_text("System 2 of 15")
-    assert _text(_grid(page, live, slug), 0, "T1").startswith("Vir-ta")
+    assert _text(_grid(page, live, slug), 0, "1").startswith("Vir-ta")
 
 
 def test_a_clean_import_moves_straight_on_and_previous_comes_back(live, song, page):
     slug, _ = song
     _open(page, live, slug)
-    _box(page, "B2").fill(" ".join(["la"] * 5))      # B2 has five notes in bars 1-3
+    _box(page, "4").fill(" ".join(["la"] * 5))      # B2 has five notes in bars 1-3
     page.get_by_role("button", name="Next →").click()
     expect(page.locator(".lyedwhere")).to_contain_text("System 2 of 15", timeout=30_000)
     page.get_by_role("button", name="← Previous").click()
     expect(page.locator(".lyedwhere")).to_contain_text("System 1 of 15")
-    expect(_box(page, "B2")).to_have_value("la la la la la")
+    expect(_box(page, "4")).to_have_value("la la la la la")
 
 
 def test_verse_tabs_keep_the_system_and_import_only_their_verse(live, song, page):
     slug, _ = song
     _open(page, live, slug)
-    _box(page, "T1").fill(" ".join(["yy"] * 11))
+    _box(page, "1").fill(" ".join(["yy"] * 11))
     page.get_by_role("button", name="Next →").click()
     expect(page.locator(".lyedwhere")).to_contain_text("System 2 of 15", timeout=30_000)
     page.get_by_role("button", name="+ verse").click()
     expect(page.locator(".lyedtabs .vtab.active")).to_have_text("Verse 2")
     expect(page.locator(".lyedwhere")).to_contain_text("System 2 of 15")
-    expect(_box(page, "B1")).to_have_value("")
-    slots = int(page.locator(".lyrow", has=_box(page, "B1")).locator("label").inner_text()
+    expect(_box(page, "3")).to_have_value("")
+    slots = int(page.locator(".lyrow", has=_box(page, "3")).locator("label").inner_text()
                 .split("·")[1].split()[0])
-    _box(page, "B1").fill(" ".join(["kaa"] * slots))
+    _box(page, "3").fill(" ".join(["kaa"] * slots))
     page.get_by_role("button", name="Import").click()
     expect(page.locator(".lyedstatus")).to_have_text("Imported.", timeout=30_000)
     grid = _grid(page, live, slug)
     assert grid["verses"] == [1, 2]
-    assert _text(grid, 1, "B1", verse=2) == " ".join(["kaa"] * slots)
-    assert _text(grid, 1, "B1", verse=1) == ""
-    assert _text(grid, 0, "T1") == " ".join(["yy"] * 11)
+    assert _text(grid, 1, "3", verse=2) == " ".join(["kaa"] * slots)
+    assert _text(grid, 1, "3", verse=1) == ""
+    assert _text(grid, 0, "1") == " ".join(["yy"] * 11)
     page.locator(".lyedtabs .vtab", has_text="Verse 1").click()
     expect(page.locator(".lyedwhere")).to_contain_text("System 2 of 15")
     _shot(page, "editor-verse-2.png")
@@ -239,7 +239,7 @@ def test_verse_tabs_keep_the_system_and_import_only_their_verse(live, song, page
 def test_a_voice_2_box_only_where_that_part_has_second_voice_notes(live, song, page):
     slug, dest = song
     _open(page, live, slug)
-    expect(_box(page, "B2@2")).to_have_count(0)
+    expect(_box(page, "4@2")).to_have_count(0)
     page.get_by_role("button", name="Next →").click()
     expect(page.locator(".lyedwhere")).to_contain_text("System 2 of 15")
     row = page.locator(".lyrow.v2")
@@ -248,11 +248,11 @@ def test_a_voice_2_box_only_where_that_part_has_second_voice_notes(live, song, p
     order = page.locator(".lyedbody > *").evaluate_all(
         "els => els.map(e => e.classList.contains('lyedslice') ? 'staff'"
         "  : e.querySelector('textarea')?.dataset.box)")
-    assert order[-3:] == ["B1", "B2", "B2@2"]
-    _box(page, "B2@2").fill("Ke-vät ke-vät")
+    assert order[-3:] == ["3", "4", "4@2"]
+    _box(page, "4@2").fill("Ke-vät ke-vät")
     page.get_by_role("button", name="Import").click()
     expect(page.locator(".lyedstatus")).to_have_text("Imported.", timeout=30_000)
-    assert _text(_grid(page, live, slug), 1, "B2@2") == "Ke-vät ke-vät"
+    assert _text(_grid(page, live, slug), 1, "4@2") == "Ke-vät ke-vät"
     row.scroll_into_view_if_needed()
     _shot(page, "editor-voice-2.png")
 
@@ -260,14 +260,14 @@ def test_a_voice_2_box_only_where_that_part_has_second_voice_notes(live, song, p
 def test_emptying_a_box_and_importing_takes_its_words_out(live, song, page):
     slug, _ = song
     _open(page, live, slug)
-    _box(page, "T2").fill(" ".join(["oo"] * 13))
+    _box(page, "2").fill(" ".join(["oo"] * 13))
     page.get_by_role("button", name="Import").click()
     expect(page.locator(".lyedstatus")).to_have_text("Imported.", timeout=30_000)
-    assert _text(_grid(page, live, slug), 0, "T2")
-    _box(page, "T2").fill("")
+    assert _text(_grid(page, live, slug), 0, "2")
+    _box(page, "2").fill("")
     page.get_by_role("button", name="Import").click()
     expect(page.locator(".lyedstatus")).to_have_text("Imported.", timeout=30_000)
-    assert _text(_grid(page, live, slug), 0, "T2") == ""
+    assert _text(_grid(page, live, slug), 0, "2") == ""
 
 
 def _png() -> bytes:
@@ -320,3 +320,15 @@ def test_it_works_on_a_phone(live, song, page):
     expect(page.get_by_role("button", name="Next →")).to_be_visible()
     expect(page.locator(".mobilebar")).to_be_visible()
     _shot(page, "editor-phone.png")
+
+
+def test_a_line_running_on_refreshes_the_next_systems_picture_too(live, song, page):
+    """Thirteen syllables for T1's eleven notes run into system 2, whose box is empty:
+    both systems' cleaned pictures are marked as changed, not only the one typed in."""
+    slug, _ = song
+    _open(page, live, slug)
+    _box(page, "1").fill(" ".join(["la"] * 13))
+    page.get_by_role("button", name="Import").click()
+    expect(page.locator(".lyedstatus")).to_contain_text("Imported", timeout=30_000)
+    changed = page.evaluate("() => Object.keys(sysVer.by).map(Number).sort((a, b) => a - b)")
+    assert changed == [1, 2], changed

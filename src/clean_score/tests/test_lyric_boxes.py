@@ -56,9 +56,9 @@ def _score():
 
 def test_an_import_changes_only_the_boxes_it_sends():
     root = _score()
-    _import(root, 1, {0: {"P1": "a b c d"}, 1: {"P1": "e f g h"}, 2: {"P2": "x y z w"}})
+    _import(root, 1, {0: {"1": "a b c d"}, 1: {"1": "e f g h"}, 2: {"2": "x y z w"}})
     before_p2 = _words(root, 2)
-    result = _import(root, 1, {1: {"P1": "uu vv ww zz"}})
+    result = _import(root, 1, {1: {"1": "uu vv ww zz"}})
     assert not result.mismatches
     assert [t for _, _, t in _words(root, 1)] == ["a", "b", "c", "d", "uu", "vv", "ww", "zz"]
     assert _words(root, 2) == before_p2
@@ -67,9 +67,9 @@ def test_an_import_changes_only_the_boxes_it_sends():
 def test_emptying_a_box_removes_its_words_for_that_verse_and_voice_only():
     root = _score()
     _add_voice2(root, 1, 3)
-    _import(root, 1, {0: {"P1": "a b c d"}, 1: {"P1": "e f g h", "P1@2": "ke vät"}})
-    _import(root, 2, {1: {"P1": "toi nen sä ke"}})
-    _import(root, 1, {1: {"P1": ""}})
+    _import(root, 1, {0: {"1": "a b c d"}, 1: {"1": "e f g h", "1@2": "ke vät"}})
+    _import(root, 2, {1: {"1": "toi nen sä ke"}})
+    _import(root, 1, {1: {"1": ""}})
     assert [m for m, _, _ in _words(root, 1)] == [1, 1, 2, 2]
     assert [t for _, _, t in _words(root, 1, voice=2)] == ["ke", "vät"]
     assert [t for _, _, t in _words(root, 1, verse=2)] == ["toi", "nen", "sä", "ke"]
@@ -77,13 +77,13 @@ def test_emptying_a_box_removes_its_words_for_that_verse_and_voice_only():
 
 def test_a_verse_is_written_to_its_own_number_and_shown_on_its_own_tab():
     root = _score()
-    _import(root, 1, {0: {"P1": "yk-si kak-si"}})
-    _import(root, 3, {0: {"P1": "kol-me nel-jä"}})
+    _import(root, 1, {0: {"1": "yk-si kak-si"}})
+    _import(root, 3, {0: {"1": "kol-me nel-jä"}})
     assert [t for _, _, t in _words(root, 1)] == ["yk", "si", "kak", "si"]
     assert [t for _, _, t in _words(root, 1, verse=3)] == ["kol", "me", "nel", "jä"]
     grid = editor_grid(root, systems=SYSTEMS)
     assert grid.verses == [1, 2, 3]
-    box = [b for b in grid.boxes[0] if b.key == "P1"][0]
+    box = [b for b in grid.boxes[0] if b.key == "1"][0]
     assert box.text == {1: "yk-si kak-si", 2: "", 3: "kol-me nel-jä"}
 
 
@@ -92,10 +92,10 @@ def test_a_second_voice_box_exists_only_where_that_voice_has_notes():
     _add_voice2(root, 2, 4, chords=3)
     grid = editor_grid(root, systems=SYSTEMS)
     keys = {si: [b.key for b in boxes] for si, boxes in grid.boxes.items()}
-    assert keys == {0: ["P1", "P2"], 1: ["P1", "P2", "P2@2"], 2: ["P1", "P2"]}
-    v2 = [b for b in grid.boxes[1] if b.key == "P2@2"][0]
+    assert keys == {0: ["1", "2"], 1: ["1", "2", "2@2"], 2: ["1", "2"]}
+    v2 = [b for b in grid.boxes[1] if b.key == "2@2"][0]
     assert (v2.voice, v2.slots) == (2, 3)
-    result = _import(root, 1, {1: {"P2@2": "ke-vät on"}})
+    result = _import(root, 1, {1: {"2@2": "ke-vät on"}})
     assert not result.mismatches
     assert _words(root, 2, voice=2) == [(4, "begin", "ke"), (4, "end", "vät"), (4, "single", "on")]
     assert _words(root, 2) == []
@@ -104,7 +104,7 @@ def test_a_second_voice_box_exists_only_where_that_voice_has_notes():
 def test_voice_1_words_go_above_the_staff_only_in_systems_with_voice_2_words():
     root = _score()
     _add_voice2(root, 1, 3)
-    _import(root, 1, {0: {"P1": "a b c d"}, 1: {"P1": "e f g h", "P1@2": "ke vät"}})
+    _import(root, 1, {0: {"1": "a b c d"}, 1: {"1": "e f g h", "1@2": "ke vät"}})
 
     def placements(voice):
         return {m: [ly.findtext("placement") for ly in chord.findall("Lyrics")][0]
@@ -114,14 +114,14 @@ def test_voice_1_words_go_above_the_staff_only_in_systems_with_voice_2_words():
 
     assert placements(1) == {1: None, 2: None, 3: "above", 4: "above"}
     assert placements(2) == {3: None}
-    _import(root, 1, {1: {"P1@2": ""}})
+    _import(root, 1, {1: {"1@2": ""}})
     assert placements(1) == {1: None, 2: None, 3: None, 4: None}
 
 
 def test_held_words_keep_their_end_syllable():
     """Kyrie's `e-lei- _ _ son`: the notes under `_` hold the word, `son` ends it."""
     root = build_score(staff_ids=(1,), measures=2, chords=4)
-    _import(root, 1, {0: {"P1": "e-lei- _ _ son, Ky-ri- e"}}, systems=[(1, 2)])
+    _import(root, 1, {0: {"1": "e-lei- _ _ son, Ky-ri- e"}}, systems=[(1, 2)])
     assert _words(root, 1) == [
         (1, "begin", "e"), (1, "middle", "lei"), (2, "end", "son,"),
         (2, "begin", "Ky"), (2, "middle", "ri"), (2, "end", "e")]
@@ -131,16 +131,16 @@ def test_held_words_keep_their_end_syllable():
 
 def test_a_word_open_at_a_systems_end_is_continued_by_the_next_system_alone():
     root = _score()
-    _import(root, 1, {0: {"P1": "a b c lai-"}})
-    _import(root, 1, {1: {"P1": "ne-hil-le d"}})
+    _import(root, 1, {0: {"1": "a b c lai-"}})
+    _import(root, 1, {1: {"1": "ne-hil-le d"}})
     assert _words(root, 1)[3:] == [(2, "begin", "lai"), (3, "middle", "ne"),
                                    (3, "middle", "hil"), (4, "end", "le"), (4, "single", "d")]
 
 
 def test_a_long_line_runs_into_an_empty_system_and_stops_at_one_with_words():
     root = _score()
-    _import(root, 1, {2: {"P1": "x y z w"}})
-    result = _import(root, 1, {0: {"P1": "a b c d e f g h i j"}})
+    _import(root, 1, {2: {"1": "x y z w"}})
+    result = _import(root, 1, {0: {"1": "a b c d e f g h i j"}})
     assert [t for _, _, t in _words(root, 1)][:8] == list("abcdefg") + ["h i j"]
     assert [t for m, _, t in _words(root, 1) if m >= 5] == ["x", "y", "z", "w"]
     assert [(w.kind, w.measure_start, w.measure_end) for w in result.mismatches] == [
@@ -149,8 +149,8 @@ def test_a_long_line_runs_into_an_empty_system_and_stops_at_one_with_words():
 
 def test_a_short_box_clears_the_rest_of_its_system_and_says_so():
     root = _score()
-    _import(root, 1, {0: {"P1": "a b c d"}})
-    result = _import(root, 1, {0: {"P1": "a b"}})
+    _import(root, 1, {0: {"1": "a b c d"}})
+    result = _import(root, 1, {0: {"1": "a b"}})
     assert [t for _, _, t in _words(root, 1)] == ["a", "b"]
     assert [(w.kind, w.slots, w.syllables) for w in result.mismatches] == [(TOO_FEW, 4, 2)]
     assert result.written[0].to_dict() == {"staff": 1, "voice": 1, "verse": 1, "start": 1, "end": 2}
@@ -179,4 +179,14 @@ def test_the_printed_staves_of_a_system_are_read_off_the_part_to_staff_record():
             chord.tag = "Rest"
     assert printed_staves(root, 1, 2) == ([1, 2], [1])
     grid = editor_grid(root, systems=[(1, 2)])
-    assert {b.key: b.printed for b in grid.boxes[0]} == {"P1": 1, "P2": 1}
+    assert {b.key: b.printed for b in grid.boxes[0]} == {"1": 1, "2": 1}
+
+
+def test_two_parts_with_one_name_keep_their_own_boxes():
+    """Kaipaava has two parts named T2: their boxes are keyed by staff, not by name."""
+    root = build_score(staff_ids=(1, 2), measures=2, chords=2, names={1: "T2", 2: "T2"})
+    grid = editor_grid(root, systems=[(1, 2)])
+    assert [b.key for b in grid.boxes[0]] == ["1", "2"]
+    _import(root, 1, {0: {"2": "a b c d"}}, systems=[(1, 2)])
+    assert _words(root, 1) == []
+    assert [t for _, _, t in _words(root, 2)] == ["a", "b", "c", "d"]
