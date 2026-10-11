@@ -27,7 +27,7 @@ everything in `songs/` and pushes it to that private repo, nightly at 03:30
 the next boot). It commits first, then merges the repo's own `main` in (the homr
 fixture pull requests land there), then pushes; it never rebases or force-pushes,
 and a merge that conflicts fails with the local commit kept. Files the app can
-remake (the scan crop pictures, render keys, the undo copies) are listed in
+remake (the scan crop pictures, render keys, the undo copies, about 200 MB) are listed in
 `songs/.gitignore`. Install it once:
 
 ```bash

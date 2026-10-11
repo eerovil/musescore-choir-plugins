@@ -33,7 +33,7 @@ def repos(tmp_path):
     git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
     seed = tmp_path / "seed"
     git(tmp_path, "clone", "-q", str(origin), str(seed))
-    (seed / ".gitignore").write_text("scan/*.png\n")
+    (seed / ".gitignore").write_text("**/scan/*.png\n")
     (seed / "a.txt").write_text("one\n")
     git(seed, "add", "-A")
     git(seed, "commit", "-q", "-m", "seed")
@@ -67,13 +67,14 @@ def test_nothing_changed_makes_no_commit(repos):
 
 def test_ignored_files_are_not_committed(repos):
     origin, songs, _ = repos
-    (songs / "scan").mkdir()
-    (songs / "scan" / "system-01.png").write_bytes(b"png")
-    (songs / "scan" / "system-01.musicxml").write_text("<x/>\n")
+    scan = songs / "some-song" / "scan"
+    scan.mkdir(parents=True)
+    (scan / "system-01.png").write_bytes(b"png")
+    (scan / "system-01.musicxml").write_text("<x/>\n")
     assert backup(songs).returncode == 0
     tracked = git(origin, "ls-tree", "-r", "--name-only", "main").splitlines()
-    assert "scan/system-01.musicxml" in tracked
-    assert "scan/system-01.png" not in tracked
+    assert "some-song/scan/system-01.musicxml" in tracked
+    assert "some-song/scan/system-01.png" not in tracked
 
 
 def test_a_commit_on_the_remote_is_merged_in(repos):
