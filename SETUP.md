@@ -39,17 +39,24 @@ again:
 `--yes` answers yes to every question, `--no-homr` skips homr.
 
 **The system packages it cannot install for you.** MuseScore's AppImage needs a
-few libraries a desktop has and a bare server does not:
+few libraries a desktop has and a bare server does not, and on a machine with no
+screen (a server, a container) it has to draw on a virtual one, `xvfb-run`:
 
 ```bash
 # Fedora
 sudo dnf install python3 git curl poppler-utils alsa-lib mesa-libGL mesa-libEGL \
-    libX11 libxcb fontconfig freetype expat libgpg-error nss fuse-libs
+    libX11 libxcb fontconfig freetype expat libgpg-error nss libdb fuse-libs \
+    xorg-x11-server-Xvfb xorg-x11-xauth
 # Ubuntu / Debian
 sudo apt install python3 python3-venv git curl poppler-utils libasound2t64 libgl1 \
     libegl1 libx11-6 libx11-xcb1 libxcb1 libfontconfig1 libfreetype6 libexpat1 \
-    libgpg-error0 libnss3 libfuse2t64
+    libgpg-error0 libnss3 libglib2.0-0t64 libfuse2t64 libdb5.3t64 xvfb xauth
 ```
+
+Where there is no screen, the script writes `~/.local/bin/musescore3-headless`, a
+two-line wrapper that runs MuseScore inside `xvfb-run`, and puts that in `.env`.
+These two lists are what a clean Fedora 42 and Ubuntu 24.04 container needed to
+take the fixture song (step 3) through cleaning and lyrics to Review.
 
 **macOS:** `brew install python@3.13 poppler`, and install MuseScore 3.6.2 from
 <https://github.com/musescore/MuseScore/releases/tag/v3.6.2>. The script finds it
