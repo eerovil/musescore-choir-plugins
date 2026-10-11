@@ -183,3 +183,29 @@ def test_the_credits_typed_on_the_panel_reach_the_site(live, page, size):
     page.locator("[data-credit=composer]").scroll_into_view_if_needed()
     _shot(page, f"publish-credits-{size[0]}.png")
     assert errors == []
+
+
+def test_a_song_published_before_one_record_per_choir_still_shows_as_published(live, page):
+    """A song published before #384 kept one record under `site`. The library's badge
+    and rail, and the song's own stage rail, still count it as published."""
+    base, slug, _cf = live
+    song = state.load(slug)
+    song.data["publish"] = {"choir": "jm", "site": {
+        "choir": "jm", "slug": slug, "prefix": f"songs/jm/{slug}/old/", "at": time.time(),
+        "files": [], "parts": ["T1", "T2"], "duration": 4.5}}
+    song.save()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    page.goto(f"{base}/#/")
+    card = page.locator("a.card", has_text="Hanget soi")
+    expect(card.locator(".badge")).to_have_text("✓ Published")
+    expect(card.locator(".rail .dot").last).to_have_class("dot done")
+    _shot(page, "publish-legacy-library.png")
+
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator(".stagebar .step", has_text="Publish")).to_have_class(
+        "step active done")
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Published to Joensuun Mieslaulajat (jm)")
+    assert errors == []

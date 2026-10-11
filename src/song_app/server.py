@@ -179,6 +179,8 @@ def _derived(song: state.Song) -> Dict:
         "score_credits": publish.score_credits(cleaned) if cleaned and os.path.exists(cleaned) else {},
         # Whether this host can publish to the Cloudflare site at all (#382).
         "publish_configured": publish.Config.from_env() is not None,
+        # The choirs it is listed for, a pre-#384 single `site` record included.
+        "published": song.published(),
         "jobs": job_state.load(song.dir),
         # The score the last clean replaced, which Undo puts back (#391).
         "clean_backup": clean_backup.latest(song),

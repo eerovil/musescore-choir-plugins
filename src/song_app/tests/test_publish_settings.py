@@ -220,3 +220,20 @@ def test_settings_are_not_saved_while_a_publish_runs(client, song):
     reply = client.post(f"/api/songs/{song.slug}/publish-settings", json={"bpm": 90})
     assert reply.status_code == 409
     assert "bpm" not in _saved(song)
+
+
+def test_a_song_published_before_one_record_per_choir_still_counts_as_published(client, song):
+    """#384 moved to one record per choir; a song published before kept `site`."""
+    data = state.load(song.slug).data
+    data["publish"] = {"choir": "jm", "site": {"choir": "jm", "files": [], "parts": ["T1"]}}
+    state.Song(song.slug, data).save()
+
+    assert state.load(song.slug).to_summary()["published"] == ["jm"]
+    assert client.get(f"/api/songs/{song.slug}").json()["published"] == ["jm"]
+    [row] = [s for s in client.get("/api/songs").json() if s["slug"] == song.slug]
+    assert row["published"] == ["jm"]
+
+
+def test_a_song_never_published_counts_as_published_nowhere(client, song):
+    assert state.load(song.slug).to_summary()["published"] == []
+    assert client.get(f"/api/songs/{song.slug}").json()["published"] == []

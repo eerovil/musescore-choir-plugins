@@ -345,7 +345,7 @@ async function renderWorkspace(slug) {
   showPane("panel");
 
   function drawStagebar() {
-    const published = Object.keys(song.publish?.sites || {}).length > 0;
+    const published = (song.published || []).length > 0;
     const done = (st, i) => i < song.stage_index || (st === "publish" && published);
     stagebarEl.replaceChildren(...song.stages.map((st, i) => el("div", {
       className: "step " + (st === view ? "active " : "") + (done(st, i) ? "done" : ""),
@@ -1697,7 +1697,7 @@ function panelRegister(panel, song, P, refresh) {
     el("label", {}, "Display name"),
     nameInput,
     el("div", { className: "row" }, saveBtn,
-      el("span", { className: "hint" }, song.publish?.sites
+      el("span", { className: "hint" }, song.published?.length
         ? "The folder name stays the same. Publish again to show the new name on the site."
         : "The folder name stays the same.")),
     el("p", { className: "sub", style: "margin-top:16px" }, "Sources for this song."),

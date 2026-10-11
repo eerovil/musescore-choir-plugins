@@ -109,6 +109,15 @@ class Song:
     def mode(self) -> str:
         return self.data.get("mode", "normal")
 
+    def published(self) -> List[str]:
+        """The choirs whose lists the site shows this song in, sorted.
+
+        Read through `publish.records`, so a song published before #384 kept its
+        one record under `site` and still counts as published.
+        """
+        from . import publish  # noqa: PLC0415 - publish is a leaf; keep state's imports light
+        return sorted(publish.records(self.data.get("publish")))
+
     def set_stage(self, stage: str) -> None:
         self.data["stage"] = stage
 
@@ -145,7 +154,7 @@ class Song:
             ),
             "lyric_warnings": len(self.data.get("lyrics", {}).get("warnings", [])),
             # Which choirs' lists the site shows it in.
-            "published": sorted((self.data.get("publish") or {}).get("sites") or {}),
+            "published": self.published(),
             "created_at": self.data.get("created_at") or self.data.get("updated_at") or 0,
             "updated_at": self.data.get("updated_at") or 0,
         }
