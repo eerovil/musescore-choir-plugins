@@ -1008,7 +1008,15 @@ state model are in `DESIGN.md`.
   MIDI and the clock agree; the clock is MuseScore's `.mpos` bar order plus its MIDI
   tempo map, cross-checked. Files go to R2 under a fresh version prefix, then one D1
   row per (choir, slug) is upserted, with the composer, lyricist and arranger. The
-  site's migrations own the `songs` table; publishing creates nothing. It refuses a
+  site's migrations own the `songs` table; publishing creates nothing. **Tempo marks go
+  up unprinted** (#409, `publish.hide_tempo_marks`): OpenSheetMusicDisplay puts a
+  tempo mark above the staff without making room, so it landed on the lyrics of the
+  system above. MuseScore exports the marks `prepare` adds as visible whatever the
+  score says, so the exported MusicXML gets `print-object="no"` on every
+  `<metronome>` and tempo `<words>`; the speed stays in `<sound tempo>` and the MIDI.
+  `scripts/hide_published_tempo_marks.py` did the same for the songs already up, by
+  copying each version into a fresh prefix (the site caches a version's files as
+  immutable, so nothing can be changed in place). It refuses a
   score Review has not approved, and needs `CLOUDFLARE_ACCOUNT_ID`,
   `CLOUDFLARE_API_TOKEN`, `STEMMANAUHAT_D1_DATABASE_ID` in `.env`; the contract
   with the site is `docs/stemmanauhat-site.md`. The **Publish panel** holds what the
