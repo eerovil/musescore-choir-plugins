@@ -297,3 +297,48 @@ def test_a_song_published_before_one_record_per_choir_still_shows_as_published(l
     expect(page.locator(".publish-section .publish-status")).to_contain_text(
         "Published to Joensuun Mieslaulajat (jm)")
     assert errors == []
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_another_sites_own_choirs_are_offered_and_published_to(live, page, size):
+    """#408: someone else's copy of the site has its own choirs. The panel offers
+    those, read from that site's database, and keeps offering the last list read
+    while the site cannot be reached."""
+    base, slug, cf = live
+    cf.db.execute("DELETE FROM choirs")
+    cf.db.executemany("INSERT INTO choirs VALUES (?, ?, ?)", [
+        ("aurora", "Kamarikuoro Aurora", 0), ("kirkko", "Kirkkokuoro", 0),
+        ("public", "Demo", 1)])
+    cf.db.commit()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    section = page.locator(".publish-section")
+    choir = section.locator("select.publish-choir")
+    expect(choir.locator("option")).to_have_text(
+        ["— choir —", "Kamarikuoro Aurora (aurora)", "Kirkkokuoro (kirkko)",
+         "Demo (public, open to all)"])
+    section.scroll_into_view_if_needed()
+    # A native drop-down cannot be photographed open; show the list as a box.
+    choir.evaluate("s => s.size = s.options.length")
+    section.locator(".publish-status").scroll_into_view_if_needed()
+    _shot(page, f"publish-site-choirs-{size[0]}.png")
+    choir.evaluate("s => s.size = 0")
+
+    choir.select_option("aurora")
+    section.locator("button.publish-btn").click()
+    status = page.locator(".publish-section .publish-status")
+    expect(status).to_contain_text("Published to Kamarikuoro Aurora (aurora)", timeout=15000)
+    assert [row[0] for row in cf.listed("aurora")] == [slug]
+
+    # The site goes out of reach: the saved list is still offered, and says so.
+    cf.fail_on = "/d1/"
+    page.reload()
+    section = page.locator(".publish-section")
+    expect(section.locator(".publish-choirs")).to_contain_text("Could not read the site's choirs")
+    expect(section.locator("select.publish-choir")).to_have_value("aurora")
+    section.scroll_into_view_if_needed()
+    _shot(page, f"publish-site-offline-{size[0]}.png")
+    assert errors == []
