@@ -21,6 +21,25 @@ and the toolkit still runs — `songs/` is just created empty on first use.
 `songs/` is its own git repo, so `git` inside it acts on the songs, and `git` at
 the repo root acts on the code. Neither sees the other's changes.
 
+**Backups.** On the machine the app runs on, `scripts/backup-songs.sh` commits
+everything in `songs/` and pushes it to that private repo, nightly at 03:30
+(`systemd/songs-backup.timer`; a night missed while the machine was off runs at
+the next boot). It commits first, then merges the repo's own `main` in (the homr
+fixture pull requests land there), then pushes; it never rebases or force-pushes,
+and a merge that conflicts fails with the local commit kept. Files the app can
+remake (the scan crop pictures, render keys, the undo copies) are listed in
+`songs/.gitignore`. Install it once:
+
+```bash
+cp systemd/songs-backup.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now songs-backup.timer
+```
+
+To check it works, look at the newest `Backup YYYY-MM-DD` commit in the songs
+repo, or `systemctl --user status songs-backup` (a failure shows in
+`systemctl --user --failed`).
+
 ## 2. Python
 
 ```bash

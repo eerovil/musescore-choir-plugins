@@ -1,0 +1,11 @@
+[Unit]
+Description=Commit songs/ and push it to the private songs repo
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/musescore-choir-plugins
+# A timer job inherits almost no PATH, and the push needs git and its credential helper.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/musescore-choir-plugins/scripts/backup-songs.sh
+TimeoutStartSec=1800

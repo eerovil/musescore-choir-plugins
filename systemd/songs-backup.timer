@@ -1,0 +1,11 @@
+[Unit]
+Description=Back up songs/ to the private songs repo, nightly
+
+[Timer]
+Unit=songs-backup.service
+OnCalendar=*-*-* 03:30
+# A night missed while the host was off runs at the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
