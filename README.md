@@ -25,8 +25,8 @@ stage at any time; redoing one clears only what depended on it.
    line of music across all the staves) sits on the page — *Find systems*
    proposes them and you drag the edges to fix them — then press *Scan the
    score*. Each system is read separately by [homr](https://github.com/eerovil/homr),
-   an optical music reader, and you compare every system with the page before
-   approving the result. A system that came out wrong can be read again on its own.
+   an optical music reader. A bar it was unsure of is marked for the Fix stage,
+   and a system that came out wrong can be read again on its own.
 3. **Clean** — split staves that carry two voices into one staff per voice and
    name the parts (S1, A1, T1, B1, …). When the staves change parts from one
    system to the next, you fill in a small grid saying who sings on which staff.
@@ -70,14 +70,15 @@ be installed to the home screen (see [docs/PWA.md](docs/PWA.md)).
 ./song.py --port 8123     # prefer a port (the next free one is used if it is taken)
 ```
 
-`song.py` uses the project's virtualenv (`.venv/bin/python song.py` if `.venv` is
-not active). Setting up a machine — Python, MuseScore 3, poppler, and the
-optional homr install — is in **[SETUP.md](SETUP.md)**. homr can also be installed
-or updated from the Scan stage, in its *homr* box.
+To set up your own copy, run `scripts/setup.sh` and then `./song.py --check`;
+**[SETUP.md](SETUP.md)** walks through it — Python, MuseScore 3, poppler, the
+optional homr install, and publishing to your own copy of the
+[stemmanauhat site](https://github.com/eerovil/stemmanauhat-cf). `song.py` uses the
+project's virtualenv (`.venv/bin/python song.py` if `.venv` is not active).
 
 Each song is a folder under `songs/` with its state in `songs/<song>/.song.json`.
-The songs are copyrighted sheet music, so they live in a separate private
-repository cloned into `songs/`.
+`songs/` is not part of this repository, since the songs are usually sheet music
+under copyright; keep it in a private repository of your own.
 
 ## More
 

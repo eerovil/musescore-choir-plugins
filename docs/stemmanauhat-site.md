@@ -31,7 +31,9 @@ songs/<choir>/<slug>/<version>/      version = UTC time, 20261009T120000Z
   manifest.json                      the same facts as the D1 row
 ```
 
-`choir` is `jm`, `naiskuoro` or `public`. `slug` is song-app's folder name and
+`choir` is one of the ids in the site's D1 `choirs` table (`SELECT id, name,
+public FROM choirs`), which song-app reads to offer them (#408); `public` is the
+one every site has. On the original copy they are `jm`, `naiskuoro` and `public`. `slug` is song-app's folder name and
 never changes.
 
 **No audio is published.** The site plays `score.mid` with a piano soundfont and

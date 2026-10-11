@@ -74,7 +74,7 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
 
     # MusicXML -> MuseScore CLI
     log(f"Converting {os.path.basename(input_path)} with MuseScore CLI")
-    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
     result = subprocess.run(
         [cli, input_path, "-o", target], capture_output=True, text=True
     )
@@ -347,7 +347,7 @@ def musescore_check(mscx_path: str) -> Optional[List[Dict]]:
     counts (staff = position in the score, measure = every bar from the top). None
     when no MuseScore answered -- which is "not checked", never "fine".
     """
-    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
     with tempfile.TemporaryDirectory() as tmp:
         out = os.path.join(tmp, "check.mlog")
         # MuseScore reads the format off the extension, and a clean checks the file
@@ -1088,7 +1088,7 @@ def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str
     out = os.path.join(cache, f"{stem}@{dpi}.png")
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(musicxml_path):
         return out
-    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
     result = subprocess.run(
         [cli, "-T", "10", "-r", str(dpi), musicxml_path, "-o", out],
         capture_output=True, text=True, timeout=MUSESCORE_TIMEOUT)
@@ -1143,7 +1143,7 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
                     return out
         except OSError:
             pass
-    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
 
     # Without breaks there is one render at the configured scale. With them, the
     # scale has to be one the score actually fits at: at full size a wide system
@@ -1175,7 +1175,7 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
     with open(key_path, "w", encoding="utf-8") as f:
         f.write(key)
     return out
-    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
     src = _scaled_staff_mscx(mscx_path, breaks) or mscx_path
     try:
         result = subprocess.run([cli, src, "-o", out], capture_output=True, text=True)

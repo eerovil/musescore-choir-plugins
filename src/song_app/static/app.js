@@ -2811,8 +2811,8 @@ function panelReview(panel, song, P, refresh, actions) {
 // The last stage (#400): the score, its MIDI and the timing go to the stemmanauhat
 // site, which draws the score and plays the MIDI itself, and the song is listed for
 // one choir. The tempo the site plays at and the credits it shows are set here and
-// saved with the song, so publishing again sends the same.
-const CHOIRS = { jm: "Joensuun Mieslaulajat (jm)", naiskuoro: "Naiskuoro", public: "Public demo" };
+// saved with the song, so publishing again sends the same. The choirs are the
+// site's own, read from its database (#408, GET /api/choirs).
 const CREDITS = [["composer", "Composer"], ["lyricist", "Lyricist"], ["arranger", "Arranger"]];
 
 function panelPublish(panel, song, P, refresh, actions) {
@@ -2943,17 +2943,41 @@ function publishSection(P, song, refresh, settings, saveNote) {
   const pub = song.publish || {};
   // One record per choir (#384); a song published before that kept one, as `site`.
   const sites = pub.sites || (pub.site ? { [pub.site.choir]: pub.site } : {});
-  const listed = Object.keys(CHOIRS).filter((c) => sites[c])
-    .concat(Object.keys(sites).filter((c) => !(c in CHOIRS)));
+  const listed = Object.keys(sites);
   const site = sites[pub.choir] || sites[listed[0]];
   const job = song.jobs?.publish;
   const running = job?.status === "running";
-  const guess = pub.choir || { men: "jm", women: "naiskuoro" }[song.voicing] || "";
+  const names = {};
+  const choirName = (c) => names[c] ? `${names[c]} (${c})` : c;
   const choir = el("select", { className: "publish-choir" },
-    el("option", { value: "" }, "— choir —"),
-    ...Object.entries(CHOIRS).map(([value, label]) => el("option", { value }, label)));
-  choir.value = guess;
+    el("option", { value: "" }, "— choir —"));
+  const choirNote = el("p", { className: "hint publish-choirs" });
+  if (song.publish_configured) {
+    getJSON("/api/choirs").then((reply) => {
+      for (const c of reply.choirs) {
+        names[c.id] = c.name;
+        choir.append(el("option", { value: c.id }, c.public ? `${c.name} (${c.id}, open to all)` : `${c.name} (${c.id})`));
+      }
+      choir.value = pub.choir || "";
+      if (reply.error) {
+        choirNote.className = "hint publish-choirs err";
+        choirNote.textContent = `Could not read the site's choirs: ${reply.error}`
+          + (reply.saved_at ? ` — showing the list read on ${new Date(reply.saved_at * 1000).toLocaleString()}.` : "");
+      } else if (!reply.choirs.length) {
+        choirNote.textContent = "The site has no choirs yet: add one with its scripts/add-choir.sh.";
+      }
+      if (site && !running && !pub.error) status.textContent = publishedText();
+    }).catch((e) => { choirNote.className = "hint publish-choirs err"; choirNote.textContent = e.message; });
+  }
   const status = el("p", { className: "hint publish-status" });
+  const publishedText = () => listed.map((c) => {
+    const s = sites[c];
+    const against = s.published_against || pub.published_against;
+    const stale = against && song.cleaned_fingerprint && against !== song.cleaned_fingerprint;
+    return `Published to ${choirName(c)} on `
+      + `${new Date(s.at * 1000).toLocaleString()} — ${s.parts.length} part(s).`
+      + (stale ? " The score has changed since; publish again to update it." : "");
+  }).join(" ");
   if (!song.publish_configured) {
     status.textContent = "Publishing is off on this host: the Cloudflare keys are not in .env.";
   } else if (running) {
@@ -2962,14 +2986,7 @@ function publishSection(P, song, refresh, settings, saveNote) {
     status.className = "hint publish-status err";
     status.textContent = "Last publish failed: " + pub.error;
   } else if (site) {
-    status.textContent = listed.map((c) => {
-      const s = sites[c];
-      const against = s.published_against || pub.published_against;
-      const stale = against && song.cleaned_fingerprint && against !== song.cleaned_fingerprint;
-      return `Published to ${CHOIRS[c] || c} on `
-        + `${new Date(s.at * 1000).toLocaleString()} — ${s.parts.length} part(s).`
-        + (stale ? " The score has changed since; publish again to update it." : "");
-    }).join(" ");
+    status.textContent = publishedText();
   } else {
     status.textContent = "Not published yet.";
   }
@@ -2994,5 +3011,6 @@ function publishSection(P, song, refresh, settings, saveNote) {
     el("h3", {}, "Stemmanauhat site"),
     el("label", {}, "Choir"),
     el("div", { className: "row" }, choir, btn),
+    choirNote,
     status);
 }

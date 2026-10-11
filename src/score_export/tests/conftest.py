@@ -18,7 +18,7 @@ def fermata_mscx():
 
 
 def musescore_available() -> bool:
-    cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
     return bool(shutil.which(cli) or (os.path.isfile(cli) and os.access(cli, os.X_OK)))
 
 

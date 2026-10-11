@@ -19,7 +19,8 @@
 #     for a release that is still waiting on its own merge
 set -euo pipefail
 
-REPO="${REPO:-/var/home/eero/musescore-choir-plugins}"
+# The checkout this script lives in, so another machine's copy deploys itself (#408).
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SERVICE="${SERVICE:-song-app.service}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8123/healthz}"
 UNATTENDED=0
