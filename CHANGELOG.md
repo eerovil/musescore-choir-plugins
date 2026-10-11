@@ -16,6 +16,10 @@ developers are listed under *Behind the scenes*.
   database, instead of a fixed list of three. A choir added on the site shows up
   here by itself, and the choir is no longer guessed from the song's voicing:
   pick it once and the song remembers it. (#408)
+- The site no longer draws tempo marks ("♩ = 72", "Tempo I"): they landed on the
+  words of the line above. Publish now sends them hidden (the speed still changes,
+  since the site plays the MIDI), and every song already on the site was given a
+  new version with them hidden. (#409)
 - The songs folder is backed up again: every night at 03:30 the app's machine
   commits everything in `songs/` and pushes it to the private songs repo. Until
   now it had been saved there once, by hand, on 23 August. (#406)

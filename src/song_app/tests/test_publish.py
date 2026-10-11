@@ -78,9 +78,27 @@ class FakeCloudflare:
             if method == "PUT":
                 self.objects[key] = request.data
                 self.types[key] = request.get_header("Content-type")
+            elif method == "GET":
+                if key not in self.objects:
+                    raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {},
+                                                 io.BytesIO(b'{"errors":[]}'))
+                return _Reply(self.objects[key])
             elif method == "DELETE":
                 self.objects.pop(key, None)
             return _Reply(b'{"success":true}')
+        if path == "/r2/buckets/stemmanauhat/objects" and method == "GET":
+            # Listed two at a time, so the cursor is followed.
+            prefix = urllib.parse.parse_qs(url.query)["prefix"][0]
+            keys = sorted(k for k in self.objects if k.startswith(prefix))
+            start = int(urllib.parse.parse_qs(url.query).get("cursor", ["0"])[0])
+            page = keys[start:start + 2]
+            more = start + 2 < len(keys)
+            return _Reply(json.dumps({
+                "success": True,
+                "result": [{"key": k, "http_metadata": {"contentType": self.types.get(k)}}
+                           for k in page],
+                "result_info": {"is_truncated": more, "cursor": str(start + 2) if more else ""},
+            }).encode())
         if path == "/d1/database/db1/query" and method == "POST":
             body = json.loads(request.data)
             rows = self.db.execute(body["sql"], body["params"]).fetchall()
@@ -449,3 +467,139 @@ def test_publish_refuses_an_unapproved_score_an_unknown_choir_and_no_keys(
     refused = client.post(url, json={"choir": "jm"})
     assert refused.status_code == 400 and "CLOUDFLARE_API_TOKEN" in refused.json()["detail"]
     assert not any("/r2/" in path for _m, path in cf.calls)
+
+
+# --- Tempo marks are hidden on the site (#409) ------------------------------
+TEMPO_XML = b"""<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part id="P1">
+    <measure number="1">
+      <direction placement="above">
+        <direction-type>
+          <metronome parentheses="no"><beat-unit>quarter</beat-unit><per-minute>84</per-minute></metronome>
+          </direction-type>
+        <sound tempo="84"/>
+        </direction>
+      <direction placement="above">
+        <direction-type><words>Kaikki</words></direction-type>
+        </direction>
+      </measure>
+    <measure number="2">
+      <direction placement="above">
+        <direction-type><words>Tempo I</words></direction-type>
+        <direction-type>
+          <metronome parentheses="yes"><beat-unit>quarter</beat-unit><per-minute>72</per-minute></metronome>
+          </direction-type>
+        <sound tempo="72"/>
+        </direction>
+      </measure>
+    </part>
+  </score-partwise>
+"""
+
+
+def test_every_tempo_mark_is_set_not_to_print_and_nothing_else_is():
+    hidden, count = publish.hide_tempo_marks(TEMPO_XML)
+    assert count == 2
+    root = etree_root(hidden)
+    assert [m.get("print-object") for m in root.iter("metronome")] == ["no", "no"]
+    words = {w.text: w.get("print-object") for w in root.iter("words")}
+    assert words == {"Kaikki": None, "Tempo I": "no"}, "staff text without a tempo stays"
+    assert [s.get("tempo") for s in root.iter("sound")] == ["84", "72"], "the speed stays"
+    assert b"<!DOCTYPE score-partwise" in hidden
+
+
+def test_a_score_with_nothing_to_hide_comes_back_byte_for_byte():
+    hidden, _ = publish.hide_tempo_marks(TEMPO_XML)
+    assert publish.hide_tempo_marks(hidden) == (hidden, 0)
+
+
+def etree_root(data):
+    from lxml import etree
+    return etree.fromstring(data)
+
+
+def _published(cf, choir, slug, prefix, score, extra=()):
+    cf.objects[prefix + "score.musicxml"] = score
+    cf.types[prefix + "score.musicxml"] = "application/vnd.recordare.musicxml+xml"
+    cf.objects[prefix + "manifest.json"] = json.dumps(
+        {"slug": slug, "choir": choir, "version": prefix.rstrip("/").rsplit("/", 1)[1],
+         "score": "score.musicxml"}).encode()
+    cf.types[prefix + "manifest.json"] = "application/json"
+    for name, data in extra:
+        cf.objects[prefix + name] = data
+        cf.types[prefix + name] = "audio/midi"
+    cf.db.execute("INSERT INTO songs VALUES (?, ?, ?, ?, '[]', 1.0, '2025-01-01T00:00:00Z', "
+                  "NULL, NULL, NULL)", [choir, slug, slug.title(), prefix])
+
+
+def _song_record(songs, slug, choir, prefix, files):
+    os.makedirs(songs / slug)
+    data = {"name": slug, "publish": {"sites": {choir: {
+        "choir": choir, "slug": slug, "version": "v1", "prefix": prefix,
+        "files": [prefix + f for f in files]}}}, "other": {"kept": True}}
+    (songs / slug / ".song.json").write_text(json.dumps(data))
+
+
+def test_a_published_song_with_tempo_marks_gets_a_new_version_that_hides_them(tmp_path):
+    cf = FakeCloudflare()
+    old = "songs/jm/laulu/20250101T000000Z/"
+    _published(cf, "jm", "laulu", old, TEMPO_XML,
+               extra=[("score.mid", b"MThd-1"), ("timing.json", b'{"t": 1}')])
+    songs = tmp_path / "songs"
+    _song_record(songs, "laulu", "jm", old, ["score.musicxml", "score.mid"])
+    _song_record(songs, "toinen", "jm", "songs/jm/toinen/x/", ["score.musicxml"])
+    before = dict(cf.objects)
+
+    changed = publish.hide_published_tempo_marks(publish.Cloudflare(CONFIG, cf),
+                                                 songs_dir=str(songs))
+
+    [change] = changed
+    new = change["new"]
+    assert new.startswith("songs/jm/laulu/") and new != old and change["hidden"] == 2
+    [(slug, title, prefix, _parts)] = cf.listed("jm")
+    assert prefix == new
+    assert cf.db.execute("SELECT published_at FROM songs").fetchone()[0] == "2025-01-01T00:00:00Z"
+    assert sorted(k[len(new):] for k in cf.objects if k.startswith(new)) == [
+        "manifest.json", "score.mid", "score.musicxml", "timing.json"]
+    assert cf.objects[new + "score.mid"] == b"MThd-1" and cf.types[new + "score.mid"] == "audio/midi"
+    assert cf.objects[new + "timing.json"] == b'{"t": 1}'
+    assert cf.objects[new + "score.musicxml"] == publish.hide_tempo_marks(TEMPO_XML)[0]
+    assert json.loads(cf.objects[new + "manifest.json"])["version"] == change["version"]
+    assert {k: v for k, v in cf.objects.items() if k.startswith(old)} == before, \
+        "the old version stays as it was"
+
+    moved = json.loads((songs / "laulu" / ".song.json").read_text())
+    record = moved["publish"]["sites"]["jm"]
+    assert record["prefix"] == new and record["version"] == change["version"]
+    assert sorted(record["files"]) == sorted(change["files"])
+    assert moved["other"] == {"kept": True}
+    untouched = json.loads((songs / "toinen" / ".song.json").read_text())
+    assert untouched["publish"]["sites"]["jm"]["prefix"] == "songs/jm/toinen/x/"
+
+
+def test_a_published_song_without_tempo_marks_and_a_dry_run_change_nothing(tmp_path):
+    cf = FakeCloudflare()
+    _published(cf, "jm", "hiljaa", "songs/jm/hiljaa/v1/", b"<score-partwise/>")
+    _published(cf, "public", "laulu", "songs/public/laulu/v1/", TEMPO_XML)
+    before = dict(cf.objects)
+
+    changed = publish.hide_published_tempo_marks(publish.Cloudflare(CONFIG, cf), dry_run=True)
+
+    assert [(c["choir"], c["slug"]) for c in changed] == [("public", "laulu")]
+    assert cf.objects == before
+    assert [p for _s, _t, p, _ in cf.listed("public")] == ["songs/public/laulu/v1/"]
+    assert not [c for c in cf.calls if c[0] in ("PUT", "DELETE")]
+
+
+@needs_musescore
+def test_the_published_score_carries_its_tempo_marks_unprinted(tmp_path):
+    """#409: OpenSheetMusicDisplay draws tempo marks onto the lyrics, so they go
+    unprinted; the speeds stay in the file and in the MIDI."""
+    bundle = publish.build_bundle(FERMATA, str(tmp_path), initial_bpm=84,
+                                  tempo_changes=[{"measure": 2, "bpm": 72}])
+    root = etree_root(open(bundle.musicxml, "rb").read())
+    marks = list(root.iter("metronome"))
+    assert marks and all(m.get("print-object") == "no" for m in marks)
+    assert [s.get("tempo") for s in root.iter("sound") if s.get("tempo")][:2] == ["84", "72"]

@@ -33,6 +33,7 @@ formats the site reads.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import time
@@ -226,10 +227,49 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
     names = musescore.part_names(etree.parse(source).getroot())
     log("Exporting the score (MusicXML), its play order and its clock (MuseScore CLI)")
     musicxml = musescore.run_musescore(source, os.path.join(out_dir, "score.musicxml"))
+    with open(musicxml, "rb") as f:
+        hidden, count = hide_tempo_marks(f.read())
+    if count:
+        log(f"Hiding {count} tempo mark(s) on the site")
+        with open(musicxml, "wb") as f:
+            f.write(hidden)
     mpos = musescore.run_musescore(source, os.path.join(out_dir, "score.mpos"))
     midi = musescore.run_musescore(source, os.path.join(out_dir, "score.mid"))
     clock = timing(source, mpos, midi)
     return Bundle(musicxml=musicxml, timing=clock, parts=list(names), midi=midi)
+
+
+# ---------------------------------------------------------------------------
+# Tempo marks (#409)
+# ---------------------------------------------------------------------------
+def hide_tempo_marks(musicxml: bytes) -> Tuple[bytes, int]:
+    """The MusicXML with every tempo mark set not to print, and how many were hidden.
+
+    The site's score drawer (OpenSheetMusicDisplay) puts a tempo mark above the
+    staff without making room for it, so it lands on the words of the system
+    above (#409). The marks are hidden rather than deleted: the speed stays in
+    the file, and the site plays the MIDI anyway. MuseScore writes the marks
+    ``prepare`` adds as visible whatever the score says, so the export is where
+    this has to happen. A mark is a ``<direction>`` carrying ``<sound tempo>``;
+    its ``<metronome>`` and its words ("Adagio", "Tempo I") both go.
+    A file with nothing to hide comes back as it was, byte for byte.
+    """
+    parser = etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)
+    tree = etree.parse(io.BytesIO(musicxml), parser)
+    count = 0
+    for direction in tree.iter("direction"):
+        if not any(sound.get("tempo") for sound in direction.findall("sound")):
+            continue
+        shown = [mark for mark in direction.iter("metronome", "words")
+                 if mark.get("print-object") != "no"]
+        for mark in shown:
+            mark.set("print-object", "no")
+        count += bool(shown)
+    if not count:
+        return musicxml, 0
+    out = io.BytesIO()
+    tree.write(out, xml_declaration=True, encoding=tree.docinfo.encoding or "UTF-8")
+    return out.getvalue(), count
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +301,7 @@ MISSING_CONFIG = ("Publishing is off: set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_
 
 
 class Cloudflare:
-    """The three calls a publish makes: put and delete an R2 object, query D1."""
+    """What a publish asks of Cloudflare: read, list, put and delete R2 objects, query D1."""
 
     def __init__(self, config: Config, opener=None):
         self.config = config
@@ -292,6 +332,24 @@ class Cloudflare:
     def _object(self, key: str) -> str:
         return (f"/r2/buckets/{urllib.parse.quote(self.config.bucket)}/objects/"
                 f"{urllib.parse.quote(key, safe='/')}")
+
+    def get(self, key: str) -> bytes:
+        return self._call("GET", self._object(key))
+
+    def list(self, prefix: str) -> List[Dict]:
+        """The R2 objects under `prefix`: each a dict with ``key`` and ``http_metadata``."""
+        objects: List[Dict] = []
+        cursor = None
+        while True:
+            query = {"prefix": prefix, **({"cursor": cursor} if cursor else {})}
+            body = self._call("GET", f"/r2/buckets/{urllib.parse.quote(self.config.bucket)}"
+                                     f"/objects?{urllib.parse.urlencode(query)}")
+            reply = json.loads(body or b"{}")
+            objects += reply.get("result") or []
+            info = reply.get("result_info") or {}
+            cursor = info.get("cursor")
+            if not (info.get("is_truncated") and cursor):
+                return objects
 
     def put(self, key: str, data: bytes, content_type: str) -> None:
         self._call("PUT", self._object(key), data, content_type)
@@ -476,3 +534,99 @@ def _clean_up(published: Dict[str, Dict], current: Dict, client: Cloudflare,
                     client.delete(key)
     except PublishError as exc:
         log(f"Could not remove the previous version's files: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Songs already on the site (#409)
+# ---------------------------------------------------------------------------
+# What a copied file is served as when R2 does not say.
+_TYPES = {".musicxml": "application/vnd.recordare.musicxml+xml", ".mid": "audio/midi",
+          ".json": "application/json", ".mp3": "audio/mpeg"}
+
+
+def hide_published_tempo_marks(client: Cloudflare, *, songs_dir: Optional[str] = None,
+                               dry_run: bool = False, log: Logger = _noop) -> List[Dict]:
+    """Give every song on the site whose score shows tempo marks a version that hides them.
+
+    The site serves a version's files as immutable for a year, so a file cannot be
+    changed where it stands: each such song's files are copied as they are into a
+    fresh version prefix, the score with its tempo marks hidden and the manifest
+    with its new version, and the song's row is pointed there. Nothing is
+    re-exported from today's score, which may have moved on since it was
+    published. The old version stays in R2. A publish record in `songs_dir` that
+    names the old prefix is moved to the new one, so the next publish cleans up
+    the right files. Returns what was (or, with `dry_run`, would be) changed.
+    """
+    rows = [row for result in client.query("SELECT choir, slug, prefix FROM songs "
+                                           "ORDER BY choir, slug")
+            for row in result.get("results") or []]
+    changed = []
+    for row in rows:
+        choir, slug, old = (row["choir"], row["slug"], row["prefix"]) \
+            if isinstance(row, dict) else row
+        try:
+            manifest = json.loads(client.get(old + "manifest.json"))
+        except PublishError:
+            manifest = {}
+        score_name = manifest.get("score") or "score.musicxml"
+        try:
+            score, count = hide_tempo_marks(client.get(old + score_name))
+        except (PublishError, etree.XMLSyntaxError) as exc:
+            log(f"{choir}/{slug}: skipped, its score could not be read ({exc})")
+            continue
+        if not count:
+            continue
+        version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        new = f"{old.rstrip('/').rsplit('/', 1)[0]}/{version}/"
+        if new == old:
+            raise PublishError(f"{choir}/{slug} was published this second; run it again")
+        change = {"choir": choir, "slug": slug, "old": old, "new": new, "version": version,
+                  "hidden": count}
+        changed.append(change)
+        log(f"{choir}/{slug}: {count} tempo mark(s) to hide, {old} -> {new}")
+        if dry_run:
+            continue
+        files = []
+        for obj in client.list(old):
+            name = obj["key"][len(old):]
+            if name == score_name:
+                data = score
+            elif name == "manifest.json" and manifest:
+                data = json.dumps({**manifest, "version": version}, ensure_ascii=False).encode()
+            else:
+                data = client.get(obj["key"])
+            kind = ((obj.get("http_metadata") or {}).get("contentType")
+                    or _TYPES.get(os.path.splitext(name)[1], "application/octet-stream"))
+            client.put(new + name, data, kind)
+            files.append(new + name)
+        client.query("UPDATE songs SET prefix = ? WHERE choir = ? AND slug = ? AND prefix = ?",
+                     [new, choir, slug, old])
+        change["files"] = files
+        if songs_dir:
+            _move_records(songs_dir, change, log)
+    return changed
+
+
+def _move_records(songs_dir: str, change: Dict, log: Logger) -> None:
+    """Point the publish records that name the old version at the new one.
+
+    Only those records change; the rest of each ``.song.json`` is written back
+    as it was read."""
+    for entry in sorted(os.listdir(songs_dir)):
+        path = os.path.join(songs_dir, entry, ".song.json")
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        pub = data.get("publish") or {}
+        found = [r for r in list((pub.get("sites") or {}).values()) + [pub.get("site")]
+                 if isinstance(r, dict) and r.get("prefix") == change["old"]]
+        for record in found:
+            record.update(prefix=change["new"], version=change["version"],
+                          files=list(change["files"]))
+        if found:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, path)
+            log(f"Moved {entry}'s publish record to {change['version']}")
