@@ -1241,12 +1241,14 @@ def _kept_warnings(previous: List, result) -> List[Dict]:
             continue
         start, end = w["measure_start"], w.get("measure_end") or w["measure_start"]
         verse, voice = w.get("verse") or 1, w.get("voice") or 1
-        answered = any(
-            x.staff in (w.get("staff_ids") or []) and x.verse == verse and x.voice == voice
+        # One warning can name several staves (the same range, kind and counts are
+        # said once); only the staves this import rewrote are answered.
+        left = [sid for sid in (w.get("staff_ids") or []) if not any(
+            x.staff == sid and x.verse == verse and x.voice == voice
             and x.start <= end and x.end >= start
-            for x in result.written)
-        if not answered:
-            kept.append(w)
+            for x in result.written)]
+        if left:
+            kept.append({**w, "staff_ids": left})
     return kept
 
 

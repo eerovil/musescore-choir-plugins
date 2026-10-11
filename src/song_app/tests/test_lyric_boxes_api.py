@@ -171,3 +171,23 @@ def test_what_landed_is_this_systems_bars_with_their_words(song, monkeypatch):
     first, last = grid["systems"][2]["start"], grid["systems"][2]["end"]
     assert svg.count('class="measure"') == last - first + 1
     assert api.get(f"/api/songs/{slug}/landed/99").status_code == 404
+
+
+def test_a_warning_shared_by_two_parts_stays_on_the_part_not_fixed(song):
+    """Parts with the same range, kind and counts share one warning; fixing one part
+    keeps the warning for the other, so the song does not move on with it wrong."""
+    api, slug, dest = song
+    data = json.loads((dest / ".song.json").read_text())
+    data["lyrics"] = {"json": "lyrics.json", "warnings": [{
+        "kind": "too_many", "message": "Measures 1-3 (staffs 1, 2): too many tokens",
+        "measure_start": 1, "measure_end": 3, "staff_ids": [1, 2],
+        "syllables": 14, "slots": 11, "verse": 1, "voice": 1}]}
+    (dest / ".song.json").write_text(json.dumps(data))
+    fixed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"0": {
+        "T1": " ".join(["la"] * 11)}}})
+    assert fixed.status_code == 200, fixed.text
+    assert fixed.json()["imported"] == []
+    left = fixed.json()["mismatches"]
+    assert [(w["kind"], w["measure_start"], w["staff_ids"]) for w in left] == [
+        ("too_many", 1, [2])]
+    assert json.loads((dest / ".song.json").read_text())["stage"] != "review"
