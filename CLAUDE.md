@@ -43,6 +43,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   system_finder.py       Propose the printed-system bands off a page (homr's staves)
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
   publish.py             Publish: MusicXML + MIDI + timing + credits to the Cloudflare site
+  check.py               `./song.py --check`: what this machine has and lacks, one line each
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
 src/clean_score/         Score-cleaning package
@@ -70,6 +71,8 @@ CHANGELOG.md             What changed, by merge date — add a line for each use
 ## Environment & running
 
 - Python 3.13, virtualenv at `.venv/`. Use `.venv/bin/python` directly.
+- A new machine: `scripts/setup.sh` (venv, MuseScore 3, `.env`, optional homr), then
+  `./song.py --check` (#408). SETUP.md is the walk-through for someone else's copy.
 - Install deps: `.venv/bin/pip install -r pip-requirements.txt`
   (lxml, pytest, dotenv, pillow, fastapi, uvicorn, python-multipart, httpx,
   verovio, mido, numpy; MuseScore 3 and poppler are not pip packages).
@@ -1018,6 +1021,11 @@ state model are in `DESIGN.md`.
   prefilled from the score's own `composer`/`lyricist`/`arranger` metaTags until
   saved (`publish.score_credits`), then kept as `publish.credits` — an emptied one
   stays empty. Each choir's publish is recorded under `publish.sites`.
+  **The choirs are the site's own** (#408): `publish.choirs` reads the site's D1
+  `choirs` table (`GET /api/choirs`), keeps the last list in `songs/.choirs.json`
+  for when Cloudflare is out of reach, and a publish is refused (502) until a live
+  read succeeds. There is no list in the code, and the choir is no longer guessed
+  from the song's voicing; `public` is the one id every site has.
   **Part names** (#402) are set there too: cleaning renames every part by guessing
   from pitch unless the song has a voicing, so older songs reached the site with
   tenors in a women's choir. `publish.part_names` keeps one name per singing part,

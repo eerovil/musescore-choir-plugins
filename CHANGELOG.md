@@ -7,6 +7,15 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Setting the app up on another computer is one script: `scripts/setup.sh`
+  makes the Python environment, finds MuseScore 3 or downloads it (Linux), writes
+  `.env`, and offers homr. `./song.py --check` then says, one line each, what this
+  computer has and lacks. SETUP.md is rewritten for someone starting from nothing.
+  (#408)
+- Publish offers the choirs of the site it publishes to, read from the site's
+  database, instead of a fixed list of three. A choir added on the site shows up
+  here by itself, and the choir is no longer guessed from the song's voicing:
+  pick it once and the song remembers it. (#408)
 - The songs folder is backed up again: every night at 03:30 the app's machine
   commits everything in `songs/` and pushes it to the private songs repo. Until
   now it had been saved there once, by hand, on 23 August. (#406)
