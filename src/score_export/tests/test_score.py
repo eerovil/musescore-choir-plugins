@@ -238,6 +238,46 @@ def test_a_mark_already_at_that_bar_is_replaced_on_every_staff():
     assert _tempos(root) == [(2, 60.0)]
 
 
+ADAGIO = ("<Tempo><tempo>1.16666666667</tempo><followText>1</followText>"
+          "<text>Adagio <sym>metNoteQuarterUp</sym> = c. 70</text></Tempo>")
+
+
+def test_a_worded_mark_keeps_its_words_and_takes_the_recorded_speed():
+    root = _bars(3)
+    root.find("./Score/Staff/Measure[2]/voice").insert(0, etree.fromstring(ADAGIO))
+
+    assert add_tempo_changes(root, [{"measure": 2, "bpm": 66}]) == 1
+
+    assert _tempos(root) == [(2, 66.0)]
+    tempo = root.find("./Score/Staff/Measure[2]/voice/Tempo")
+    assert "".join(tempo.find("text").itertext()) == "Adagio metNoteQuarterUp = c. 70"
+    assert tempo.find("visible") is None
+    assert tempo.findtext("followText") == "0"
+
+
+@pytest.mark.parametrize("words", ["Andante", "Tempo I", "<b>Allegro</b>"])
+def test_any_printed_words_survive_a_change(words):
+    root = _bars(3, staves=1)
+    root.find("./Score/Staff/Measure[3]/voice").insert(0, etree.fromstring(
+        f"<Tempo><tempo>2</tempo><text>{words}</text></Tempo>"))
+
+    add_tempo_changes(root, [{"measure": 3, "bpm": 90}])
+
+    assert _tempos(root) == [(3, 90.0)]
+    assert root.find("./Score/Staff/Measure[3]/voice/Tempo/text") is not None
+
+
+def test_a_bare_metronome_mark_is_still_replaced():
+    root = _bars(3, staves=1)
+    root.find("./Score/Staff/Measure[2]/voice").insert(0, etree.fromstring(
+        "<Tempo><tempo>2</tempo><text><sym>metNoteQuarterUp</sym> = 120</text></Tempo>"))
+
+    add_tempo_changes(root, [{"measure": 2, "bpm": 60}])
+
+    tempo = root.find("./Score/Staff/Measure[2]/voice/Tempo")
+    assert _tempos(root) == [(2, 60.0)] and tempo.findtext("visible") == "0"
+
+
 @pytest.mark.parametrize("change, message", [
     ({"measure": 1, "bpm": 100}, "bar 1"),
     ({"measure": 9, "bpm": 100}, "bars 1-3"),

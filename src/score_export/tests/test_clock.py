@@ -4,6 +4,7 @@ import os
 
 import mido
 import pytest
+from lxml import etree
 
 from src.score_export.clock import DEFAULT_TEMPO, TempoMap, read_mpos
 from src.score_export.musescore import run_musescore
@@ -113,3 +114,23 @@ def test_a_tempo_change_reaches_musescores_clock(fermata_mscx, tmp_path):
     assert round(bpm_at(0)) == 80
     assert round(bpm_at(4)) == 140
     assert round(bpm_at(7)) == 140
+
+
+@needs_musescore
+def test_a_worded_tempo_mark_plays_at_the_recorded_speed(fermata_mscx, tmp_path):
+    """#404: "Adagio ♩ = c. 70" keeps its words and plays at the recorded 140,
+    not at the 70 its own text says."""
+    root = etree.parse(fermata_mscx).getroot()
+    voice = root.find("./Score/Staff/Measure[2]/voice")
+    voice.insert(0, etree.fromstring(
+        "<Tempo><tempo>1.16666666667</tempo><followText>1</followText>"
+        "<text>Adagio <sym>metNoteQuarterUp</sym> = c. 70</text></Tempo>"))
+    worded = tmp_path / "worded.mscx"
+    worded.write_bytes(etree.tostring(root))
+    source, _ = prepare(str(worded), str(tmp_path), initial_bpm=80,
+                        tempo_changes=[{"measure": 2, "bpm": 140}])
+
+    words = etree.parse(source).getroot().find("./Score/Staff/Measure[2]/voice/Tempo/text")
+    assert "Adagio" in "".join(words.itertext())
+    tempo = TempoMap.from_midi(run_musescore(source, str(tmp_path / "c.mid")))
+    assert round(60 * 0.5 / (tempo.seconds(4.5) - tempo.seconds(4))) == 140
