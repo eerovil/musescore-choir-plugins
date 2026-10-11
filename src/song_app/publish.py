@@ -7,7 +7,9 @@ needs from here is:
 - the score as **MusicXML**;
 - the score's **MIDI**, which the site plays;
 - a **timing file** saying where in the score playback is at each moment;
-- the **part names**, in score order, which the site matches to the MIDI tracks;
+- the **part names**, in score order, which the site matches to the MIDI tracks
+  (as corrected on the Publish panel, #402: cleaning names parts by guessing
+  from pitch);
 - the **credits**: composer, lyricist and arranger, when they are known.
 
 No audio is rendered here (stemmanauhat-cf#36), and nothing goes to YouTube any
@@ -15,8 +17,8 @@ more (#400).
 
 All of it is made off one prepared copy of the cleaned score
 (`score_export.score.prepare`: silent parts dropped, red marks stripped, the
-fermata hold, the opening tempo and the tempo changes set on the Publish
-panel), so the parts in the MusicXML, the MIDI and the timing are the same parts
+fermata hold, the opening tempo, the tempo changes and the part names set on
+the Publish panel), so the parts in the MusicXML, the MIDI and the timing are the same parts
 on the same clock. The clock is MuseScore's own: bar order from its ``.mpos``
 export (which follows repeats and D.C./D.S. jumps the way playback does) and
 seconds from its MIDI tempo map, which carries the fermata stretches. The two
@@ -188,14 +190,38 @@ def score_credits(mscx_path: str) -> Dict[str, str]:
     return {name: tags[name] for name in CREDITS if tags.get(name)}
 
 
+def score_parts(mscx_path: str) -> List[str]:
+    """The names the score's singing parts have now, top staff first: what a
+    publish calls them unless the Publish panel names them (#402)."""
+    from src.score_export import score
+    try:
+        return score.singing_part_names(etree.parse(mscx_path).getroot())
+    except (OSError, etree.XMLSyntaxError):
+        return []
+
+
+def part_count_message(count: int) -> str:
+    return f"The score now has {count} parts; check the part names on the Publish panel."
+
+
 def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] = None,
                  tempo_changes: Optional[List[Dict]] = None,
+                 part_names: Optional[List[str]] = None,
                  log: Logger = _noop) -> Bundle:
-    """MusicXML, MIDI, the timing and the part names, made off one prepared score."""
+    """MusicXML, MIDI, the timing and the part names, made off one prepared score.
+
+    `part_names` are the names saved on the Publish panel, by position (#402). A
+    score that has since been cleaned into another number of parts is refused
+    rather than named by guesswork.
+    """
     from src.score_export import musescore, score
 
+    if part_names is not None:
+        count = len(score_parts(cleaned_path))
+        if count != len(part_names):
+            raise PublishError(part_count_message(count))
     source, dropped = score.prepare(cleaned_path, out_dir, initial_bpm=initial_bpm,
-                                    tempo_changes=tempo_changes)
+                                    tempo_changes=tempo_changes, part_names=part_names)
     if dropped:
         log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
     names = musescore.part_names(etree.parse(source).getroot())

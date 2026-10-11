@@ -5,7 +5,7 @@ from lxml import etree
 
 from src.score_export.score import (START, add_opening_tempo, add_tempo_changes, drop_parts,
                                      has_opening_tempo, hold_fermatas, prepare,
-                                     silent_parts)
+                                     rename_parts, silent_parts, singing_part_names)
 
 SCORE = """<museScore><Score>
   <Part><trackName>T1</trackName><Staff id="1"/></Part>
@@ -299,3 +299,44 @@ def test_prepare_puts_the_changes_only_in_its_copy(tmp_path):
 
     assert _tempos(etree.parse(path).getroot()) == [(1, 80.0), (2, 132.0), (3, 80.0)]
     assert original.read_text() == before
+
+
+NAMED = """<museScore><Score>
+  <Part><Staff id="1"/><trackName>T1</trackName>
+    <Instrument id="piano"><longName>Tenor 1</longName><shortName>T1</shortName>
+      <trackName>Piano</trackName></Instrument></Part>
+  <Part><Staff id="2"/><trackName>Click</trackName></Part>
+  <Part><Staff id="3"/><trackName>T2</trackName>
+    <Instrument id="piano"><longName>Tenor 2</longName><shortName>T2</shortName></Instrument></Part>
+  <Staff id="1"><Measure><voice><Chord><Note><pitch>60</pitch></Note></Chord></voice></Measure></Staff>
+  <Staff id="2"><Measure><voice><Rest/></voice></Measure></Staff>
+  <Staff id="3"><Measure><voice><Chord><Note><pitch>57</pitch></Note></Chord></voice></Measure></Staff>
+</Score></museScore>"""
+
+
+def test_the_singing_parts_are_named_in_score_order():
+    assert singing_part_names(etree.fromstring(NAMED)) == ["T1", "T2"]
+
+
+def test_prepare_renames_every_name_field_only_in_its_copy(tmp_path):
+    """#402: the names a person corrected go on the parts left once the silent
+    ones are dropped, in the track name and the instrument's long and short names."""
+    original = tmp_path / "score.mscx"
+    original.write_text(NAMED)
+    path, dropped = prepare(str(original), str(tmp_path), part_names=["S1", "A1"])
+    assert dropped == ["Click"] and path != str(original)
+    parts = etree.parse(path).getroot().find("Score").findall("Part")
+    assert [(p.findtext("trackName"), p.findtext("Instrument/longName"),
+             p.findtext("Instrument/shortName")) for p in parts] == \
+        [("S1", "S1", "S1"), ("A1", "A1", "A1")]
+    assert original.read_text() == NAMED
+
+
+def test_renaming_to_the_same_names_changes_nothing():
+    root = etree.fromstring(SINGING_ONLY)
+    assert rename_parts(root, ["T1"]) == 0
+
+
+def test_renaming_with_the_wrong_count_is_refused():
+    with pytest.raises(ValueError, match="1 parts; 2 names"):
+        rename_parts(etree.fromstring(SINGING_ONLY), ["S1", "S2"])

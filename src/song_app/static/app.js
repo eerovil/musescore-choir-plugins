@@ -2887,8 +2887,20 @@ function panelPublish(panel, song, P, refresh, actions) {
     return [key, input];
   }));
 
+  // What the singers see each part called (#402). Cleaning names parts by guessing
+  // from pitch, so a women's choir can come out with tenors; the names typed here
+  // go into the published score, its MIDI and the site, and survive a re-clean.
+  const publishParts = song.publish_parts || { names: [] };
+  const partNames = publishParts.names.map((name, i) => {
+    const input = el("input", { type: "text", value: name, maxLength: 40,
+      placeholder: `Part ${i + 1}`, "data-part-name": String(i), style: "width:96px" });
+    input.addEventListener("input", changed);
+    return input;
+  });
+
   const settings = () => ({
     tempo_changes: tempoChanges(),
+    ...(partNames.length ? { part_names: partNames.map((input) => input.value.trim()) } : {}),
     credits: Object.fromEntries(CREDITS.map(([key]) => [key, credits[key].value.trim()])),
     ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
   });
@@ -2916,6 +2928,12 @@ function panelPublish(panel, song, P, refresh, actions) {
       el("span", { className: "hint" }, "where the page changes speed; bars counted from 1")),
     el("div", { className: "credits" },
       ...CREDITS.flatMap(([key, label]) => [el("label", {}, label), credits[key]])),
+    ...(partNames.length ? [
+      el("label", {}, "Part names"),
+      el("div", { className: "row part-names", "data-part-names": "" }, ...partNames),
+      el("span", { className: `part-names-note hint${publishParts.stale ? " err" : ""}` },
+        publishParts.stale ? publishParts.message : "as the singers see them, top staff first"),
+    ] : []),
     el("div", { className: "row" }, saveBtn, saveNote),
     publishSection(P, song, refresh, settings, saveNote),
     makeLog(song.jobs?.publish));

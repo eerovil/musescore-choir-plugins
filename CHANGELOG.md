@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Publish: a **Part names** row lets you correct what the site calls each part,
+  top staff first. Cleaning names parts by guessing from pitch, so a women's choir
+  song could come out with tenors. The names are saved with the song's other
+  publish settings, so cleaning again keeps them; if a re-clean changes the number
+  of parts, Publish stops and asks you to check them. (#402)
 - A tempo change set on the Publish panel no longer wipes out the tempo words the
   score prints at that bar ("Adagio", "Andante", "Tempo I"): the words stay and
   only the speed changes. (#405)

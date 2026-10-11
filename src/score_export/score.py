@@ -290,10 +290,50 @@ def drop_parts(root: etree._Element, names: List[str]) -> int:
     return dropped
 
 
+def singing_part_names(root: etree._Element) -> List[str]:
+    """The names of the parts `prepare` keeps, in score order (top staff first)."""
+    score = root.find("Score")
+    if score is None:
+        return []
+    silent = set(silent_parts(root))
+    names = [_part_name(p, i) for i, p in enumerate(score.findall("Part"))]
+    return [name for name in names if name not in silent]
+
+
+def rename_parts(root: etree._Element, names: Sequence[str]) -> int:
+    """Give the parts these names, in order: the track name and the instrument's
+    long and short names, so the MIDI, the MusicXML and the site agree (#402).
+    Returns how many parts changed. A list of another length is refused."""
+    score = root.find("Score")
+    parts = score.findall("Part") if score is not None else []
+    if len(parts) != len(names):
+        raise ValueError(f"The score has {len(parts)} parts; {len(names)} names given")
+    changed = 0
+    for part, name in zip(parts, names):
+        fields = [part.find("trackName")]
+        instrument = part.find("Instrument")
+        if instrument is not None:
+            fields += [instrument.find("longName"), instrument.find("shortName")]
+        if fields[0] is None:
+            fields[0] = etree.SubElement(part, "trackName")
+        fields = [f for f in fields if f is not None]
+        if all((f.text or "") == name for f in fields):
+            continue
+        for field in fields:
+            field.text = name
+        changed += 1
+    return changed
+
+
 def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
             initial_bpm: Optional[int] = None,
-            tempo_changes: Optional[Sequence[Dict]] = None) -> Tuple[str, List[str]]:
+            tempo_changes: Optional[Sequence[Dict]] = None,
+            part_names: Optional[Sequence[str]] = None) -> Tuple[str, List[str]]:
     """Return (score to render, names dropped).
+
+    `part_names` renames the parts left after the silent ones go, top staff first
+    (#402): the names a person corrected on the Publish panel, since cleaning
+    names parts by guessing from pitch.
 
     The original file is never touched; when no render-only edit is needed it is
     used as-is, so the common case costs nothing.
@@ -302,6 +342,8 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     root = tree.getroot()
     silent = [] if keep_silent else silent_parts(root)
     changed = bool(drop_parts(root, silent))
+    if part_names is not None:
+        changed = bool(rename_parts(root, part_names)) or changed
     # The red marks cleaning leaves for a person fixing the score (#238) are not
     # part of the music; a forgotten one must not end up in a practice track.
     changed = bool(strip_marks(root)) or changed

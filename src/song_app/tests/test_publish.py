@@ -324,6 +324,26 @@ def test_the_bundle_is_musescores_own_parts_and_clock(tmp_path):
     assert starts == [0, 1, 0, 1], "MuseScore plays the repeat, so the timing does"
 
 
+@needs_musescore
+def test_the_names_given_are_the_bundles_parts_and_its_midi_tracks(tmp_path):
+    """#402: the names typed on the Publish panel are what the site matches the
+    MIDI tracks by, so the MIDI must carry them too."""
+    bundle = publish.build_bundle(os.path.join(FIXTURES, "repeat.mscx"), str(tmp_path),
+                                  part_names=["Sopraano", "Altto"])
+    assert bundle.parts == ["Sopraano", "Altto"]
+    # MuseScore ends a track name with a NUL byte.
+    tracks = [t.name.rstrip("\x00") for t in mido.MidiFile(bundle.midi).tracks if t.name]
+    assert tracks == ["Sopraano", "Altto"]
+    assert "<part-name>Sopraano</part-name>" in open(bundle.musicxml).read()
+
+
+def test_a_score_cleaned_into_another_number_of_parts_is_refused(tmp_path):
+    with pytest.raises(publish.PublishError,
+                       match="The score now has 2 parts; check the part names"):
+        publish.build_bundle(os.path.join(FIXTURES, "repeat.mscx"), str(tmp_path),
+                             part_names=["S1", "S2", "A1"])
+
+
 # ---------------------------------------------------------------------------
 # The route: Publish in the app puts the song in the choir's list
 # ---------------------------------------------------------------------------
@@ -359,7 +379,7 @@ def _publish_client(monkeypatch, tmp_path):
     seen = {}
 
     def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None,
-                    log=lambda m: None):
+                    part_names=None, log=lambda m: None):
         seen.update(cleaned=cleaned, initial_bpm=initial_bpm, tempo_changes=tempo_changes)
         return _bundle(tmp_path)
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)
