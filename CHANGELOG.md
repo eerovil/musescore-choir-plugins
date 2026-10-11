@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Publish no longer renders an MP3 per part: the site plays the score's MIDI, so a
+  publish is now three quick MuseScore exports instead of 4–7 audio renders. Part
+  names still reach the site. (stemmanauhat-cf#36)
 - Review and Fix: **Check again** compares the notes with the scan, asks MuseScore 3
   whether it opens the score, and checks health — on the cleaned score as it is now,
   without cleaning. A score fixed by hand no longer shows those checks as stale. It

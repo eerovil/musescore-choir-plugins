@@ -18,7 +18,7 @@ import urllib.parse
 import mido
 import pytest
 
-from src.scrollvideo.tests.conftest import needs_ffmpeg, needs_musescore
+from src.scrollvideo.tests.conftest import needs_musescore
 from src.song_app import publish
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "scrollvideo", "tests",
@@ -81,17 +81,12 @@ class FakeCloudflare:
 def _bundle(tmp_path, parts=("S1", "A1")):
     xml = tmp_path / "score.musicxml"
     xml.write_text("<score-partwise/>")
-    files = []
-    for name in parts:
-        mp3 = tmp_path / f"{name}.mp3"
-        mp3.write_bytes(b"ID3" + name.encode())
-        files.append((name, str(mp3)))
     timing = {"version": 1, "measures": 2, "duration": 4.5,
               "points": [[0.0, 0, 0.0], [4.5, 1, 4.0]]}
-    return publish.Bundle(musicxml=str(xml), timing=timing, parts=files)
+    return publish.Bundle(musicxml=str(xml), timing=timing, parts=list(parts))
 
 
-def test_a_published_song_is_in_its_choirs_list_with_score_timing_and_every_part(tmp_path):
+def test_a_published_song_is_in_its_choirs_list_with_score_timing_and_every_part_name(tmp_path):
     cf = FakeCloudflare()
     record = publish.publish(slug="laulu", title="Laulu", choir="jm",
                              bundle=_bundle(tmp_path), client=publish.Cloudflare(CONFIG, cf))
@@ -101,12 +96,11 @@ def test_a_published_song_is_in_its_choirs_list_with_score_timing_and_every_part
     assert cf.listed("naiskuoro") == []
     assert prefix == record["prefix"] and prefix.startswith("songs/jm/laulu/")
     parts = json.loads(parts)
-    assert [p["name"] for p in parts] == ["S1", "A1"]
+    # Names only: the site plays the MIDI, so no audio per part goes up (stemmanauhat-cf#36).
+    assert parts == [{"name": "S1"}, {"name": "A1"}]
     assert cf.objects[prefix + "score.musicxml"] == b"<score-partwise/>"
     assert json.loads(cf.objects[prefix + "timing.json"])["points"][-1] == [4.5, 1, 4.0]
-    for part in parts:
-        assert cf.objects[prefix + part["file"]].startswith(b"ID3")
-        assert cf.types[prefix + part["file"]] == "audio/mpeg"
+    assert sorted(cf.objects) == sorted(prefix + f for f in ("score.musicxml", "timing.json", "manifest.json"))
     manifest = json.loads(cf.objects[prefix + "manifest.json"])
     assert manifest["parts"] == parts and manifest["choir"] == "jm"
     # The row goes in last: the site never points at files not yet uploaded.
@@ -269,14 +263,10 @@ def test_timing_refuses_a_different_bar_count(tmp_path):
 
 
 @needs_musescore
-@needs_ffmpeg
 def test_the_bundle_is_musescores_own_parts_and_clock(tmp_path):
     bundle = publish.build_bundle(os.path.join(FIXTURES, "repeat.mscx"), str(tmp_path))
-    assert [name for name, _ in bundle.parts] == ["S1", "A1"]
-    for _name, path in bundle.parts:
-        with open(path, "rb") as f:
-            head = f.read(3)
-        assert head == b"ID3" or head[:2] == b"\xff\xfb"
+    assert bundle.parts == ["S1", "A1"]
+    assert not [f for f in os.listdir(tmp_path) if f.endswith((".wav", ".mp3"))], "no part audio is rendered"
     assert "<score-partwise" in open(bundle.musicxml).read()
     starts = [p[1] for p in bundle.timing["points"] if p[2] == 0.0]
     assert starts == [0, 1, 0, 1], "MuseScore plays the repeat, so the timing does"
