@@ -47,7 +47,6 @@ from lxml import etree
 
 Logger = Callable[[str], None]
 
-CHOIRS = ("jm", "naiskuoro", "public")
 TIMING_VERSION = 1
 # How far MuseScore's .mpos bar starts may sit from the MIDI clock before the
 # timing is refused. .mpos is written in whole milliseconds.
@@ -318,9 +317,64 @@ def _errors(body: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# The site's choirs
+# ---------------------------------------------------------------------------
+# Each copy of the site has its own choirs, in its D1 `choirs` table (made by its
+# setup script), so the list is read from there rather than written down here
+# (#408): a list in this file was one choir director's choirs, and anybody else
+# had to edit code to publish at all. `public` is the one id every site has
+# (its migration 0001), and is the open demo list.
+PUBLIC = "public"
+CHOIRS_FILE = ".choirs.json"
+
+
+def site_choirs(client: "Cloudflare") -> List[Dict]:
+    """The site's choirs, ``[{"id", "name", "public"}]``, the private ones first."""
+    result = client.query("SELECT id, name, public FROM choirs ORDER BY public, name")
+    choirs = []
+    for part in result:
+        for row in part.get("results") or []:
+            if isinstance(row, dict):
+                row = (row.get("id"), row.get("name"), row.get("public"))
+            choir, name, public = row
+            choirs.append({"id": choir, "name": name or choir, "public": bool(public)})
+    return choirs
+
+
+def choirs(config: Optional[Config], songs_dir: str,
+           client: Optional["Cloudflare"] = None) -> Dict:
+    """The choirs the Publish panel offers, and where the list came from.
+
+    Read from the site every time, and kept in ``songs/.choirs.json`` so the panel
+    still has a list while Cloudflare cannot be reached; the reply then says it
+    is the saved one (``saved_at``) and why (``error``).
+    """
+    if config is None:
+        return {"choirs": [], "error": MISSING_CONFIG, "saved_at": None}
+    path = os.path.join(songs_dir, CHOIRS_FILE)
+    try:
+        listed = site_choirs(client or Cloudflare(config))
+    except (PublishError, ValueError) as exc:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                saved = json.load(fh)
+            return {"choirs": saved["choirs"], "error": str(exc), "saved_at": saved.get("at")}
+        except (OSError, ValueError, KeyError):
+            return {"choirs": [], "error": str(exc), "saved_at": None}
+    try:
+        os.makedirs(songs_dir, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"choirs": listed, "at": time.time()}, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except OSError:
+        pass  # a list not saved costs the offline fallback, not this answer
+    return {"choirs": listed, "error": None, "saved_at": None}
+
+
+# ---------------------------------------------------------------------------
 # Publishing
 # ---------------------------------------------------------------------------
-PUBLIC = "public"
 
 
 def records(state: Optional[Dict]) -> Dict[str, Dict]:
@@ -349,7 +403,8 @@ def replaced(choir: str, published: Dict[str, Dict]) -> List[str]:
 
 def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudflare,
             credits: Optional[Dict[str, str]] = None,
-            published: Optional[Dict[str, Dict]] = None, log: Logger = _noop) -> Dict:
+            published: Optional[Dict[str, Dict]] = None,
+            choirs: Optional[Sequence[str]] = None, log: Logger = _noop) -> Dict:
     """Upload `bundle` and register it for `choir`. Returns the record to keep.
 
     The files go under a fresh version prefix first; the D1 row is pointed at
@@ -359,9 +414,12 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     afterwards, and so is the song in any other private choir — rows and files
     — while its public listing stays (``replaced``). `credits` names the
     composer, lyricist and arranger; an empty or missing one is left out.
+    `choirs` is the site's choir ids when the caller has just read them; without
+    it they are read here (``site_choirs``).
     """
-    if choir not in CHOIRS:
-        raise PublishError(f"Unknown choir {choir!r}; choose one of {', '.join(CHOIRS)}.")
+    known = list(choirs) if choirs is not None else [c["id"] for c in site_choirs(client)]
+    if choir not in known:
+        raise PublishError(f"Unknown choir {choir!r}; the site has {', '.join(known) or 'none'}.")
     version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     prefix = f"songs/{choir}/{slug}/{version}/"
     parts = [{"name": name} for name in bundle.parts]

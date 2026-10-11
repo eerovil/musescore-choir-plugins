@@ -32,6 +32,11 @@ SITE_SONGS = """CREATE TABLE songs (
   choir TEXT NOT NULL, slug TEXT NOT NULL, title TEXT NOT NULL, prefix TEXT NOT NULL,
   parts TEXT NOT NULL, duration REAL NOT NULL, published_at TEXT NOT NULL,
   composer TEXT, lyricist TEXT, arranger TEXT, PRIMARY KEY (choir, slug))"""
+# The site's choirs table and the rows its migration 0001 seeds on the live copy.
+SITE_CHOIRS = """CREATE TABLE choirs (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, public INTEGER NOT NULL DEFAULT 0)"""
+SEEDED = [("jm", "Joensuun Mieslaulajat", 0), ("naiskuoro", "Naiskuoro", 0),
+          ("public", "Esittely", 1)]
 
 
 class _Reply(io.BytesIO):
@@ -45,13 +50,15 @@ class _Reply(io.BytesIO):
 class FakeCloudflare:
     """Cloudflare's REST API as a publish uses it: R2 objects and D1 queries."""
 
-    def __init__(self, fail_on=None):
+    def __init__(self, fail_on=None, choirs=SEEDED):
         self.objects = {}
         self.types = {}
         self.db = sqlite3.connect(":memory:", check_same_thread=False)
         # The site's own schema (stemmanauhat-cf migrations 0001 and 0004): the
         # site owns the table, and a publish no longer creates it.
         self.db.execute(SITE_SONGS)
+        self.db.execute(SITE_CHOIRS)
+        self.db.executemany("INSERT INTO choirs VALUES (?, ?, ?)", choirs)
         self.calls = []
         self.fail_on = fail_on
 
@@ -234,7 +241,7 @@ def test_a_refused_upload_registers_nothing(tmp_path):
     with pytest.raises(publish.PublishError, match="403 no"):
         publish.publish(slug="laulu", title="Laulu", choir="jm",
                         bundle=_bundle(tmp_path), client=publish.Cloudflare(CONFIG, cf))
-    assert not any("/d1/" in path for _m, path in cf.calls)
+    assert cf.listed("jm") == []
 
 
 def test_an_unknown_choir_is_refused(tmp_path):
@@ -441,4 +448,4 @@ def test_publish_refuses_an_unapproved_score_an_unknown_choir_and_no_keys(
     monkeypatch.delenv("CLOUDFLARE_API_TOKEN")
     refused = client.post(url, json={"choir": "jm"})
     assert refused.status_code == 400 and "CLOUDFLARE_API_TOKEN" in refused.json()["detail"]
-    assert cf.calls == []
+    assert not any("/r2/" in path for _m, path in cf.calls)

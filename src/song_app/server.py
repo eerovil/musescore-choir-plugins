@@ -1727,7 +1727,8 @@ async def api_publish_settings(slug: str, body: Dict = None) -> Dict:
     return _derived(song)
 
 
-def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
+def _run_publish(slug: str, choir: str, config: "publish.Config",
+                 choirs: Optional[List[str]] = None) -> None:
     song = _require(slug)
     log = lambda m: _job_emit(slug, "publish", m)
     try:
@@ -1750,7 +1751,7 @@ def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
                 client=publish.Cloudflare(config), credits=credits,
-                published=published, log=log)
+                published=published, choirs=choirs, log=log)
         record["published_against"] = state.file_fingerprint(cleaned)
         with state.song_lock(slug):
             song = _require(slug)
@@ -1787,8 +1788,6 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     song = _require(slug)
     body = body or {}
     choir = body.get("choir") or ""
-    if choir not in publish.CHOIRS:
-        raise HTTPException(400, f"Choose a choir: {', '.join(publish.CHOIRS)}")
     config = publish.Config.from_env()
     if config is None:
         raise HTTPException(400, publish.MISSING_CONFIG)
@@ -1804,6 +1803,18 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         raise HTTPException(409, publish.part_count_message(len(parts["names"]))
                             + " Save the part names first.")
     settings = _publish_settings(song, body.get("settings") or {})
+    # The site's own choirs (#408), read live and only once everything checked
+    # here is right; a list saved while Cloudflare is out of reach is not enough
+    # to publish against, and the upload would fail anyway.
+    if not choir:
+        raise HTTPException(400, "Choose a choir first.")
+    listing = await asyncio.get_running_loop().run_in_executor(
+        None, publish.choirs, config, state.SONGS_DIR)
+    if listing["error"]:
+        raise HTTPException(502, f"Could not read the site's choirs: {listing['error']}")
+    known = [c["id"] for c in listing["choirs"]]
+    if choir not in known:
+        raise HTTPException(400, f"Choose a choir: {', '.join(known) or 'the site has none'}")
     if _publish_busy(song) or not job_state.start_if_idle(
             song.dir, "publish", ("scan", "clean", "check", "publish"), fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
@@ -1812,8 +1823,15 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         song = _require(slug)
         song.data.setdefault("publish", {}).update(settings)
         song.save()
-    asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config)
+    asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config, known)
     return {"started": True}
+
+
+@app.get("/api/choirs")
+async def api_choirs() -> Dict:
+    """The choirs the Publish panel offers: the site's own, read from its database (#408)."""
+    return await asyncio.get_running_loop().run_in_executor(
+        None, publish.choirs, publish.Config.from_env(), state.SONGS_DIR)
 
 
 # --------------------------------------------------------------------------

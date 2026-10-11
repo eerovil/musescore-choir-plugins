@@ -2,8 +2,8 @@
 
 The server runs in-process, so Cloudflare is the same `FakeCloudflare` the unit
 tests use (R2 a dict, D1 SQLite) and the MuseScore half of the publish is a
-stub. What is pinned is the person's path: the choir is offered (guessed from
-the song's voicing), Publish runs, and the panel then says where the song went —
+stub. What is pinned is the person's path: the site's choirs are offered (read
+from its database, #408), one is chosen, Publish runs, and the panel then says where the song went —
 and the fake D1 says the same. Screenshots go to `EVIDENCE_DIR` when the run
 names one.
 """
@@ -111,7 +111,12 @@ def test_publish_lists_the_song_for_the_chosen_choir(live, page, size):
     section = page.locator(".publish-section")
     expect(section.get_by_role("heading", name="Stemmanauhat site")).to_be_visible()
     choir = section.locator("select.publish-choir")
-    expect(choir).to_have_value("jm")  # a men's choir song
+    # The site's own choirs, read from its database (#408); nothing is guessed.
+    expect(choir.locator("option")).to_have_text(
+        ["— choir —", "Joensuun Mieslaulajat (jm)", "Naiskuoro (naiskuoro)",
+         "Esittely (public, open to all)"])
+    expect(choir).to_have_value("")
+    choir.select_option("jm")
     expect(section.locator(".publish-status")).to_have_text("Not published yet.")
     section.scroll_into_view_if_needed()
     _shot(page, f"publish-before-{size[0]}.png")
@@ -138,6 +143,7 @@ def test_a_song_published_to_public_and_a_choir_shows_both(live, page, size):
 
     section = page.locator(".publish-section")
     status = section.locator(".publish-status")
+    section.locator("select.publish-choir").select_option("jm")
     section.locator("button.publish-btn").click()
     expect(status).to_contain_text("Published to Joensuun Mieslaulajat (jm)", timeout=15000)
 
@@ -145,7 +151,7 @@ def test_a_song_published_to_public_and_a_choir_shows_both(live, page, size):
     section.locator("select.publish-choir").select_option("public")
     section.locator("button.publish-btn").click()
     status = page.locator(".publish-section .publish-status")
-    expect(status).to_contain_text("Published to Public demo", timeout=15000)
+    expect(status).to_contain_text("Published to Esittely (public)", timeout=15000)
     expect(status).to_contain_text("Published to Joensuun Mieslaulajat (jm)")
     assert [row[0] for row in cf.listed("jm")] == [slug]
     assert [row[0] for row in cf.listed("public")] == [slug]
@@ -172,6 +178,7 @@ def test_the_credits_typed_on_the_panel_reach_the_site(live, page, size):
 
     page.reload()
     expect(page.locator("[data-credit=composer]")).to_have_value("Toivo Kuula")
+    page.locator(".publish-section select.publish-choir").select_option("jm")
     page.locator(".publish-section button.publish-btn").click()
     expect(page.locator(".publish-section .publish-status")).to_contain_text(
         "Published to Joensuun Mieslaulajat (jm)", timeout=15000)
@@ -219,6 +226,7 @@ def test_the_part_names_typed_on_the_panel_are_published(live, page, size, monke
     page.locator("[data-part-names]").scroll_into_view_if_needed()
     _shot(page, f"publish-part-names-{size[0]}.png")
 
+    page.locator(".publish-section select.publish-choir").select_option("jm")
     page.locator(".publish-section button.publish-btn").click()
     expect(page.locator(".publish-section .publish-status")).to_contain_text(
         "2 part(s)", timeout=15000)
@@ -247,6 +255,7 @@ def test_stale_part_names_stop_publish_until_saved(live, page, monkeypatch, tmp_
 
     expect(page.locator("[data-part-names] input")).to_have_count(2)
     expect(page.locator(".part-names-note")).to_contain_text("The score now has 2 parts")
+    page.locator(".publish-section select.publish-choir").select_option("jm")
     page.locator(".publish-section button.publish-btn").click()
     status = page.locator(".publish-section .publish-status")
     expect(status).to_contain_text("Save the part names first")
@@ -256,6 +265,7 @@ def test_stale_part_names_stop_publish_until_saved(live, page, monkeypatch, tmp_
 
     page.locator("button.publish-save").click()
     expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    page.locator(".publish-section select.publish-choir").select_option("jm")
     page.locator(".publish-section button.publish-btn").click()
     expect(page.locator(".publish-section .publish-status")).to_contain_text(
         "Published to Joensuun Mieslaulajat (jm)", timeout=15000)

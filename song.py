@@ -3,6 +3,7 @@
 
     ./song.py            # start the server and open the browser
     ./song.py --port 8123 --no-browser
+    ./song.py --check    # what this machine has and lacks, then exit
 
 See DESIGN.md for the design.
 """
@@ -46,7 +47,14 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser")
     parser.add_argument("--no-reload", action="store_true",
                         help="Disable auto-reload on source changes")
+    parser.add_argument("--check", action="store_true",
+                        help="Say what this machine has and lacks (MuseScore 3, poppler, "
+                             "homr, publishing), then exit")
     args = parser.parse_args()
+
+    if args.check:
+        from src.song_app import check
+        sys.exit(check.main())
 
     port = _find_free_port(args.host, args.port)
     if port != args.port:

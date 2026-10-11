@@ -14,7 +14,7 @@ CLI_TIMEOUT = 600
 
 
 def musescore_cli() -> str:
-    return os.getenv("MUSESCORE_CLI_PATH", "musescore3")
+    return (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
 
 
 def run_musescore(input_path: str, output_path: str, timeout: int = CLI_TIMEOUT) -> str:
