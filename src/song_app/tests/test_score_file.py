@@ -166,7 +166,7 @@ def test_an_mscz_with_no_score_inside_it_is_refused(client):
 def test_nothing_is_replaced_underneath_a_running_job(client):
     client, song = client
     from src.song_app import job_state
-    job_state.start(song.dir, "render")
+    job_state.start(song.dir, "publish")
 
     r = _upload(client, song.slug, "talviuni_cleaned.mscx", FIXED)
 

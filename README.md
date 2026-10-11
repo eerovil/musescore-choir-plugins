@@ -1,8 +1,9 @@
 # song — choir practice tracks from sheet music
 
-A small web app that turns a choir score into practice videos: one video per
-voice, the score scrolling past with the sounding notes lit up, and that voice
-louder than the others in the mix. It runs on your own machine and works from a
+A small web app that turns a choir score into practice material: it reads the
+notes off the sheet music, splits the voices onto their own staves, puts the
+words under them and publishes the score to the stemmanauhat site, which draws it
+and plays it back part by part. It runs on your own machine and works from a
 phone as well as a desktop.
 
 You bring the sheet music as a **PDF** (or a score file you already have). The
@@ -40,16 +41,15 @@ stage at any time; redoing one clears only what depended on it.
    by verse. The app shows where the words and the notes do not match up.
 6. **Review** — one place that says whether the score is ready: health, lyrics,
    whether MuseScore 3 will open the file. Approve it to move on.
-7. **Record** — render the videos. Preview the scrolling picture in the browser
-   first, adjust tempo (and the bars where it changes), margins and which parts
-   share a staff, then render every part (plus an *ALL* mix) unattended.
-8. **Upload** — send the videos to YouTube, into a playlist if you like. Renaming
-   the song later retitles the uploaded videos too. Once YouTube has every video,
-   **Free space** deletes the local copies; recording again makes them back.
+7. **Publish** — send the score to the stemmanauhat site for one choir. Set the
+   opening tempo (for a score that prints none), the bars where the tempo changes,
+   and the composer, lyricist and arranger the site shows, then press *Publish*.
+   The site gets the score, its MIDI and a timing file; publishing again replaces
+   the song there.
 
 <img src="docs/images/scan.png" width="400" alt="Scan stage: proposed system bands drawn over the page"> <img src="docs/images/review.png" width="400" alt="Review stage with the original PDF beside it">
 
-<img src="docs/images/lyrics.png" width="400" alt="Lyrics stage: paste lyrics read by your own AI"> <img src="docs/images/record.png" width="400" alt="Record stage with the scrolling preview playing">
+<img src="docs/images/lyrics.png" width="400" alt="Lyrics stage: paste lyrics read by your own AI">
 
 The right-hand viewer switches between the original PDF, single printed systems,
 the scanned score and the cleaned score (with and without lyrics), and can split
@@ -62,8 +62,6 @@ bar at the bottom to switch between them. The stage list slides in from the ☰ 
 the header, and the score zooms with a pinch or its − / + / Fit buttons. The app can
 be installed to the home screen (see [docs/PWA.md](docs/PWA.md)).
 
-<img src="docs/images/phone.png" width="260" alt="Record stage on a phone">
-
 ## Running it
 
 ```bash
@@ -73,7 +71,7 @@ be installed to the home screen (see [docs/PWA.md](docs/PWA.md)).
 ```
 
 `song.py` uses the project's virtualenv (`.venv/bin/python song.py` if `.venv` is
-not active). Setting up a machine — Python, MuseScore 3, ffmpeg, poppler, and the
+not active). Setting up a machine — Python, MuseScore 3, poppler, and the
 optional homr install — is in **[SETUP.md](SETUP.md)**. homr can also be installed
 or updated from the Scan stage, in its *homr* box.
 
@@ -85,7 +83,7 @@ repository cloned into `songs/`.
 
 - [CHANGELOG.md](CHANGELOG.md) — what changed, and when.
 - [TOOLS.md](TOOLS.md) — the command-line tools the app is built on
-  (`clean_score.py`, `lyric_txt.py`, `scroll_video.py`, `record_stemmanauha.py`)
+  (`clean_score.py`, `lyric_txt.py`)
   and the MuseScore 3 plugins in `plugins/`.
 - [DESIGN.md](DESIGN.md) — why the app is shaped the way it is.
 - [SETUP.md](SETUP.md) — setting up a new machine.

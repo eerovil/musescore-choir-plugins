@@ -18,7 +18,7 @@ A pull request gets two independent checks on Ubuntu 24.04 with Python 3.13:
 
 ### Python and integration tests
 
-This job installs the normal Python requirements plus FFmpeg, Poppler, Xvfb,
+This job installs the normal Python requirements plus Poppler, Xvfb,
 and the project's MuseScore 3.6.2 AppImage. The AppImage is pinned by version
 and verified against its SHA-256 digest before execution. It runs:
 
@@ -26,14 +26,14 @@ and verified against its SHA-256 digest before execution. It runs:
 python -m pytest \
   src/clean_score/tests \
   src/song_app/tests \
-  src/scrollvideo/tests \
+  src/score_export/tests \
   -m "not browser" \
   --strict-markers \
   --durations=10 \
   -ra
 ```
 
-That includes tests which otherwise skip when MuseScore, FFmpeg, or Poppler is
+That includes tests which otherwise skip when MuseScore or Poppler is
 missing.
 
 ### Browser tests

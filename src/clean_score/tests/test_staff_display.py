@@ -114,7 +114,7 @@ def test_ordinary_test_scores_pass_through_unchanged():
     import glob
     import os
     here = os.path.dirname(__file__)
-    files = glob.glob(os.path.join(here, "..", "..", "scrollvideo", "tests", "test_files", "*.mscx"))
+    files = glob.glob(os.path.join(here, "..", "..", "score_export", "tests", "test_files", "*.mscx"))
     files.append(os.path.join(here, "test_files", "simple_1_output.mscx"))
     assert files
     for path in files:

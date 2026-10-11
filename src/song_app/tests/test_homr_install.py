@@ -234,10 +234,10 @@ def test_the_routes(host) -> None:
     assert st["up_to_date"] is False
 
     song = state.create("Talviuni", per_system=False)
-    job_state.start(song.dir, "render")
+    job_state.start(song.dir, "publish")
     refused = client.post("/api/homr/install")
     assert refused.status_code == 409 and "Talviuni" in refused.json()["detail"]
-    job_state.finish(song.dir, "render")
+    job_state.finish(song.dir, "publish")
 
     assert client.post("/api/homr/install").json() == {"started": True}
     deadline = time.time() + 10

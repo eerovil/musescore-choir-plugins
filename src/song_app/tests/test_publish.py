@@ -1,4 +1,4 @@
-"""Publishing a song to the Cloudflare stemmanauhat site (#382).
+"""Publishing a song to the Cloudflare stemmanauhat site (#382, #400).
 
 Cloudflare is mocked at the HTTP boundary: `FakeCloudflare` answers the REST
 calls a publish makes, keeping R2 as a dict and D1 as a real SQLite database
@@ -18,14 +18,20 @@ import urllib.parse
 import mido
 import pytest
 
-from src.scrollvideo.tests.conftest import needs_musescore
+from src.score_export.tests.conftest import needs_musescore
 from src.song_app import publish
 
-FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "scrollvideo", "tests",
+FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "score_export", "tests",
                         "test_files")
 FERMATA = os.path.join(FIXTURES, "fermata.mscx")
 CONFIG = publish.Config(account_id="acct", api_token="tok", bucket="stemmanauhat",
                         database_id="db1")
+
+
+SITE_SONGS = """CREATE TABLE songs (
+  choir TEXT NOT NULL, slug TEXT NOT NULL, title TEXT NOT NULL, prefix TEXT NOT NULL,
+  parts TEXT NOT NULL, duration REAL NOT NULL, published_at TEXT NOT NULL,
+  composer TEXT, lyricist TEXT, arranger TEXT, PRIMARY KEY (choir, slug))"""
 
 
 class _Reply(io.BytesIO):
@@ -43,6 +49,9 @@ class FakeCloudflare:
         self.objects = {}
         self.types = {}
         self.db = sqlite3.connect(":memory:", check_same_thread=False)
+        # The site's own schema (stemmanauhat-cf migrations 0001 and 0004): the
+        # site owns the table, and a publish no longer creates it.
+        self.db.execute(SITE_SONGS)
         self.calls = []
         self.fail_on = fail_on
 
@@ -77,16 +86,22 @@ class FakeCloudflare:
         return self.db.execute("SELECT slug, title, prefix, parts FROM songs "
                                "WHERE choir = ?", [choir]).fetchall()
 
+    def credits(self, choir, slug):
+        return self.db.execute("SELECT composer, lyricist, arranger FROM songs "
+                               "WHERE choir = ? AND slug = ?", [choir, slug]).fetchone()
+
 
 def _bundle(tmp_path, parts=("S1", "A1")):
     xml = tmp_path / "score.musicxml"
     xml.write_text("<score-partwise/>")
+    midi = tmp_path / "score.mid"
+    midi.write_bytes(b"MThd-fake")
     timing = {"version": 1, "measures": 2, "duration": 4.5,
               "points": [[0.0, 0, 0.0], [4.5, 1, 4.0]]}
-    return publish.Bundle(musicxml=str(xml), timing=timing, parts=list(parts))
+    return publish.Bundle(musicxml=str(xml), timing=timing, parts=list(parts), midi=str(midi))
 
 
-def test_a_published_song_is_in_its_choirs_list_with_score_timing_and_every_part_name(tmp_path):
+def test_a_published_song_is_in_its_choirs_list_with_score_midi_timing_and_every_part_name(tmp_path):
     cf = FakeCloudflare()
     record = publish.publish(slug="laulu", title="Laulu", choir="jm",
                              bundle=_bundle(tmp_path), client=publish.Cloudflare(CONFIG, cf))
@@ -100,11 +115,47 @@ def test_a_published_song_is_in_its_choirs_list_with_score_timing_and_every_part
     assert parts == [{"name": "S1"}, {"name": "A1"}]
     assert cf.objects[prefix + "score.musicxml"] == b"<score-partwise/>"
     assert json.loads(cf.objects[prefix + "timing.json"])["points"][-1] == [4.5, 1, 4.0]
-    assert sorted(cf.objects) == sorted(prefix + f for f in ("score.musicxml", "timing.json", "manifest.json"))
+    # The site plays the score's MIDI (#400).
+    assert cf.objects[prefix + "score.mid"] == b"MThd-fake"
+    assert cf.types[prefix + "score.mid"] == "audio/midi"
+    assert sorted(cf.objects) == sorted(prefix + f for f in (
+        "score.musicxml", "score.mid", "timing.json", "manifest.json"))
     manifest = json.loads(cf.objects[prefix + "manifest.json"])
     assert manifest["parts"] == parts and manifest["choir"] == "jm"
+    assert manifest["midi"] == "score.mid" and manifest["score"] == "score.musicxml"
+    # No credits given: none in the manifest, NULL in the row.
+    assert not set(publish.CREDITS) & set(manifest)
+    assert cf.credits("jm", "laulu") == (None, None, None)
     # The row goes in last: the site never points at files not yet uploaded.
     assert cf.calls[-1] == ("POST", "/client/v4/accounts/acct/d1/database/db1/query")
+
+
+def test_the_credits_that_are_set_reach_the_row_and_the_manifest(tmp_path):
+    cf = FakeCloudflare()
+    record = publish.publish(slug="laulu", title="Laulu", choir="jm",
+                             bundle=_bundle(tmp_path), client=publish.Cloudflare(CONFIG, cf),
+                             credits={"composer": "Jean Sibelius", "lyricist": " ",
+                                      "arranger": "Eero"})
+    assert cf.credits("jm", "laulu") == ("Jean Sibelius", None, "Eero")
+    manifest = json.loads(cf.objects[record["prefix"] + "manifest.json"])
+    assert manifest["composer"] == "Jean Sibelius" and manifest["arranger"] == "Eero"
+    assert "lyricist" not in manifest
+
+    # Publishing again with the composer cleared clears it on the site too.
+    time.sleep(1.1)
+    publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=_bundle(tmp_path),
+                    client=publish.Cloudflare(CONFIG, cf), credits={"arranger": "Eero"},
+                    published={"jm": record})
+    assert cf.credits("jm", "laulu") == (None, None, "Eero")
+
+
+def test_score_credits_reads_the_metatags_that_are_set(tmp_path):
+    score = tmp_path / "s.mscx"
+    score.write_text('<museScore><Score><metaTag name="composer">Toivo  Kuula</metaTag>'
+                     '<metaTag name="lyricist"></metaTag><metaTag name="arranger">A</metaTag>'
+                     '<metaTag name="workTitle">X</metaTag></Score></museScore>')
+    assert publish.score_credits(str(score)) == {"composer": "Toivo Kuula", "arranger": "A"}
+    assert publish.score_credits(str(tmp_path / "missing.mscx")) == {}
 
 
 def test_publishing_again_replaces_the_old_version_and_a_new_choir_moves_the_song(tmp_path):
@@ -268,6 +319,7 @@ def test_the_bundle_is_musescores_own_parts_and_clock(tmp_path):
     assert bundle.parts == ["S1", "A1"]
     assert not [f for f in os.listdir(tmp_path) if f.endswith((".wav", ".mp3"))], "no part audio is rendered"
     assert "<score-partwise" in open(bundle.musicxml).read()
+    assert open(bundle.midi, "rb").read(4) == b"MThd"
     starts = [p[1] for p in bundle.timing["points"] if p[2] == 0.0]
     assert starts == [0, 1, 0, 1], "MuseScore plays the repeat, so the timing does"
 
@@ -293,7 +345,7 @@ def app_song(tmp_path, monkeypatch):
     with open(FERMATA, "rb") as src, open(cleaned, "wb") as dst:
         dst.write(src.read())
     song.data["cleaned"] = os.path.basename(cleaned)
-    song.data["stage"] = "upload"
+    song.data["stage"] = "publish"
     song.data["review"] = {"approved_against": state.file_fingerprint(cleaned)}
     song.save()
     return song

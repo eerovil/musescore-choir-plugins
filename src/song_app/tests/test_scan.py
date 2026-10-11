@@ -367,12 +367,12 @@ def test_a_song_that_never_scanned_derives_nothing_from_any_of_this(songs, reade
     song = state.create("Legacy", per_system=False)
     song.data["sources"]["xml"] = "legacy.mscx"
     song.data["review"] = {"approved_against": "sha1:whatever"}
-    song.set_stage("record")
+    song.set_stage("publish")
     song.save()
 
     assert scan.reconcile(song) == []
     assert song.data["review"] == {"approved_against": "sha1:whatever"}
-    assert song.stage == "record"
+    assert song.stage == "publish"
 
 
 # --- the stage machine and the routes -------------------------------------

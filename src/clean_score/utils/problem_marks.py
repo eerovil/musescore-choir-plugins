@@ -6,7 +6,7 @@ the score plays and opens, and says so **in the bar** with a red staff text star
 with `⚠`. That is where a person fixing the score in MuseScore is looking, and deleting
 the note is how they say the bar is done: the health check lists every one still there.
 
-The video renderer strips them, so a forgotten one never reaches a practice track.
+The published copy strips them, so a forgotten one never reaches the site.
 """
 from typing import Dict, List
 

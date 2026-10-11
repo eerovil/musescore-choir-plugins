@@ -3,9 +3,9 @@
 import pytest
 from lxml import etree
 
-from src.scrollvideo.score import (START, add_opening_tempo, add_tempo_changes, drop_parts,
-                                   has_opening_tempo, hold_fermatas, prepare,
-                                   silent_parts)
+from src.score_export.score import (START, add_opening_tempo, add_tempo_changes, drop_parts,
+                                     has_opening_tempo, hold_fermatas, prepare,
+                                     silent_parts)
 
 SCORE = """<museScore><Score>
   <Part><trackName>T1</trackName><Staff id="1"/></Part>

@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A song now ends at **Publish**: the app no longer renders practice videos or
+  uploads to YouTube, and the Record and Upload stages are gone (a song that was on
+  either opens on Publish, keeping its tempo settings). Publishing sends the score's
+  MIDI along with the score and timing, and the composer, lyricist and arranger,
+  which the Publish panel lets you edit (prefilled from the score). Videos already
+  on YouTube and media files on disk are left alone. (#400)
 - Publish no longer renders an MP3 per part: the site plays the score's MIDI, so a
   publish is now three quick MuseScore exports instead of 4–7 audio renders. Part
   names still reach the site. (stemmanauhat-cf#36)

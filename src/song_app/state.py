@@ -16,7 +16,6 @@ import unicodedata
 from typing import Dict, List, Optional
 
 from . import health
-from src.media_root import media_dir
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
@@ -30,7 +29,13 @@ STATE_FILE = ".song.json"
 # where every song that predates this stage sits, so the rail reads `scan` as
 # behind them and satisfied. Having an input score *is* what being past scanning
 # means; nothing has to be recorded to say so.
-STAGES = ["register", "scan", "clean", "fix", "lyrics", "review", "record", "upload"]
+#
+# A song ends at `publish`: the score, its MIDI and its timing go to the
+# stemmanauhat site, which draws and plays them itself (#400). The `record` and
+# `upload` stages that made and uploaded videos are gone, and a song left on
+# either is read as being on `publish` (`_upgrade`).
+STAGES = ["register", "scan", "clean", "fix", "lyrics", "review", "publish"]
+RETIRED_STAGES = ("record", "upload")
 
 
 def slugify(name: str) -> str:
@@ -76,10 +81,6 @@ class Song:
     def path(self, *parts: str) -> str:
         return os.path.join(self.dir, *parts)
 
-    def media_path(self, *parts: str) -> str:
-        """A path in this song's media folder, which `MEDIA_ROOT` may put elsewhere."""
-        return os.path.join(media_dir(self.dir), *parts)
-
     def state_path(self) -> str:
         return self.path(STATE_FILE)
 
@@ -108,6 +109,15 @@ class Song:
     def mode(self) -> str:
         return self.data.get("mode", "normal")
 
+    def published(self) -> List[str]:
+        """The choirs whose lists the site shows this song in, sorted.
+
+        Read through `publish.records`, so a song published before #384 kept its
+        one record under `site` and still counts as published.
+        """
+        from . import publish  # noqa: PLC0415 - publish is a leaf; keep state's imports light
+        return sorted(publish.records(self.data.get("publish")))
+
     def set_stage(self, stage: str) -> None:
         self.data["stage"] = stage
 
@@ -129,7 +139,6 @@ class Song:
 
     def to_summary(self) -> Dict:
         """Lightweight view for the library list."""
-        rec = self.data.get("record", {})
         return {
             "slug": self.slug,
             "name": self.name,
@@ -144,18 +153,11 @@ class Song:
                 if i.get("status") == "open"
             ),
             "lyric_warnings": len(self.data.get("lyrics", {}).get("warnings", [])),
-            "recorded": bool(rec.get("outputs")),
-            # Every video has a YouTube id, not merely one: an upload that stopped
-            # half-way leaves some entries (#371).
-            "uploaded": _upload_complete(self) if rec.get("uploads") else False,
+            # Which choirs' lists the site shows it in.
+            "published": self.published(),
             "created_at": self.data.get("created_at") or self.data.get("updated_at") or 0,
             "updated_at": self.data.get("updated_at") or 0,
         }
-
-
-def _upload_complete(song: "Song") -> bool:
-    from . import free_videos  # it reads songs, so it imports this module
-    return free_videos.status(song)["complete"]
 
 
 _LOCKS: Dict[str, threading.RLock] = {}
@@ -178,7 +180,30 @@ def load(slug: str) -> Optional[Song]:
     if not os.path.exists(path):
         return None
     with open(path, "r", encoding="utf-8") as f:
-        return Song(slug, json.load(f))
+        return Song(slug, _upgrade(json.load(f)))
+
+
+# The settings the site plays a song with. They used to be the Record stage's
+# (`record`), and are read from there until the song is saved again (#400).
+PUBLISH_SETTINGS = ("bpm", "tempo_changes")
+
+
+def _upgrade(data: Dict) -> Dict:
+    """A song saved before the video stages were removed, read as it is now (#400).
+
+    Only what the app still uses is carried over: the stage moves to `publish`,
+    and the BPM and tempo changes move from `record` to `publish`. The rest of
+    `record` (videos, uploads) is left in the file untouched.
+    """
+    if data.get("stage") in RETIRED_STAGES:
+        data["stage"] = "publish"
+    record = data.get("record") or {}
+    publish = data.setdefault("publish", {}) if any(k in record for k in PUBLISH_SETTINGS) \
+        else data.get("publish")
+    for key in PUBLISH_SETTINGS:
+        if key in record and key not in publish:
+            publish[key] = record[key]
+    return data
 
 
 def list_songs() -> List[Song]:
@@ -190,65 +215,6 @@ def list_songs() -> List[Song]:
             if s:
                 songs.append(s)
     return songs
-
-
-# --- known YouTube playlists (account-wide, remembered across songs) ----------
-PLAYLISTS_FILE = os.path.join(SCRIPT_DIR, ".playlists.json")
-
-
-# Every upload makes the song its own playlist, "<name> Stemmanauhat - <date>".
-# Those are not playlists anybody picks a song into, so they are never offered.
-_SONG_PLAYLIST = re.compile(r" Stemmanauhat - \d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
-
-
-def is_song_playlist(title: Optional[str]) -> bool:
-    """True for the playlist an upload made for one song (#338)."""
-    return bool(title and _SONG_PLAYLIST.search(title))
-
-
-def _read_playlists() -> Dict[str, str]:
-    if not os.path.exists(PLAYLISTS_FILE):
-        return {}
-    try:
-        with open(PLAYLISTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def _write_playlists(data: Dict[str, str]) -> None:
-    try:
-        with open(PLAYLISTS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except OSError:
-        pass
-
-
-def load_playlists() -> List[Dict]:
-    """Return [{id, title}] of the playlists songs have been picked into.
-
-    Older uploads also wrote each song's own playlist here; those stay in the file
-    and are skipped (#338)."""
-    return [{"id": k, "title": v} for k, v in _read_playlists().items()
-            if not is_song_playlist(v)]
-
-
-def forget_playlist(playlist_id: str) -> None:
-    """Stop offering a playlist. Nothing happens to it on YouTube."""
-    data = _read_playlists()
-    if data.pop(playlist_id, None) is not None:
-        _write_playlists(data)
-
-
-def save_playlist(playlist_id: str, title: Optional[str] = None) -> None:
-    """Remember a playlist id (with an optional human title) for later selection."""
-    if not playlist_id:
-        return
-    data = _read_playlists()
-    # Keep the best label we have; don't overwrite a real title with the bare id.
-    if playlist_id not in data or (title and data[playlist_id] == playlist_id):
-        data[playlist_id] = title or data.get(playlist_id) or playlist_id
-        _write_playlists(data)
 
 
 def create(name: str, per_system: bool, voicing: str = "") -> Song:

@@ -12,7 +12,7 @@ Three rules, each for a reason:
   keeps that; a timer would not.
 - **Not under a running job.** The script replaces files inside the venv a scan
   is running out of, so it is refused while any song is scanning, cleaning,
-  rendering or uploading, and scans are refused while it runs. Every homr read
+  checking or publishing, and scans are refused while it runs. Every homr read
   (a scan, *Ask homr*) holds a :func:`begin_read` token for as long as it runs,
   and taking one and starting an install go through the same lock, so neither
   can slip into the gap between the other's check and its start. Both are files
@@ -70,7 +70,7 @@ TIMEOUT_S = 45 * 60
 LOG_LINES = 200
 
 #: Song jobs that run homr or would be read half-written by one being replaced.
-SONG_JOBS = ("scan", "clean", "render", "upload")
+SONG_JOBS = ("scan", "clean", "check", "publish")
 
 _log: "collections.deque[str]" = collections.deque(maxlen=LOG_LINES)
 _result: Dict[str, object] = {}
@@ -276,7 +276,7 @@ def start(run_in_background: Callable[[Callable[[], None]], object]) -> None:
         jobs = _running_song_jobs()
         if jobs:
             raise Refused("Wait for " + ", ".join(jobs) + " to finish: a scan, clean, "
-                          "render or upload is running, and installing would replace "
+                          "check or publish is running, and installing would replace "
                           "homr underneath it.")
         os.makedirs(state.SONGS_DIR, exist_ok=True)
         with open(_lock_path(), "w", encoding="utf-8") as f:

@@ -26,6 +26,7 @@ new one, never half. That choir's previous version's files are deleted afterward
 ```
 songs/<choir>/<slug>/<version>/      version = UTC time, 20261009T120000Z
   score.musicxml                     the score, exported by MuseScore 3
+  score.mid                          the same score's MIDI, which the site plays
   timing.json                        playback time -> score position (below)
   manifest.json                      the same facts as the D1 row
 ```
@@ -33,10 +34,12 @@ songs/<choir>/<slug>/<version>/      version = UTC time, 20261009T120000Z
 `choir` is `jm`, `naiskuoro` or `public`. `slug` is song-app's folder name and
 never changes.
 
-**No audio is published.** The site plays the score's MIDI with a piano
-soundfont and mixes the parts itself (stemmanauhat-cf), so the per-part MP3s
-song-app once rendered are no longer made (stemmanauhat-cf#36). `parts` lists the
-part names in score order; the site matches them to the MIDI tracks. Songs
+**No audio is published.** The site plays `score.mid` with a piano soundfont and
+mixes the parts itself (stemmanauhat-cf), so the per-part MP3s song-app once
+rendered are no longer made (stemmanauhat-cf#36). The MIDI is exported off the
+same prepared copy as the MusicXML and the timing, so its tracks, tempo changes
+and fermata holds are the ones the timing was measured on. `parts` lists the part
+names in score order; the site matches them to the MIDI tracks. Songs
 published before carry a `file` per part as well, and their MP3s stay in R2
 unread.
 
@@ -45,14 +48,22 @@ unread.
 ```json
 {"slug": "hanget-soi", "title": "Hanget soi", "choir": "jm",
  "version": "20261009T120000Z", "score": "score.musicxml", "timing": "timing.json",
- "parts": [{"name": "T1"}, {"name": "T2"}, ...],
- "duration": 96.375}
+ "midi": "score.mid", "parts": [{"name": "T1"}, {"name": "T2"}, ...],
+ "duration": 96.375, "composer": "…", "lyricist": "…"}
 ```
+
+`composer`, `lyricist` and `arranger` are the credits set on song-app's Publish
+panel (prefilled from the score's own metaTags until someone saves them). Each is
+present only when it is set; a manifest from before them has none, and none had
+`midi`.
 
 ## D1: the list
 
+The site owns the `songs` table: its migrations create it and add to it, and
+song-app creates nothing. A database without them refuses the first publish. The
+columns song-app writes:
+
 ```sql
-CREATE TABLE IF NOT EXISTS songs (
   choir TEXT NOT NULL,          -- jm | naiskuoro | public
   slug TEXT NOT NULL,
   title TEXT NOT NULL,          -- the song's display name
@@ -60,13 +71,13 @@ CREATE TABLE IF NOT EXISTS songs (
   parts TEXT NOT NULL,          -- JSON, the manifest's "parts"
   duration REAL NOT NULL,       -- seconds
   published_at TEXT NOT NULL,   -- ISO 8601 UTC
+  composer TEXT,                -- the credits (site migration 0004); NULL when not set
+  lyricist TEXT,
+  arranger TEXT,
   PRIMARY KEY (choir, slug)
-);
 ```
 
-song-app runs that `CREATE TABLE IF NOT EXISTS` before every publish, so it
-works before the site's own migration exists; the site's migration should create
-the same table. Publishing upserts one row. A song can be in the `public` list and one
+Publishing upserts one row. A song can be in the `public` list and one
 choir's list at once (#384): publishing to `public` deletes nothing, and
 publishing to a choir deletes the song's row in any *other* private choir (a
 move between `jm` and `naiskuoro`) but never its `public` row — the same rule as
@@ -97,5 +108,5 @@ Repeats and D.C./D.S. jumps are already unrolled: a repeated bar appears again
 later with later times.
 
 The clock is MuseScore's own — bar order from its `.mpos` export, seconds from
-its MIDI tempo map — the same clock the audio was rendered on. song-app refuses
+its MIDI tempo map, the same MIDI that is published. song-app refuses
 to publish when the two disagree by more than 10 ms anywhere.

@@ -1,7 +1,7 @@
-"""Take one of this host's heavy slots while the video render runs.
+"""Take one of this host's heavy slots while a scan or a publish runs.
 
-Rendering a practice video is minutes of every core the machine has. So is an
-agent's test suite, a scan, or a second song rendering at the same time, and
+Reading a page with homr is every core the machine has, and a publish runs
+MuseScore three times. So is an agent's test suite at the same time, and
 this host has four cores and no notion of whose turn it is — three of them at
 once produce one slow render and two slow suites rather than any of them
 finishing sooner.

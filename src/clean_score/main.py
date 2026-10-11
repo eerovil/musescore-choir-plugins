@@ -57,7 +57,7 @@ def mark_scan_damage(root: etree._Element) -> None:
     A slur joining two singers and a bar longer than its time signature. Both run on
     the finished parts -- the part names go into the red marks they leave on each bar
     they change, and a slur only joins two singers once the voices are apart. The marks
-    are for a person; the scrolling video strips them.
+    are for a person; the published copy strips them.
     """
     slurs = drop_cross_voice_slurs(root)
     store_removed(root, slurs)

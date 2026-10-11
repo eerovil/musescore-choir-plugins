@@ -162,9 +162,9 @@ def test_findings_do_not_gate(live, page):
     approve = page.locator(".review-approve")
     assert approve.is_visible() and approve.is_enabled()
     approve.click()
-    page.wait_for_selector(".panel h2:text('Record')")
+    page.wait_for_selector(".panel h2:text('Publish')")
     fresh = state.load(song.slug)
-    assert fresh.stage == "record"
+    assert fresh.stage == "publish"
     assert fresh.data.get("review", {}).get("approved_against")
 
 

@@ -84,125 +84,13 @@ read from the original PDF:
 You can also export the current lyrics to a checkable text format:
     ./lyric_txt.py export "songs/Laulun aika/Laulun aika_cleaned.mscx" -o lyrics.txt
 
-## record_stemmanauha
-
-IF ONLY RECORDING AUDIO: just run export.qml plugin in musescore
-you don't need this script
-
-Install QuickRecorder.
-Set up QuickRecorder: Add keyboard shortcuts to start record and stop
-	-- Send Shift+Control+Cmd + R to start
-    -- Send Shift+Control+Cmd + S to stop
-
-Setup musescore 3 to export with keyboard shortcut.
-i.e. install plugins and run plugin export.qml with keyboard shortcut
-	-- Send Command-Option-E
-
-Open wanted sheet music in musescore
-Test quickrecorder that the recording area is correct
-
-Run this script with the same basename as the directory in songs/
-i.e. if your song is in songs/MySong, run
-    ./record_stemmanauha.py MySong
-
-media files should appear in song folder. To re-record, delete files
-
-### The staff line in YouTube descriptions
-
-Every uploaded part video carries one line in its description that the
-stemmanauhat site reads to zoom a phone to that part's staff:
-
-    stemmanauha-staff: <staff>/<staves>
-
-Counted from the top starting at 1, as the video shows the staves. In a
-scrolling video a click or spacer staff does not count, and parts sharing a staff
-(the Record stage's *Shared staves*) get the same number. A screen recording
-shows the score as MuseScore has it, so there every shown staff counts, a click
-staff included. The ALL video has no line. The uploader
-works it out from the song's cleaned score (`src/stemmanauha/staff_lines.py`).
-
-Videos uploaded before that get the line with a one-off command, run from the
-repo root with your YouTube login (`token.pickle` / `client_secrets.json`):
-
-    .venv/bin/python backfill_staff_lines.py --dry-run   # print title → line
-    .venv/bin/python backfill_staff_lines.py             # write them
-    .venv/bin/python backfill_staff_lines.py lempilintu  # only these song folders
-
-It covers every song in `songs/` whose `.song.json` records uploads, keeps the
-rest of each description, and replaces an old line rather than adding a second.
-The site picks the lines up on its next "update videos" run.
-
-## scroll_video.py — practice videos without the GUI
-
-An alternative to `record_stemmanauha`: instead of screen-recording MuseScore's
-playback cursor, this renders the video directly from the score. No QuickRecorder,
-no AppleScript, no keyboard shortcuts, nothing on screen — so it can run
-unattended, and the audio can't drift against the picture.
-
-    ./scroll_video.py "songs/MySong/MySong_cleaned.mscx"
-    ./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 720 --no-audio
-    # --height alone picks a 16:9 width; pass --width only to override it
-
-One video per voice: the score scrolls horizontally as one long system, a bar number
-above the first bar of each printed system, and the notehead of every sounding note
-turns MuseScore blue — the head itself, not a box drawn over it. Click/percussion
-staves are left out (`--keep-silent` keeps them).
-
-Output is **3840x2160 at 60fps** (`--width`, `--height`, `--fps` to change it); 60fps
-because the picture pans sideways the whole time, which is what judders at 30.
-
-The picture is the same for all voices, so it is encoded once and each voice is that
-video with its own mix muxed on — the same shape as `record_stemmanauha`, where one
-recording gets four mp3s merged onto it. A 2:32 four-part score takes about 4 minutes
-for all four 4K videos (25 MB each), or about 50 seconds at `--height 1080 --fps 30`.
-`--emphasise` instead lights each voice's own notes brighter than the rest, which
-costs a full re-encode per voice.
-
-The scroll is kept from lurching: a bar of 32 notes is drawn five times wider per
-beat than an equally long bar of 4, and since the scroll follows the notes, the
-video surges through one and crawls through the other. So the renderer caps how
-much a bar's width per beat may differ from the bar next to it
-(`--spacing-ratio`, default 1.3) and widens only the bars needed to keep that,
-using a hidden staff of rests that is engraved and then cropped off the picture —
-the trick the `add_rest_track.qml` click staff used to do. A dense bar widens the
-few bars around it and tapers away; a song of ordinary bars is left at its natural
-width and gets no hidden staff at all. `--spacing-ratio 0` turns it off.
-`--smooth SECONDS` sets how long the scroll speed is averaged over (default 2;
-0 disables).
-
-The render is deterministic: same score in, byte-identical videos out.
-
-How it fits together:
-
-    .mscx --(MuseScore CLI)--> MusicXML --(verovio)--> engraving + note positions
-          --(MuseScore CLI)--> MIDI ---------------->  the clock (tempo map)
-          --(MuseScore CLI)--> WAV per voice -------->  the audio
-
-Needs `ffmpeg`/`ffprobe` on PATH and `MUSESCORE_CLI_PATH` set, plus the Python
-deps in `pip-requirements.txt` (verovio, cairosvg, mido, numpy).
-
-Repeats and voltas work: the section is drawn once and the scroll jumps back to
-play it again, the way your eyes do. D.C./D.S. jumps work the same way: the
-video plays the bars in the order MuseScore plays them, and the scroll jumps back
-to the segno or the start and forward to the coda. Every render is also checked against the exported audio before it is
-written, and refused if the highlights don't line up, so a silently out-of-sync
-video is not a thing that can happen.
-
-Note this produces a *scrolling score* video, not a play-along recording of a
-MuseScore window; if you want the latter, `record_stemmanauha` is still there.
-
-The song web app's **Record** stage offers both and defaults to this one — pick
-"Screen recording" there to get the old behaviour. Either way the videos land in
-`songs/<song>/media/video/` under the same names, so the Upload stage does not
-care which one made them.
-
 ## MuseScore plugins (`plugins/`)
 
 Plugins to help creating practice tracks.
 
 Install by linking/copying to ~/Documents/MuseScore3/Plugins
 
-export.qml is used to create mp3:s for each staff. You can also rename the saves quickly for any combination SSAA, SATB, TTBB, SAM (Soprano, alto, men) etc.
+export.qml is used to create mp3:s for each staff, by hand in MuseScore (nothing in the app or the scripts runs it any more). You can also rename the saves quickly for any combination SSAA, SATB, TTBB, SAM (Soprano, alto, men) etc.
 
 voice2.qml splits a selection into two voices (chords are split, lowest note goes to voice 2, single notes are duplicated)
 

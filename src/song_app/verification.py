@@ -1,21 +1,15 @@
-"""Evidence shown before recording and before human-controlled upload."""
+"""Evidence shown at Review, before a person approves the score for publishing."""
 
 from __future__ import annotations
 
 from collections import Counter
-import json
-import math
 import os
-import subprocess
 from typing import Dict, Iterable, List, Optional
 
 from lxml import etree
 
 from . import health as health_check
 from . import state
-
-COMBINED_PART = "ALL"
-
 
 def _result(status: str, detail: str, **extra) -> Dict:
     return {"status": status, "detail": detail, **extra}
@@ -24,8 +18,8 @@ def _result(status: str, detail: str, **extra) -> Dict:
 def singing_parts(mscx_path: str) -> List[str]:
     if not mscx_path or not os.path.exists(mscx_path):
         return []
-    from src.scrollvideo.audio import part_names
-    from src.scrollvideo.score import silent_parts
+    from src.score_export.musescore import part_names
+    from src.score_export.score import silent_parts
 
     root = etree.parse(mscx_path).getroot()
     silent = set(silent_parts(root))
@@ -93,84 +87,6 @@ def compare_notes(source_mscx: str, cleaned_mscx: str) -> Dict:
         source_notes=source_count,
         cleaned_notes=cleaned_count,
     )
-
-
-def _fraction(value: str) -> float:
-    try:
-        a, b = value.split("/", 1)
-        return float(a) / float(b) if float(b) else 0.0
-    except (AttributeError, TypeError, ValueError):
-        return 0.0
-
-
-def probe_file(path: str) -> Dict:
-    signature = {
-        "size": os.path.getsize(path),
-        "mtime_ns": os.stat(path).st_mtime_ns,
-    }
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_streams", "-show_format",
-             "-of", "json", path],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return _result("warning", f"Could not inspect file: {exc}", **signature)
-    if result.returncode:
-        reason = (result.stderr or "ffprobe failed").strip().splitlines()[-1]
-        return _result("warning", reason, **signature)
-    try:
-        payload = json.loads(result.stdout)
-    except ValueError:
-        return _result("warning", "ffprobe returned unreadable data.", **signature)
-    streams = payload.get("streams", [])
-    video = next((s for s in streams if s.get("codec_type") == "video"), None)
-    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
-    raw_duration = payload.get("format", {}).get("duration")
-    try:
-        duration = float(raw_duration)
-    except (TypeError, ValueError):
-        duration = 0.0
-    fps = _fraction((video or {}).get("avg_frame_rate"))
-    valid = bool(video and audio and math.isfinite(duration) and duration > 0)
-    detail = (f"{video.get('width')}×{video.get('height')}, {fps:.2f} fps, "
-              f"{duration:.2f}s, picture and sound present") if valid else \
-             "File must contain picture, sound, and a positive duration."
-    return _result(
-        "passed" if valid else "warning", detail,
-        width=(video or {}).get("width"), height=(video or {}).get("height"),
-        fps=fps, duration=duration, video=bool(video), audio=bool(audio), **signature,
-    )
-
-
-def verify_media(song: state.Song, outputs: Iterable[str], parts: Iterable[str]) -> Dict:
-    expected = list(parts)
-    if len(expected) > 1:
-        expected.append(COMBINED_PART)
-    by_part: Dict[str, Dict] = {}
-    prefix = song.slug + " "
-    for name in outputs:
-        path = song.media_path("video", os.path.basename(name))
-        label = os.path.splitext(os.path.basename(name))[0]
-        if label.startswith(prefix):
-            label = label[len(prefix):]
-        if not os.path.exists(path):
-            by_part[label] = _result("warning", "File is missing.")
-        else:
-            by_part[label] = probe_file(path)
-        by_part[label]["name"] = os.path.basename(name)
-    missing = [part for part in expected if part not in by_part]
-    unexpected = [part for part in by_part if part not in expected]
-    invalid = [part for part in expected
-               if part in by_part and by_part[part].get("status") != "passed"]
-    ok = not missing and not invalid and not unexpected
-    detail = (f"{len(by_part)} output(s); all {len(expected)} expected videos passed file checks."
-              if ok else f"Missing: {', '.join(missing) or 'none'}; failed checks: "
-              f"{', '.join(invalid) or 'none'}; unexpected: {', '.join(unexpected) or 'none'}. "
-              f"Found {len(by_part)} output(s), expected {len(expected)}.")
-    return _result("passed" if ok else "warning", detail,
-                   expected=expected, expected_count=len(expected), output_count=len(by_part),
-                   missing=missing, unexpected=unexpected, files=by_part)
 
 
 def _musescore_result(stored: Optional[Dict], current: Optional[str]) -> Dict:
@@ -245,34 +161,6 @@ def summary(song: state.Song, systems: int) -> Dict:
                                f"Current score; {len(warnings)} lyric warning(s).")
 
     parts = singing_parts(cleaned) if current else []
-    record = song.data.get("record", {})
-    media = record.get("verification")
-    if not record.get("outputs"):
-        expected = parts + ([COMBINED_PART] if len(parts) > 1 else [])
-        media_result = _result("not_checked", "Videos have not been rendered.",
-                               expected=expected, files={})
-    elif record.get("rendered_against") != current:
-        expected = parts + ([COMBINED_PART] if len(parts) > 1 else [])
-        media_result = _result("stale", "Videos were rendered from an older cleaned score.",
-                               expected=expected, files=(media or {}).get("files", {}))
-    elif not media:
-        expected = parts + ([COMBINED_PART] if len(parts) > 1 else [])
-        media_result = _result("not_checked", "Rendered files have not been inspected.",
-                               expected=expected, files={})
-    else:
-        media_result = dict(media)
-        for result in media_result.get("files", {}).values():
-            name = result.get("name")
-            path = song.media_path("video", name) if name else ""
-            if not path or not os.path.exists(path):
-                result.update(status="warning", detail="File is missing.")
-                media_result["status"] = "warning"
-            elif (result.get("size"), result.get("mtime_ns")) != \
-                    (os.path.getsize(path), os.stat(path).st_mtime_ns):
-                result.update(status="stale", detail="File changed after it was inspected.")
-                media_result["status"] = "stale"
-        if media_result.get("status") != "passed":
-            media_result["detail"] = "One or more rendered files are missing, changed, or failed checks."
 
     return {
         "cleaned_fingerprint": current,
@@ -282,6 +170,4 @@ def summary(song: state.Song, systems: int) -> Dict:
         "lyrics": lyric_result,
         "expected_parts": parts,
         "systems": systems,
-        "media": media_result,
-        "render_error": record.get("error"),
     }

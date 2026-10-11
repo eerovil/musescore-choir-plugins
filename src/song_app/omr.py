@@ -35,7 +35,7 @@ Three things about homr that this module exists to absorb:
   the bar by a whole note by construction. :func:`split_measure_rests` moves
   the rest out; the reasoning is there.
 
-**A scan takes one of this host's heavy slots**, the same way the video render
+**A scan takes one of this host's heavy slots**, the same way a publish
 does (:mod:`heavy_slot`, issue #100). A page is ~30s of every core on a
 four-core host shared with the deck's own suites and a song rendering, and
 three such jobs at once finish no sooner than one after another. Failing to
@@ -604,8 +604,8 @@ def read_page(
     (``--mark-doubt``, #245): homr reads the image a second time and puts a red
     ``⚠`` text, naming what it doubted, at the head of each such bar. Those are
     the same marks cleaning leaves, so the health check and the Fix panel list
-    them until somebody deletes them in MuseScore, and the video never shows
-    them. The owner asked that no wrong bar go unmarked; a read takes twice as
+    them until somebody deletes them in MuseScore, and the published score never
+    shows them. The owner asked that no wrong bar go unmarked; a read takes twice as
     long for it. A homr too old to mark is said so in the log, because a score
     with no marks then means "not checked" rather than "nothing doubted".
 

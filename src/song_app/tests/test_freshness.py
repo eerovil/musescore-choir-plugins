@@ -36,31 +36,3 @@ def test_an_unchanged_file_is_still_a_cheap_304(client):
     again = client.get("/app.js", headers={"If-None-Match": etag})
     assert again.status_code == 304
     assert again.content == b""
-
-
-def test_a_video_url_changes_when_the_video_does(tmp_path):
-    vdir = tmp_path / "media" / "video"
-    vdir.mkdir(parents=True)
-    video = vdir / "demo S1.mp4"
-    video.write_bytes(b"first take")
-
-    song = type("S", (), {"slug": "demo",
-                          "media_path": lambda self, *p: str(tmp_path.joinpath("media", *p))})()
-    before = server._media_list(song)[0]["url"]
-
-    video.write_bytes(b"a rather longer second take")
-    after = server._media_list(song)[0]["url"]
-
-    assert "?v=" in before
-    assert before != after, "a re-recorded part must not reuse the cached URL"
-
-
-def test_a_video_is_served_with_no_cache(client, tmp_path):
-    vdir = tmp_path / "demo" / "media" / "video"
-    vdir.mkdir(parents=True)
-    (vdir / "demo S1.mp4").write_bytes(b"take")
-    (tmp_path / "demo" / ".song.json").write_text('{"name": "Demo", "stage": "record"}')
-
-    response = client.get("/api/songs/demo/media/demo S1.mp4?v=1-4")
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-cache"

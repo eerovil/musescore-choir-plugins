@@ -1,4 +1,4 @@
-"""The Upload panel's New site section in a real browser (#382).
+"""The Publish panel in a real browser (#382, #400).
 
 The server runs in-process, so Cloudflare is the same `FakeCloudflare` the unit
 tests use (R2 a dict, D1 SQLite) and the MuseScore half of the publish is a
@@ -80,7 +80,7 @@ def live(tmp_path, monkeypatch):
     cleaned = song.path("hanget_cleaned.mscx")
     with open(FERMATA, "rb") as src, open(cleaned, "wb") as dst:
         dst.write(src.read())
-    song.data.update(cleaned=os.path.basename(cleaned), stage="upload",
+    song.data.update(cleaned=os.path.basename(cleaned), stage="publish",
                      review={"approved_against": state.file_fingerprint(cleaned)})
     song.save()
 
@@ -105,13 +105,11 @@ def test_publish_lists_the_song_for_the_chosen_choir(live, page, size):
     base, slug, cf = live
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.route("**/api/songs/*/playlists", lambda route: route.fulfill(
-        json={"total": 0, "playlists": []}))
     page.set_viewport_size({"width": size[0], "height": size[1]})
     page.goto(f"{base}/#/song/{slug}")
 
     section = page.locator(".publish-section")
-    expect(section.get_by_role("heading", name="New site (Cloudflare)")).to_be_visible()
+    expect(section.get_by_role("heading", name="Stemmanauhat site")).to_be_visible()
     choir = section.locator("select.publish-choir")
     expect(choir).to_have_value("jm")  # a men's choir song
     expect(section.locator(".publish-status")).to_have_text("Not published yet.")
@@ -135,8 +133,6 @@ def test_a_song_published_to_public_and_a_choir_shows_both(live, page, size):
     base, slug, cf = live
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.route("**/api/songs/*/playlists", lambda route: route.fulfill(
-        json={"total": 0, "playlists": []}))
     page.set_viewport_size({"width": size[0], "height": size[1]})
     page.goto(f"{base}/#/song/{slug}")
 
@@ -155,4 +151,61 @@ def test_a_song_published_to_public_and_a_choir_shows_both(live, page, size):
     assert [row[0] for row in cf.listed("public")] == [slug]
     page.locator(".publish-section").scroll_into_view_if_needed()
     _shot(page, f"publish-public-and-jm-{size[0]}.png")
+    assert errors == []
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_the_credits_typed_on_the_panel_reach_the_site(live, page, size):
+    base, slug, cf = live
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    page.locator("[data-credit=composer]").fill("Toivo Kuula")
+    page.locator("[data-credit=lyricist]").fill("Eino Leino")
+    expect(page.locator("[data-save-note]")).to_have_text("Unsaved changes")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    assert state.load(slug).data["publish"]["credits"] == {
+        "composer": "Toivo Kuula", "lyricist": "Eino Leino", "arranger": ""}
+
+    page.reload()
+    expect(page.locator("[data-credit=composer]")).to_have_value("Toivo Kuula")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+    assert cf.credits("jm", slug) == ("Toivo Kuula", "Eino Leino", None)
+    # The finished publish redraws the panel, which can swap the field out under
+    # the scroll; wait for the redrawn one.
+    expect(page.locator(".publish-section button.publish-btn")).to_have_text("Publish again")
+    expect(page.locator("[data-credit=composer]")).to_have_value("Toivo Kuula")
+    page.locator("[data-credit=composer]").scroll_into_view_if_needed()
+    _shot(page, f"publish-credits-{size[0]}.png")
+    assert errors == []
+
+
+def test_a_song_published_before_one_record_per_choir_still_shows_as_published(live, page):
+    """A song published before #384 kept one record under `site`. The library's badge
+    and rail, and the song's own stage rail, still count it as published."""
+    base, slug, _cf = live
+    song = state.load(slug)
+    song.data["publish"] = {"choir": "jm", "site": {
+        "choir": "jm", "slug": slug, "prefix": f"songs/jm/{slug}/old/", "at": time.time(),
+        "files": [], "parts": ["T1", "T2"], "duration": 4.5}}
+    song.save()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    page.goto(f"{base}/#/")
+    card = page.locator("a.card", has_text="Hanget soi")
+    expect(card.locator(".badge")).to_have_text("✓ Published")
+    expect(card.locator(".rail .dot").last).to_have_class("dot done")
+    _shot(page, "publish-legacy-library.png")
+
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator(".stagebar .step", has_text="Publish")).to_have_class(
+        "step active done")
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Published to Joensuun Mieslaulajat (jm)")
     assert errors == []

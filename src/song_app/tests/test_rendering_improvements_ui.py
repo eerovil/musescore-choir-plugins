@@ -1,4 +1,4 @@
-"""Reload behavior for the workspace and completed renders in a real browser."""
+"""Reload behavior for the workspace in a real browser."""
 
 import os
 import socket
@@ -29,7 +29,7 @@ if not _browser_installed():
 
 import uvicorn
 
-from src.song_app import job_state, server, state
+from src.song_app import server, state
 
 pytestmark = pytest.mark.browser
 PHONE = {"width": 390, "height": 844}
@@ -55,7 +55,7 @@ def live(tmp_path_factory):
     with open(cleaned, "w") as handle:
         handle.write("<museScore><Score/></museScore>")
     song.data["cleaned"] = os.path.basename(cleaned)
-    song.data["stage"] = "record"
+    song.data["stage"] = "review"
     song.save()
 
     port = _free_port()
@@ -86,14 +86,13 @@ def _choose_stage(page, label):
     page.locator(".stagebar .step", has_text=label).click()
 
 
-def _open_record(page, live):
+def _open_lyrics(page, live):
     base, slug = live
     page.goto(f"{base}/#/song/{slug}")
     page.wait_for_selector(".stagebar", state="attached")
     # Make this a deliberate selection so the companion script stores it.
     _choose_stage(page, "Review")
-    _choose_stage(page, "Record")
-    page.wait_for_selector("text=Video style")
+    _choose_stage(page, "Lyrics")
     return slug
 
 
@@ -101,21 +100,21 @@ def test_workflow_mobile_pane_and_viewer_tab_survive_a_reload(live, page):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.set_viewport_size(PHONE)
-    slug = _open_record(page, live)
+    slug = _open_lyrics(page, live)
 
-    page.locator(".mobilebar").get_by_role("button", name="Preview").click()
+    page.locator(".mobilebar").get_by_role("button", name="Score").click()
     cleaned_tab = page.locator(".viewtabs .vtab", has_text="Cleaned MSCX").first
     cleaned_tab.click()
     assert cleaned_tab.evaluate("node => node.classList.contains('active')")
 
     song = state.load(slug)
-    song.data["stage"] = "upload"
+    song.data["stage"] = "publish"
     song.save()
     try:
         page.reload()
         page.wait_for_function("""
             () => [...document.querySelectorAll('.stagebar .step')]
-              .some(step => step.classList.contains('active') && step.textContent.trim() === 'Record')
+              .some(step => step.classList.contains('active') && step.textContent.trim() === 'Lyrics')
         """)
         page.wait_for_function("""
             () => [...document.querySelectorAll('.viewtabs .vtab.active')]
@@ -123,80 +122,10 @@ def test_workflow_mobile_pane_and_viewer_tab_survive_a_reload(live, page):
         """)
         page.wait_for_function("""
             () => [...document.querySelectorAll('.mobilebar .mtab')]
-              .some(tab => tab.classList.contains('active') && tab.textContent.trim() === 'Preview')
+              .some(tab => tab.classList.contains('active') && tab.textContent.trim() === 'Score')
         """)
         assert not errors, f"the reloaded workspace raised: {errors}"
     finally:
         song = state.load(slug)
-        song.data["stage"] = "record"
+        song.data["stage"] = "review"
         song.save()
-
-
-def test_finished_render_appears_without_a_websocket_state_message(live, page):
-    """The polling fallback must notice completion on a suspended/disconnected phone."""
-    errors = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
-    # app.js only assigns onmessage and closes the socket. This inert substitute makes
-    # the browser genuinely miss every file-watcher state message while keeping the
-    # rest of the workspace identical to a temporarily disconnected phone.
-    page.add_init_script("""
-        (() => {
-          class SilentWebSocket {
-            constructor(url) { this.url = url; this.readyState = 1; this.onmessage = null; }
-            close() { this.readyState = 3; }
-            send() {}
-          }
-          SilentWebSocket.CONNECTING = 0;
-          SilentWebSocket.OPEN = 1;
-          SilentWebSocket.CLOSING = 2;
-          SilentWebSocket.CLOSED = 3;
-          window.WebSocket = SilentWebSocket;
-        })();
-    """)
-    slug = _open_record(page, live)
-    song = state.load(slug)
-    lock = server._lock_path(song)
-    video = song.path("media", "video", f"{slug} S1.mp4")
-
-    try:
-        job_state.start(song.dir, "render", state.file_fingerprint(song.cleaned_path()))
-        with open(lock, "w") as handle:
-            handle.write(str(os.getpid()))
-
-        page.reload()
-        page.wait_for_selector("text=Rendering… leave this running.")
-        # Let rendering_state.js observe the running baseline before completing it.
-        page.wait_for_timeout(1200)
-
-        os.makedirs(os.path.dirname(video), exist_ok=True)
-        with open(video, "wb") as handle:
-            handle.write(b"new take")
-        song = state.load(slug)
-        song.data["record"] = {
-            "renderer": "scroll",
-            "outputs": [os.path.basename(video)],
-            "rendered_against": state.file_fingerprint(song.cleaned_path()),
-        }
-        song.data["stage"] = "upload"
-        song.save()
-        job_state.finish(song.dir, "render")
-        os.remove(lock)
-        # Deliberately do not emit a WebSocket state message. The fake socket also
-        # prevents the server's file watcher from updating this page behind our back.
-
-        page.wait_for_selector(".result video[src*='completed=']", timeout=10000)
-        assert page.locator(".result .rlabel").first.inner_text() == "S1"
-        active = page.locator(".stagebar .step.active").inner_text()
-        assert active == "Record"
-        assert not errors, f"the completion refresh raised: {errors}"
-    finally:
-        if os.path.exists(lock):
-            os.remove(lock)
-        if os.path.exists(video):
-            os.remove(video)
-        song = state.load(slug)
-        song.data["record"] = {}
-        song.data["stage"] = "record"
-        song.save()
-        if job_state.is_running(song.dir, "render"):
-            job_state.finish(song.dir, "render", error="test cleanup")

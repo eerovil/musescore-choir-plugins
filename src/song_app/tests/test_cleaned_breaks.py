@@ -31,7 +31,6 @@ def test_kun_poijat_after_its_delbar(tmp_path):
     source = a_score(tmp_path / "in.mscx", 22, {3, 7, 12, 15, 18})
     fixes(tmp_path, {"kind": "delbar", "measure": 10, "from": []})
     assert pipeline.cleaned_line_breaks(str(tmp_path), source) == [3, 7, 11, 14, 17]
-    assert pipeline.cleaned_system_starts(str(tmp_path), source) == [0, 4, 8, 12, 15, 18]
 
 
 def test_no_fixes_leaves_the_breaks_alone(tmp_path):

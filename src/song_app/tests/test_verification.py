@@ -1,6 +1,4 @@
-import json
 import os
-from types import SimpleNamespace
 
 from src.song_app import state, verification
 
@@ -83,23 +81,6 @@ def test_notes_a_b_part_borrows_from_its_base_part_are_not_a_difference(tmp_path
     assert "2 more" in result["detail"]
 
 
-def test_probe_requires_picture_sound_duration_and_reports_metadata(tmp_path, monkeypatch):
-    media = tmp_path / "voice.mp4"
-    media.write_bytes(b"video")
-    payload = {"streams": [
-        {"codec_type": "video", "width": 1920, "height": 1080, "avg_frame_rate": "30/1"},
-        {"codec_type": "audio"},
-    ], "format": {"duration": "12.5"}}
-    monkeypatch.setattr(verification.subprocess, "run", lambda *a, **k: SimpleNamespace(
-        returncode=0, stdout=json.dumps(payload), stderr=""))
-
-    result = verification.probe_file(str(media))
-    assert result["status"] == "passed"
-    assert (result["width"], result["height"], result["fps"], result["duration"]) == \
-           (1920, 1080, 30.0, 12.5)
-    assert result["video"] and result["audio"]
-
-
 def test_summary_distinguishes_current_stale_and_not_checked(tmp_path, monkeypatch):
     song, cleaned = _song(tmp_path, monkeypatch)
     current = state.file_fingerprint(cleaned)
@@ -113,7 +94,7 @@ def test_summary_distinguishes_current_stale_and_not_checked(tmp_path, monkeypat
     assert [result[key]["status"] for key in ("health", "notes", "lyrics")] == \
            ["passed", "passed", "passed"]
     assert result["expected_parts"] == ["T1", "B1"] and result["systems"] == 7
-    assert result["media"]["status"] == "not_checked"
+    assert "media" not in result, "nothing is rendered any more (#400)"
 
     with open(cleaned, "a") as f:
         f.write("\n")

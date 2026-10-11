@@ -20,8 +20,8 @@ Two steps still need a person, by design: reading the printed system boundaries
 off the page (proposed by an AI, corrected by dragging in the **Systems** tab),
 and reviewing the result against the scan (**Compare** tab).
 
-**`record` and `upload` have never been run** by any of this work. They are the
-untested half.
+The video stages this note was written against (`record`, `upload`) have since
+been removed; a song now ends at `publish`.
 
 ## What "clean" does not mean
 
@@ -37,9 +37,9 @@ and any wrong note that still fills its bar are all unverified.
   edition omits the `8` under the treble clef were read at face value, so the tenor
   line sounds an octave above where it is sung. `songs/Sortunut` is one: its
   cleaned score ranges 66–82 where it should be 54–70. Creating the song again with
-  **Men** selected fixes it, but the recordings have to be redone.
+  **Men** selected fixes it, and the song then has to be published again.
 - **`songs/virta-scratch`** is a scratch copy from testing the bounds editor, now
-  at stage `upload` with recorded media in it. Delete it whenever.
+  with recorded media in it (it now reads as stage `publish`). Delete it whenever.
 - **Women's voicing with an F-clef staff** falls back to calling it Alto. No real
   score has hit this; it wants a rule rather than a fallback if one ever does.
 - **One unexplained measurement.** An early diagnostic showed the page scrolling at
@@ -68,9 +68,6 @@ and any wrong note that still fills its bar are all unverified.
 
 ## Suggested next steps
 
-1. **Exercise `record` and `upload`** on `sortunut-aani-2` or the fixture. It is the
-   only stretch of the workflow nothing here has touched, and the scroll-video
-   renderer is now the Record stage's default.
-2. **Re-do any male-choir song** whose tracks are an octave high.
-3. **A third song**, ideally one that is neither homophonic (Sortunut) nor cleanly
+1. **Re-do any male-choir song** whose tracks are an octave high.
+2. **A third song**, ideally one that is neither homophonic (Sortunut) nor cleanly
    imitative (Virta) — a per-system score would test the least-exercised path.

@@ -18,7 +18,7 @@ of them changes a note, a length or a word:
   last bar overrides the final barline MuseScore otherwise draws there by itself.
 
 :func:`fix_staff_display` runs at the end of cleaning, and again on the copy every
-preview and video renders from, so a score cleaned before it existed is drawn right
+preview and publish renders from, so a score cleaned before it existed is drawn right
 without being cleaned again (which would cost its lyrics).
 """
 
@@ -101,7 +101,7 @@ def share_end_barlines(root: etree._Element) -> int:
     Only a staff with no barline of its own in that bar is given one. A final
     (``end``) barline is never shared: on the last bar MuseScore draws one by
     itself, and copying it there changed every ordinary score for nothing, so
-    every video rendered from a copy. One inside the score is rare in this
+    every score rendered from a copy. One inside the score is rare in this
     repertoire and left as the scan read it.
     """
     staves = [s.findall("Measure") for s in root.iterfind(".//Score/Staff")]
