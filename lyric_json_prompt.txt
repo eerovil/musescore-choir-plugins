@@ -13,12 +13,24 @@ JSON format:
                                           # share one staff and sing DIFFERENT words;
                                           # omit (or null) if the staff has one line.
                 "text": "this is the text the te-nors sing",
+                "verse": 1,               # Which verse (1, 2, 3 ...) this text is.
+                "voice": 1,               # 2 only for a small or spoken second line
+                                          # sung by a voice inside one part's staff.
                 "parts": []               # LEAVE EMPTY. Only fill to override the
                                           # mapping (see below).
             },
             {
+                "staff_number": 1,
+                "text": "the se-cond verse of the te-nors",
+                "verse": 2,
+                "voice": 1,
+                "parts": []
+            },
+            {
                 "staff_number": 2,
                 "text": "ly-rics for the bass",
+                "verse": 1,
+                "voice": 1,
                 "parts": []
             }
         ]
@@ -42,7 +54,13 @@ Notes:
   markers.
 - A word that continues onto the next line ends with a trailing hyphen (e.g. "Su-ku-")
   and the next line starts with the rest of it ("pol-vis-ta …").
-- Only verse 1 is imported. Skip later verses and editorial/ossia notes.
+- Give EVERY verse printed under a staff, each as its own entry with its "verse"
+  number (the verse printed nearest the staff is 1). Skip editorial/ossia notes.
+- "voice": 2 is for a second line of words on one part's own staff, sung by a second
+  voice with its own notes there (e.g. a spoken or small-note line under the main
+  one). Everything else is "voice": 1.
+- Only what this JSON names is changed: every verse, voice and line it leaves out
+  keeps the words it has. An entry with an empty "text" takes that line's words out.
 
 MANUAL OVERRIDE (when the automatic mapping is wrong — e.g. a part is omitted on some
 lines, or an extra voice like an ossia T3 is printed on top so the staff numbering

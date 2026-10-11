@@ -86,4 +86,6 @@ def test_a_blank_verse_1_does_not_show_verse_2():
     assert "toi" not in export_lyrics(root)
     assert "kol" not in export_lyrics(root)
     grid = editor_grid(root).to_dict()
-    assert "toi" not in str(grid) and "kol" not in str(grid)
+    assert "toi" not in str(grid["cells"]) and "kol" not in str(grid["cells"])
+    verse_1 = [b["text"]["1"] for boxes in grid["boxes"].values() for b in boxes]
+    assert "toi" not in str(verse_1) and "kol" not in str(verse_1)
