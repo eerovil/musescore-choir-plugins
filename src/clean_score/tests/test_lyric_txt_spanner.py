@@ -302,16 +302,20 @@ def test_import_roundtrip_ineligible_cleared():
 
 
 def test_roundtrip_no_hups_in_result():
-    """Export spanner.mscx -> TXT -> import into copy; result must contain no lyric text 'hups'."""
+    """Export spanner.mscx -> TXT -> import into copy; no verse 1 lyric may read 'hups'.
+
+    The fixture also has 'hups' as a verse 2 lyric; an import keeps verses 2+ (#392)."""
     txt = export_lyrics(_load(SPANNER_MSCX))
     root = _load(SPANNER_MSCX)
     place_lyrics(root, txt)
     score = root if root.tag == "Score" else root.find(".//Score")
     assert score is not None
     for lyrics in score.findall(".//Lyrics"):
+        if lyrics.find("no") is not None:
+            continue  # verse 2+: kept as it was
         t_el = lyrics.find("text")
         t = (t_el.text or "").strip() if t_el is not None else ""
-        assert t != "hups", f"Round-trip result must not contain 'hups'; found in Lyrics (no={lyrics.find('no').text if lyrics.find('no') is not None else '?'})"
+        assert t != "hups", "Round-trip result must not carry 'hups' in verse 1"
 
 
 def test_cross_measure_syllabic_continuation():
