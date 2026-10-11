@@ -1018,6 +1018,15 @@ state model are in `DESIGN.md`.
   prefilled from the score's own `composer`/`lyricist`/`arranger` metaTags until
   saved (`publish.score_credits`), then kept as `publish.credits` — an emptied one
   stays empty. Each choir's publish is recorded under `publish.sites`.
+  **Part names** (#402) are set there too: cleaning renames every part by guessing
+  from pitch unless the song has a voicing, so older songs reached the site with
+  tenors in a women's choir. `publish.part_names` keeps one name per singing part,
+  top staff first, and `score.prepare` writes them into the publish copy's
+  `trackName` and instrument long/short names, so the MIDI tracks, the MusicXML and
+  the database agree; the cleaned score is never renamed. Empty or repeated names
+  are refused (the site tells parts apart by name), and a re-clean that changes
+  the number of parts makes Publish refuse until they are checked
+  (`server._publish_parts` says so on the panel).
   **The video stages are gone** (#400): the scrolling renderer, the macOS screen
   recorder, YouTube upload, playlists, freeing local videos and the old site's refresh
   were all removed, and with them `record` and `upload` in `state.STAGES`. A song saved

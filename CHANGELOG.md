@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Publish: a **Part names** row lets you correct what the site calls each part,
+  top staff first. Cleaning names parts by guessing from pitch, so a women's choir
+  song could come out with tenors. The names are saved with the song's other
+  publish settings, so cleaning again keeps them; if a re-clean changes the number
+  of parts, Publish stops and asks you to check them. (#402)
 - A song now ends at **Publish**: the app no longer renders practice videos or
   uploads to YouTube, and the Record and Upload stages are gone (a song that was on
   either opens on Publish, keeping its tempo settings). Publishing sends the score's

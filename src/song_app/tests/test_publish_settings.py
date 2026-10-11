@@ -150,8 +150,11 @@ def _publish(client, song, monkeypatch, tmp_path, body):
     monkeypatch.setattr(publish.urllib.request, "urlopen", cf)
     seen = {}
 
-    def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None, log=None):
+    def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None,
+                    part_names=None, log=None):
         seen.update(initial_bpm=initial_bpm, tempo_changes=tempo_changes)
+        if part_names is not None:
+            seen["part_names"] = part_names
         return _bundle(tmp_path)
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)
     assert client.post(f"/api/songs/{song.slug}/publish", json=body).status_code == 200
@@ -237,3 +240,47 @@ def test_a_song_published_before_one_record_per_choir_still_counts_as_published(
 def test_a_song_never_published_counts_as_published_nowhere(client, song):
     assert state.load(song.slug).to_summary()["published"] == []
     assert client.get(f"/api/songs/{song.slug}").json()["published"] == []
+
+
+# ---------------------------------------------------------------------------
+# Part names (#402): cleaning names parts by guessing from pitch
+# ---------------------------------------------------------------------------
+def test_the_panel_is_offered_the_scores_part_names_until_some_are_saved(client, song):
+    assert client.get(f"/api/songs/{song.slug}").json()["publish_parts"] == \
+        {"names": ["T1"], "saved": False, "stale": False}
+    reply = client.post(f"/api/songs/{song.slug}/publish-settings",
+                        json={"part_names": ["  Sopraano  "]})
+    assert reply.status_code == 200
+    assert reply.json()["publish_parts"] == {"names": ["Sopraano"], "saved": True,
+                                             "stale": False}
+    assert _saved(song)["part_names"] == ["Sopraano"]
+
+
+@pytest.mark.parametrize("names, message", [
+    ([""], "Part 1 has no name"),
+    (["S1", "S1"], "Two parts are called S1"),
+    (["S1", "A1"], "The score now has 1 parts"),
+    ("S1", "must be a list"),
+    ([3], "must be text"),
+])
+def test_bad_part_names_are_refused(client, song, names, message):
+    reply = client.post(f"/api/songs/{song.slug}/publish-settings", json={"part_names": names})
+    assert reply.status_code == 400 and message in reply.json()["detail"]
+    assert "part_names" not in _saved(song)
+
+
+def test_saved_names_for_another_number_of_parts_are_said_and_refused(client, song):
+    data = state.load(song.slug)
+    data.data["publish"] = {"part_names": ["S1", "A1"]}
+    data.save()
+    parts = client.get(f"/api/songs/{song.slug}").json()["publish_parts"]
+    assert parts["stale"] and parts["names"] == ["T1"]
+    assert parts["message"].startswith("The score now has 1 parts")
+    reply = client.post(f"/api/songs/{song.slug}/publish-settings", json={})
+    assert reply.status_code == 400 and "check the part names" in reply.json()["detail"]
+
+
+def test_a_publish_is_handed_the_part_names(client, song, monkeypatch, tmp_path):
+    _cf, seen, _data = _publish(client, song, monkeypatch, tmp_path, {
+        "choir": "naiskuoro", "settings": {"part_names": ["A2"]}})
+    assert seen["part_names"] == ["A2"]

@@ -177,6 +177,9 @@ def _derived(song: state.Song) -> Dict:
         # The composer, lyricist and arranger the score itself carries, which
         # the Publish panel offers until someone saves their own (#400).
         "score_credits": publish.score_credits(cleaned) if cleaned and os.path.exists(cleaned) else {},
+        # The part names the site will show, which the Publish panel lets a
+        # person correct: cleaning names parts by guessing from pitch (#402).
+        "publish_parts": _publish_parts(song, cleaned),
         # Whether this host can publish to the Cloudflare site at all (#382).
         "publish_configured": publish.Config.from_env() is not None,
         # The choirs it is listed for, a pre-#384 single `site` record included.
@@ -1622,11 +1625,52 @@ def _credits(value) -> Dict[str, str]:
     return out
 
 
+PART_NAME_LIMIT = 40
+
+
+def _part_names(value) -> List[str]:
+    """Part names as the Publish panel sends them (#402): one per part, top staff
+    first, each trimmed. None may be empty or repeat another, because the site's
+    player tells the parts apart by name."""
+    if not isinstance(value, list):
+        raise HTTPException(400, "Part names must be a list")
+    out: List[str] = []
+    for index, name in enumerate(value, start=1):
+        if not isinstance(name, str):
+            raise HTTPException(400, f"Part {index}: the name must be text")
+        name = " ".join(name.split())
+        if not name:
+            raise HTTPException(400, f"Part {index} has no name")
+        if len(name) > PART_NAME_LIMIT:
+            raise HTTPException(400, f"Part {index}: the name is longer than "
+                                     f"{PART_NAME_LIMIT} characters")
+        if name in out:
+            raise HTTPException(400, f"Two parts are called {name}; the singers "
+                                     "pick their part by name")
+        out.append(name)
+    return out
+
+
+def _publish_parts(song: state.Song, cleaned: Optional[str]) -> Dict:
+    """The part names a publish would use, for the Publish panel (#402): the saved
+    ones, or the score's own while none are saved. `stale` when the saved ones no
+    longer match the score's number of parts, which a publish refuses."""
+    current = publish.score_parts(cleaned) if cleaned and os.path.exists(cleaned) else []
+    saved = (song.data.get("publish") or {}).get("part_names")
+    if saved is None:
+        return {"names": current, "saved": False, "stale": False}
+    if len(saved) != len(current):
+        return {"names": current, "saved": True, "stale": True,
+                "message": publish.part_count_message(len(current))}
+    return {"names": list(saved), "saved": True, "stale": False}
+
+
 def _publish_settings(song: state.Song, opts: Dict) -> Dict:
     """What the site plays and shows a song with, out of a request (#400).
 
     The tempo the app supplies (only for a score without its own), the tempo
-    changes (#387) and the credits. Anything the request leaves out falls back
+    changes (#387), the credits and the part names (#402). Anything the request
+    leaves out falls back
     to what this song saved last; the credits fall back to the score's own
     metaTags.
     """
@@ -1648,6 +1692,13 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
         out["credits"] = _credits(opts["credits"])
     elif "credits" in saved:
         out["credits"] = saved["credits"]
+    names = _part_names(opts["part_names"]) if "part_names" in opts \
+        else saved.get("part_names")
+    if names is not None:
+        count = len(publish.score_parts(cleaned))
+        if len(names) != count:
+            raise HTTPException(400, publish.part_count_message(count))
+        out["part_names"] = names
     return out
 
 
@@ -1692,6 +1743,7 @@ def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
                 bundle = publish.build_bundle(
                     cleaned, tmp, initial_bpm=bpm,
                     tempo_changes=settings.get("tempo_changes"),
+                    part_names=settings.get("part_names"),
                     log=slot.guard(log))
                 slot.check()
             record = publish.publish(

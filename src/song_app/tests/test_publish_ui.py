@@ -73,7 +73,7 @@ def live(tmp_path, monkeypatch):
     cf = FakeCloudflare()
     monkeypatch.setattr(publish.urllib.request, "urlopen", cf)
     monkeypatch.setattr(publish, "build_bundle",
-                        lambda cleaned, out, initial_bpm=None, tempo_changes=None, log=None: _bundle(
+                        lambda cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, log=None: _bundle(
                             tmp_path, parts=("T1", "T2", "B1", "B2")))
 
     song = state.create("Hanget soi", per_system=False, voicing="men")
@@ -182,6 +182,48 @@ def test_the_credits_typed_on_the_panel_reach_the_site(live, page, size):
     expect(page.locator("[data-credit=composer]")).to_have_value("Toivo Kuula")
     page.locator("[data-credit=composer]").scroll_into_view_if_needed()
     _shot(page, f"publish-credits-{size[0]}.png")
+    assert errors == []
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_the_part_names_typed_on_the_panel_are_published(live, page, size, monkeypatch,
+                                                          tmp_path):
+    """#402: cleaning guesses part names from pitch; the panel shows the score's
+    names, refuses two the same, and publishes what was typed."""
+    base, slug, _cf = live
+    handed = []
+
+    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None,
+                    log=None):
+        handed.append(part_names)
+        return _bundle(tmp_path, parts=tuple(part_names))
+    monkeypatch.setattr(publish, "build_bundle", fake_bundle)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    names = page.locator("[data-part-names] input")
+    expect(names).to_have_count(2)
+    expect(names.nth(0)).to_have_value("S1")
+    expect(names.nth(1)).to_have_value("A1")
+    names.nth(1).fill("S1")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_contain_text("Two parts are called S1")
+    assert "part_names" not in state.load(slug).data.get("publish", {})
+
+    names.nth(0).fill("Sopraano")
+    names.nth(1).fill("Altto")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    page.locator("[data-part-names]").scroll_into_view_if_needed()
+    _shot(page, f"publish-part-names-{size[0]}.png")
+
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "2 part(s)", timeout=15000)
+    assert handed == [["Sopraano", "Altto"]]
+    expect(page.locator("[data-part-names] input").nth(0)).to_have_value("Sopraano")
     assert errors == []
 
 
