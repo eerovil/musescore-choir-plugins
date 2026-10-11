@@ -23,6 +23,7 @@ from . import (agentdeck, bar_readings, free_videos, health, heavy_slot, homr_in
                job_state, omr,
                pdf_systems, pipeline, playlists, problems, publish, pwa_assets, scan, site_refresh,
                state, system_finder, verification)
+from . import clean_backup
 from src.clean_score.utils.score_fixes import FixError
 from src.scrollvideo.score import START as START_TEMPO, format_groups, parse_groups
 from src.media_root import media_dir
@@ -226,6 +227,8 @@ def _derived(song: state.Song) -> Dict:
         # Whether this host can publish to the Cloudflare site at all (#382).
         "publish_configured": publish.Config.from_env() is not None,
         "jobs": job_state.load(song.dir),
+        # The score the last clean replaced, which Undo puts back (#391).
+        "clean_backup": clean_backup.latest(song),
         "verification_summary": verification.summary(song, systems),
     }
 
@@ -610,16 +613,27 @@ def _run_clean(slug: str) -> None:
         # not there any more; replaying it would fail the clean, or worse, fit.
         bar_readings.drop_stale_picks(song, log)
         opens: Dict = {}
-        cleaned, source_mscx = pipeline.run_clean(
-            xml, song.dir, per_system=(song.mode == "per-system"), log=log,
-            voicing=song.data.get("voicing") or None, check=opens,
-        )
+        # The score this clean replaces, with what was recorded about it, so a clean
+        # pressed by mistake can be undone (#391). Taken back if the clean fails,
+        # since then nothing was replaced.
+        backup = clean_backup.stash(song)
+        try:
+            cleaned, source_mscx = pipeline.run_clean(
+                xml, song.dir, per_system=(song.mode == "per-system"), log=log,
+                voicing=song.data.get("voicing") or None, check=opens,
+            )
+        except Exception:
+            clean_backup.drop(backup)
+            raise
+        if backup:
+            log("The previous cleaned score is kept: Undo last clean (Clean panel) puts it back.")
         # A song scanned before the scan stage labelled its bands gets them here,
         # off the same converted input.
         _label_bounds(song, source_mscx)
         rel = os.path.relpath(cleaned, song.dir)
         song.data["cleaned"] = rel
         song.data["cleaned_fingerprint"] = state.file_fingerprint(cleaned)
+        clean_backup.mark_made(backup, song.data["cleaned_fingerprint"])
         note_check = verification.compare_notes(source_mscx, cleaned)
         song.data.setdefault("verification", {})["notes"] = {
             **note_check, "checked_against": song.data["cleaned_fingerprint"],
@@ -655,10 +669,112 @@ def _run_clean(slug: str) -> None:
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
     if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "clean", ("scan", "clean", "render", "upload", "publish"),
+            song.dir, "clean", ("scan", "clean", "check", "render", "upload", "publish"),
             state.file_fingerprint(song.source_path("xml"))):
         raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
+    return {"started": True}
+
+
+@app.post("/api/songs/{slug}/undo-clean")
+def api_undo_clean(slug: str) -> Dict:
+    """Put back the cleaned score the last clean replaced, with its records (#391)."""
+    song = _require(slug)
+    if is_recording(song) or is_scanning(song) or any(
+            job_state.is_running(song.dir, kind)
+            for kind in ("clean", "check", "render", "upload", "publish")):
+        raise HTTPException(409, "Something is running for this song; undo once it has finished.")
+    with state.song_lock(song.slug):
+        fresh = state.load(song.slug) or song
+        try:
+            clean_backup.restore(fresh)
+        except clean_backup.NothingToUndo as exc:
+            raise HTTPException(400, str(exc))
+        except clean_backup.ChangedSinceClean as exc:
+            raise HTTPException(409, str(exc))
+        # The restored fingerprint is in the state before the watcher sees the file
+        # change, so it is read as our own write and not checked a second time.
+        fresh.save()
+    song.data = fresh.data
+    hub.emit(slug, {"type": "log", "line": "Undid the last clean: the previous cleaned score is back."})
+    hub.emit(slug, {"type": "state"})
+    return _derived(song)
+
+
+def _run_check(slug: str) -> None:
+    """Run the clean's checks again on the cleaned score as it is now (#391).
+
+    A clean compares the notes against the scan and asks MuseScore 3 whether it would
+    open the result, and those answers hold only for the file they were made on. A
+    score fixed in MuseScore, uploaded, or changed by a recorded fix showed both as
+    stale, and the only way to refresh them was a re-clean, which throws the score
+    away. This asks the same questions about the score that is there.
+
+    It only reports. Unlike a clean it resets no bar MuseScore refuses: the score may
+    be a person's own edit, and changing it here would do so where nobody looked.
+    What MuseScore refuses becomes a health row instead (`_health_scan`).
+    """
+    song = _require(slug)
+    log = lambda m: _job_emit(slug, "check", m)
+    try:
+        cleaned = _cleaned_or_400(song)
+        fingerprint = state.file_fingerprint(cleaned)
+        source_mscx = pipeline.convert_to_mscx(song.source_path("xml"), song.dir, log)
+        log("Comparing the notes with the scan…")
+        notes = verification.compare_notes(source_mscx, cleaned)
+        log(notes.get("detail") or "Notes compared.")
+        log("Asking MuseScore 3 whether it opens the score…")
+        found = pipeline.musescore_check(cleaned)
+        if found is None:
+            opens = {"status": "not_checked", "reset": [], "rejected": []}
+            log("Not checked: no MuseScore answered (MUSESCORE_CLI_PATH).")
+        elif found:
+            opens = {"status": "rejected", "reset": [], "rejected": found}
+            log(f"MuseScore 3 calls this score corrupted ({len(found)} problem(s)); "
+                "listed in the Fix panel:")
+            for one in found:
+                log("  " + one["message"])
+        else:
+            opens = {"status": "passed", "reset": [], "rejected": []}
+            log("MuseScore 3 opens it without calling it corrupted.")
+        with state.song_lock(song.slug):
+            fresh = state.load(song.slug) or song
+            if state.file_fingerprint(cleaned) != fingerprint:
+                raise RuntimeError("The score changed while it was being checked; check again.")
+            fresh.data["cleaned_fingerprint"] = fingerprint
+            checks = fresh.data.setdefault("verification", {})
+            checks["notes"] = {**notes, "checked_against": fingerprint}
+            checks["musescore"] = {**opens, "checked_against": fingerprint}
+            found_health = _health_scan(fresh, cleaned)
+            fresh.data["health"] = {
+                "checked_against": fingerprint,
+                "issues": health.merge_issues(
+                    found_health, fresh.data.get("health", {}).get("issues", [])),
+            }
+            fresh.save()
+        n = health.finding_count([i for i in fresh.data["health"]["issues"]
+                                  if i.get("status") == "open"])
+        log(f"Done. {n} issue(s) to review." if n else "Done. No issues found.")
+        _job_finish(song, "check")
+    except Exception as exc:
+        traceback.print_exc()
+        message = exc.detail if isinstance(exc, HTTPException) else _error_text(exc)
+        _job_emit(slug, "check", message, "error")
+        _job_finish(song, "check", message)
+    hub.emit(slug, {"type": "state"})
+
+
+@app.post("/api/songs/{slug}/recheck")
+async def api_recheck(slug: str) -> Dict:
+    song = _require(slug)
+    _cleaned_or_400(song)
+    # Not beside a render or an upload either: each saves the whole song state, and
+    # the later save would put back the earlier one's copy of the other's result.
+    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "check", ("scan", "clean", "check", "render", "upload")):
+        raise HTTPException(409, "A scan, clean, check, render, or upload is already running "
+                                 "for this song.")
+    asyncio.get_running_loop().run_in_executor(None, _run_check, slug)
     return {"started": True}
 
 
@@ -1453,9 +1569,11 @@ async def api_upload_score_file(slug: str, file: UploadFile = None) -> Dict:
     if not file or not file.filename:
         raise HTTPException(400, "No file was uploaded")
     if is_recording(song) or is_scanning(song) or any(
-            job_state.is_running(song.dir, kind) for kind in ("clean", "render", "upload")):
-        raise HTTPException(409, "A scan, clean, render, or upload is running for this song — "
-                                 "replacing the score underneath it would be read half-written.")
+            job_state.is_running(song.dir, kind)
+            for kind in ("clean", "check", "render", "upload")):
+        raise HTTPException(409, "A scan, clean, check, render, or upload is running for this "
+                                 "song — replacing the score underneath it would be read "
+                                 "half-written.")
     try:
         summary = pipeline.accept_uploaded_score(cleaned, file.filename, await file.read())
     except pipeline.ScoreUploadError as exc:
@@ -1929,8 +2047,9 @@ async def api_record_settings(slug: str, body: Dict = None) -> Dict:
 @app.post("/api/songs/{slug}/record")
 async def api_record(slug: str, body: Dict = None) -> Dict:
     song = _require(slug)
-    if is_recording(song) or is_scanning(song):
-        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
+    if is_recording(song) or is_scanning(song) or job_state.is_running(song.dir, "check"):
+        raise HTTPException(409, "Another scan, clean, check, render, or upload is already "
+                                 "running for this song.")
     opts = body or {}
     source_fingerprint = state.file_fingerprint(song.cleaned_path())
     if not (opts.get("upload_only") or opts.get("merge_only")):
@@ -1960,8 +2079,10 @@ async def api_record(slug: str, body: Dict = None) -> Dict:
                                      "upload?) — record again to make them.")
     kind = "upload" if opts.get("upload_only") else "render"
     if not job_state.start_if_idle(
-            song.dir, kind, ("scan", "clean", "render", "upload", "free"), source_fingerprint):
-        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
+            song.dir, kind, ("scan", "clean", "check", "render", "upload", "free"),
+            source_fingerprint):
+        raise HTTPException(409, "Another scan, clean, check, render, or upload is already "
+                                 "running for this song.")
     # The durable start above is the atomic gate; the PID lock keeps the existing
     # process-aware recording indicator and stale-lock recovery behavior.
     try:

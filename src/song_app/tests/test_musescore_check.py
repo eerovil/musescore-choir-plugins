@@ -234,7 +234,10 @@ def test_what_is_still_refused_becomes_a_health_finding(tmp_path, monkeypatch):
     ({"status": "passed", "checked_against": "old"}, "stale", "older cleaned score"),
     ({"status": "passed", "checked_against": "now"}, "passed", "without calling it corrupted"),
     ({"status": "repaired", "reset": [{}, {}], "checked_against": "now"}, "warning", "2 staff-bar(s)"),
-    ({"status": "rejected", "rejected": [{}], "checked_against": "now"}, "warning", "still calls"),
+    ({"status": "rejected", "reset": [{}], "rejected": [{}], "checked_against": "now"},
+     "warning", "still calls"),
+    # Check again (#391) resets nothing, so nothing is "still" refused.
+    ({"status": "rejected", "rejected": [{}], "checked_against": "now"}, "warning", "3 calls it"),
     ({"status": "not_checked", "checked_against": "now"}, "not_checked", "No MuseScore 3"),
 ])
 def test_the_review_row_says_what_musescore_said(stored, status, says):

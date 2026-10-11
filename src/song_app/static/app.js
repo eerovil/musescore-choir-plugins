@@ -1943,6 +1943,24 @@ async function panelClean(panel, song, slug, P, refresh) {
     panel.append(el("div", { className: "banner" }, "● Cleaning… recent messages are saved below."));
   else if (cleanJob?.status === "failed")
     panel.append(el("div", { className: "banner err" }, "Last clean failed: " + cleanJob.error));
+  if (song.clean_backup?.changed && cleanJob?.status !== "running") {
+    // Worked on since the clean (lyrics, a fix, an upload): undoing would lose it.
+    panel.append(el("p", { className: "hint undoclean-off" },
+      "Undo last clean is not offered: the score has changed since that clean, "
+      + "and undoing would throw those changes away."));
+  } else if (song.clean_backup && cleanJob?.status !== "running") {
+    const when = song.clean_backup.saved_at
+      ? new Date(song.clean_backup.saved_at * 1000).toLocaleString() : "before the last clean";
+    const undoBtn = el("button", { className: "undoclean", onclick: async () => {
+      if (!confirm(`Put back the cleaned score as it was on ${when}, with its lyrics and checks?\n\n`
+          + "What the last clean made is thrown away.")) return;
+      undoBtn.disabled = true;
+      try { await postJSON(`${P}/undo-clean`, {}); refresh(); }
+      catch (e) { undoBtn.disabled = false; appendLog(e.message, true); }
+    } }, "Undo last clean");
+    panel.append(el("div", { className: "row" }, undoBtn,
+      el("span", { className: "hint" }, `Puts back the score from ${when}.`)));
+  }
   panel.append(makeLog(cleanJob));
   if (song.has_cleaned) appendLog("A cleaned score exists. Re-cleaning will overwrite it.");
 }
@@ -1970,13 +1988,42 @@ function sysBlock(sys) {
       rows));
 }
 
+// Run the clean's own checks again -- notes against the scan, MuseScore 3's check,
+// health -- on the cleaned score as it is now, without cleaning (#391). A score fixed
+// by hand showed them as stale, and a re-clean would have thrown the fixes away.
+function checkAgainButton(song, P) {
+  const running = song.jobs?.check?.status === "running";
+  const btn = el("button", { disabled: running, title:
+      "Compare the notes with the scan, ask MuseScore 3 whether it opens the score, "
+      + "and check health -- on the score as it is now. Changes nothing in the score.",
+    onclick: async () => {
+      btn.disabled = true;
+      try { await postJSON(`${P}/recheck`, {}); }
+      catch (e) { btn.disabled = false; alert(e.message); }
+    } }, running ? "Checking…" : "Check again");
+  return btn;
+}
+
+function checkAgainStatus(song) {
+  const job = song.jobs?.check;
+  if (!job) return "";
+  const head = job.status === "running" ? el("div", { className: "banner" }, "● Checking the current score…")
+    : job.status === "failed" ? el("div", { className: "banner err" }, "Last check failed: " + job.error)
+    : "";
+  // A finished check's messages fold away; the check rows above already say the result.
+  if (job.status === "succeeded")
+    return el("details", { className: "checkagain" }, el("summary", {}, "Last check's messages"), makeLog(job));
+  return el("div", { className: "checkagain" }, head, makeLog(job));
+}
+
 function panelFix(panel, song, P, refresh) {
   panel.append(el("h2", {}, "Fix"),
     el("p", { className: "sub" }, "OCR damage the auto-fixers couldn't repair. Fix in MuseScore, save, and it re-checks automatically."));
   problemList(panel, song, P, refresh);
   panel.append(el("div", { className: "row" },
     el("button", { className: "primary", onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore"),
-    el("button", { onclick: async () => { await postJSON(`${P}/rescan`); refresh(); } }, "Re-check now")));
+    checkAgainButton(song, P)));
+  panel.append(checkAgainStatus(song));
   panel.append(scoreFileTransfer(song, P, refresh));
   slurRecorder(panel, song, P, refresh);
 }
@@ -2730,11 +2777,9 @@ function panelReview(panel, song, P, refresh, actions) {
     compactReview(song.verification_summary),
     el("div", { className: "review-full" }, verificationView(song.verification_summary)),
     el("div", { className: "review-secondary row" },
-      el("button", { onclick: async () => {
-        Object.assign(song, await postJSON(`${P}/rescan`));
-        refresh();
-      } }, "Re-run health check"),
+      checkAgainButton(song, P),
       el("button", { onclick: () => postJSON(`${P}/open-score`) }, "Open in MuseScore")),
+    checkAgainStatus(song),
     scoreFileTransfer(song, P, refresh),
     el("div", { className: "review-actions" }, approve)));
 }

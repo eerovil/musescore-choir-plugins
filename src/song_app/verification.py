@@ -178,7 +178,7 @@ def _musescore_result(stored: Optional[Dict], current: Optional[str]) -> Dict:
     if not current:
         return _result("not_checked", "No cleaned score exists.")
     if not stored:
-        return _result("not_checked", "Not checked yet; cleaning again runs MuseScore 3's own check.")
+        return _result("not_checked", "Not checked yet; Check again runs MuseScore 3's own check.")
     if stored.get("checked_against") != current:
         return _result("stale", "MuseScore 3's check applies to an older cleaned score.")
     status = stored.get("status")
@@ -190,7 +190,8 @@ def _musescore_result(stored: Optional[Dict], current: Optional[str]) -> Dict:
                                   "reset to rests and are listed in the Fix panel.", reset=reset)
     if status == "rejected":
         left = len(stored.get("rejected") or [])
-        return _result("warning", f"MuseScore 3 still calls it corrupted ({left} problem(s)); "
+        still = "still calls" if reset else "calls"
+        return _result("warning", f"MuseScore 3 {still} it corrupted ({left} problem(s)); "
                                   "see the Fix panel.", reset=reset, rejected=left)
     return _result("not_checked", "No MuseScore 3 was available to check it.")
 
