@@ -18,6 +18,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SONGS_DIR="${SONGS_DIR:-$REPO_ROOT/songs}"
 BRANCH="${SONGS_BRANCH:-main}"
 
+# Unattended: a missing credential must fail the run, not open a password prompt.
+export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false
+
 cd "$SONGS_DIR"
 git rev-parse --git-dir >/dev/null
 

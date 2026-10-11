@@ -24,7 +24,7 @@ the repo root acts on the code. Neither sees the other's changes.
 **Backups.** On the machine the app runs on, `scripts/backup-songs.sh` commits
 everything in `songs/` and pushes it to that private repo, nightly at 03:30
 (`systemd/songs-backup.timer`; a night missed while the machine was off runs at
-the next boot). It commits first, then merges the repo's own `main` in (the homr
+the next boot). It pushes with AgentDeck's git credential helper (the GitHub App token; `gh` has no token outside a shell). It commits first, then merges the repo's own `main` in (the homr
 fixture pull requests land there), then pushes; it never rebases or force-pushes,
 and a merge that conflicts fails with the local commit kept. Files the app can
 remake (the scan crop pictures, render keys, the undo copies, about 200 MB) are listed in
