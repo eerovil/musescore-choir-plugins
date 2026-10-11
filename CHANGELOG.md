@@ -13,6 +13,8 @@ developers are listed under *Behind the scenes*.
   only reports; it changes nothing in the score. (#391)
 - Clean: **Undo last clean** puts back the cleaned score a clean replaced, with its
   lyrics and checks. The last 10 replaced scores are kept in `backups/`. (#391)
+- Lyrics: importing the words no longer deletes verses 2 and up. They stay in
+  the score exactly as they were; the import still writes verse 1 only. (#392)
 - Record stage: **Tempo changes** — list the bars where the page changes speed,
   each with its BPM or "back to start" (*Tempo I*). The videos, their audio, the
   preview and Publish all follow them. They are kept with the Record settings, so

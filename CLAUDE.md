@@ -2609,11 +2609,13 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
   per printed system in order, so each null block takes the start measure of the
   system at its position (`per_system.system_ranges`); explicit values are left alone, and a
   block-count vs system-count mismatch is warned (so the user verifies alignment).
-- Import is in-place on the tree, removes verse 2+, and clears lyrics from
+- Import is in-place on the tree, leaves verses 2+ exactly as they are (#392; it
+  used to delete them), and clears lyrics from
   ineligible (spanner-continuation) chords. `--replace` / `clear_existing=True`
   wipes all verse-1 lyrics first (needed because MusicXML imports arrive with
   garbled OCR lyrics); without it, only measures/staves named in the input are
-  touched (partial edit).
+  touched (partial edit). Export and the editor read verse 1 only; a score with no
+  verse 1 anywhere (words stored as verse 2) is read from verse 2 instead.
 
 When editing this file, the export and import paths must stay symmetric — the
 test `test_lyric_txt_spanner.py` asserts export→import round-trips back to the

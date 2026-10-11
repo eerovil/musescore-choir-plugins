@@ -236,8 +236,17 @@ def _is_verse1(no_el: Optional[etree._Element]) -> bool:
     return ((no_el.text or "").strip() == "") if no_el.text is not None else True
 
 
-def _get_verse1_lyric(chord: etree._Element) -> Optional[Tuple[str, str]]:
-    """Returns (syllabic, text) for verse 1 (omit no), or verse 2 (no=1) if verse 1 is missing. None if no lyrics."""
+def _get_verse1_lyric(
+    chord: etree._Element, verse2_fallback: bool = False
+) -> Optional[Tuple[str, str]]:
+    """Returns (syllabic, text) for verse 1 (omit no). None if the chord has none.
+
+    With verse2_fallback, a chord with no verse 1 reads its verse 2 (no=1) instead: some
+    scores arrive with all their words stored as verse 2. The caller allows that only
+    when the score has no verse 1 anywhere. An import keeps verses 2+ (#392), so reading
+    verse 2 under a blank verse 1 in an imported score would put its words in the
+    editor, and the next import would copy them into verse 1.
+    """
     verse1: Optional[Tuple[str, str]] = None
     verse2: Optional[Tuple[str, str]] = None
     for lyrics in chord.findall(".//Lyrics"):
@@ -254,9 +263,14 @@ def _get_verse1_lyric(chord: etree._Element) -> Optional[Tuple[str, str]]:
             verse2 = pair
     if verse1 is not None and (verse1[1] or verse1[0]):
         return verse1
-    if verse2 is not None:
+    if verse2_fallback and verse2 is not None:
         return verse2
     return verse1
+
+
+def _has_verse1(score: etree._Element) -> bool:
+    """True if any Lyrics in the score is verse 1."""
+    return any(_is_verse1(ly.find("no")) for ly in score.iter("Lyrics"))
 
 
 def _token_from_lyric(syllabic: str, text: str) -> str:
@@ -790,6 +804,7 @@ def _lyrics_by_measure_staff(score_root: etree._Element) -> Dict[int, Dict[int, 
     if score is None:
         return {}
     staffs = score.findall(".//Staff") or score_root.findall(".//Staff")
+    verse2_fallback = not _has_verse1(score)
     by_measure_staff: Dict[int, Dict[int, List[str]]] = {}
     for staff in staffs:
         staff_id = int(staff.get("id", "0"))
@@ -812,7 +827,7 @@ def _lyrics_by_measure_staff(score_root: etree._Element) -> Dict[int, Dict[int, 
                         continue  # middle of slur: ineligible, no token
                     if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
                         continue  # middle of tie: ineligible, no token
-                    lyric = _get_verse1_lyric(el)
+                    lyric = _get_verse1_lyric(el, verse2_fallback)
                     if lyric is not None:
                         syllabic, text = lyric
                         measure_tokens.append(_token_from_lyric(syllabic, text))
@@ -981,18 +996,6 @@ def _syllables_to_tokens(syllables: List[Tuple[str, str]]) -> List[str]:
         else:
             tokens.append(piece)
     return tokens
-
-
-def _remove_verse2_plus(score_root: etree._Element) -> None:
-    """Remove all Lyrics with <no> (verse 2 = no=1, verse 3 = no=2, ...) so only verse 1 (omit no) remains."""
-    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
-    if score is None:
-        return
-    for lyrics in list(score.findall(".//Lyrics")):
-        if not _is_verse1(lyrics.find("no")):
-            parent = lyrics.getparent()
-            if parent is not None:
-                parent.remove(lyrics)
 
 
 def _count_remaining_eligible_chords(
@@ -1169,7 +1172,7 @@ def _import_txt_into_mscx(
                 if _has_tie_start(el):
                     tie_active = True
 
-    _remove_verse2_plus(score_root)
+    # Verses 2+ are left exactly as they are (#392): an import writes verse 1 only.
     # Clear verse 1 lyrics from any chord that is inside spanner (ineligible)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is not None:
