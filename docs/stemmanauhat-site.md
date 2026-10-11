@@ -27,27 +27,25 @@ new one, never half. That choir's previous version's files are deleted afterward
 songs/<choir>/<slug>/<version>/      version = UTC time, 20261009T120000Z
   score.musicxml                     the score, exported by MuseScore 3
   timing.json                        playback time -> score position (below)
-  parts/<n>-<name>.mp3               one per part, in score order
   manifest.json                      the same facts as the D1 row
 ```
 
 `choir` is `jm`, `naiskuoro` or `public`. `slug` is song-app's folder name and
-never changes. Part file names carry their position so two parts never clash.
+never changes.
 
-**The MP3s are each part on its own** (the other parts at volume 0), rendered by
-the same MuseScore CLI and off the same prepared score as the practice videos'
-audio, so the sound is the same synth. The site mixes them. Today's videos play
-the singer's part at MuseScore volume 127 and the others at 36
-(`scrollvideo/audio.py`, `FOCUS_VOLUME` / `BACKGROUND_VOLUME`). All parts of a
-song have the same length and start at the same instant: play them together
-from 0.
+**No audio is published.** The site plays the score's MIDI with a piano
+soundfont and mixes the parts itself (stemmanauhat-cf), so the per-part MP3s
+song-app once rendered are no longer made (stemmanauhat-cf#36). `parts` lists the
+part names in score order; the site matches them to the MIDI tracks. Songs
+published before carry a `file` per part as well, and their MP3s stay in R2
+unread.
 
 `manifest.json`:
 
 ```json
 {"slug": "hanget-soi", "title": "Hanget soi", "choir": "jm",
  "version": "20261009T120000Z", "score": "score.musicxml", "timing": "timing.json",
- "parts": [{"name": "T1", "file": "parts/1-T1.mp3"}, ...],
+ "parts": [{"name": "T1"}, {"name": "T2"}, ...],
  "duration": 96.375}
 ```
 
@@ -85,7 +83,7 @@ old files.
 
 Each point is `[seconds, measure, beat]`:
 
-- `seconds` — time in the MP3s.
+- `seconds` — playback time from the start of the song.
 - `measure` — 0-based index of the bar in `score.musicxml` (the n-th `<measure>`
   of a part; a pickup bar is index 0).
 - `beat` — quarter notes from that bar's start (6/8 counts in quarters too: an

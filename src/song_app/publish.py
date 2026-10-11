@@ -1,19 +1,20 @@
 """Publish a song to the Cloudflare stemmanauhat site (#382).
 
 The new site (eerovil/stemmanauhat#8) draws the score in the browser and plays
-the parts itself, so what it needs from here is not a video but three things:
+the parts itself, so what it needs from here is not a video but:
 
 - the score as **MusicXML**;
-- **one MP3 per part**, that part alone, rendered by MuseScore the same way the
-  practice videos' audio is (`scrollvideo.audio.render_mix`, same synth, same
-  prepared score), so the site can mix them with a slider;
-- a **timing file** saying where in the score playback is at each moment.
+- a **timing file** saying where in the score playback is at each moment;
+- the **part names**, in score order.
 
-All three are made off one prepared copy of the cleaned score
+The site plays the score's MIDI with a piano soundfont (stemmanauhat-cf), so no
+audio is rendered here: the per-part MP3s it once played are no longer made
+(stemmanauhat-cf#36).
+
+All of it is made off one prepared copy of the cleaned score
 (`scrollvideo.score.prepare`: silent parts dropped, red marks stripped, the
 fermata hold, the opening tempo the app supplies), so the parts in the
-MusicXML, the MP3s and the timing are the same parts and the same clock as the
-video. The clock is MuseScore's own: bar order from its ``.mpos`` export (which
+MusicXML and the timing are the same parts and the same clock as the video. The clock is MuseScore's own: bar order from its ``.mpos`` export (which
 follows repeats and D.C./D.S. jumps the way playback does) and seconds from its
 MIDI tempo map, which carries the fermata stretches. The two are checked
 against each other before anything is uploaded.
@@ -29,9 +30,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import shutil
-import subprocess
 import tempfile
 import time
 import urllib.error
@@ -50,7 +48,6 @@ TIMING_VERSION = 1
 # How far MuseScore's .mpos bar starts may sit from the MIDI clock before the
 # timing is refused. .mpos is written in whole milliseconds.
 TIMING_TOLERANCE = 0.01
-MP3_QUALITY = "2"  # LAME VBR ~190 kbit/s
 API = "https://api.cloudflare.com/client/v4"
 TIMEOUT = 120
 TRIES = 3
@@ -178,33 +175,13 @@ def timing(mscx_path: str, mpos_path: str, midi_path: str) -> Dict:
 class Bundle:
     musicxml: str
     timing: Dict
-    parts: List[Tuple[str, str]] = field(default_factory=list)  # (part name, mp3 path)
-
-
-def part_file(index: int, name: str) -> str:
-    """A part's file name in the bucket: its position keeps two names apart."""
-    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "part"
-    return f"parts/{index + 1}-{safe}.mp3"
-
-
-def _mp3(wav: str, out: str) -> str:
-    if shutil.which("ffmpeg") is None:
-        raise PublishError("ffmpeg is not on PATH — it encodes the MP3s.")
-    result = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", wav,
-                             "-codec:a", "libmp3lame", "-q:a", MP3_QUALITY, out],
-                            capture_output=True, text=True)
-    if result.returncode != 0 or not os.path.exists(out):
-        raise PublishError(f"ffmpeg could not encode {os.path.basename(out)}: "
-                           f"{result.stderr.strip()}")
-    return out
+    parts: List[str] = field(default_factory=list)  # part names, in score order
 
 
 def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] = None,
                  tempo_changes: Optional[List[Dict]] = None,
                  log: Logger = _noop) -> Bundle:
-    """MusicXML, one MP3 per part and the timing, made off one prepared score."""
-    from concurrent.futures import ThreadPoolExecutor
-
+    """MusicXML, the timing and the part names, made off one prepared score."""
     from src.scrollvideo import audio, score
 
     source, dropped = score.prepare(cleaned_path, out_dir, initial_bpm=initial_bpm,
@@ -217,20 +194,7 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
     mpos = audio.run_musescore(source, os.path.join(out_dir, "score.mpos"))
     midi = audio.run_musescore(source, os.path.join(out_dir, "score.mid"))
     clock = timing(source, mpos, midi)
-
-    log(f"Rendering {len(names)} part(s) on their own (MuseScore CLI)")
-
-    def one(item):
-        index, name = item
-        wav = audio.render_mix(source, name, os.path.join(out_dir, f"part{index}.wav"),
-                               background_volume=0)
-        mp3 = _mp3(wav, os.path.join(out_dir, f"part{index}.mp3"))
-        log(f"{name}: MP3 ready")
-        return name, mp3
-
-    with ThreadPoolExecutor(max_workers=min(4, len(names) or 1)) as pool:
-        parts = list(pool.map(one, enumerate(names)))
-    return Bundle(musicxml=musicxml, timing=clock, parts=parts)
+    return Bundle(musicxml=musicxml, timing=clock, parts=list(names))
 
 
 # ---------------------------------------------------------------------------
@@ -362,8 +326,7 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
         raise PublishError(f"Unknown choir {choir!r}; choose one of {', '.join(CHOIRS)}.")
     version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     prefix = f"songs/{choir}/{slug}/{version}/"
-    parts = [{"name": name, "file": part_file(i, name)}
-             for i, (name, _path) in enumerate(bundle.parts)]
+    parts = [{"name": name} for name in bundle.parts]
     duration = bundle.timing.get("duration", 0.0)
     manifest = {"slug": slug, "title": title, "choir": choir, "version": version,
                 "score": "score.musicxml", "timing": "timing.json", "parts": parts,
@@ -373,9 +336,6 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     with open(bundle.musicxml, "rb") as f:
         uploads.append(("score.musicxml", f.read(), "application/vnd.recordare.musicxml+xml"))
     uploads.append(("timing.json", json.dumps(bundle.timing).encode(), "application/json"))
-    for part, (_name, path) in zip(parts, bundle.parts):
-        with open(path, "rb") as f:
-            uploads.append((part["file"], f.read(), "audio/mpeg"))
     uploads.append(("manifest.json", json.dumps(manifest, ensure_ascii=False).encode(),
                     "application/json"))
 

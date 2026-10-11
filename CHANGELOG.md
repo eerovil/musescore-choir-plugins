@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Publish no longer renders an MP3 per part: the site plays the score's MIDI, so a
+  publish is now three quick MuseScore exports instead of 4–7 audio renders. Part
+  names still reach the site. (stemmanauhat-cf#36)
 - Lyrics: **Type by system** shows one printed system at a time, on a computer and a
   phone. Each staff of the page is followed by the boxes for its parts, and
   ← Previous / Next → import first (a warning keeps you on the system). Verse tabs
