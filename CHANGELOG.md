@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Review and Fix: **Check again** compares the notes with the scan, asks MuseScore 3
+  whether it opens the score, and checks health — on the cleaned score as it is now,
+  without cleaning. A score fixed by hand no longer shows those checks as stale. It
+  only reports; it changes nothing in the score. (#391)
+- Clean: **Undo last clean** puts back the cleaned score a clean replaced, with its
+  lyrics and checks. The last 10 replaced scores are kept in `backups/`. (#391)
 - Record stage: **Tempo changes** — list the bars where the page changes speed,
   each with its BPM or "back to start" (*Tempo I*). The videos, their audio, the
   preview and Publish all follow them. They are kept with the Record settings, so

@@ -334,7 +334,7 @@ def test_a_pick_keeps_the_place_in_the_list(live, page, size, late):
 def test_a_refresh_nobody_tapped_for_leaves_the_view_alone(live, page, where):
     """A `state` ping redraws the panel; the reader stays where they were (#329).
 
-    Below the last card (the slur recorder, "Re-check now") there is no card to hold
+    Below the last card (the slur recorder, "Check again") there is no card to hold
     on to, so the scroll position itself comes back — not the "decided" summary,
     which stands in for a card only after a tap.
     """
