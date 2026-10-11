@@ -9,6 +9,7 @@ fermata one beat longer than written. The source score is never changed.
 from __future__ import annotations
 
 import os
+import re
 from fractions import Fraction
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -91,7 +92,9 @@ def add_tempo_changes(root: etree._Element, changes: Sequence[Dict]) -> int:
 
     `changes` are `{"measure": n, "bpm": 112 or "start"}`, bars counted from 1 the
     way recorded fixes count them. A mark already standing at the start of that
-    bar is replaced, on every staff, so the bar plays at the tempo asked for.
+    bar is replaced, on every staff, so the bar plays at the tempo asked for —
+    except one that prints words ("Adagio ♩ = c. 70", "Tempo I"), which stays
+    where it is, words and all, and only its speed changes (#404).
     "start" is the tempo the score opens at, so add the opening tempo first.
     """
     staves = root.findall("./Score/Staff")
@@ -110,20 +113,63 @@ def add_tempo_changes(root: etree._Element, changes: Sequence[Dict]) -> int:
         if not 1 < measure <= len(bars):
             raise ValueError(f"A tempo change at bar {measure}: the score has "
                              f"bars 1-{len(bars)}, and bar 1 is the opening tempo")
+        worded = False
         for staff in staves:
             staff_bars = staff.findall("Measure")
             if measure > len(staff_bars):
                 continue
             for voice in staff_bars[measure - 1].findall("voice"):
                 for element in list(voice)[:_bar_start(voice)]:
-                    if element.tag == "Tempo":
+                    if element.tag != "Tempo":
+                        continue
+                    if _has_words(element):
+                        _retime(element, float(bpm))
+                        worded = True
+                    else:
                         voice.remove(element)
+        if worded:
+            added += 1
+            continue
         voice = bars[measure - 1].find("voice")
         if voice is None:
             voice = etree.SubElement(bars[measure - 1], "voice")
         voice.insert(_bar_start(voice), _tempo_mark(float(bpm)))
         added += 1
     return added
+
+
+# A metronome figure in a tempo mark's text: "= c. 70", "♩ = 70", "(ca. 66)".
+_METRONOME = re.compile(r"\b(?:c|ca|circa)\.|\d+(?:[.,]\d+)?")
+
+
+def _has_words(tempo: etree._Element) -> bool:
+    """Whether a tempo mark prints words ("Adagio", "Tempo I"), not only "♩ = n".
+
+    The note symbol is a `<sym>`; its name is not text the reader sees."""
+    text = tempo.find("text")
+    if text is None:
+        return False
+    shown = [text.text or ""]
+    for child in text:
+        if child.tag != "sym":
+            shown.extend(child.itertext())
+        shown.append(child.tail or "")
+    shown = "".join(shown)
+    return any(ch.isalpha() for ch in _METRONOME.sub("", shown))
+
+
+def _retime(tempo: etree._Element, bpm: float) -> None:
+    """Make a printed tempo mark play at `bpm`, keeping its words as printed (#404).
+
+    MuseScore re-reads the speed off the text when `followText` is on, so it
+    is turned off: the recorded speed is the one that plays."""
+    value = tempo.find("tempo")
+    if value is None:
+        value = etree.SubElement(tempo, "tempo")
+    value.text = format(bpm / 60, ".12g")
+    follow = tempo.find("followText")
+    if follow is not None:
+        follow.text = "0"
 
 
 # How long a fermata holds (#380). Cleaning writes `timeStretch` 3, which made a

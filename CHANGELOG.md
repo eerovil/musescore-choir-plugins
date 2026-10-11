@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A tempo change set on the Publish panel no longer wipes out the tempo words the
+  score prints at that bar ("Adagio", "Andante", "Tempo I"): the words stay and
+  only the speed changes. (#404)
 - A song now ends at **Publish**: the app no longer renders practice videos or
   uploads to YouTube, and the Record and Upload stages are gone (a song that was on
   either opens on Publish, keeping its tempo settings). Publishing sends the score's
