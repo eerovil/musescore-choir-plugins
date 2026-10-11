@@ -1,8 +1,7 @@
 # Setting up on a new machine
 
-Everything here is macOS, because the recording half of the toolkit is. The
-score-cleaning, lyric and scrolling-video halves are not, but nothing else has
-been tried.
+This was written on macOS. Nothing in the toolkit needs it any more (the live
+app runs on Linux), so read `brew install` as your platform's package manager.
 
 ## 1. The two repos
 
@@ -37,16 +36,14 @@ rather than activating.
 ## 3. Things that are not pip packages
 
 ```bash
-brew install ffmpeg poppler
+brew install poppler
 ```
 
 | what | needed by | without it |
 | --- | --- | --- |
-| **MuseScore 3** | everything (`.mscz`/MusicXML conversion, audio, MIDI) | nothing works; MuseScore 4 is a different CLI and is not supported |
-| `ffmpeg` / `ffprobe` | both video renderers | no video |
+| **MuseScore 3** | everything (`.mscz`/MusicXML conversion, previews, MIDI) | nothing works; MuseScore 4 is a different CLI and is not supported |
 | poppler (`pdftoppm`, `pdfinfo`) | PDF system crops | Systems tab and the lyric editor's score crops are unavailable; their tests skip |
 | homr (below) | reading a scanned page into MusicXML | scanned scores have to be brought in as MusicXML by hand; its tests skip |
-| QuickRecorder | the screen recorder only | use the scrolling renderer, which is the default anyway |
 
 ### homr, for reading scanned scores (optional)
 
@@ -64,8 +61,7 @@ scripts/install-homr.sh --status # installed commit vs the fork's main; installs
 Or press **Install homr** in the *homr* box at the bottom of the app's Library
 page — it runs this same script and shows its log, so a phone can do it. The box
 also says when the fork's `main` has moved past the installed commit and offers
-**Update homr**. It is refused while a song is scanning, cleaning, rendering or
-uploading, and scans wait while it runs. If `uv` is missing, the script installs
+**Update homr**. It is refused while a song is scanning, cleaning or publishing, and scans wait while it runs. If `uv` is missing, the script installs
 it into `~/.local/bin` with astral's own installer first.
 
 That creates `~/.local/share/musescore-choir-plugins/homr-venv` on python 3.12
@@ -102,8 +98,7 @@ worktree would download its own 150 MB.
 
 Install the QML plugins separately by copying or symlinking `plugins/` into
 `~/Documents/MuseScore3/Plugins` — MuseScore loads them from there, not from this
-repo. Only `export.qml` is needed for the screen-recording path; the rest are
-hand tools.
+repo. They are all hand tools; nothing in the app runs them.
 
 ## 4. `.env`
 
@@ -121,8 +116,12 @@ The one that must be right is `MUSESCORE_CLI_PATH` — on a stock macOS install
 "$(grep MUSESCORE_CLI_PATH .env | cut -d'"' -f2)" --version
 ```
 
-`YOUTUBE_CLIENT_SECRETS_PATH` matters only for uploading (below);
-`MUSESCORE_EXPORT_PATH` and `VIDEO_EXPORT_PATH` only for the screen recorder.
+`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and
+`STEMMANAUHAT_D1_DATABASE_ID` turn on the Publish button (below); blank, the
+Publish stage says publishing is off on this host. The other keys in
+`.env.default` (`MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
+`YOUTUBE_CLIENT_SECRETS_PATH`, `MEDIA_ROOT`, `STEMMANAUHAT_DISPATCH_TOKEN`) belonged
+to the video and YouTube stages, which are gone; nothing reads them.
 
 ### AgentDeck song chats (optional)
 
@@ -160,11 +159,11 @@ state read as a button that does nothing (#52).
 ## 5. Check it works
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
+.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/score_export/tests/ -q
 ```
 
 180 pass with everything installed; fewer is expected — browser tests skip
-without Playwright, the PDF tests without poppler, the sync tests without a
+without Playwright, the PDF tests without poppler, the MuseScore tests without a
 MuseScore CLI. Then the real check:
 
 ```bash
@@ -182,25 +181,20 @@ before the songs clone exists:
 fixtures/virta-venhetta-vie/reset.sh
 ```
 
-## 6. YouTube upload (only if you upload from this machine)
+## 6. Publishing (only if you publish from this machine)
 
-Not synced, and deliberately: `client_secrets.json` and `token.pickle` are both
-gitignored. Download the OAuth client secret from the Google Cloud project into
-the repo root as `client_secrets.json`; the first upload opens a browser to
-authorise and writes `token.pickle` beside it. Uploads from a second machine
-mean a second `token.pickle` — that is fine, they are independent.
+Publish sends a song to the Cloudflare stemmanauhat site. It needs one API token
+with *R2 Storage: Edit* and *D1: Edit* on that account, plus the account id and the
+D1 database id, all in `.env`. The site's own migrations create its tables, so a
+fresh database has to have them applied before the first publish. The formats are
+in [docs/stemmanauhat-site.md](docs/stemmanauhat-site.md).
 
 ## Working across machines
 
 Commit and push `songs/` when you stop working on a song — the state file
-`.song.json` is the thing that matters, and it is tiny. Two rules follow from
+`.song.json` is the thing that matters, and it is tiny. One rule follows from
 what the songs repo does *not* carry:
 
-- **Practice audio and video are per-machine.** `media/` is gitignored (tens of
-  gigabytes, past GitHub's limits), so a song that shows as *recorded* on the
-  laptop has no video on the desktop. Re-render it there —
-  `./scroll_video.py` is unattended and deterministic — or, if it was uploaded,
-  it is on YouTube and the ids are in `.song.json`.
 - **Rendered previews rebuild themselves.** `.pages/`, `*.render.pdf` and the
   `.persystem_cache.json` answer cache are all derived; the first page load on a
   new machine is slow while MuseScore re-renders, then it is cached again.

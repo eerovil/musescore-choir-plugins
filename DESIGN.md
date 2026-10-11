@@ -7,8 +7,8 @@ A design doc for a unified app over the choir-track toolkit.
 
 ## The problem
 
-Today the workflow is a chain of separate CLIs (`clean_score`, `lyric_txt`,
-`record_stemmanauha`) plus manual MuseScore editing plus an LLM round-trip for
+The workflow used to be a chain of separate CLIs (`clean_score`, `lyric_txt`,
+and a macOS screen recorder for the practice videos) plus manual MuseScore editing plus an LLM round-trip for
 lyrics plus QML plugins. The user is the **integration layer**: they remember the
 command order, the flags, the file paths; they juggle terminal ↔ MuseScore ↔ an
 LLM; and they have to *discover* OCR errors themselves (e.g. the m18 lost-notes
@@ -30,7 +30,7 @@ measures; everything else hangs off fixing that.
 ## Decisions locked
 
 - **Form factor:** local web app. Python backend (FastAPI) serving a browser UI;
-  PDF rendering via pdf.js; shells out to the existing scripts + AppleScripts.
+  PDF rendering via pdf.js; shells out to the existing scripts.
 - **PDF is copied** into `songs/<name>/` → the song folder is self-contained and
   powers the side-by-side viewer.
 - **Mode is a checkbox** ("Staves change parts per system / per-system mode") at
@@ -39,8 +39,8 @@ measures; everything else hangs off fixing that.
   *permanent* manual copy-paste round-trip — the app makes it frictionless but
   never calls an AI itself.
 - **No new musical logic.** The app is a thin frontend over the existing
-  `clean_score` / `lyric_txt` / `record_stemmanauha` and the existing
-  AppleScripts. The only genuinely new code is the app shell + a health check.
+  `clean_score` / `lyric_txt`. The only genuinely new code was the app shell + a
+  health check (scanning and publishing came later).
 
 ## Object model
 
@@ -77,7 +77,8 @@ state file *is* the UX; the user never tracks any of this in their head.
               "warnings": [{ "kind": "too_many", "measure_start": 16, "measure_end": 19,
                              "staff_ids": [1, 2], "syllables": 11, "slots": 9,
                              "message": "Measures 16-19 (staffs 1, 2): too many …" }] },
-  "record": { "exported": false, "youtube_id": null }
+  "publish": { "bpm": 80, "tempo_changes": [], "credits": { "composer": "…" },
+               "sites": { "jm": { "published_against": "sha1:…" } } }
 }
 ```
 
@@ -93,7 +94,7 @@ linear; `fix` and `lyrics` form a loop (see below).
 | **fix** | run **health check** | no `open` issues remain | punch list w/ measure #s; opens MuseScore |
 | **lyrics** | guide copy-paste → import → validate | no syllable warnings (or dismissed) | mismatch list w/ measure ranges |
 | **review** | open final score | user confirms | — |
-| **record** | export / record / upload | media exists | links, YouTube id |
+| **publish** | send score, MIDI and timing to the site | published for a choir | which choirs, against which score |
 
 ### The non-linear bit: fix ⇄ lyrics
 
@@ -121,7 +122,7 @@ the right**:
 │ ▸Fix   │   measure/system in    │                      │
 │ Lyrics │   focus on the right)  │                      │
 │ Review │                        │                      │
-│ Record │                        │                      │
+│ Publish│                        │                      │
 └────────┴───────────────────────┴──────────────────────┘
 ```
 
@@ -147,7 +148,7 @@ the right**:
      measure.
   4. `[Import]`.
 
-- **Review / Record.** Buttons with streamed progress; YouTube link when done.
+- **Review / Publish.** Buttons with streamed progress; the site's record when done.
 
 ## Backend architecture
 
@@ -161,7 +162,7 @@ POST /song                      → create (name, pdf, xml, per_system); copies 
 POST /song/{name}/clean         → run clean_score        ┐
 PUT  /song/{name}/systems       → save grid → cache → re-clean │ long tasks run in
 POST /song/{name}/lyrics        → import JSON             │ background, stream
-POST /song/{name}/record        → export/record/upload   ┘ logs over the WS
+POST /song/{name}/publish       → send to the site       ┘ logs over the WS
 GET  /song/{name}/health        → punch list
 POST /song/{name}/health/{id}/dismiss
 POST /song/{name}/open-score    → `open -a "MuseScore 3" …_cleaned.mscx` (local)
@@ -173,7 +174,7 @@ GET  /song/{name}/state         → .song.json
 Two backend mechanisms carry the "magic":
 1. **File watcher** (watchdog) on `_cleaned.mscx`: user saves in MuseScore →
    re-run health scan → push updated punch list. ("Never ask *are you done*.")
-2. **Background tasks streaming logs** over the WS for clean/record, so the UI
+2. **Background tasks streaming logs** over the WS for clean/publish, so the UI
    shows progress instead of a frozen button.
 
 Single user, single local process — no auth, no concurrency concerns.
@@ -209,8 +210,8 @@ measure-range**, so we can locate a measure to its *system*, not a pixel.
 
 ## Reuse vs. new
 
-- **Pure reuse:** `clean_score`, `lyric_txt` import, `record_stemmanauha`, the
-  per-system cache, the AppleScripts, the QML plugins.
+- **Pure reuse:** `clean_score`, `lyric_txt` import, the per-system cache, the
+  QML plugins.
 - **New (small):** the `.song.json` state machine + Library/Workspace UI; the
   **health check** (validation only — the malformed-tick scan already exists in
   `corrupted_measures` / `missing_tuplets`; surface it instead of silently

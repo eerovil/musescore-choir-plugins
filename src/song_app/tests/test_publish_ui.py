@@ -1,4 +1,4 @@
-"""The Upload panel's New site section in a real browser (#382).
+"""The Publish panel in a real browser (#382, #400).
 
 The server runs in-process, so Cloudflare is the same `FakeCloudflare` the unit
 tests use (R2 a dict, D1 SQLite) and the MuseScore half of the publish is a
@@ -105,13 +105,11 @@ def test_publish_lists_the_song_for_the_chosen_choir(live, page, size):
     base, slug, cf = live
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.route("**/api/songs/*/playlists", lambda route: route.fulfill(
-        json={"total": 0, "playlists": []}))
     page.set_viewport_size({"width": size[0], "height": size[1]})
     page.goto(f"{base}/#/song/{slug}")
 
     section = page.locator(".publish-section")
-    expect(section.get_by_role("heading", name="New site (Cloudflare)")).to_be_visible()
+    expect(section.get_by_role("heading", name="Stemmanauhat site")).to_be_visible()
     choir = section.locator("select.publish-choir")
     expect(choir).to_have_value("jm")  # a men's choir song
     expect(section.locator(".publish-status")).to_have_text("Not published yet.")
@@ -135,8 +133,6 @@ def test_a_song_published_to_public_and_a_choir_shows_both(live, page, size):
     base, slug, cf = live
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.route("**/api/songs/*/playlists", lambda route: route.fulfill(
-        json={"total": 0, "playlists": []}))
     page.set_viewport_size({"width": size[0], "height": size[1]})
     page.goto(f"{base}/#/song/{slug}")
 
@@ -155,4 +151,35 @@ def test_a_song_published_to_public_and_a_choir_shows_both(live, page, size):
     assert [row[0] for row in cf.listed("public")] == [slug]
     page.locator(".publish-section").scroll_into_view_if_needed()
     _shot(page, f"publish-public-and-jm-{size[0]}.png")
+    assert errors == []
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_the_credits_typed_on_the_panel_reach_the_site(live, page, size):
+    base, slug, cf = live
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    page.locator("[data-credit=composer]").fill("Toivo Kuula")
+    page.locator("[data-credit=lyricist]").fill("Eino Leino")
+    expect(page.locator("[data-save-note]")).to_have_text("Unsaved changes")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    assert state.load(slug).data["publish"]["credits"] == {
+        "composer": "Toivo Kuula", "lyricist": "Eino Leino", "arranger": ""}
+
+    page.reload()
+    expect(page.locator("[data-credit=composer]")).to_have_value("Toivo Kuula")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+    assert cf.credits("jm", slug) == ("Toivo Kuula", "Eino Leino", None)
+    # The finished publish redraws the panel, which can swap the field out under
+    # the scroll; wait for the redrawn one.
+    expect(page.locator(".publish-section button.publish-btn")).to_have_text("Publish again")
+    expect(page.locator("[data-credit=composer]")).to_have_value("Toivo Kuula")
+    page.locator("[data-credit=composer]").scroll_into_view_if_needed()
+    _shot(page, f"publish-credits-{size[0]}.png")
     assert errors == []

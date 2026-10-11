@@ -11,12 +11,14 @@ sheet music. It has two halves:
    scores and export audio.
 2. **Python scripts/packages** (`src/`, plus thin CLI wrappers in the repo root)
    that process MuseScore files (`.mscx`/`.mscz`/MusicXML) as XML, fix lyrics,
-   and automate audio/video recording + YouTube upload.
+   and publish the result.
 
 The end goal: take a SATB-style score where multiple voices share a staff, split
-it so each voice has its own staff, generate per-voice practice audio (each voice
-louder than the rest), record a play-along video, and optionally upload to
-YouTube.
+it so each voice has its own staff, put the words under it, and publish it to the
+Cloudflare stemmanauhat site (eerovil/stemmanauhat-cf), which draws the score with
+OpenSheetMusicDisplay and plays its MIDI part by part. The app used to render
+practice videos and upload them to YouTube; that is gone (#400), and a song now
+ends at **Publish**.
 
 MuseScore `.mscx` files are XML; almost all musical processing is `lxml` tree
 manipulation. There is no database: persistent app state is JSON/files under
@@ -31,9 +33,6 @@ song.py                  Launcher for the song web app (FastAPI; src/song_app/)
 clean_score.py           CLI wrapper → src/clean_score/main.py (split voices into staves)
 lyric_txt.py             CLI wrapper → src/clean_score/lyric_txt.py (lyrics <-> txt/json)
 rename_parts.py          Standalone CLI: rename Part/Instrument names + add click staff
-record_stemmanauha.py    CLI wrapper → src/stemmanauha (record practice video)
-backfill_staff_lines.py  One-off: add `stemmanauha-staff: N/M` to uploaded videos' descriptions
-scroll_video.py          CLI wrapper → src/scrollvideo (render scrolling practice video)
 src/song_app/            Local web app tying the workflow together (see DESIGN.md)
   state.py               Song state machine (.song.json), slug, stages
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
@@ -43,6 +42,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   scan.py                The scan stage: crop + read every band, assemble, invalidate
   system_finder.py       Propose the printed-system bands off a page (homr's staves)
   pipeline.py            Glue: convert + clean (clean_score) + lyric import (lyric_txt)
+  publish.py             Publish: MusicXML + MIDI + timing + credits to the Cloudflare site
   server.py              FastAPI routes, WebSocket progress, file-watch re-check
   static/                Vanilla-JS SPA (library + 3-pane workspace, PDF viewer)
 src/clean_score/         Score-cleaning package
@@ -51,18 +51,12 @@ src/clean_score/         Score-cleaning package
   utils/                 part_types, reversed_voices, missing_ties,
                          corrupted_measures, utils, globals
   tests/                 pytest
-src/scrollvideo/         Scrolling practice video rendered from the score (no GUI)
-  engrave.py             verovio: one continuous system -> SVG + timemap
-  geometry.py            SVG -> note positions; SVG -> pixel strip (tiled)
-  timing.py              MuseScore MIDI tempo map = the clock; note on/off events
-  audio.py               per-voice mixes + MuseScore CLI calls
-  video.py               frame compositing (scroll + highlight) -> ffmpeg
-  build.py               orchestration (the public build_videos)
-src/stemmanauha/         Audio/video recording automation (macOS, AppleScript + OBS/ffmpeg)
-  create_video.py        Orchestrates mp3 export -> video record -> merge -> upload
-  upload_to_youtube.py   YouTube Data API upload
-  staff_lines.py         Each part's staff, written into its video's description (#323)
-  *.scpt                 AppleScript files driving MuseScore + QuickRecorder
+src/score_export/        The cleaned score made ready to publish (see its section below)
+  score.py               the publish copy: silent parts out, marks off, tempos, fermata hold
+  musescore.py           the MuseScore 3 CLI (run_musescore, part_names, CLI_TIMEOUT)
+  clock.py               MuseScore's clock: TempoMap from the MIDI, bar order from .mpos
+  engraving.py           verovio settings shared by every toolkit (RESOURCE_PATH, XML_ID_SEED)
+  tests/                 pytest
 fixtures/                In-repo prototyping song + the OMR benchmark's PD slice
                          (see fixtures/*/README.md, STEPS.md)
 songs/                   Per-song working dirs (gitignored, output lives here)
@@ -77,22 +71,17 @@ CHANGELOG.md             What changed, by merge date — add a line for each use
 
 - Python 3.13, virtualenv at `.venv/`. Use `.venv/bin/python` directly.
 - Install deps: `.venv/bin/pip install -r pip-requirements.txt`
-  (lxml, pytest, dotenv, google-api-python-client, google-auth-oauthlib, pillow,
-  pyautogui, fastapi, uvicorn, python-multipart; recording also needs
-  `ffmpeg`/`ffprobe` on PATH, and macOS with MuseScore 3 + QuickRecorder).
+  (lxml, pytest, dotenv, pillow, fastapi, uvicorn, python-multipart, httpx,
+  verovio, mido, numpy; MuseScore 3 and poppler are not pip packages).
 - Config is via `.env` (falls back to `.env.default`). Keys:
-  `MUSESCORE_CLI_PATH`, `MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
-  `YOUTUBE_CLIENT_SECRETS_PATH`, and optionally `STEMMANAUHAT_DISPATCH_TOKEN` /
-  `STEMMANAUHAT_REPO` (site refresh after upload), and `MEDIA_ROOT` (#370,
-  `src/media_root.py`): where song media goes — `$MEDIA_ROOT/<slug>/` instead of
-  `songs/<slug>/media/`, about 150 MB per voice video at 4K. Code asks
-  `Song.media_path(...)` / `media_root.media_dir(song_dir)`, never
-  `songs/<slug>/media` directly. A song not moved yet is read where it is, and
-  `scripts/move_media.py` moves it (copy, SHA-256 check, one rename, then delete;
-  skips a song whose `.recording.lock` is live). The root `conftest.py` blanks it so
-  tests never write to the real media disk. On this host it is
-  `/var/mnt/ssd/choir-media`. Never commit real secrets;
-  `.env`, `client_secrets.json`, and `token.pickle` are gitignored.
+  `MUSESCORE_CLI_PATH`, and for Publish `CLOUDFLARE_ACCOUNT_ID`,
+  `CLOUDFLARE_API_TOKEN`, `STEMMANAUHAT_D1_DATABASE_ID` (optionally
+  `STEMMANAUHAT_R2_BUCKET`). The video-era keys (`MUSESCORE_EXPORT_PATH`,
+  `VIDEO_EXPORT_PATH`, `YOUTUBE_CLIENT_SECRETS_PATH`, `MEDIA_ROOT`,
+  `STEMMANAUHAT_DISPATCH_TOKEN`, `STEMMANAUHAT_REPO`) are read by nothing now.
+  The media already on disk (on this host `/var/mnt/ssd/choir-media`) and the
+  videos on YouTube are left where they are. Never commit real secrets; `.env`,
+  `client_secrets.json`, and `token.pickle` are gitignored.
 - The CLI wrappers import the package via `from src.clean_score... import ...`,
   so **run them from the repo root** (e.g. `./clean_score.py ...`). Their shebang is the
   system `python3`, which lacks the dependencies, so unless `.venv` is activated run them
@@ -116,13 +105,6 @@ CHANGELOG.md             What changed, by merge date — add a line for each use
 
 # Rename parts from a part string (S/A/T/B/M/W) and ensure a click/rest staff
 python rename_parts.py score.mscx SSAA -o score_renamed.mscx
-
-# Record a practice video (macOS only; song must already exist in songs/<name>/)
-./record_stemmanauha.py MySong --youtube --playlist <id>
-
-# Render a scrolling practice video per voice, no GUI/screen recording involved
-./scroll_video.py "songs/MySong/MySong_cleaned.mscx"
-./scroll_video.py score.mscx -o out/ --parts S1 A1 --height 720 --no-audio
 
 # Backup all .mscz files to backup/
 ./backup.sh
@@ -287,7 +269,7 @@ and applied-not-recorded is the hand edit this file exists to replace. Only the 
 entry is applied — `slur` is not idempotent, so replaying the file would double every
 earlier one. The wrong repair people reach for instead is an empty syllable (`_`) in
 the lyric editor, which patches the words while the score still says two attacks: the
-video lights the second note, the grid keeps offering the slot, `slot_counts` keeps
+site's player lights the second note, the grid keeps offering the slot, `slot_counts` keeps
 counting it, and none of it survives a re-clean.
 
 ```bash
@@ -300,8 +282,7 @@ Stages are overlays holding only what they add, so the 745 KB scan is stored onc
 It now runs clean the whole way: **no health issues, no lyric mismatches**, and it
 reaches stage `review` — which means every automatic check is satisfied, not that
 the song is right. Nobody has compared it against the page end to end, the words and
-their alignment are unverified, and **record** and **upload** have never been run on
-it. See STEPS.md, "What clean does not mean". Two things needed a person to read the page, and both are
+their alignment are unverified, and it has never been published. See STEPS.md, "What clean does not mean". Two things needed a person to read the page, and both are
 recorded in `fixes.json` with their reasoning — a dot the OCR invented in m26, and a
 slur it dropped in m50. A third case needed no score edit at all: in m32 the bass
 lower voice holds one syllable while the others sing two, which is a rhythm
@@ -364,16 +345,14 @@ it: they build their own songs in a tmp dir and read `fixtures/` from the worktr
 is CI's job, not yours:
 
 ```bash
-.venv/bin/python -m pytest src/song_app/tests/test_scroll_preview.py -q   # one module
-.venv/bin/python -m pytest src/scrollvideo/tests/ -q                      # one package
+.venv/bin/python -m pytest src/song_app/tests/test_publish.py -q   # one module
+.venv/bin/python -m pytest src/score_export/tests/ -q              # one package
 ```
 
 `.github/workflows/ci.yml` runs everything on every pull request and every push to
 `main`, in two parallel jobs (the suite, and the browser tests on their own), and
-finishes in **2–3 minutes**. The same run locally takes **8+ minutes** on this host —
-it is serial, and `src/scrollvideo/tests/test_preview.py` alone is over half of it
-because each of its tests shells out to MuseScore. Running it before every PR was the
-habit from before CI existed (added 2026-08-25); there is no reason to keep paying it.
+finishes in a few minutes. The same run locally is serial and slower. Running it
+before every PR was the habit from before CI existed (added 2026-08-25); there is no reason to keep paying it.
 
 So: **verify your change with its own tests, push, and read CI.** Cite the CI run in
 the PR body rather than a local "full suite passed" count.
@@ -386,21 +365,20 @@ only thing that ran the suite, and nothing will stop you merging while it is red
 still running.
 
 The full run is still the right thing before a release you are nervous about, or when
-you have touched something with reach (`lyric_txt.py`, `main.py`, `build.py`):
+you have touched something with reach (`lyric_txt.py`, `main.py`, `publish.py`):
 
 ```bash
-.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q
-# 467 passed              — with poppler, Playwright and MUSESCORE_CLI_PATH all set
-# fewer                   — without Playwright the browser tests skip; without
+.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/score_export/tests/ -q
+# fewer passed            — without Playwright the browser tests skip; without
 #                           poppler the pdf_systems and bounds tests skip; without
-#                           a MuseScore CLI the scrollvideo sync tests skip too
+#                           a MuseScore CLI the MuseScore tests skip too
 ```
 
 **A poller verification job leaves the browser tests to CI** (agentdeck#2709). Submit
 the full run with `-m "not browser and not omr"` and let it run on this host:
 
 ```bash
-agentdeck job submit --verification ... -- .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/scrollvideo/tests/ -q -m "not browser and not omr"
+agentdeck job submit --verification ... -- .venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/score_export/tests/ -q -m "not browser and not omr"
 ```
 
 The Playwright tests are the slow part, and CI's `Browser tests` job already runs them
@@ -410,10 +388,10 @@ need to.
 `not omr` keeps homr off this host: the `omr` tests run it on real scans, and CI,
 which has no homr, skips them too.
 
-One trap when timing or trusting it: the scrollvideo tests call the MuseScore CLI
+One trap when timing or trusting it: the tests that call the MuseScore CLI do so
 under a timeout, so anything else heavy running on the host at the same time makes
-them fail for no reason of their own. Two `test_preview.py` failures chased in this
-way turned out to be a concurrent job starving them; they pass in seconds alone.
+them fail for no reason of their own. Failures chased in this way have turned out to
+be a concurrent job starving them; they pass in seconds alone.
 
 The six extra are **browser tests** (`src/song_app/tests/test_ui_flow.py`, Playwright),
 marked `browser`. They need a two-step install, and the module skips unless **both**
@@ -626,7 +604,7 @@ Key test modules:
   own signature and the bars either side are untouched. Then the marks: red, `⚠`,
   listed by health until deleted, said in the clean's log (no longer copied into
   `fixes.json`, #347), put on a bar MuseScore rejected, and absent from the
-  video.
+  publish copy.
 - `test_missing_ties.py` — a tie is copied onto a voice singing the donor's rhythm,
   not onto an ostinato on the same pitch (#284), not past a rhythm that differs
   before the tie ends, and not between two pitches; any matching donor will do.
@@ -861,8 +839,8 @@ present.
 A local **FastAPI** web app (launched by `./song.py`, served at `localhost:8000`)
 that unifies the workflow behind one state-aware door. It is a **thin frontend
 over the existing scripts** — it adds no musical logic; it shells out to
-`clean_score` (`main()`), `lyric_txt` (`import_file`), and `record_stemmanauha`
-(`create_video.run`), and drives MuseScore via `open -a`. Full rationale and the
+`clean_score` (`main()`) and `lyric_txt` (`import_file`), drives the MuseScore CLI
+for previews and the publish exports, and opens MuseScore via `open -a`. Full rationale and the
 state model are in `DESIGN.md`.
 
 - **Before working a song, check its source.** Song input scores come from Soundslice plus
@@ -874,10 +852,8 @@ state model are in `DESIGN.md`.
   mojibake and read the words off the page.
 - **A Song** = a folder `songs/<slug>/` plus `.song.json` (the state file *is* the
   UX). `state.py` owns the slug, the human display name, the stage machine
-  (`register → scan → clean → fix → lyrics → review → record → upload`), and file
-  fingerprints. Recording produces the per-voice videos; **upload** (YouTube) is a
-  separate stage, so a song can be "recorded but not yet uploaded". The folder is
-  a slug; the display name lives in the JSON.
+  (`register → scan → clean → fix → lyrics → review → publish`), and file
+  fingerprints. The folder is a slug; the display name lives in the JSON.
 - `pipeline.py` is the glue: `convert_to_mscx` (mscx as-is / mscz unzip / xml via
   MuseScore CLI), `run_clean` (calls `main(..., interactive=False)`; per-system runs off
   the answers the **grid form** recorded via `save_system_answers`), and
@@ -1018,80 +994,57 @@ state model are in `DESIGN.md`.
   would send somebody back to a system they had just repaired.
 - `server.py`: REST routes under `/api/songs/...`, a per-slug WebSocket (`/ws/{slug}`)
   for streamed progress logs + `state` pings — `hub.emit` **never raises**, because a
-  render runs for minutes in a worker thread while the browser may come and go, and a
-  closed loop surfacing there used to abort work that was going fine — long tasks (clean/record) run in a
-  thread executor with a thread-safe `hub.emit`. Recording is guarded by a
-  **lock file** (`.recording.lock`, holding the server pid) so a second start
-  (e.g. after a page refresh) gets a 409 instead of clashing with the running
-  recording; a lock from a dead/old process is treated as stale and cleared.
-  The record endpoint takes `audio_delay_ms` (merge sync offset), `redo_mp3` /
-  `redo_video` (re-export / re-record selectively), `merge_only` (re-merge
-  existing media with a new offset, no recording), and `upload_only` (upload the
-  already-merged videos — the Upload stage, no recording); outputs are listed via
-  `/media` and streamed (range-capable) from `/media/{name}` for in-browser
-  review. YouTube uploads report live percentage via a `progress` WS message,
-  are recorded into `record.uploads` (title/id/url) for review + delete/re-upload
-  (`/youtube-delete`), use the human song name for titles, and remember used
-  playlists globally in `.playlists.json` (`/api/playlists`). **Local videos can be
-  freed after upload** (#371, `free_videos.py`, `POST /free-videos`, the Upload
-  panel's *Free space* button, never automatic): each upload entry now records the
-  file it sent (`file`, `size`, `mtime_ns`), a video counts as uploaded when its
-  part has a `video_id` and (when stamped) the file is unchanged, and freeing asks
-  YouTube (`confirm_uploads`: exists, processed, published after the file) and
-  deletes nothing unless every video passes. It holds the song's job gate
-  (`free`), keeps `uploads`, records `record.freed`, and a render clears it. **Which playlists a song is in can be
-  changed after the upload** (#338, `playlists.py`): the Upload panel's *Playlists*
-  list ticks each remembered playlist holding every one of the song's videos, read
-  live from YouTube (the app never recorded the extra playlist, and YouTube's own
-  app can edit one), and `POST /playlists` adds the missing videos or removes this
-  song's items, never touching the song's own playlist. Per-song playlists
-  ("… Stemmanauhat - <date>") are no longer remembered or offered. The song's display
-  name is editable on the Start panel (`POST /rename`); if videos are already
-  uploaded, it retitles them (and the playlist) on YouTube in the background via
-  `rename_uploads` (each upload stores its `part`, so titles rebuild as
-  "<new name> <part>"). The folder slug never changes. After an upload run that uploaded something,
-  and after `/youtube-delete`, `site_refresh.refresh_stemmanauhat` dispatches the
-  `eerovil/stemmanauhat` site's *Update Videos* workflow (#321): its own schedule
-  runs only a few times a day, so a new song otherwise took hours to appear there.
-  Off without `STEMMANAUHAT_DISPATCH_TOKEN` in `.env`; a failure is a log line and
-  never fails the upload. **Publish** (#382, `publish.py`, `POST /publish`, the
-  Upload panel's *New site* section) sends the song to the Cloudflare
-  stemmanauhat site instead of YouTube: MusicXML, one MP3 per part *alone* (the
-  site mixes them) and `timing.json`, all off one `scrollvideo.score.prepare`
-  copy so parts and clock match the videos; the clock is MuseScore's `.mpos` bar
-  order plus its MIDI tempo map, cross-checked. Files go to R2 under a fresh
-  version prefix, then one D1 row per (choir, slug) is upserted. Needs
-  `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `STEMMANAUHAT_D1_DATABASE_ID`
-  in `.env`; the contract with the site is `docs/stemmanauhat-site.md`. YouTube
-  stays until the new site replaces it. All YouTube API calls go
-  through `_with_retry`/`_execute` (`upload_to_youtube.py`): 429 / 5xx / rate-limit
-  reasons are retried with exponential backoff + jitter (6 tries; the resumable
-  upload's `next_chunk` resumes on retry), while a daily-quota 403 raises
-  `QuotaExceeded` with a clear "try again after reset" message instead of looping.
+  job runs for minutes in a worker thread while the browser may come and go, and a
+  closed loop surfacing there used to abort work that was going fine — long tasks
+  (scan, clean, check, publish) run in a thread executor with a thread-safe
+  `hub.emit`, one at a time per song (`job_state`). The song's display name is
+  editable on the Start panel (`POST /rename`); the folder slug never changes, and a
+  song already on the site shows the new name there once it is published again.
+  **Publish** (`publish.py`, `POST /publish`, body `{choir, settings}`) is where a
+  song ends: it sends the song to the Cloudflare stemmanauhat site
+  (eerovil/stemmanauhat-cf), which draws the score with OpenSheetMusicDisplay and
+  plays its MIDI. It uploads `score.musicxml`, `score.mid`, `timing.json` and
+  `manifest.json`, all off one `score_export.score.prepare` copy so the parts, the
+  MIDI and the clock agree; the clock is MuseScore's `.mpos` bar order plus its MIDI
+  tempo map, cross-checked. Files go to R2 under a fresh version prefix, then one D1
+  row per (choir, slug) is upserted, with the composer, lyricist and arranger. The
+  site's migrations own the `songs` table; publishing creates nothing. It refuses a
+  score Review has not approved, and needs `CLOUDFLARE_ACCOUNT_ID`,
+  `CLOUDFLARE_API_TOKEN`, `STEMMANAUHAT_D1_DATABASE_ID` in `.env`; the contract
+  with the site is `docs/stemmanauhat-site.md`. The **Publish panel** holds what the
+  site plays and shows a song with, saved under `publish` in `.song.json` by
+  `POST /publish-settings` (and by Publish itself, before it runs): the opening BPM
+  (only for a score with no tempo marking), the tempo changes, and the **credits**,
+  prefilled from the score's own `composer`/`lyricist`/`arranger` metaTags until
+  saved (`publish.score_credits`), then kept as `publish.credits` — an emptied one
+  stays empty. Each choir's publish is recorded under `publish.sites`.
+  **The video stages are gone** (#400): the scrolling renderer, the macOS screen
+  recorder, YouTube upload, playlists, freeing local videos and the old site's refresh
+  were all removed, and with them `record` and `upload` in `state.STAGES`. A song saved
+  on either is read as `publish` (`state._upgrade`), and its `record.bpm` /
+  `record.tempo_changes` are copied to `publish`; the rest of `record` stays in the
+  file untouched. Videos already on YouTube, the old GitHub Pages site and media
+  files on disk are left alone.
   Legacy `songs/<name>/`
   folders from the old CLI workflow are adopted by `import_legacy()` (run on
   startup and via `POST /api/import` / the Library's "Import existing" button): it
   infers a `.song.json` from the files present — input score, `*_cleaned.mscx`
-  (+ health scan), PDF, `lyrics.json`, merged `media/video/<name> *.mov` outputs,
-  and per-system mode from the answer cache — and sets the stage accordingly
-  (recorded→upload, cleaned→review, input→clean). It's idempotent and skips
+  (+ health scan), PDF, `lyrics.json`, and per-system mode from the answer cache —
+  and sets the stage accordingly (cleaned→review, input→clean, PDF→scan). It's
+  idempotent and skips
   folders that already have a state file. There is also a **file watcher**
   (`watchfiles.awatch` on `songs/`) that re-runs the health check when a
   `*_cleaned.mscx` is saved in MuseScore (guarded by fingerprint so our own writes
   don't loop). Static SPA is mounted at `/` (so `/api/*` wins).
-  **Freshness.** This pull request proposes sending `Cache-Control: no-cache` on
-  every file the app serves — the SPA shell, `app.js`/`style.css` (via
-  `RevalidatingStaticFiles`), the PDFs, the system crops and the videos. Sending
+  **Freshness.** The app sends `Cache-Control: no-cache` on
+  every file it serves — the SPA shell, `app.js`/`style.css` (via
+  `RevalidatingStaticFiles`), the PDFs and the system crops. Sending
   no `Cache-Control` at all is not the same as forbidding caching: a browser
   given no instruction invents a freshness lifetime from `Last-Modified`, and
-  Chrome on Android invents a generous one, so a phone kept serving old code and
-  old video off its own disk until the browser was restarted (#34). `no-cache`
+  Chrome on Android invents a generous one, so a phone kept serving old code
+  off its own disk until the browser was restarted (#34). `no-cache`
   is not `no-store` — the copy is kept and `FileResponse`'s ETag turns an
   unchanged file into a small 304, so this costs a round trip, not a download.
-  Videos additionally carry a `?v=<mtime>-<size>` stamp in the URL
-  `_media_list` hands out, because re-recording a part rewrites the same file
-  name and an identical URL is the one thing revalidation cannot save you from
-  once a range request is already cached.
 - `static/` **slow pictures say so** (#303). A score tab is a MuseScore render and can
   take a minute: `mountPdf` shows a note with a running seconds count (`busyNote`) on a
   first build, keeps the old score under an "Updating…" badge on a rebuild, and says
@@ -1213,143 +1166,29 @@ state model are in `DESIGN.md`.
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are
   flagged `unset` and listed in the "will be DROPPED" confirm before cleaning.
-- The **Record stage has two renderers**, and defaults to the scrolling one
-  (`src/scrollvideo`, see its own section): it draws the video from the score, needs
-  no GUI and runs unattended. The old screen recorder (`src/stemmanauha`, MuseScore +
-  QuickRecorder, macOS) is still there, one radio button away. Both write
-  `media/video/<slug> <part>.<ext>`, which is the whole integration: `_media_list`,
-  `create_video.find_merged_outputs` and the YouTube titles all read the part out of
-  that name, so **review, upload, retitling and delete do not know which renderer
-  ran**. `pipeline.run_scroll_video` is the glue (it passes the slug as
-  `build_videos(basename=...)` so the names come out right); `server._run_record`
-  branches on `renderer` and records which one it used in `record.renderer`.
-  `find_merged_outputs` matches `.mp4` as well as `.mov` for the same reason.
-  This pull request proposes that the scrolling render **take one of this host's
-  heavy slots while it runs** (`heavy_slot.heavy_slot`, wrapped around
-  `pipeline.run_scroll_video` in `_run_record`). A render is minutes of every core
-  the machine has, and so is an agent's test suite or a second song rendering — three
-  at once is one slow render and two slow suites rather than any of them finishing
-  sooner. AgentDeck owns that queue (a small pool of `flock`ed files under
-  `/run/user/<uid>`), and its two existing enforcement points both work by classifying
-  a command string in a shell the deck controls; the song app is a systemd service and
-  has no such shell, so it asks over HTTP instead — `POST /api/heavy-slots`, heartbeat,
-  `DELETE` — and the deck never learns what ran. Two things are deliberately backwards
-  from an ordinary queue. **A lease has to be renewed**: a `flock` dies with its holder,
-  so a killed render cannot strand a slot, but an HTTP lease can and there is only one
-  to strand — hence the heartbeat thread, and hence a lease that expires. And
-  **failing to get a slot is fail-open, losing one is not**. Unconfigured, unreachable,
-  refused, or busy for half an hour all leave the render running unqueued with a line
-  in the song's live log saying so: none of them has told us what else is running, and
-  somebody is waiting for a practice track. A heartbeat answering **404** has told us —
-  the lease is not held, so the cores may already have been promised to somebody else,
-  and carrying on is the two-jobs-on-four-cores case the queue exists to prevent. So
-  that stops the render (`SlotLost`), the song keeps the reason in `record.error`, and
-  the stage does not move to Upload. Stopping a call that lasts minutes needs somewhere
-  to stop *at*: `Slot.guard` wraps the render's own `log`/`progress` callbacks, which
-  fire about every percent of the encode. `video.render` now kills ffmpeg when the
-  frame loop is abandoned, or it would sit forever on a pipe nobody will write to
-  again. The preview and the screen recorder are left alone.
-  This pull request proposes that the app's **vertical margins start at 0% top and
-  5% bottom** rather than 0/0. The renderer's own default stays 0 — there the number
-  means "leave the framing alone", and moving it would silently move `scroll_video.py`
-  too — so this is a product default, held twice: `server.DEFAULT_TOP_MARGIN_PERCENT`
-  / `DEFAULT_BOTTOM_MARGIN_PERCENT` (the record API's fallback and both
-  `scroll-preview*` query defaults) and `DEFAULT_TOP_MARGIN` / `DEFAULT_BOTTOM_MARGIN`
-  in `static/app.js`, which prefill the panel. The two have to agree or the preview
-  frames the music differently from the video. The bottom edge is the one that needs
-  the space: the lowest staff's lyrics otherwise sit against the frame. A default only
-  fills a setting nobody answered — a song that recorded at 0 keeps 0, and typing 0
-  still means 0. `_run_record` now always passes both margins to the renderer instead
-  of only when one is non-zero, which was the same call anyway (the renderer's own
-  defaults are 0). It also **remembers a chosen margin the way it remembers the BPM**
-  — written into `record` when the request arrives, and falling back to what this song
-  chose last before the app-wide default. They used to be written only after a render
-  succeeded, so framing decided against a render that then failed was gone by the next
-  page load. **A successful preview records it too** — nudging a margin and looking at
-  the result is how the choice actually gets made, and requiring a render first lost it
-  every time. Both paths go through `_remember_record_settings`, which writes only a real change
-  and never while a job is running, since the state file is saved whole.
-  **The panel's Preview button saves them first** (#301), through `POST /record-settings`,
-  which also backs a **Save settings** button: quality, tempo, both margins, shared
-  staves and the NVIDIA choice, checked by `_scroll_settings` — the same checks the
-  render runs. Before that Preview only opened the tab, where a second button had to be
-  found before anything was asked of the server, so nothing was kept and the tab sat
-  blank. Opening it from the panel now starts preparing at once, with a moving bar and a
-  seconds counter, since the server reports no progress for that step. A framing the
-  renderer refuses is not recorded: coming back to a margin that cannot be drawn would
-  be a trap. Nothing else about the preview writes to the song — no stage moves, no
-  video appears.
-- The Record panel already has a **silent scroll preview**, so the layout question can be
-  answered before the encoding one. Whether the margins are right, whether the staff
-  size reads, where the beat marker sits, whether a repeat lands on the right bar —
-  all of that used to cost a full render to find out, and video encoding is the wrong
-  feedback loop for it. `GET /scroll-preview` prepares the render's own data
-  (`pipeline.scroll_preview` → `src.scrollvideo.preview`) off the worker thread and
-  hands it to a player in the page (`static/scroll_preview.js`, `.pvviewport` in the
-  stylesheet), with play/pause/restart/scrub. No ffmpeg, no audio, and — apart from
-  the framing it was asked for, which this pull request proposes recording (see the
-  margin note above) — nothing written into the song's state: it is a look at the
-  score, not a stage of the work.
-  The prepared payload is cached beside the song under a key naming the cleaned
-  score's fingerprint **and** every setting that moves the picture (size, both
-  margins, the tempo the app supplies), so a score edited in MuseScore or a margin
-  nudged is prepared again rather than reused. Preparing costs seconds, which is why
-  it is cached at all.
-- The player also has **opt-in synchronized audio**. It stays silent and uses its
-  wall clock until the user checks Audio, so opening or playing the picture does
-  not generate a WAV. The
-  visual preview keeps a private copy of `build.prepare`'s exact render source;
-  `GET /scroll-preview-audio` validates the picture's revision and selected `ALL`
-  or singing-part mix, then calls `audio.render_mix_cached` in the same
-  `media/.scrollvideo-audio` cache the final renderer uses. Opening the picture
-  still renders no audio. Once enabled, the browser prepares only the selected mix, uses the
-  native audio element's `currentTime` as the picture clock, and falls back to wall
-  time only for the renderer's short silent tail after the WAV ends. Switching a
-  part keeps the current position, ignores stale requests, and swaps between
-  pre-painted focus/background highlight tiles without engraving or rasterising
-  again. An audio error leaves the picture and controls available.
-- This pull request changes **what the preview is made of: the renderer's own
-  pixels**, not its SVG. The preview drew the engraving in the browser, and a browser
-  is not what draws the video. Verovio writes lyrics, measure numbers and part names
-  as `font-family="Times, serif"`; cairosvg resolves that against the host's fonts
-  and a browser against its own, so the words in the preview were never the words in
-  the video, and nothing about the layout was quite what would be encoded. So the
-  server now rasterises with the same call the renderer makes (`build.raster`, split
-  out of `build_videos` the way `build.prepare` already was), only at
-  `preview.PREVIEW_HEIGHT` rather than 2160, and sends **two strips as PNG tiles**:
-  the engraving, and the same engraving with every playable glyph already repainted
-  blue (`preview.lit_strip`, `video.lit_pixels` — the renderer's own arithmetic). A
-  frame in the page is a canvas holding a window onto the first strip, a translucent
-  band, and a copy of each sounding symbol's box out of the second — the three steps
-  `video.render` takes, in that order. The browser therefore no longer decides how
-  the music is drawn or what colour a lit note goes; it decides nothing. Tiles
-  because Chrome refuses an image past 16384px on a side and a score is wider than
-  that. The cache is now a folder (`<song>/.scroll-preview/`, payload plus tiles,
-  served by name and emptied before a rebuild, since tile names are positional), and
-  preparing costs a rasterisation on top of the engraving: ~15s for two minutes of
-  music, ~900 KB of PNG. Still seconds against the render's minutes, and it fixes a
-  real disagreement as well as a cosmetic one — a bottom margin revealed the spacer
-  rest staff in the preview, which the video deliberately crops to white.
-- This pull request proposes moving the preview **out of the Record panel and into
-  the viewer**, as a `preview` tab beside the score documents, because on a phone the
-  panel is a task screen and the preview is a full-screen visual — the same split the
-  rest of the mobile Review/Record redesign makes. The Record panel keeps only the
-  controls plus a **Preview** button that opens that tab, and the third mobile tab
-  reads **Preview** while in Record rather than Score.
-  That move is what makes the preview's **lifecycle** a question at all, and the
-  answer is that hiding is not destroying. Switching Preview → Record to nudge a
-  margin is the normal move, so `_pausePreview` stops the sound and the frames and
-  leaves the prepared picture and the prepared WAV mounted; coming back is instant
-  and costs no second rasterisation. Destroying is reserved for the case where the
-  preview is *wrong*: the panel keeps a signature of every input that moves the
-  picture (quality, both margins, the tempo the app supplies) **plus the cleaned
-  score's fingerprint**, and when that signature changes it tears the player down and
-  says so. Tearing down takes the sound with it — the audio request is aborted, the
-  element cleared and the object URL revoked — because a stale mix heard against a
-  new picture is the wrong tempo or the wrong crop, and sounds like neither. Late
-  responses cannot undo any of that: a picture that arrives after its signature
-  stopped matching is dropped, and a WAV that arrives after its player was destroyed
-  is revoked rather than attached.
+- **Heavy slots** (`heavy_slot.py`). A homr read or a homr install is every core the
+  machine has, and so is an agent's test suite — several at once is all of them slow
+  rather than any finishing sooner. AgentDeck owns that queue (a small pool of
+  `flock`ed files under `/run/user/<uid>`), and its two existing enforcement points
+  both work by classifying a command string in a shell the deck controls; the song app
+  is a systemd service and has no such shell, so it asks over HTTP instead —
+  `POST /api/heavy-slots`, heartbeat, `DELETE` — and the deck never learns what ran.
+  Two things are deliberately backwards from an ordinary queue. **A lease has to be
+  renewed**: a `flock` dies with its holder, so a killed job cannot strand a slot, but
+  an HTTP lease can — hence the heartbeat thread, and hence a lease that expires. And
+  **failing to get a slot is fail-open, losing one is not**. Unconfigured,
+  unreachable, refused, or busy for half an hour all leave the work running unqueued
+  with a line in the song's live log saying so: none of them has told us what else is
+  running. A heartbeat answering **404** has told us — the lease is not held, so the
+  cores may already have been promised to somebody else, and carrying on is the
+  two-jobs-on-four-cores case the queue exists to prevent. So that stops the work
+  (`SlotLost`). Stopping a call that lasts minutes needs somewhere to stop *at*:
+  `Slot.guard` wraps the work's own log callbacks. (The scrolling video render was the
+  first user and is gone; publishing is a few quick MuseScore exports and takes no
+  slot.)
+  `src/song_app/tests/test_heavy_slot.py` pins those rules: every way the deck can fail
+  to co-operate leaves the work running, a lease is renewed while the work runs and
+  released when it raises, and a 404 heartbeat stops it.
 - The **Fix** panel lists the health issues and the outstanding free-text fixes, and
   this pull request proposes it also **record a missing slur** — see the `fixes.json`
   notes above for why that judgement can only come from a person. Two routes:
@@ -1456,7 +1295,7 @@ state model are in `DESIGN.md`.
   a stage**: the route claims its own write with `_rescan` (so the watcher does not
   check the same file twice), the health record is re-taken against what arrived, and
   an approval recorded against the old fingerprint lapses by itself. Nothing is
-  replaced while a scan, clean, render or upload is running — that would be read
+  replaced while a scan, clean, check or publish is running — that would be read
   half-written — and the panel's confirmation survives its own refresh, or the only
   sign the file arrived would be the health rows quietly changing.
 - `omr.py` is added by this pull request: **one call that turns a page image into a
@@ -1519,7 +1358,7 @@ state model are in `DESIGN.md`.
   what catches those. A read takes twice as long. The marks are the same as
   cleaning's (`problem_marks`), so they survive the clean on the first part the
   staff becomes, are listed by health and the Fix panel until deleted, and never
-  reach the video. A homr too old to mark says so in the scan log, because no marks
+  reach what is published. A homr too old to mark says so in the scan log, because no marks
   then means "not checked".
   What following a branch costs is worth saying rather than skipping: an install is no
   longer reproducible from the checkout alone, so two hosts set up a month apart get
@@ -1608,10 +1447,9 @@ state model are in `DESIGN.md`.
   that kills the process group, not `wait(timeout=...)`, because reading the pipe is
   what blocks. Not installed is its own error (`HomrMissing`) naming the install
   script.
-  **A page is read under one of this host's heavy slots**, through the same
-  `heavy_slot` client the scrolling render uses — not a second slot client. A page is
-  ~30s of every core on a four-core host shared with the deck's own suites and a song
-  rendering, which is exactly what that queue is for. Its two backwards-looking rules
+  **A page is read under one of this host's heavy slots**, through the `heavy_slot`
+  client described above. A page is ~30s of every core on a four-core host shared
+  with the deck's own suites, which is exactly what that queue is for. Its two backwards-looking rules
   carry over unchanged and are not re-argued here: **failing** to get a slot is
   fail-open (the scan runs unqueued with a line in the log), **losing** one is not (a
   heartbeat answering 404 means the cores may already be somebody else's, so the page
@@ -1619,8 +1457,7 @@ state model are in `DESIGN.md`.
   needs, and abandoning the read loop kills homr's process group — otherwise it would
   keep running on cores that have been handed away.
   **One slot per page, not one per song.** The page is the unit `read_page` owns and
-  each page writes its own MusicXML, so releasing between pages lets a render or a
-  suite in, and an interruption costs the page in flight rather than the song — the
+  each page writes its own MusicXML, so releasing between pages lets a suite in, and an interruption costs the page in flight rather than the song — the
   pages already read are on disk. A caller that would rather hold one lease across a
   whole song passes `queue=False` and wraps the loop itself, so the two never nest
   (nesting would deadlock a one-slot pool).
@@ -1671,8 +1508,8 @@ state model are in `DESIGN.md`.
   Nothing downstream catches it: `preprocess_corrupted_measures` declines, and
   `fix_overfull_measures` correctly refuses a voice that ends on a note — so it reaches
   the cleaned score as `len="28/16"`, and every *other* staff's measure rest in that bar
-  is then the wrong length, which no health check sees and which surfaces only as a
-  scrolling video the renderer refuses.
+  is then the wrong length, which no health check sees and which surfaced only when
+  the (since removed) scrolling video renderer refused it.
   The rule is one sentence: **a rest written `type="whole"` that shares a `<voice>` with
   any other note or rest cannot be that voice's, because a whole-measure rest alone fills
   the bar.** Nothing is invented and nothing is deleted — one voice number changes and
@@ -1718,7 +1555,7 @@ state model are in `DESIGN.md`.
   Three calls, and the middle one is the idea. `read_systems` crops each band
   (`pdf_systems.crop_systems`) and reads it with `omr.read_page`, **one heavy slot per
   system** — the per-page lease taken one step further, which is if anything better:
-  shorter holds, so a render or a test suite waiting behind it waits less, and an
+  shorter holds, so a test suite waiting behind it waits less, and an
   interruption costs the band in flight rather than the page. `flatten` reads a
   system's MusicXML as an ordered list of **staves**, splitting a part on the `<staff>`
   its notes carry, so a fused two-staff "Piano" contributes two exactly where a pair of
@@ -2205,7 +2042,7 @@ state model are in `DESIGN.md`.
   bands. No fourth stage for bounds: one stage, one screen, and the thing that must happen
   is the thing in front of you (#103). Bounds are dragged by hand, always — nothing
   proposes them, and #80 measured why.
-  **During the scan** it is the raw log, the same one `clean` and `record` show, streamed
+  **During the scan** it is the raw log, the same one `clean` and `publish` show, streamed
   over the per-slug WebSocket. ~20 systems at 16–20s, and on a busy host it stalls between
   them waiting for a heavy slot — `heavy_slot` already says so in that log, which is the
   whole mitigation.
@@ -2322,7 +2159,7 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    was written to the length the override declared, so once the override goes it
    overruns the corrected bar and MuseScore plays the measure longer than it is
    engraved. No health check sees that — it showed up as a scrolling video the
-   renderer refused, 92% of the played notes having no highlight — so such a voice
+   (since removed) renderer refused, 92% of the played notes having no highlight — so such a voice
    becomes a measure rest of the real bar. Lengths count `location`
    gaps, or a voice looks complete on its notes while the file has it occupying more
    of the bar. The fixture's m26 cost two wrong versions before that shape — see its
@@ -2389,9 +2226,8 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    out. The app's clean also marks each bar the MuseScore check resets. Deleting a mark
    in MuseScore is how a person says the bar is fixed: until then health lists it
    (`marked-problem`) and the Fix panel reads it off the score (until #347 a copy went
-   into `fixes.json` as a `clean-marker` text entry). The scrolling video
-   strips marks (`scrollvideo/score.prepare`), so a forgotten one never reaches a
-   practice track.
+   into `fixes.json` as a `clean-marker` text entry). The publish copy strips marks
+   (`score_export/score.prepare`), so a forgotten one never reaches the site.
 9. `centre_measure_rests` (`utils/measure_rests.py`, #298) runs last in both modes: a
    rest that alone fills its bar becomes a bar rest (`durationType` `measure`).
    MuseScore 3's MusicXML import writes an ordinary whole rest even for
@@ -2408,8 +2244,8 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    every staff of the bar that has none, since the split left it with the upper
    voice. A plain barline on the last bar goes, since it overrides the final barline
    MuseScore draws there. The same pass runs on the copy every cleaned preview
-   (`render_score_pdf(tidy=True)`) and every video (`scrollvideo/score.prepare`)
-   renders from, so a song cleaned before it is drawn right without a re-clean,
+   (`render_score_pdf(tidy=True)`) and every publish (`score_export/score.prepare`)
+   is made from, so a song cleaned before it is drawn right without a re-clean,
    which would cost its lyrics. `omr_systems.flatten` also steps to the bar's end
    before a right barline now, so new scans do not write the fake bar at all.
 
@@ -2640,503 +2476,72 @@ original XML. The `il-man il-ki-rii-vi-` case (where a word's syllables span a
 measure boundary) is covered by the two `measure_14` regression tests; the
 syllable distribution in `json_lines_to_by_measure` must keep them green.
 
-## Scrolling practice video (`src/scrollvideo/`)
+## The publish copy and MuseScore's clock (`src/score_export/`)
 
-An alternative to the screen-recording pipeline: the video is **rendered from the
-score**, so nothing appears on screen, nothing depends on window focus or global
-shortcuts, and it can run unattended. One video per voice: the score scrolls
-horizontally as a single continuous system, every sounding note lights up, and the
-voice the track is for is highlighted strongly while the others stay faint.
+What is left of the scrolling video renderer after #400: the parts Publish still
+needs. Publishing (`song_app/publish.py`) makes one prepared copy of the cleaned
+score and exports everything off it, so the parts in the MusicXML, the MIDI and the
+timing are the same parts on the same clock.
 
-Interface — everything else is an implementation detail of these calls. This pull
-request proposes replacing the `spacer_per_quarter` grid shown here with
-`spacing_ratio`, the biggest step in width-per-beat allowed between neighbouring
-bars:
-
-```python
-build_videos(mscx_path, out_dir, parts=None, height=2160, width=3840,
-             fps=60, with_audio=True, keep_silent=False, emphasise=False,
-             combined=True, spacing_ratio=1.3, smooth_seconds=2.0,
-             basename=None, system_starts=None, staff_groups=None,
-             log=...) -> [video paths]
-preview(mscx_path, out_dir, width=3840, height=2160, fps=60, ...) -> payload
-```
-
-**The picture is decided once, and there are two things that can be done with it.**
-Everything before rasterisation lives in `build.prepare(mscx_path, tmp, ...) ->
-Prepared`: the prepared score, the MusicXML and MIDI, the verovio engraving with its
-timemap and drawn-id map, `TempoMap.from_midi`, the note and rest events,
-`scroll_anchors` + `smooth_scroll`, the spacer-staff crop, the margin viewport, the
-duration — and the refusals, which is the part worth naming. A D.C./D.S. jump whose
-bars cannot be matched to the engraving, margins that leave no picture and a timeline that misses more than 2% of the played
-notes all fail in `prepare`, so **the preview refuses exactly what the render
-refuses**, seconds in rather than minutes.
-
-**And this pull request does the same for the pixels.** `build.raster(ready, height)
--> Raster` draws a `Prepared` — the strip, the glyph coverage, and each symbol's
-pixel box, with the spacer crop and the margins already applied — at whatever height
-is asked for. `build_videos` asks for 2160; `preview` asks for
-`preview.PREVIEW_HEIGHT`. One call, so the preview cannot be a second drawing of the
-same score, which is what it was while the browser was given SVG: verovio writes
-words as `font-family="Times, serif"` and cairosvg and a browser do not pick the same
-serif.
-
-`preview.py` writes that `Raster` into `out_dir` as two sets of PNG tiles — the
-engraving, and `lit_strip`: the same engraving with every playable glyph already
-repainted blue through its coverage by `video.lit_pixels`, transparent everywhere
-else — and returns the numbers to play them with: the frame size, where each tile
-starts, the duration, the scroll curve as `(times, xs)` **in strip pixels**, and one
-entry per symbol that lights up (on, off, staff, its box, and the beat marker's
-band). The browser interpolates the curve, copies the window out of the first strip,
-blends the marker band, and copies each sounding box out of the second. It works
-nothing out about music, layout, time or colour, so it cannot disagree with the
-render. Tiles because cairo caps surface dimensions and so do browsers — Chrome
-refuses an image past 16384px on a side, which a score reaches. The curve also
-carries `jump`, the backward step past which the player must land rather than
-interpolate, so a repeat snaps back to the repeated bar instead of sliding across
-the music in between.
-
-`combined` also writes **"&lt;base&gt; ALL"** — the same picture with every voice at equal
-volume (`render_mix(focus=None)`, muxed like any other track). It is a mix, not a part,
-so it never goes through `part_names`; downstream reads the part out of the file name,
-which is why it is called ALL, the name the screen recorder always used.
-
-Three MuseScore CLI calls feed it, and each output answers one question:
-
-| output | question | who answers |
-| --- | --- | --- |
-| MusicXML | what does the page look like, and which note is where? | verovio |
-| MIDI | *when* does each note sound? | MuseScore's tempo map |
-| WAV per voice | what do we hear? | MuseScore's synth |
-
-**The clock is the whole design.** Verovio's timemap and MuseScore's audio are
-*different musics*: verovio ignores playback properties, above all the
-`timeStretch=3` that `clean_score` puts on fermatas. On the Hanget soi score
-verovio says 48.0s where MuseScore renders 59.6s — a video on verovio's clock
-drifts up to 14s. But MuseScore writes that stretch into its MIDI export as tempo
-changes (120 -> 40 bpm for a fermata), so: **musical position (qstamp) from
-verovio, seconds from the MIDI tempo map** (`timing.TempoMap`). Verified against
-the MIDI's own note-ons — every highlight lands within 20ms of a note MuseScore
-actually plays. This is what `tests/test_sync.py` pins; don't "simplify" it back
-to `entry["tstamp"]`.
-
-- `spacing.py` stops the scroll **lurching**, and this pull request changes what it
-  does about it. Verovio spaces a measure by what is in it, so a bar of 32nds comes
-  out five times wider *per beat* than an equally long bar of quarters — and since
-  the scroll follows the notes, the video surges through the sparse bar and crawls
-  through the busy one. The fix used to be a staff of evenly spaced rests at one
-  subdivision over the whole song (the trick `add_rest_track.qml` already used in
-  MuseScore), which works but charges every bar in the song for the worst bar in it.
-  Now the rest count is chosen **per bar**, and a song that already scrolls evenly
-  gets no rest staff at all.
-  What is capped is **width per quarter note**, not raw width, so a 3/4 bar next to
-  a 4/4 one is not mistaken for a lurch. The narrowest widths-per-beat that keep
-  every neighbouring step inside `DEFAULT_MAX_RATIO` (1.3, `--spacing-ratio`) have a
-  closed form — `x_i = max_j natural_j / cap**|i - j|` — so a dense bar widens the
-  bars around it and dies away geometrically, rather than lifting the whole song.
-  Reaching a target is **measured, not predicted**: verovio spaces each separate
-  moment in a bar, so rests laid where the music already sounds change nothing, and
-  past that what one more is worth falls away as the bar fills (about a fifth as
-  much in a bar of 32nds as in a bar of quarters). `even_engraving` engraves, reads
-  the bars back off the SVG's staff lines, works out from that engraving what a rest
-  was worth in each bar, and solves again — three or four engravings for a score
-  that needs widening, one for a score that does not.
-  Two things were got wrong on the way here. The rests must be written as **real
-  note values** (`slot_durations` splits a bar into as few as it takes, then halves
-  the longest until there are enough): verovio reads what a rest is *written* as and
-  not its `<duration>`, so a rest of "one fifth of a bar" is taken for a whole rest
-  and quietly drags the part out of time with the audio, with nothing wrong in the
-  picture to show it. And the targets are settled **before** any rest is written and
-  never moved again — re-solving the cap against the widths a plan produced looks
-  like the way to tidy away the last few percent of rounding, and instead it walks
-  outwards bar by bar and inflates the whole score by a third and rising. That
-  leftover stays, so an engraved step can sit a few percent past the cap.
-  A bar's **width** is the distance the scroll covers through it: from its first
-  note or rest to the next bar's (`measure_widths`), not its staff lines. Verovio
-  draws the clef, key and time signature inside bar 1, which the scroll never
-  crosses, and counting them made Kesäaamu's sixteenth pickup read 11x too wide per
-  beat and stretch the next nine bars up to 9x (#376). A bar shorter than a quarter
-  (`SHORTEST_COMPARED`) is also compared as if it lasted a quarter: a note has a
-  smallest drawn width, so a pickup is always "too fast", and smoothing absorbs it
-  anyway. It stays in the chain, so it can still be widened to match its neighbours.
-  A bar's length is read by following the MusicXML cursor (`note`/`forward` advance
-  it, `backup` winds it back), not by adding up every note: a two-voice bar is
-  written as one voice after the other and summing reports it as twice as long, so
-  every target computed for it would be half what it should be. And everything about
-  the staff that can be told not to print is (`print-object="no"` on its name, clef
-  and time signature) — it is cropped off the bottom of the strip, but those are
-  drawn in the left margin where the crop cannot reach them.
-  The staff is injected into the **MusicXML** (after MuseScore has produced it, so
-  it never reaches the MIDI or the audio) and cropped back off the bottom of the
-  strip by `visible_height` — `build_videos` rasterises proportionally taller so the
-  singing staves still fill the frame. The crop margin is deliberately tiny: the
-  last staff's lyrics sit in the gap above the spacer, and a generous margin clips
-  them. Verovio's own spacing options cannot do this job — `spacingNonLinear: 1.0`
-  gets the spread to 1.04x but makes the page 7x wider, leaving less than one bar on
-  screen.
+- `score.prepare(mscx_path, work_dir, keep_silent=False, initial_bpm=None,
+  tempo_changes=None) -> (path, dropped)` is the only edit made to the score before
+  it is published, and it is made on a copy: the cleaned score is never touched, and
+  when nothing needs changing the original is used as-is. It drops parts with nothing
+  to sing (percussion, or a staff of only rests — the click track `add_rest_track.qml`
+  adds) with the staves they own, strips the red marks and red notes cleaning leaves
+  for a person, runs `fix_staff_display` (so a song cleaned before it is drawn right
+  without a re-clean, which would cost its lyrics), and writes in the tempo:
+- **An opening tempo** (`add_opening_tempo`), only for a score with none of its own
+  (`has_opening_tempo`). Cleaning deletes tempo marks and a scan never had any. The
+  Publish panel's BPM field is shown only then; `publish.DEFAULT_BPM` (80) fills it
+  until someone sets one.
+- **Tempo changes are the Publish panel's, not the score's** (#387,
+  `score.add_tempo_changes`). A song that changes speed otherwise plays at one BPM.
+  `publish.tempo_changes` (`[{"measure": 13, "bpm": 112}, {"measure": 23, "bpm":
+  "start"}]`, bars counted from 1, bar 1 being the opening BPM) is checked by
+  `server._tempo_changes` and written into the copy as hidden tempo marks at the start
+  of each bar; `"start"` is the tempo the copy opens at. Kept beside the BPM rather
+  than in `fixes.json`: it is a playback setting, a re-clean must not need it
+  replayed, and changing it needs only a re-publish.
 - **A fermata holds one beat longer than written** (#380, `score.hold_fermatas`).
-  Cleaning writes `timeStretch=3`, which held a dotted half for six seconds at 90
-  bpm. The render's copy rewrites every fermata's stretch so it adds one beat (a
-  dotted quarter in 6/8), worked out from the span MuseScore stretches: from the
-  fermata's beat to the next note or rest on *any* staff. The clock, the audio and
-  the preview all come off that copy, so a re-render is enough — no re-clean.
-  `FERMATA_HOLD` is in the preview's cache key.
-- **Tempo changes are the Record panel's, not the score's** (#387,
-  `score.add_tempo_changes`). Cleaning deletes tempo marks and a scan never had
-  any, so a song that changes speed played at one BPM. `record.tempo_changes`
-  (`[{"measure": 13, "bpm": 112}, {"measure": 23, "bpm": "start"}]`, bars counted
-  from 1, bar 1 being the opening BPM) is checked by `server._tempo_changes` and
-  written into the render's copy as hidden tempo marks at the start of each bar;
-  `"start"` is the tempo the copy opens at. The MIDI clock, the mixes, the preview
-  (its cache key carries them) and Publish all come off that copy. Kept beside the
-  BPM rather than in `fixes.json`: it is a playback setting, a re-clean must not
-  need it replayed, and changing it needs only a re-render.
-- `score.py` is the only edit made to the score before engraving: parts with nothing
-  to sing (percussion, or a staff of only rests — the click track
-  `add_rest_track.qml` adds) are dropped, along with the staves they own. They would
-  otherwise cost a staff of height in every frame and each get their own pointless
-  practice video. The original file is never touched; with nothing to drop it is used
-  as-is. `build_videos(..., keep_silent=True)` / `--keep-silent` turns it off.
-- **Two parts can share a staff in the picture** (#246): `staff_groups=[("S1",
-  "S2"), ("A1", "A2")]`, `--merge S1+S2`, or the Record panel's *Shared staves*
-  field (kept in `record.staff_groups`). `score.merge_staves` moves the lower part
-  into the upper part's staff as voice 2, on a copy, before MuseScore exports the
-  MusicXML, so MuseScore lays out the two voices (stems, rests, beams) itself. The
-  staff takes the lower part's clef and is labelled `S1/S2`; words both sing are
-  printed once and differing words go on a second line; a bar both rest through
-  gets one rest. **Only the picture changes**: the MIDI the clock comes from and
-  the score the mixes come from stay unmerged, so the files, the mixes and the
-  audio cache are the same as without it, and the 98% alignment check measures the
-  merged picture against the real sound. At most two parts a staff, and a part that
-  already has two voices in a bar is refused naming the bar. The shared staff's
-  clefs are all the lower part's, its later changes included, each put at the same
-  beat in voice 1 (`_walk` counts dots, tuplets and `location` gaps to find it);
-  the upper part's own clef changes are not drawn.
-  `Prepared.staff_of` says which staff each part is drawn on, which is what
-  `--emphasise` and the preview's part highlight use.
-- `engrave.py` renders with `breaks: "none"` so the whole score is one system
-  (one page — a second page is an error, not something to stitch). Notes are
-  `<g id=... class="note">` and the timemap's `on`/`off` lists name those same ids;
-  that pairing is what makes highlighting possible at all.
-  This pull request adds one more thing it owns: **a music symbol written inside a
-  piece of text is drawn here, not left to a font.** The quarter note in "♩ = 80" is
-  the case that shows up — verovio writes it as a character of its own music font
-  and offers that font only as a base64 `@font-face` in the SVG's stylesheet, which
-  cairosvg ignores, so the note reached the video as the empty box a font draws for
-  a character it has not got (#58). It affected the tempo the app itself adds to a
-  score with none (#28) as well as printed ones. `draw_symbol_text` replaces the
-  character with the outline verovio ships beside the font — the same outlines every
-  symbol it *does* draw is made of — and moves the writing after it along by the
-  advance width in `Leipzig.xml`. Only a symbol that **opens** its text is drawn:
-  after writing, placing it would mean measuring that writing in whatever font the
-  renderer picked, and a symbol in the wrong place is worse than a box. A page with
-  no such symbol is returned untouched, so renders that never had the problem stay
-  byte-identical.
-  This pull request proposes that it also own **which bars print their number**.
-  A number on every bar is what one continuous system gets today, and about four
-  bars fit on screen, so the picture carries four numbers at once and none of them
-  means anything (#78). The useful grouping is the one the singer already has: the
-  systems of the printed page. So a number goes on the **first bar of each printed
-  system**, even though the video has no systems of its own.
-  Verovio has no way to say "these bars and no others", so it is still asked for
-  every bar and `engrave.keep_measure_numbers` rubs out the rest. Asking for all of
-  them is deliberate rather than lazy: the width of a bar is settled when the page
-  is laid out, so the bars `spacing.even_engraving` measures come out the same
-  whichever numbers survive, and the choice cannot move the scroll. `None` skips
-  the whole pass and returns the page verovio drew, byte for byte.
-  Where the grouping comes from is the awkward half. `score.system_starts` reads it
-  off the score's own line breaks, which works for a per-system score and for the
-  `scroll_video.py` CLI — but **normal-mode cleaning strips line breaks**, so the
-  score the app renders usually has none. The app therefore reads them off the
-  converted input (`pipeline.printed_system_starts`, the same file the score
-  previews already take their breaks from) and passes them as `system_starts`. A
-  score with no breaks anywhere — a native MuseScore file never laid out for print
-  — falls back to a number every `build.FALLBACK_NUMBER_INTERVAL` bars, which is
-  about what a system holds. Falling back to *every* bar would be falling back to
-  the complaint. The preview is given the same grouping and it is part of the
-  preview's cache key, or a relaid-out source would be played against old numbers.
-- `geometry.py` owns two verovio-SVG facts. Coordinates live in the **nested**
-  `<svg class="definition-scale" viewBox=...>`, not the root (whose px size is 1/25
-  of it), and a note's position is its notehead `<use transform="translate(x, y)">`
-  **plus every ancestor `<g transform>`** (verovio emits a page margin; dropping it
-  puts every highlight a staff too high). `rasterise` renders the strip in tiles
-  because cairo caps surface dimensions at 32767px and a 3-minute score is wider;
-  tile edges are cut on the **output pixel grid**, not by converting a fixed unit
-  width, so seams don't accumulate rounding drift.
-  This pull request proposes **giving each tile only the measures it shows**. A tile
-  used to be the entire engraving with the viewBox moved, and cairo then clips — but
-  cairosvg has already walked and drawn every node in the document in Python, so the
-  clip saves nothing. Measured on Kaksi laulua krapulasta 2 (86 bars, 4 minutes,
-  a 1.8 MB SVG of 27 000 nodes): a 1765px-wide tile cost the same 13s as an 8000px
-  one. Cost was nodes x tiles, not nodes x picture, and the 4K render pays it nine
-  times over. `_Croppable` parses the engraving once and hands each tile the
-  measures inside its window; `measure_spans` works out how far a measure's ink
-  actually reaches from the shapes themselves — glyph widths taken from `<defs>`,
-  curve control points, and the widest a piece of writing could be at its font size
-  — so a slur drawn in one bar and carrying on over the next still comes with the
-  tile it reaches. **Anything whose reach cannot be worked out counts as drawing
-  across the whole page** and is never left out: a tile that took too long is a far
-  smaller bug than a notehead rubbed off the score. The picture is byte-identical,
-  which is the property under test rather than a hope — `test_geometry` asserts the
-  cropped strip and coverage equal the uncropped ones pixel for pixel. Measured on
-  that song: `build.raster` for the preview 58s -> 11s (whole preview preparation
-  113s -> 27s), and at the video's 2160 rows, 107s -> 28s.
-- `timing.smooth_scroll` finishes the job the spacer starts: it averages the scroll
-  **speed** over a couple of seconds and integrates it back into positions. Averaging
-  positions directly would flatten the curve at both ends — a perfectly even scroll
-  would ramp up at the start and down at the finish. Repeats stay sharp: a jump back
-  is real motion, and jumps are found in the anchors *before* resampling smears them
-  across frames, then each stretch is smoothed on its own. Scrolling at a dead
-  constant speed is not an option: measured, it puts the sung note up to 0.45 screens
-  from where it belongs, where smoothing keeps it inside 0.02.
-  Measured end to end (spacer + 2s smoothing): Käyttäytymisohjeita's speed
-  coefficient of variation goes 0.31 -> 0.11 and Venematka's 0.43 -> 0.16, costing
-  about half a bar of on-screen music.
-- **The sounding note is repainted, not covered.** `geometry.note_coverage` renders
-  a second pass with the **noteheads** in a marker colour nothing else uses (pure red
-  on a black-and-white engraving) and reads coverage back as red-minus-green: full
-  on the head, zero on staff lines and on the lyric that shares the note's group, and
-  correctly *partial* on antialiased edges. `video.render` draws those pixels as
-  blue-on-white weighted by coverage, so the head itself goes MuseScore blue with a
-  smooth outline instead of sitting under a coloured box.
-  **Heads only** — stems, flags and beams stay black. That is a deliberate choice
-  (colouring stems drags the eye up and down as they flip direction, and a beam is
-  shared between notes so it would flicker), and it keeps `NoteGeom.box()` down to
-  the head, which is less to composite per frame.
-  One gotcha is load-bearing: verovio ships a stylesheet
-  (`#id ellipse, #id path, ... {stroke:currentColor}`) that outranks presentation
-  attributes on the shapes it names, so marking uses an **inline style**.
-  This pull request proposes taking that gotcha one level further down. A notehead
-  is a `<use>` of a glyph kept in `<defs>`, so the shapes actually painted are paths
-  the rule names by id — and a rule on the path beats a style inherited from the
-  `<use>` above it. Marking therefore left the glyph outlined in **black** around its
-  red fill, and red-minus-green read that outline as almost no coverage: the whole
-  antialiased edge came back at well under half its true value (74 measured as 32 on
-  one edge pixel, 157 as 111 on another), the edge was repainted nearly white instead
-  of part-blue, and a lit notehead had a staircase for a border — thin open heads,
-  half and whole notes, worst of all (#63). Adding `color` to the marker style
-  resolves that `currentColor` to the marker too, and coverage then equals the
-  engraving's own ink exactly. `test_geometry` pins that: wherever nothing else on
-  the page is drawn, coverage must equal the strip's ink, partial pixels included.
-  What is left at the border after that is the **codec**, not the picture. h264 4:2:0
-  stores colour at half resolution each way, and a notehead is only ~50px across in a
-  4K frame, so a thin blue ring picks up blocky colour fringes while the black stem
-  beside it stays crisp — luma is full resolution. Measured on one frame against the
-  composite it was made from, mean error over the notehead: 4:2:0 1.48, 4:4:4 1.74 at
-  x264's own bitrate, i.e. subsampling and not quantisation is the limit
-  (`chroma-qp-offset=-6` bought 12%, `-12` no more). 4:4:4 is the only real cure and
-  it is not shippable — these are watched on a phone and sent to YouTube, and neither
-  decodes High 4:4:4 Predictive.
-- `video.py` composites: the engraving is rasterised **once** and a frame is a crop
-  of that strip plus the recolouring above. Nothing is
-  re-engraved per frame — a four-voice minute of music costs about a minute of CPU
-  for all four videos. Scroll position is interpolated from the notes' own x
-  positions (`timing.scroll_anchors`), so a fermata's held note simply sits still.
-- `audio.py` replaces `export.qml` + AppleScript: a per-voice mix is MIDI controller
-  7 on each Part's `<Channel>` in the .mscx, so it is a copy-the-score-and-set-
-  volumes edit, then one headless CLI render (~6s per voice). Every CLI call is
-  bounded by `CLI_TIMEOUT` — a wedged MuseScore process otherwise hangs the render
-  (and the test suite) forever.
+  Cleaning writes `timeStretch=3`, which held a dotted half for six seconds at 90 bpm.
+  The copy rewrites every fermata's stretch so it adds one beat (a dotted quarter in
+  6/8), worked out from the span MuseScore stretches: from the fermata's beat to the
+  next note or rest on *any* staff. A fermata marked not to play is left alone.
 
-Because video and audio come off the same clock, there is **no `audio_delay_ms`**
-here — that offset exists in `stemmanauha` only because a screen recording and an
-mp3 are captured independently.
+`musescore.py` is the MuseScore 3 command line (`run_musescore`, bounded by
+`CLI_TIMEOUT` because a wedged MuseScore otherwise hangs the publish) and the part
+names a score carries (`part_names`), which the site matches to the MIDI tracks.
+`engraving.py` is what every verovio toolkit in the app is set up with:
+`RESOURCE_PATH`, because the native library does not carry its bundled fonts into the
+executor thread, and `XML_ID_SEED`, which makes an engraving byte-for-byte
+reproducible. The bar readings in the Fix panel and "Show what landed" use it.
 
-**It is deterministic**, and that is deliberate: `engrave.XML_ID_SEED` pins verovio's
-element ids (otherwise random per run, which changes nothing visible but makes
-renders impossible to diff). Verified by rendering twice: SVG, rasterised strip,
-MuseScore's MusicXML/MIDI/WAV and the final mp4 all come out byte-identical. The one
-caveat is MuseScore's MusicXML export stamping `<encoding-date>` with today's date,
-so a re-render on a later day differs in that file (not in the video).
+**The clock is MuseScore's own** (`clock.py`), and that was the hard-won lesson of the
+video renderer: verovio's timemap and MuseScore's playback are *different musics*.
+Verovio ignores playback properties, above all the fermata stretch — on Hanget soi it
+said 48.0s where MuseScore plays 59.6s. But MuseScore writes that stretch into its
+MIDI export as tempo changes, so seconds come from the **MIDI tempo map**
+(`TempoMap.from_midi`), and bar order comes from MuseScore's **`.mpos` export**
+(`read_mpos`), which is written off the same repeat list playback uses. That is what
+makes repeats, voltas and D.C./D.S. jumps come out right without a second copy of the
+segno/coda/Fine rules here: verovio followed them only sometimes (it played
+Jouluriemua's two D.C.s as two passes where MuseScore plays three, and a scan's "2."
+bracket that opens and never closes made it expand no repeat at all).
+`publish.timing` lays the bars end to end in MuseScore's play order, puts a point on
+every beat, at every tempo change and at each bar's end, and checks each bar's start
+on the MIDI clock against the `.mpos` within 10 ms, refusing to publish otherwise. A
+bar count that differs between MuseScore and the score is refused too. The format is
+in `docs/stemmanauhat-site.md`.
 
-**The picture is identical for every voice, so it is encoded once.** At 1080p30,
-compositing the frames was 3.2s of a 21.5s render and x264 the other 18.3s, so
-rendering per voice paid for the encode four times over to change nothing but which
-highlights were brighter. Instead: one encode, then each practice track is a
-`-c:v copy` mux of that video with its own mix, and the audio mixes run concurrently
-(four MuseScore processes: 11.8s together instead of 43s).
-`emphasise=True` / `--emphasise` restores per-voice highlighting (that voice bright,
-the others faint) and with it a full encode per voice — it is the slow path, and
-`test_video.test_mux_puts_audio_on_a_video_without_touching_the_picture` pins that
-the default one does not re-encode.
-
-**Output is 3840x2160 @ 60fps** (`--width/--height/--fps`). 60fps because the whole
-frame pans horizontally, which is exactly what judders at 30. Measured on
-Käyttäytymisohjeita (78 bars, 1451 notes, 2:32, 4 voices): **228s** for all four,
-peak RSS 2.9GB, 25MB per video.
-
-     3s  setup      MusicXML + MIDI + engrave
-    14s  rasterise  59518x2160 strip = 386 MB
-    12s  audio      4 mixes, concurrent
-   170s  video      ONCE
-    ~5s  mux        4x, stream copy
-
-At 4K the encoder is no longer the bottleneck — moving 25MB frames is. x264 presets
-barely change the time (medium 16.7s vs veryfast 13.8s for a 15s probe) but change
-the size a lot (24MB vs 47MB), so `DEFAULT_PRESET` stays `medium`. For the same
-reason `video.render` fills **one reused frame buffer** rather than copying a blank
-per frame, and `geometry.rasterise` fills a single strip buffer instead of
-`hstack`ing tiles — at 4K each of those would otherwise double hundreds of MB of
-traffic or footprint. Strip memory is ~2.5MB per second of music at 2160p, so a
-6-minute score needs roughly 900MB; that is the number to watch if a very long score
-ever fails.
-
-Three behaviours worth knowing:
-
-- **Tie continuations get their own highlight.** Verovio's timemap emits an `on` for
-  the second note of a tie; MuseScore's MIDI (correctly) does not retrigger. The
-  highlight moves to the tied notehead while the sound continues — which is what a
-  singer follows, and matches MuseScore's own playback cursor.
-- **Section repeats and voltas work, and the scroll jumps back.** Verovio *expands*
-  repeats in its timemap exactly as MuseScore does, so the played timeline is already
-  unrolled and the qstamp axis still matches MIDI ticks. The section is engraved once,
-  so the repeat pass sounds under suffixed ids (`xyz-rend2`) that are not drawn;
-  `engrave._drawn_ids` maps them back with verovio's `getNotatedIdForElement`. A
-  repeated note therefore gets one highlight event per pass, and the scroll walks
-  back to where that section is drawn. One thing verovio gets wrong on the way: a
-  whole-bar rest in the bar a repeat jumps back to is timed in the meter in force *at
-  the jump* (a 7/4 bar repeating to a 4/4 one where a part rests made Kantajani's
-  highlights 2.25s late and the render was refused, #313), so `engrave.retime_repeats` puts every bar of the played
-  timeline back at its MusicXML length.
-- **D.C./D.S. jumps are followed in MuseScore's own bar order** (#314; `playorder.py`).
-  They were refused until then, because verovio follows them only sometimes: it gets
-  Illan viimeinen tango's D.S. al Coda right, and plays Jouluriemua's two D.C.s as
-  two passes (181 quarters) where MuseScore plays three (257.5). So a score with a
-  `Jump` (a `Marker` alone is only a label) asks MuseScore which bars it plays, in
-  order — the `.mpos` export, written off the same repeat list playback uses — rather
-  than keeping a second copy of the segno/coda/Fine rules here. Each printed bar's
-  timing is taken from the first time verovio's timemap plays it, and the bars are
-  laid end to end in that order into a new timemap, which everything downstream reads
-  as it would verovio's. A note held into a bar the jump skips stops at the barline.
-  Where the next bar played is not the next one printed is a **cut**
-  (`Prepared.cuts`): `timing.cut_anchors` holds the scroll until the jump and lands it
-  on the far side, and `smooth_scroll` starts a fresh stretch there, because a jump
-  *forward* to a coda is no bigger a step than ordinary music on a long page. A bar
-  count that differs between MuseScore and the engraving, or a bar MuseScore plays
-  that verovio never timed, is refused by name; the 98% alignment check below still
-  has the last word. A score without a `Jump` takes exactly the old path, except
-  that a score with repeat signs or voltas asks for the `.mpos` too and follows it
-  when verovio's bar order differs (#374): a scan writes a "2." ending as a bracket
-  that opens and never closes, MuseScore plays the repeat as printed, and verovio
-  then expands no repeat at all (Kristallen den fina 74%, Kun poijat ne raitilla 65%).
-  `test_files/voltas.mscx` is that shape.
-- **Every render is verified against the audio before it ships.** `build.alignment`
-  checks what fraction of highlights land within 200ms of a note MuseScore actually
-  strikes, and refuses below 98%. That is the real property, so it catches timeline
-  disagreements we did not think to look for — don't replace it with a structural
-  check on the markup.
-
-Tests (`src/scrollvideo/tests/`) — `test_sync.py` needs the MuseScore CLI and skips
-without it, like the browser tests:
-
-- `test_sync.py` — the clock, end to end on a fixture with a 3x fermata: every
-  highlight lands within 20ms of a MIDI note-on, the last note ends with the audio,
-  and a guard test spelling out what verovio's own clock *would* have shipped.
-- `test_measure_numbers.py` — added by this pull request: a line break starts the
-  *next* system and one on the last bar starts nothing, the caller's grouping beats
-  the score's, a score with no breaks gets an interval and not every bar, and — the
-  two that guard the render — the chosen page has the same bar widths, page width
-  and notes as the fully numbered one, and every pixel of it is the same or lighter,
-  so removing a number cannot have moved anything.
-- `test_symbol_text.py` — a tempo mark's note is drawn rather than left to a font, it
-  is ink on the page above the music (measured against the same page with the drawing
-  taken out again, so the "= 80" beside it cannot satisfy the reading), the writing
-  after it moves along by the font's advance, and a symbol that follows writing is
-  deliberately left alone.
-- `test_preview.py` — the preview against the render it is a preview of: the same
-  scroll curve number for number, a fermata timed on MuseScore's clock rather than
-  verovio's, the symbols `place` would light, a repeat that stays one backward jump,
-  the same refusals, and that nothing is encoded and no voice is mixed. This pull
-  request adds the tests that only became possible once the preview carried pixels:
-  the strip is byte-identical to `build.raster`'s, a lit glyph is
-  `video.lit_pixels`'s own blue, a bottom margin shows white rather than the spacer
-  staff — and, the one that pins the lot, a frame composed out of the payload the way
-  `scroll_preview.js` composes it, against real frames from `video.render` written as
-  raw pixels so the comparison is not arguing with a codec.
-- `test_playorder.py` — following a D.C./D.S. jump (#314). On hand-written timemaps:
-  bars laid out in the given order with continuous time, a D.S. al Coda giving one cut
-  back and one forward, a held note stopping at the barline of a skipped bar, a bar
-  first timed in a repeat pass mapping back to the page, and the two refusals. Then,
-  with MuseScore, on `dal_segno.mscx` and `da_capo.mscx` (five bars made from
-  `fermata.mscx`): every highlight within 20ms of a note MuseScore plays, the last one
-  ending with the audio, and the scroll landing at each jump within a frame with time
-  never stepping backwards. `test_preview.py` adds that the preview follows the jump
-  with `prepare`'s own curve.
-- `test_geometry.py` — the ancestor-translate offset, the definition-scale viewBox,
-  and that tiled rasterisation matches single-shot (alignment pinned; antialiasing
-  along a seam is allowed to differ by a pixel). This pull request adds the
-  cropping's own rules: cropped tiles equal uncropped ones pixel for pixel, a tile
-  really is handed less of the score, a slur running past its own barline still
-  comes with the tile it reaches, and a shape we cannot measure is never left out.
-- `test_timing.py` — TempoMap arithmetic (a 3x fermata window), notes still sounding
-  at the end being closed rather than dropped.
-- `test_video.py` — highlights land on the right staff, and are present while a note
-  sounds and gone after it stops (decoded back out of the rendered mp4).
-- `test_geometry.py` also pins the highlight: the note box is the head and stops short
-  of the stem, marking paints the head via an inline style but leaves the stem and the
-  lyric alone, and coverage marks strictly less than all the ink. `test_video.py` pins that colour lands only where
-  the glyph is — a leak outside it means someone reintroduced the box.
-- `src/song_app/tests/test_record_renderers.py` — the Record stage routes to the
-  scrolling renderer by default, passes the size choice through, still reaches the
-  screen recorder on request, refuses to render without a cleaned score, names the
-  files so review and upload find them, and cannot be killed by progress reporting.
-  This pull request adds that the render holds a heavy slot **across** the render
-  rather than merely asking for one, and that losing it stops the render.
-- `src/song_app/tests/test_heavy_slot.py` — added by this pull request, and mostly
-  about what happens when the deck does not co-operate: an unconfigured deck, an
-  unreachable one, one that refuses, and one that never frees a slot all leave the
-  work running; the lease is released when the work raises; it is renewed while the
-  work runs and not after; a heartbeat that could not be *sent* is retried until the
-  lease would have expired; and a heartbeat answering 404 stops the work where it next
-  reports progress. `test_record_renderers.py` carries the same loss end to end
-  through the record path: the render stops, the song says why, and the stage stays
-  on Record.
-- `src/song_app/tests/test_record_panel_ui.py` — the same choice in a real browser:
-  both renderers offered, scrolling preselected, controls swap, and the run button
-  actually posts `renderer` (browser-marked, skips without Playwright). This pull
-  request adds the queue as a person sees it: a busy host says so in the song's live
-  log, then says the slot came free, then renders.
-- `src/song_app/tests/test_scroll_preview.py` / `test_scroll_preview_ui.py` — the
-  endpoint's caching and its invalidation (score edited, or any setting that moves
-  the picture), that previewing changes nothing about the song, and a refusal
-  arriving as a message; then the player itself in a browser — play, pause, seek,
-  restart, the repeat landing rather than sliding, the sounding glyph turning blue,
-  the beat marker following it, a phone-sized layout, and a rebuilt preview after the
-  score changes. This pull request adds the folder cache's own rules (a rebuild
-  empties the old tiles; a tile name off the wire cannot reach out of the folder),
-  and re-grounds the browser tests: **the stub strip encodes each column's own x
-  position in its pixels** (`(x >> 8, x & 255, 0)`), so with no viewBox left to read,
-  one pixel off the canvas says exactly where the player has scrolled to and every
-  assertion is made by looking at what is on screen. The drawing is stubbed in both,
-  so neither needs MuseScore.
-- `test_spacing.py` — this pull request rewrites it around the adaptive rule: a
-  score of ordinary bars is engraved at its natural width with no rest staff, the
-  reported 4-note/32-note pair comes back inside the cap, one dense bar among
-  sixteen sparse ones widens its neighbours and leaves the far end untouched, and a
-  2/4 bar among 4/4 bars is not widened for being short. Plus the mechanism's own
-  rules: more rests widen a bar and never narrow it, a bar does not budge until it
-  is asked for more moments than its music already has, the rests keep the music in
-  time (the written-value bug, caught by comparing the timemap against the unspaced
-  score), a two-voice bar is not read as twice as long, a bar of a length no rest
-  spells gets a whole-measure rest rather than an approximation, a count that
-  divides the bar unevenly is still written, and where the crop falls.
-- `test_timing.py` also pins the smoothing: an already-even scroll is left exactly
-  even (the edge-ramp bug), uneven spacing is evened out, and a repeat stays one
-  clean jump rather than three smeared ones.
-- `test_score.py` — which parts count as silent, that dropping one takes its staff
-  with it, and that the original file is never modified.
-- `test_merge_staves.py` — sharing a staff: which voice each part lands in, the
-  clef, the label, words once or on a second line, one rest for two, stems left to
-  MuseScore, the refusals, and (with MuseScore) two parts engraving as one staff
-  with the same notes and the same unmerged audio source.
-- `test_audio.py` / `test_build.py` — the volume edit (replaced, not duplicated;
-  pan/program untouched), the D.C.-jump refusal, that section repeats/voltas are
-  *not* refused, and the alignment measure itself (full when highlights match the
-  MIDI, falling when they drift).
-- `tests/test_files/fermata.mscx` — `simple_1_output` with a `timeStretch=3` fermata
-  added to measure 1 (4.00s -> 5.00s of MIDI as written; 4.50s once `score.prepare`
-  holds it one beat, which `test_sync` pins). `fermata.musicxml` is the same score
-  pre-converted so engraving tests need no MuseScore.
+Tests (`src/score_export/tests/`): `test_score.py` pins which parts count as silent,
+that dropping one takes its staff, that the original file is never modified, the
+opening tempo, the fermata hold and the tempo changes, each only in the copy.
+`test_clock.py` pins the `TempoMap` arithmetic (a 3x fermata window), reading the
+`.mpos` in played order, and, with MuseScore (skips without it), which bars MuseScore
+plays for `repeat`, `voltas`, `dal_segno` and `da_capo`, and that an opening BPM, a
+fermata hold and a tempo change reach MuseScore's clock. `tests/test_files/fermata.mscx`
+is `simple_1_output` with a `timeStretch=3` fermata in measure 1.
 
 ## Reading a scanned score (playbook)
 
@@ -3215,19 +2620,15 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   on the mapping: `{"staff_number": 1, "text": "...", "parts": ["T1"]}`, then `["T2"]`, `["B1"]`,
   `["B2"]` for the others (one entry per part per printed system). Each `too_many`/`too_few`
   left over was a slur the page prints differently (see the table above).
-- **Tempo:** save the printed tempos with `POST /record-settings` (`bpm`, `tempo_changes`);
-  the score has none after a clean.
-- **Publish:** without the Cloudflare keys in `.env`, `POST /publish` refuses. Use
-  stemmanauhat-cf's scripts instead (its README): build the bundle here, then upload it from the
-  stemmanauhat-cf checkout:
-
-  ```bash
-  .venv/bin/python ~/stemmanauhat-cf/scripts/song-app-bundle.py ~/musescore-choir-plugins /tmp/bundles <slug>
-  cd ~/stemmanauhat-cf && ./scripts/publish-songs.sh jm /tmp/bundles/<slug>
-  ```
-
-  `jm` is the men's choir; only public-domain songs go in `public`. Several slugs can go in one
-  run. The bundle script passes the saved tempo changes only from eerovil/stemmanauhat-cf#30 on.
+- **Tempo and credits:** save the printed tempos and who wrote the song with
+  `POST /api/songs/<slug>/publish-settings` (`bpm`, `tempo_changes`, `credits` with
+  `composer`/`lyricist`/`arranger`); the score has no tempo after a clean, and the
+  credits otherwise come from the score's metaTags.
+- **Publish** from the app: `POST /api/songs/<slug>/publish` with `{"choir": "jm"}`
+  (it needs the Review approval and the Cloudflare keys in `.env`, and refuses
+  without either). `jm` is the men's choir; only public-domain songs go in `public`.
+  The stand-in bundle scripts in stemmanauhat-cf (`scripts/song-app-bundle.py`,
+  `scripts/publish-songs.*`) are superseded by this.
 - Leave the Review approval to Eero.
 
 ## MuseScore plugins (`plugins/`)
@@ -3238,41 +2639,14 @@ this repo). After changing a plugin, reload it in MuseScore (Plugins → Plugin
 Manager, or restart). They cannot be unit-tested from Python.
 
 - `export.qml` — export per-voice mp3s, each choir voice mixed louder than the
-  rest; supports SSAA/SATB/TTBB/SAM naming. Triggered by the recording script.
+  rest; supports SSAA/SATB/TTBB/SAM naming. Run by hand: the macOS recorder that
+  used to trigger it is gone (#400), and the plugin was kept.
 - `voice2.qml` — split a selection into two voices (lowest note → voice 2).
 - `copylyrics.qml` — copy topmost-staff lyrics down to lower staves by tick.
 - `replacelyrics.qml` — search/replace across hyphenated lyric syllables.
 - `add_rest_track.qml` — add a spacer staff of 16th rests (even measure spacing).
 - `mute.qml` — toggle mute / set volume on all instruments.
 - `lyric_export_import.qml` — in-app lyric TSV transfer with highlighting.
-
-## Recording pipeline (`src/stemmanauha/`, macOS only)
-
-`record_stemmanauha.py MySong` → `create_video.run()`:
-mp3 export (AppleScript drives MuseScore's `export.qml`) → record play-along
-video via QuickRecorder (AppleScript + OBS websocket) → `ffmpeg` merges each
-voice mp3 onto the video (audio sync offset `audio_delay_ms`, default 1300ms) →
-optional YouTube upload.
-
-`run()` takes granular controls (used by the web app, see above): `audio_delay_ms`
-(the merge sync offset), `redo_mp3` / `redo_video` (selectively clear and redo a
-stage — each step otherwise skips if its output already exists), and `merge_only`
-(re-merge existing media with a new offset, no recording — the fast fix when the
-sync is just off). `merge_mp3_to_video(..., force=True)` overwrites existing
-merged outputs, and it identifies the **raw** recording as the `.mov` whose name
-is not one of the `"<song> <part>.mov"` merge outputs (so re-merging never feeds
-its own output back in). Before the per-voice merges it downscales the recording
-**once** in place to `MAX_VIDEO_HEIGHT` (env, default 1080; 0 disables) via
-`_cap_video_height` — Retina screen recordings are 1440p+, and YouTube would serve
-that; capping keeps the merges `-c:v copy` (one re-encode, not one per voice).
-Already-merged songs need a **re-merge** (force) to regenerate at 1080p.
-
-This is heavily environment-dependent: it relies on specific macOS apps, global
-keyboard shortcuts wired in QuickRecorder/MuseScore, `MUSESCORE_EXPORT_PATH`,
-`VIDEO_EXPORT_PATH`, and `ffmpeg`/`ffprobe`. It is not portable or testable in
-CI. The `.scpt` AppleScript files and the keyboard shortcuts described in
-`TOOLS.md`/`record_stemmanauha.py --help` must match. The CLI still skips a
-stage when its output exists; the web app exposes the redo flags instead.
 
 ## This host: the live app, the deploy, the board
 
@@ -3317,7 +2691,7 @@ fast-forward of `main` cannot disturb one; leaving it visible bought nothing and
 every deploy made while a card was open.
 
 `/healthz` exists for that watcher. It returns `{"status": "ok"}` and touches nothing —
-it has to answer while a clean or a video render is occupying the worker threads.
+it has to answer while a scan, clean or publish is occupying the worker threads.
 
 **Song chats need three keys in `.env`, and for a month they were not there.** The
 AgentDeck mapping added in #48 reads `AGENTDECK_URL`, `AGENTDECK_API_URL` and

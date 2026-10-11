@@ -1,4 +1,4 @@
-"""Durable clean/render status and recent logs for the song app."""
+"""Durable clean, check and publish status and recent logs for the song app."""
 
 from __future__ import annotations
 

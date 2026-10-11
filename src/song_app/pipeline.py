@@ -809,18 +809,6 @@ def line_break_measures(mscx_path: str) -> List[int]:
     return []
 
 
-def printed_system_starts(mscx_path: str) -> List[int]:
-    """0-based measures that *begin* a printed system, from a score with breaks.
-
-    A line break sits on the last bar of its system, so the next bar opens the
-    following one. Empty when the score has no breaks. The scrolling video numbers
-    these bars: it has no systems of its own, so the page's grouping is the only
-    one a singer can recognise.
-    """
-    breaks = line_break_measures(mscx_path)
-    return [0] + [i + 1 for i in breaks] if breaks else []
-
-
 def cleaned_line_breaks(song_dir: str, input_mscx: str) -> List[int]:
     """The printed line breaks, in the cleaned score's bar numbering (#354).
 
@@ -853,12 +841,6 @@ def moved_breaks(breaks: List[int], moves) -> List[int]:
         if moved is not None and moved - 1 not in out:
             out.append(moved - 1)
     return sorted(out)
-
-
-def cleaned_system_starts(song_dir: str, input_mscx: str) -> List[int]:
-    """`printed_system_starts`, in the cleaned score's bar numbering."""
-    breaks = cleaned_line_breaks(song_dir, input_mscx)
-    return [0] + [i + 1 for i in breaks] if breaks else []
 
 
 def _apply_line_breaks(root: etree._Element, indices: List[int]) -> int:
