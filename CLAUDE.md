@@ -720,12 +720,19 @@ Key test modules:
   reading always **b**, picking it writing the bar afresh and coming back on a rebuild,
   an octave-shifted tenor, an earlier pick counting as decided, and in the browser six
   shown with the rest behind "More". `test_bar_fix.py` pins the `bar` kind itself.
-- `src/song_app/tests/test_lyrics_live_ui.py` — added for #336: an import keeps the
-  Lyrics panel's scroll, its boxes and the focus, through the watcher's `state` ping
-  too; the warnings change in place; only the changed systems (and the blank-box
-  systems a line spills into) are fetched again, the old picture kept under
-  "Updating…" meanwhile; One system shows the words on the notes; and a phone keeps
-  its place. Pictures and the import are `page.route` stubs, so no MuseScore.
+- `src/clean_score/tests/test_lyric_boxes.py` / `src/song_app/tests/test_lyric_boxes_api.py`
+  / `test_lyric_editor_ui.py` — added for #397, the by-system editor. The first pins the
+  model on little scores: an import changes only the boxes it sends, an emptied box
+  takes its words out for that verse and voice only, a verse lands on its own `<no>`,
+  a voice-2 box exists only where that voice has notes, voice 1's words go above the
+  staff only where voice 2 has words, `e-lei- _ _ son` keeps `son` as the word's end,
+  a word open at a system's end is continued by the next system imported alone, a
+  long line runs into an empty system and stops at one with words, and a paste
+  carries verses and second voices. The second is the routes on the Virta fixture
+  (warnings kept per box, the staff positions found once per crop, "what landed"
+  drawn from those bars). The third is the browser: one system with each staff's
+  boxes under it, Next importing first and a warning keeping you there, verse tabs,
+  the voice-2 box, "what landed", the list when staves do not match, and a phone.
 - `src/song_app/tests/test_state_race.py` — added for #252. The file watcher used to
   save the whole song state it had loaded, so a lyric import that saved while the
   watcher was checking health was silently undone. It drives both interleavings (a
@@ -1164,47 +1171,40 @@ state model are in `DESIGN.md`.
   exactly like one that passed it. The two file inputs carry ids (`#f-pdf`, `#f-xml`)
   because the browser tests used to reach the score as "the first file input", which
   reordering would have silently repointed at the PDF.
-- The Lyrics panel's **Type by system** mode divides by the *printed* systems from
-  `.systems.json`, not by the score's line breaks: normal-mode cleaning strips those,
-  so the editor used to offer one cell per part covering the whole piece and only
-  ever worked for per-system scores. `editor_grid(root, systems=[(start, end), ...])`
-  takes the ranges; unlabelled bounds are refused and it falls back to the score.
-  Focusing a cell shows that system in the viewer's **One system** tab (only the
-  first pane follows the cursor, so a split can keep another document in view); a
-  small inline crop above each block is available too, off by default.
-- The Lyrics panel has two client-side modes (remembered in `localStorage`):
-  **Paste from AI** keeps the prompt/JSON round-trip, while **Type by system**
-  fetches `/lyric-grid` (`lyric_txt.editor_grid(...).to_dict()`) and renders a
-  textarea for every `(printed system, output part)` — parts, systems and the
-  prefilled text all come from the lyric module, not from `server.py`. The browser
-  POSTs the raw cells (`{"cells": {system: {part: text}}}`); the server turns them
-  into name-addressed JSON blocks with `blocks_from_cells` (`parts: [part name]`,
-  `measure_start: system start`), writes them to `lyrics.json`, and runs the same
-  importer as the paste mode. Mismatches come back as **fields** (`kind`,
-  `measure_start`, `measure_end`, `staff_ids`, `syllables`, `slots`, `message`) and
-  are attached to the matching system/part cell by comparing those fields — the
-  browser no longer parses warning prose (a song whose `.song.json` predates this holds
-  the sentence as a string; the panel reads the fields back out of it). **An import
-  does not redraw the panel** (#336): it sets `panel._refreshInPlace`, which
-  `refresh()` calls instead of `drawPanel()`, so the warnings, and each box's text
-  (re-read off `/lyric-grid`, `_` for an empty slot), change in the boxes already
-  there, the scroll and the focus stay, and the `state` ping the file watcher sends
-  after the import's own write cannot redraw it either — and `api_lyrics` claims
-  that write (the new `cleaned_fingerprint` saved under `song_lock` before the slow
-  health check), so the watcher normally sends none, while the page ignores a
-  "score moved" during an import (`lyricImporting`). The hook refuses (and the
-  panel is drawn afresh) when the cleaned fingerprint moved some other way. The
-  viewer's cleaned-system pictures (One system, which now shows the cleaned system
-  with its words under the printed one, and Compare) carry a version per system in
-  their URL: an import moves on only the systems whose text changed, plus the ones
-  after where that part's box is blank, since a blank box carries the line on
-  (`cleanedSystemsChanged`); any other change of fingerprint moves on all of them.
-  The server still renders the whole score once and crops (4.6s for Kantajani's 37
-  bars); engraving one system alone was refused as not worth cutting slurs and ties
-  at the seams. The old picture stays under an "Updating…" note until the new one
-  has loaded (`swapSystemImage`, two at a time); a picture that failed is asked for
-  again the next time its system is wanted. Blank cells are omitted, so this editor expresses a lyric line starting in
-  a system, not an instruction to clear one isolated cell.
+- The Lyrics panel's **Type by system** mode shows **one printed system per screen**
+  (#393's spec, built in #397). The systems are the *printed* ones from `.systems.json`
+  (normal-mode cleaning strips the score's line breaks), or the score's own breaks for a
+  song with no marked systems. The page picture of the system is cut just above each
+  staff and the boxes for the parts printed on it sit under it: `GET /lyric-staves/{n}`
+  (`pipeline.lyric_staves`) finds the staves in the crop with the app's own finder
+  (`system_finder._staves`, no homr), cuts at the first blank row above each staff's
+  own ink, and pairs them with the printed staves the clean's part-to-staff record
+  names for the system (`lyric_txt.printed_staves`: all of them, or the ones that sing,
+  since a page leaves a resting staff out). Positions are kept in
+  `.pages/lyric-staves.json`, keyed by the crop's file name, so they are found again
+  only when the crop changes. A system that does not match lists its boxes under the
+  whole picture, so a box never lands under the wrong staff (measured on #393: 784 of
+  853 systems match). The panel takes the viewer's width while it is open (`.ws.lyricwide`).
+  One box is **one verse x one system x one part x one voice** (`lyric_txt.editor_grid`
+  → `boxes`, keys `T1` and `T1@2`); a voice-2 box exists only where that voice has notes.
+  **Verse tabs** keep you on the system. The browser sends only the boxes changed,
+  `{"verse": n, "boxes": {system: {key: text}}}` (`blocks_from_boxes`, addressed by
+  staff id — a part may be named "1", or two parts the same), and an emptied box
+  takes its words out. **← Previous / Next →** import first and stay on the system if
+  the import warned; pressing again moves on. **Show what landed** swaps the picture for
+  `GET /landed/{n}`: MuseScore exports the score and verovio engraves only that system's
+  bars (`pipeline.landed_system_svg`), because a render of the whole score need not lay
+  its systems out like the page (Kevät's has 18 for the page's 13, so cropping "system
+  9" out of it showed bars 16-18). Warnings are kept per box: an import drops only the
+  earlier ones its own bars answer (`server._kept_warnings`, read off
+  `LyricImport.written`). The editor's import is written to `lyrics-editor.json`, so the
+  paste box still opens on `lyrics.json`. Mismatches come back as **fields** (`kind`,
+  `measure_start`, `measure_end`, `staff_ids`, `syllables`, `slots`, `verse`, `voice`,
+  `message`) and are attached to the matching box by comparing those fields.
+- **Paste from AI** keeps the prompt/JSON round-trip, and follows the same model: each
+  line may say `"verse": n` and `"voice": 2`, one paste carries every verse, and it
+  changes only what its lines name (an empty `text` clears that line). It is no longer
+  a full replace of verse 1 (`run_lyric_import(replace=False)`).
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are
@@ -2537,12 +2537,14 @@ song app's manual editor) go through these, and nothing else is public:
 
 ```python
 export_lyrics(root) -> str                      # the TXT projection of the score
-place_lyrics(root, source, fmt=, replace=, split=) -> LyricImport
+place_lyrics(root, source, fmt=, replace=, split=, systems=) -> LyricImport
 editor_grid(root, systems=) -> EditorGrid       # parts x printed systems, prefilled
 slot_counts(root) -> {staff: {measure: n}}      # notes that take a syllable
 syllable_slots(root, staff, measure) -> [bool]  # the same, note by note
 lyric_parts(root) -> [EditorPart]               # the parts that carry words
-blocks_from_cells(grid, cells) -> [block]       # those cells as lyric JSON
+blocks_from_boxes(grid, verse, boxes) -> [block]  # the by-system editor's changed boxes (#397)
+printed_staves(root, start, end)                # a system's printed staves: all, singing
+blocks_from_cells(grid, cells) -> [block]       # the older editor's cells as lyric JSON
 export_file(...) / import_file(...) -> LyricImport      # the .txt/.json adapters
 ```
 
@@ -2559,20 +2561,24 @@ now needs to offer a person a list of parts to point at.
 `source` is TXT, JSON text, or already-parsed JSON blocks (`fmt` overrides the
 sniff). **Diagnostics are returned, never printed**: `LyricImport.mismatches` is a
 list of `Mismatch(kind, message, measure_start, measure_end, staff_ids, syllables,
-slots)` — kinds `too_many` / `too_few` / `no_systems` / `no_system_for_line` /
+slots, verse, voice)` — kinds `too_many` / `too_few` / `no_systems` / `no_system_for_line` /
 `block_count` — plus `filled_measure_starts` for nulls inferred from the printed
 systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prints
 `Warning: <message>` itself, so terminal output is unchanged.
 
-- **Eligibility**: only voice 0, verse 1. A note gets a syllable token unless it
-  is a slur/tie *continuation* (not the first note of the slur/tie) — those get
-  no token. Rests get no token.
+- **Eligibility** (`_walk_voice`): per voice, so a second voice is counted on its own
+  notes with the same rules (#397). A note gets a syllable token unless it is a slur/tie
+  *continuation* (not the first note of the slur/tie) — those get no token. Rests get
+  no token. The TXT export is verse 1 of voice 1; the editor and the JSON reach every
+  verse and voice 2.
 - **TXT format**: `# Measure N` headers, then `staffId [syllableCount]: tok1 tok2 ...`
   Tokens are space-separated; hyphens join syllables of a word (`il-man`);
   trailing hyphen = the word continues, and that holds between **any** two tokens,
   not only across a barline; a **leading** hyphen says the same thing looking
   backwards, so a line carried over from the previous system may be written
-  `-hil-le`. `_` = eligible note with no lyric. Syllabic state
+  `-hil-le`. `_` = eligible note with no lyric; after a word ending in `-` it is a
+  note the word is held over, so `e-lei- _ _ son` keeps `son` as the word's end (#393;
+  a `_` used to end the word, and Kyrie's `son`s came back as words of their own). Syllabic state
   (begin/middle/end/single) is reconstructed from hyphenation on import: a syllable
   is `middle` when a word runs both into and out of it, and reading that as `end`
   splits one word in two. It did — `lai-ne-hil-le` was stored as `lai-ne-hil` plus a
@@ -2586,7 +2592,7 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
 - **JSON format**: line-by-line; tokens are *distributed across measures* using
   actual chord counts from the score (`_get_chord_counts_per_measure`). The
   PDF-derived format has a `lyrics` array of `{text, staff_number, position,
-  verse, parts}`. `staff_number` is the printed staff (top=1); `position` is
+  verse, voice, parts}` (`verse` and `voice` default to 1). `staff_number` is the printed staff (top=1); `position` is
   `above`/`below`. These are mapped to **output staff ids** via the
   `lyricsStaffMap` metaTag that `clean_score` writes (`_read_lyrics_staff_map`):
   a printed staff that split into two voices gets the line on both voices when
@@ -2611,13 +2617,18 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
   per printed system in order, so each null block takes the start measure of the
   system at its position (`per_system.system_ranges`); explicit values are left alone, and a
   block-count vs system-count mismatch is warned (so the user verifies alignment).
-- Import is in-place on the tree, leaves verses 2+ exactly as they are (#392; it
-  used to delete them), and clears lyrics from
-  ineligible (spanner-continuation) chords. `--replace` / `clear_existing=True`
-  wipes all verse-1 lyrics first (needed because MusicXML imports arrive with
-  garbled OCR lyrics); without it, only measures/staves named in the input are
-  touched (partial edit). Export and the editor read verse 1 only; a score with no
-  verse 1 anywhere (words stored as verse 2) is read from verse 2 instead.
+- Import is in-place on the tree and **changes only what it names** (#392, #397):
+  a JSON line is one part, voice and verse from its block's `measure_start`, and fills
+  its own system (`measure_end`, the caller's `systems`, or the next block), running on
+  into the next system only while that one's box stays empty — not named and no words
+  in the score, or emptied by this import. Bars it rewrites lose their old words of
+  that verse and voice, including on ineligible (spanner-continuation) notes; every
+  other verse, voice, part and bar keeps its words. A word a bar starts mid-way is
+  joined to the last syllable before it, placed or already there. Where a staff's voice
+  2 has words, voice 1's words in that system go above the staff (`<placement>above`,
+  `_place_two_voice_words`). `--replace` / `clear_existing=True` still wipes all
+  verse-1 lyrics first (for MusicXML imports with garbled OCR lyrics). A score with no
+  verse 1 anywhere (words stored as verse 2) is read from verse 2 for verse 1.
 
 When editing this file, the export and import paths must stay symmetric — the
 test `test_lyric_txt_spanner.py` asserts export→import round-trips back to the

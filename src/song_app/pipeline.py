@@ -1225,9 +1225,20 @@ def _printed_systems(song_dir: str) -> Optional[List[Tuple[int, int]]]:
 
 
 def lyric_grid(mscx_path: str, song_dir: str = "") -> Dict:
-    """The manual editor's projection of a score: parts x printed systems, prefilled."""
+    """The manual editor's projection of a score: parts x printed systems, prefilled.
+
+    Each system also carries `crop`, the printed system's number in `.systems.json`
+    (the picture `/system/{crop}` and `/cleaned-system/{crop}` serve), or None when
+    the song has no marked systems and the systems are the score's own line breaks.
+    """
     root = etree.parse(mscx_path).getroot()
-    return lyric_txt.editor_grid(root, systems=_printed_systems(song_dir)).to_dict()
+    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir)).to_dict()
+    crops = [b.index for b in pdf_systems.load_bounds(song_dir) if b.measure_start] \
+        if song_dir else []
+    for system in grid["systems"]:
+        i = system["index"]
+        system["crop"] = crops[i] if len(crops) == len(grid["systems"]) else None
+    return grid
 
 
 def lyric_blocks(mscx_path: str, cells: Dict, song_dir: str = "") -> List[Dict]:
@@ -1235,6 +1246,167 @@ def lyric_blocks(mscx_path: str, cells: Dict, song_dir: str = "") -> List[Dict]:
     root = etree.parse(mscx_path).getroot()
     grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir))
     return lyric_txt.blocks_from_cells(grid, cells)
+
+
+def lyric_box_blocks(mscx_path: str, verse: int, boxes: Dict, song_dir: str = "") -> List[Dict]:
+    """The by-system editor's changed boxes of one verse as lyric JSON blocks (#397)."""
+    root = etree.parse(mscx_path).getroot()
+    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir))
+    return lyric_txt.blocks_from_boxes(grid, verse, boxes)
+
+
+# The staves of a printed system are found at the Systems editor's dpi: the finder
+# is tuned there (`system_finder.QUICK_DPI`), and the positions are fractions anyway.
+LYRIC_STAFF_DPI = system_finder.QUICK_DPI
+# Found again when this changes, as when the crop does.
+LYRIC_STAFF_VERSION = 2
+
+
+def _cut_above(ink, upper: tuple, lower: tuple) -> float:
+    """The pixel row to cut a system's picture at, just above the lower of two staves.
+
+    A staff's own ink reaches above it — high notes, ledger lines, stems — so the cut
+    is the first blank row going up from the staff, a little way into the white. A
+    row counts as blank by the columns that are not ink from one staff to the other:
+    a barline drawn through the gap would otherwise leave no blank row at all. When
+    nothing between them is blank, the cut is a fixed distance above the staff.
+    """
+    space = lower[2]
+    fallback = max(upper[1], lower[0] - 1.5 * space)
+    a, b = int(upper[1]) + 1, int(lower[0] - 0.4 * space)
+    if b - a < 2:
+        return fallback
+    region = ink[a:b, int(ink.shape[1] * 0.08):]
+    through = region.all(axis=0)
+    counts = region[:, ~through].sum(axis=1)
+    limit = max(1, int(0.003 * region.shape[1]))
+    y = len(counts) - 1
+    while y >= 0 and counts[y] > limit:
+        y -= 1
+    if y < 0:
+        return fallback
+    top = y
+    while top > 0 and counts[top - 1] <= limit and y - top < space:
+        top -= 1
+    return a + (top + y) / 2
+
+
+def _found_staves(song_dir: str, pdf_path: str, crop: int) -> Tuple[List[Dict], float]:
+    """The staves in one printed system's crop, as fractions of its height, and the
+    crop's width over its height.
+
+    Kept per system in the page cache and found again only when the crop changes:
+    the crop's file name carries its band and its page (`pdf_systems.crop_systems`).
+    """
+    import numpy as np
+    from PIL import Image
+
+    path = system_crop(song_dir, pdf_path, crop, LYRIC_STAFF_DPI)
+    stamp = os.path.basename(path)
+    store = os.path.join(_page_cache(song_dir), "lyric-staves.json")
+    try:
+        with open(store, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        saved = {}
+    hit = saved.get(str(crop))
+    if (isinstance(hit, dict) and hit.get("crop") == stamp
+            and hit.get("version") == LYRIC_STAFF_VERSION):
+        return hit.get("staves") or [], hit["aspect"]
+    with Image.open(path) as image:
+        ink = np.asarray(image.convert("L")) < system_finder._INK
+    height, width = ink.shape
+    found = system_finder._staves(ink)
+    staves = [{"top": t / height, "bottom": b / height, "space": s / height,
+               "cut": 0.0 if i == 0 else _cut_above(ink, found[i - 1], (t, b, s)) / height}
+              for i, (t, b, s) in enumerate(found)]
+    aspect = width / height
+    saved[str(crop)] = {"crop": stamp, "version": LYRIC_STAFF_VERSION,
+                        "staves": staves, "aspect": aspect}
+    os.makedirs(os.path.dirname(store), exist_ok=True)
+    tmp = store + f".{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(saved, f)
+    os.replace(tmp, store)
+    return staves, aspect
+
+
+def lyric_staves(song_dir: str, pdf_path: str, mscx_path: str, system_index: int) -> Dict:
+    """Where each staff of one printed system is, and which printed staff it is (#397).
+
+    `{"crop", "aspect", "rows": [{"top", "bottom"}], "printed": [n per row] | None}`,
+    `aspect` being the crop's width over its height. A row runs
+    from just above its staff's own ink to just above the next one's, so the editor can cut
+    the picture there and put each staff's boxes under it. The staves found in the
+    picture are paired with the printed staves the cleaned score records for the
+    system — every one of them, or the ones that sing there, since a page leaves out
+    a resting part's staff — and `printed` is None when neither count matches: then
+    no box may be placed under a staff, because it could be the wrong one.
+    """
+    grid = lyric_grid(mscx_path, song_dir)
+    systems = grid["systems"]
+    if not 0 <= system_index < len(systems):
+        raise ValueError(f"there is no system {system_index + 1}")
+    system = systems[system_index]
+    crop = system.get("crop")
+    if crop is None or not pdf_path:
+        return {"crop": crop, "rows": [], "printed": None}
+    staves, aspect = _found_staves(song_dir, pdf_path, crop)
+    rows = [{"top": st["cut"], "staff": st["top"]} for st in staves]
+    for i, row in enumerate(rows):
+        row["bottom"] = rows[i + 1]["top"] if i + 1 < len(rows) else 1.0
+    root = etree.parse(mscx_path).getroot()
+    every, singing = lyric_txt.printed_staves(root, system["start"], system["end"])
+    printed = (every if every and len(every) == len(rows)
+               else singing if singing and len(singing) == len(rows) else None)
+    return {"crop": crop, "aspect": aspect, "rows": rows, "printed": printed}
+
+
+_LANDED_LOCK = threading.Lock()
+
+
+def landed_system_svg(song_dir: str, mscx_path: str, start: int, end: int) -> str:
+    """Bars `start`-`end` of the cleaned score as they are now, words included (#397).
+
+    What the lyric editor's "Show what landed" shows. Drawn from those bars alone —
+    MuseScore exports the score, verovio engraves just that range — rather than cut
+    out of a render of the whole score, because a render's systems need not be the
+    page's: on a hand-rewritten score (Kevät) the render has 18 systems for the
+    page's 13, and "the ninth" is another part of the song. Cached by the score's
+    content; an older score's files go when a newer one is drawn.
+    """
+    import verovio
+
+    from src.scrollvideo import audio, engrave
+
+    with open(mscx_path, "rb") as f:
+        stamp = hashlib.sha1(f.read()).hexdigest()[:12]
+    cache = os.path.join(_page_cache(song_dir), "landed")
+    out = os.path.join(cache, f"{stamp}-{start}-{end}.svg")
+    if os.path.exists(out):
+        return out
+    with _LANDED_LOCK:
+        os.makedirs(cache, exist_ok=True)
+        xml = os.path.join(cache, f"{stamp}.musicxml")
+        if not os.path.exists(xml):
+            for old in os.listdir(cache):
+                if not old.startswith(stamp):
+                    os.remove(os.path.join(cache, old))
+            audio.run_musescore(mscx_path, xml)
+        tk = verovio.toolkit(False)
+        tk.setResourcePath(engrave.RESOURCE_PATH)
+        tk.setOptions({"pageWidth": 2400, "pageHeight": 60000, "adjustPageHeight": True,
+                       "header": "none", "footer": "none", "breaks": "auto", "scale": 45,
+                       "xmlIdSeed": engrave.XML_ID_SEED})
+        if not tk.loadFile(xml):
+            raise RuntimeError("verovio could not read the score")
+        tk.select({"measureRange": f"{start}-{end}"})
+        tk.redoLayout()
+        tmp = out + f".{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(tk.renderToSVG(1))
+        os.replace(tmp, out)
+    return out
 
 
 # Scrolling-video sizes offered by the Record stage. 4K60 is the default because
@@ -1495,7 +1667,12 @@ def scroll_preview_tile(song_dir: str, name: str) -> Optional[str]:
 
 
 def run_lyric_import(
-    json_path: str, cleaned_path: str, replace: bool = True
+    json_path: str, cleaned_path: str, replace: bool = False, song_dir: str = ""
 ) -> LyricImport:
-    """Import lyric JSON in place into the cleaned score; return the placement result."""
-    return import_file(json_path, cleaned_path, cleaned_path, replace=replace)
+    """Import lyric JSON in place into the cleaned score; return the placement result.
+
+    Not a full replace any more (#397): only the parts, voices, verses and systems the
+    JSON names change. The printed systems decide how far a line may run on.
+    """
+    return import_file(json_path, cleaned_path, cleaned_path, replace=replace,
+                       systems=_printed_systems(song_dir))

@@ -1184,11 +1184,78 @@ def api_lyric_grid(slug: str) -> Dict:
     return pipeline.lyric_grid(cleaned, song.dir)
 
 
+@app.get("/api/songs/{slug}/lyric-staves/{index}")
+def api_lyric_staves(slug: str, index: int) -> Dict:
+    """Where each staff of one printed system is in its picture, and which it is (#397).
+
+    `index` is the lyric editor's system (0-based). `printed` is None when the staves
+    found do not match the score's record, and then the editor lists the boxes instead.
+    """
+    song = _require(slug)
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise HTTPException(400, "Clean the score first")
+    pdf = song.source_path("pdf")
+    try:
+        return pipeline.lyric_staves(song.dir, pdf if pdf and os.path.exists(pdf) else "",
+                                     cleaned, index)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # no poppler, an unreadable crop: the list still works
+        return {"crop": None, "rows": [], "printed": None, "error": str(exc)}
+
+
+@app.get("/api/songs/{slug}/landed/{index}")
+def api_landed(slug: str, index: int):
+    """One printed system's bars of the cleaned score as they are now, words included.
+
+    `index` is the lyric editor's system (0-based). Drawn from those bars alone, so it
+    is the right bars even where a render of the whole score lays them out otherwise.
+    """
+    song = _require(slug)
+    cleaned = song.cleaned_path()
+    if not cleaned or not os.path.exists(cleaned):
+        raise HTTPException(400, "Clean the score first")
+    systems = pipeline.lyric_grid(cleaned, song.dir)["systems"]
+    if not 0 <= index < len(systems):
+        raise HTTPException(404, f"there is no system {index + 1}")
+    system = systems[index]
+    try:
+        path = pipeline.landed_system_svg(song.dir, cleaned, system["start"], system["end"])
+    except Exception as exc:
+        raise HTTPException(500, f"Could not draw bars {system['start']}–{system['end']}: {exc}")
+    return FileResponse(path, media_type="image/svg+xml", headers=dict(REVALIDATE))
+
+
+def _kept_warnings(previous: List, result) -> List[Dict]:
+    """Earlier import warnings this import did not answer (#397).
+
+    An import now changes only what it names, so a warning about a box it did not
+    touch still stands. One is answered when the import rewrote its bars on one of
+    its parts, for the same voice and verse. A warning with no bars to it, or one
+    an older app saved as a sentence, belonged to the import that made it.
+    """
+    kept = []
+    for w in previous or []:
+        if not isinstance(w, dict) or not w.get("measure_start"):
+            continue
+        start, end = w["measure_start"], w.get("measure_end") or w["measure_start"]
+        verse, voice = w.get("verse") or 1, w.get("voice") or 1
+        answered = any(
+            x.staff in (w.get("staff_ids") or []) and x.verse == verse and x.voice == voice
+            and x.start <= end and x.end >= start
+            for x in result.written)
+        if not answered:
+            kept.append(w)
+    return kept
+
+
 @app.get("/api/songs/{slug}/lyrics-json")
 def api_lyrics_json(slug: str):
     song = _require(slug)
-    path = song.lyrics_json_path()
-    if not path or not os.path.exists(path):
+    # What was pasted, not the by-system editor's last import (lyrics-editor.json).
+    path = song.path("lyrics.json")
+    if not os.path.exists(path):
         return PlainTextResponse("")
     with open(path, "r", encoding="utf-8") as f:
         return PlainTextResponse(f.read())
@@ -1196,28 +1263,51 @@ def api_lyrics_json(slug: str):
 
 @app.post("/api/songs/{slug}/lyrics")
 def api_lyrics(slug: str, body: Dict) -> Dict:
-    """Import lyrics: either pasted JSON (`json`) or the manual editor's cells (`cells`)."""
+    """Import lyrics: pasted JSON (`json`), or the by-system editor's changed boxes.
+
+    The editor sends `{"verse": n, "boxes": {system index: {box key: text}}}` — only
+    the boxes changed, an empty one clearing its words (#397). `cells` is the older
+    editor's verse-1 form. Either way only what is named changes; every other verse,
+    voice, part and system keeps its words, and so do the warnings about them.
+    """
     song = _require(slug)
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         raise HTTPException(400, "Clean the score first")
     body = body or {}
     cells = body.get("cells")
-    if cells:
+    boxes = body.get("boxes")
+    if boxes:
+        try:
+            verse = int(body.get("verse") or 1)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Which verse?")
+        if verse < 1:
+            raise HTTPException(400, "Which verse?")
+        blocks = pipeline.lyric_box_blocks(cleaned, verse, boxes, song.dir)
+        if not blocks:
+            raise HTTPException(400, "Nothing changed")
+        json_text = json.dumps(blocks, ensure_ascii=False, indent=2)
+        json_name = "lyrics-editor.json"
+    elif cells:
         blocks = pipeline.lyric_blocks(cleaned, cells, song.dir)
         if not blocks:
             raise HTTPException(400, "Nothing typed yet")
         json_text = json.dumps(blocks, ensure_ascii=False, indent=2)
+        json_name = "lyrics-editor.json"
     else:
         json_text = body.get("json", "")
         if not json_text.strip():
             raise HTTPException(400, "Paste the lyric JSON first")
-    json_path = song.path("lyrics.json")
+        json_name = "lyrics.json"
+    # The editor's import is kept beside the paste rather than over it, so the
+    # paste box still opens on what was pasted.
+    json_path = song.path(json_name)
     with open(json_path, "w", encoding="utf-8") as f:
         f.write(json_text)
     previous_fingerprint = state.file_fingerprint(cleaned)
     try:
-        result = pipeline.run_lyric_import(json_path, cleaned, replace=True)
+        result = pipeline.run_lyric_import(json_path, cleaned, song_dir=song.dir)
     except Exception as exc:
         raise HTTPException(400, f"Import failed: {exc}")
     current_fingerprint = state.file_fingerprint(cleaned)
@@ -1230,10 +1320,12 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
         claimed = state.load(song.slug) or song
         claimed.data["cleaned_fingerprint"] = current_fingerprint
         claimed.save()
+    previous = song.data.get("lyrics") or {}
     song.data["lyrics"] = {
-        "json": "lyrics.json",
+        "json": "lyrics.json" if json_name == "lyrics.json" else previous.get("json") or json_name,
         "imported_against": current_fingerprint,
-        "warnings": [m.to_dict() for m in result.mismatches],
+        "warnings": _kept_warnings(previous.get("warnings"), result)
+                    + [m.to_dict() for m in result.mismatches],
     }
     # Import may add full-measure rests to otherwise empty measures, so health must
     # be checked again rather than rebound to the new fingerprint without evidence.
@@ -1250,12 +1342,14 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
         "issues": health.merge_issues(_health_scan(song, cleaned), previous_issues),
     }
     song.data["cleaned_fingerprint"] = current_fingerprint
-    if result.ok:
+    if not song.data["lyrics"]["warnings"]:
         song.set_stage("review")
     song.save()
     # The bars that did not take their words, said in the reply itself rather than
     # left for the caller to dig out of the song's `lyrics.warnings` (#340).
-    return {**_derived(song), "mismatches": song.data["lyrics"]["warnings"]}
+    # `imported` is what this import alone said, so a caller can tell its own.
+    return {**_derived(song), "mismatches": song.data["lyrics"]["warnings"],
+            "imported": [m.to_dict() for m in result.mismatches]}
 
 
 # --------------------------------------------------------------------------

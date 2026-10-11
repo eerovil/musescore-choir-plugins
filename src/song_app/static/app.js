@@ -281,7 +281,6 @@ function newSongDialog() {
 // ---- workspace -----------------------------------------------------------
 let ws = null;
 let logBox = null;
-let lyricScroll = null; // carry the lyrics panel scroll across a re-import re-render
 
 async function renderWorkspace(slug) {
   if (ws) { ws.close(); ws = null; }
@@ -372,6 +371,7 @@ async function renderWorkspace(slug) {
     recordPreviewSettings = null;
     panelEl._keepPlace = null;
     panelEl._refreshInPlace = null;
+    wsGrid.classList.remove("lyricwide"); // the by-system lyric editor's own width
     panelEl.replaceChildren();
     renderPanel(panelEl, view, song, slug, refresh, {
       // Use the same click path as the rail so rendering_state.js remembers an
@@ -2488,6 +2488,7 @@ async function panelLyrics(panel, song, P, refresh) {
   const swap = (m) => {
     localStorage.setItem("lyricMode", m);
     panel._refreshInPlace = null;
+    panel.closest(".ws")?.classList.remove("lyricwide");
     panel.replaceChildren();
     panelLyrics(panel, song, P, refresh);
   };
@@ -2595,167 +2596,249 @@ async function lyricsPaste(panel, song, P, refresh) {
   panel.append(makeLog());
 }
 
+// ---- Type by system: one printed system per screen (#393, #397) ---------------
+// Each staff of the page picture is followed by the boxes for the parts printed on
+// it. One box is one verse x one system x one part x one voice; an import sends
+// only the boxes changed, and an emptied box takes its words out. ← Previous and
+// Next → import first, and stay put when the import gives a warning.
+const lyricPlace = (slug) => {
+  try { return JSON.parse(localStorage.getItem(`lyricPlace:${slug}`)) || {}; } catch { return {}; }
+};
+
 async function lyricsManual(panel, song, P, refresh) {
-  panel.append(el("p", { className: "sub" }, "Type the lyrics for each part, per system. Hyphenate syllables (e.g. \"lau-lun ai-ka\")."));
-  const toggle = el("button", { className: "vtab" }, "");
-  toggle.onclick = () => {
-    showScore = !showScore;
-    localStorage.setItem("lyricScore", showScore ? "1" : "0");
-    lyricScroll = panel.scrollTop;
-    panel._refreshInPlace = null; // this one does want the panel drawn again
-    refresh();
-  };
-  panel.append(toggle);
-  const holder = el("div", {}, el("p", { className: "hint" }, "Loading…"));
-  panel.append(holder, makeLog());
+  const wsEl = panel.closest(".ws");
+  wsEl?.classList.add("lyricwide");
+  const holder = el("div", { className: "lyed" }, el("p", { className: "hint" }, "Loading…"));
+  panel.append(holder);
 
   let grid;
   try { grid = await getJSON(`${P}/lyric-grid`); }
   catch (e) { holder.replaceChildren(el("p", { className: "err" }, e.message)); return; }
+  if (!grid.systems.length) {
+    holder.replaceChildren(el("p", { className: "hint" }, "This score has no systems to type into."));
+    return;
+  }
 
-  // The printed system, cropped from the scan, shown beside the cells for it.
-  // Typing lyrics against a whole page is the resolution problem all over again:
-  // a slur or a lyric line under the lower staff is not legible at page scale.
-  // Matched by measure range, not by position, so a bounds file that disagrees
-  // with the score attaches nothing rather than the wrong picture.
-  let byStart = {};
-  try {
-    const b = await getJSON(`${P}/bounds`);
-    for (const s of b.systems || []) if (s.measure_start) byStart[s.measure_start] = s.index;
-  } catch { /* no PDF, or none stored yet — the cells work regardless */ }
-  // Off by default now that focusing a cell shows the system in the viewer.
-  let showScore = localStorage.getItem("lyricScore") === "1";
-  const { parts, systems, cells, capacities } = grid;
-  const cellText = (si, name) => (cells?.[si]?.[name]) || "";
-  // Attach a mismatch to the system where its line STARTS (a line can span several
-  // systems if the part is blank in later ones); show the full measure range.
-  const cellWarns = (sys, p) => lyricMismatches(song).filter((w) =>
-    (w.staff_ids || []).includes(p.id) && w.measure_start >= sys.start && w.measure_start <= sys.end);
-  const warnLines = (sys, p) => cellWarns(sys, p).map((w) => el("div", { className: "lyerr" },
-    `⚠ m${w.measure_start}–${w.measure_end}`
-    + `${w.measure_end > sys.end ? " (spans later systems)" : ""}: `
-    + `${w.message.split("): ").pop()}`));
-  const warnBoxes = [];
-  let typingIn = null; // the box last typed in, given back its focus after an import
-
-  const scoreFor = (sys) => {
-    const idx = byStart[sys.start];
-    if (!idx || !showScore) return [];
-    return [el("a", { className: "syspeek", href: `${P}/system/${idx}?dpi=400`,
-                      target: "_blank", title: "open at full resolution" },
-      el("img", { src: `${P}/system/${idx}?dpi=200`, loading: "lazy",
-                  alt: `system ${idx}` }))];
+  const saved = lyricPlace(song.slug);
+  const S = {
+    n: Math.min(Math.max(0, saved.n | 0), grid.systems.length - 1),
+    verse: Math.max(1, saved.verse | 0 || 1),
+    verses: Math.max(grid.verses.length, saved.verse | 0 || 1),
+    landed: false,
+    armed: false,            // an import just warned: the next press moves on
+    typed: {},               // `${verse}|${system}|${key}` -> text not yet imported
+    status: "",
   };
-
-  holder.replaceChildren(...systems.map((sys) =>
-    el("div", { className: "sysblock" },
-      el("h4", {}, `System ${sys.index + 1} — measures ${sys.start}–${sys.end}`),
-      ...scoreFor(sys),
-      ...parts.map((p) => {
-        const ta = el("textarea", { rows: 1, value: cellText(sys.index, p.name),
-          "data-sys": sys.index, "data-part": p.name });
-        ta.oninput = () => autoGrow(ta);
-        const shown = byStart[sys.start];
-        ta.onfocus = () => { typingIn = ta; if (shown) showSystem(shown); };
-        const errs = el("div", { className: "lyerrs" }, ...warnLines(sys, p));
-        warnBoxes.push([errs, sys, p]);
-        return el("div", { className: "lyrow" },
-          el("label", {}, `${p.name} · ${capacities?.[sys.index]?.[p.name] ?? 0} lyric slots`), ta, errs);
-      }))));
-  toggle.textContent = Object.keys(byStart).length
-    ? (showScore ? "Hide the score" : "Show the score")
-    : "";
-  toggle.style.display = Object.keys(byStart).length ? "" : "none";
-  holder.querySelectorAll("textarea").forEach(autoGrow); // size to content (no scroll)
-  if (lyricScroll != null) { panel.scrollTop = lyricScroll; lyricScroll = null; } // restore after "Show the score"
-
-  // The warnings are the only thing an import changes in this panel, so they are
-  // the only thing redrawn: the boxes, the one being typed in and the scroll stay.
-  const drawWarns = () => {
-    for (const [errs, sys, p] of warnBoxes) errs.replaceChildren(...warnLines(sys, p));
-  };
-  const live = lyricsInPlace(panel, song, drawWarns);
-  const readCells = () => {
-    const map = {};
-    panel.querySelectorAll("textarea[data-sys]").forEach((t) => {
-      (map[t.dataset.sys] ||= {})[t.dataset.part] = t.value.trim();
-    });
-    return map;
-  };
-  let imported = readCells(); // what the score holds now, to tell what an import changes
-
-  // After an import each box shows what actually landed -- the words, and a `_` for
-  // every slot left without one -- written into the boxes already there. The box
-  // being typed in keeps its caret, and whatever is in view stays where it is on
-  // screen even when a box above it grows.
-  const showLanded = async () => {
-    let fresh;
-    try { fresh = await getJSON(`${P}/lyric-grid`); } catch { return; }
-    const boxes = [...panel.querySelectorAll("textarea[data-sys]")];
-    const anchor = (typingIn?.isConnected && typingIn)
-      || boxes.find((t) => t.getBoundingClientRect().bottom > panel.getBoundingClientRect().top);
-    const y = anchor?.getBoundingClientRect().top;
-    for (const t of boxes) {
-      const text = fresh.cells?.[t.dataset.sys]?.[t.dataset.part] || "";
-      if (t.value === text) continue;
-      const caret = t === typingIn ? t.selectionStart : null;
-      t.value = text;
-      autoGrow(t);
-      if (caret != null) t.setSelectionRange(caret, caret);
-    }
-    if (anchor) panel.scrollTop += anchor.getBoundingClientRect().top - y;
-    imported = readCells();
-  };
-
-  // The printed systems an import touches: each one where a part's text differs
-  // from what was imported last, and the systems after it where that part is left
-  // blank, because a blank box carries the line on and the words spill into them.
-  const changedSystems = (now) => {
-    const touched = new Set();
-    for (const p of parts) {
-      let carrying = false;
-      for (const sys of systems) {
-        const text = now[sys.index]?.[p.name] || "";
-        const before = imported[sys.index]?.[p.name] || "";
-        if (text !== before) { touched.add(sys); carrying = true; }
-        else if (text) carrying = false;
-        else if (carrying) touched.add(sys);
+  const staves = {};         // system -> what /lyric-staves said
+  const remember = () => localStorage.setItem(`lyricPlace:${song.slug}`,
+    JSON.stringify({ n: S.n, verse: S.verse }));
+  const sys = () => grid.systems[S.n];
+  const boxesOf = (n) => grid.boxes?.[n] || grid.boxes?.[String(n)] || [];
+  const original = (b, verse = S.verse) => b.text?.[verse] || "";
+  const tkey = (verse, n, b) => `${verse}|${n}|${b.key}`;
+  const current = (b, verse = S.verse, n = S.n) => S.typed[tkey(verse, n, b)] ?? original(b, verse);
+  const label = (b) => b.voice > 1 ? `${b.part} · voice ${b.voice}` : b.part;
+  // Every verse's boxes changed on this system and not imported yet.
+  const pending = () => {
+    const out = {};
+    for (let v = 1; v <= S.verses; v++) {
+      for (const b of boxesOf(S.n)) {
+        if (current(b, v) !== original(b, v)) (out[v] ||= {})[b.key] = current(b, v);
       }
     }
-    const printed = [...touched].map((sys) => byStart[sys.start]);
-    return printed.every(Boolean) ? printed.sort((a, b) => a - b) : "all";
+    return out;
   };
 
-  const doImport = async (btn) => {
-    const map = readCells();
-    if (!Object.values(map).some((row) => Object.values(row).some((t) => t))) {
-      appendLog("Nothing typed yet.", true); return;
-    }
-    btn.disabled = true;
-    live.busy = lyricImporting = true;
-    appendLog("Importing lyrics…");
-    try {
-      const fresh = await postJSON(`${P}/lyrics`, { cells: map });
-      Object.assign(song, fresh);
-      live.fp = song.cleaned_fingerprint;
-      drawWarns();
-      const w = song.lyrics?.warnings || [];
-      appendLog(w.length ? `Imported with ${w.length} warning(s).` : "Imported cleanly. Ready for review.");
-      cleanedSystemsChanged(song.slug, song.cleaned_fingerprint, changedSystems(map));
-      imported = map;
-      await showLanded();
-    } catch (e) { appendLog(e.message, true); }
-    live.busy = lyricImporting = false;
-    btn.disabled = false;
-    // Pressing the button took the focus (and disabling it dropped it on the page);
-    // give it back to the box being typed in, without scrolling to it.
-    const away = document.activeElement;
-    if (typingIn?.isConnected && (away === btn || away === document.body || !away))
-      typingIn.focus({ preventScroll: true });
-    refresh(); // the stage rail and the viewer; this panel only updates its warnings
+  const warnsFor = (b) => lyricMismatches(song).filter((w) =>
+    (w.verse || 1) === S.verse && (w.voice || 1) === b.voice
+    && (w.staff_ids || []).includes(b.id)
+    && w.measure_start >= sys().start && w.measure_start <= sys().end);
+  const warnRows = [];
+  const warnLines = (b) => warnsFor(b).map((w) => el("div", { className: "lyerr" },
+    `⚠ m${w.measure_start}–${w.measure_end}`
+    + `${w.measure_end > sys().end ? " (runs into the next system)" : ""}: `
+    + `${w.message.split("): ").pop()}`));
+  const drawWarns = () => { for (const [box, b] of warnRows) box.replaceChildren(...warnLines(b)); };
+
+  const statusEl = el("span", { className: "lyedstatus" });
+  const showStatus = () => {
+    const p = pending();
+    const changed = Object.entries(p).map(([v, keys]) =>
+      `${S.verses > 1 ? `verse ${v}: ` : ""}${Object.keys(keys).join(", ")}`);
+    statusEl.textContent = S.status || (changed.length ? `Not imported — ${changed.join("; ")}` : "");
   };
-  const importBtn = el("button", { className: "primary", onclick: () => doImport(importBtn) }, "Import lyrics");
-  panel.append(el("div", { className: "floatbar" }, importBtn));
+
+  const boxEl = (b) => {
+    const ta = el("textarea", { rows: 1, value: current(b), spellcheck: false,
+      "data-box": b.key, "aria-label": `${label(b)}, verse ${S.verse}` });
+    const mark = () => ta.classList.toggle("changed", ta.value !== original(b));
+    ta.oninput = () => {
+      S.typed[tkey(S.verse, S.n, b)] = ta.value;
+      S.armed = false; S.status = "";
+      mark(); autoGrow(ta); showStatus();
+    };
+    mark();
+    const errs = el("div", { className: "lyerrs" }, ...warnLines(b));
+    warnRows.push([errs, b]);
+    return el("div", { className: b.voice > 1 ? "lyrow v2" : "lyrow" },
+      el("label", {}, `${label(b)} · ${b.slots} slot${b.slots === 1 ? "" : "s"}`), ta, errs);
+  };
+
+  const pictureSrc = (crop) => `${P}/system/${crop}?dpi=200`;
+  // The picture as a list: the whole system (the page, or what landed), boxes under it.
+  const listView = (boxes, note) => {
+    const crop = sys().crop;
+    const out = [];
+    if (S.landed) {
+      // This system's bars drawn on their own, so they are these bars even where a
+      // render of the whole score lays its systems out differently from the page.
+      const box = el("div", { className: "lyedpic landed" });
+      swapSystemImage(box, `${P}/landed/${S.n}?v=${encodeURIComponent(song.cleaned_fingerprint || "")}`,
+        S.n + 1);
+      out.push(box);
+    } else if (crop != null) {
+      out.push(el("div", { className: "lyedpic" },
+        el("img", { src: pictureSrc(crop), alt: `printed system ${S.n + 1}` })));
+    }
+    if (note) out.push(el("p", { className: "hint" }, note));
+    out.push(...boxes.map(boxEl));
+    return out;
+  };
+  // Layout B: the picture cut just above each staff, that staff's boxes under it.
+  const staffView = (boxes, found) => {
+    const out = [];
+    const src = pictureSrc(found.crop);
+    found.rows.forEach((row, i) => {
+      const span = Math.max(1e-6, row.bottom - row.top);
+      out.push(el("div", { className: "lyedslice",
+        style: `aspect-ratio: ${found.aspect} / ${span}` },
+        el("img", { src, alt: `staff ${found.printed[i]} of printed system ${S.n + 1}`,
+          style: `top: ${(-row.top / span) * 100}%; height: ${100 / span}%` })));
+      out.push(...boxes.filter((b) => b.printed === found.printed[i]).map(boxEl));
+    });
+    return out;
+  };
+
+  const body = el("div", { className: "lyedbody" });
+  const tabs = el("div", { className: "lyedtabs", role: "tablist" });
+  const where = el("span", { className: "lyedwhere" });
+  const landedBtn = el("button", { onclick: () => { S.landed = !S.landed; drawBody(); } });
+  const prevBtn = el("button", { onclick: () => go(-1) }, "← Previous");
+  const nextBtn = el("button", { onclick: () => go(1) }, "Next →");
+  const importBtn = el("button", { className: "primary", onclick: () => doImport() }, "Import");
+
+  const drawTabs = () => {
+    const unsent = pending();
+    tabs.replaceChildren(
+      ...Array.from({ length: S.verses }, (_, i) => i + 1).map((v) =>
+        el("button", { className: v === S.verse ? "vtab active" : "vtab", role: "tab",
+          "aria-selected": v === S.verse ? "true" : "false",
+          onclick: () => { S.verse = v; S.status = ""; remember(); drawAll(); } },
+          `Verse ${v}${unsent[v] ? " •" : ""}`)),
+      el("button", { className: "vtab", title: "type another verse",
+        onclick: () => { S.verses += 1; S.verse = S.verses; S.status = ""; remember(); drawAll(); } },
+        "+ verse"));
+  };
+
+  let drawn = 0;
+  async function drawBody() {
+    const ticket = ++drawn;
+    const s = sys();
+    where.textContent = `System ${S.n + 1} of ${grid.systems.length} · bars ${s.start}–${s.end}`;
+    prevBtn.disabled = S.n === 0;
+    nextBtn.disabled = S.n + 1 >= grid.systems.length;
+    landedBtn.textContent = S.landed ? "Show the page" : "Show what landed";
+    warnRows.length = 0;
+    const boxes = boxesOf(S.n);
+    if (!boxes.length) {
+      body.replaceChildren(...listView([], "No part sings in this system."));
+      return;
+    }
+    let found = staves[S.n];
+    if (s.crop != null && !S.landed && !found) {
+      body.replaceChildren(busyNote("Finding the staves…", "busynote small"));
+      try { found = staves[S.n] = await getJSON(`${P}/lyric-staves/${S.n}`); }
+      catch { found = staves[S.n] = { rows: [], printed: null }; }
+      if (ticket !== drawn) return;
+    }
+    // Under a staff only when every box has its staff in the picture: a box never
+    // lands under the wrong one.
+    const matched = !!(found && !S.landed && found.printed && found.rows?.length
+      && found.printed.length === found.rows.length
+      && boxes.every((b) => found.printed.includes(b.printed)));
+    const focusKey = document.activeElement?.dataset?.box;
+    warnRows.length = 0;
+    body.replaceChildren(...(matched ? staffView(boxes, found)
+      : listView(boxes, s.crop != null && !S.landed
+        ? "The staves in this picture could not be matched to the parts, so the boxes are listed under it." : "")));
+    body.querySelectorAll("textarea").forEach(autoGrow);
+    if (focusKey) body.querySelector(`textarea[data-box="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+  }
+  function drawAll() { drawTabs(); drawBody(); showStatus(); }
+
+  const live = lyricsInPlace(panel, song, drawWarns);
+
+  // Import every verse changed on this system. True when it went in with no warning.
+  async function doImport() {
+    const unsent = pending();
+    if (!Object.keys(unsent).length) { S.status = "Nothing changed on this system."; showStatus(); return true; }
+    for (const b of [importBtn, prevBtn, nextBtn]) b.disabled = true;
+    live.busy = lyricImporting = true;
+    S.status = "Importing…"; showStatus();
+    let warned = 0;
+    let failed = false;
+    const n = S.n;
+    try {
+      for (const [verse, boxes] of Object.entries(unsent)) {
+        const fresh = await postJSON(`${P}/lyrics`, { verse: +verse, boxes: { [n]: boxes } });
+        Object.assign(song, fresh);
+        live.fp = song.cleaned_fingerprint;
+        warned += (fresh.imported || []).length;
+        for (const key of Object.keys(boxes)) delete S.typed[`${verse}|${n}|${key}`];
+      }
+      // The boxes show what landed: the words, and `_` for every note left without one.
+      grid = await getJSON(`${P}/lyric-grid`);
+      S.verses = Math.max(S.verses, grid.verses.length);
+      const crop = grid.systems[n]?.crop;
+      cleanedSystemsChanged(song.slug, song.cleaned_fingerprint, crop != null ? [crop] : "all");
+      S.status = warned ? `Imported with ${warned} warning${warned === 1 ? "" : "s"} — see the boxes.`
+        : "Imported.";
+    } catch (e) {
+      failed = true;
+      S.status = `Import failed: ${e.message}`;
+    }
+    live.busy = lyricImporting = false;
+    importBtn.disabled = false;
+    drawAll();
+    refresh(); // the stage rail; this panel keeps itself
+    return !failed && !warned;
+  }
+
+  // Moving imports what was typed first; a warning keeps you on the system to see it,
+  // and pressing again moves on.
+  async function go(step) {
+    const to = S.n + step;
+    if (to < 0 || to >= grid.systems.length) return;
+    if (!S.armed && Object.keys(pending()).length) {
+      const clean = await doImport();
+      if (!clean) { S.armed = true; S.status += " Press again to move on."; showStatus(); return; }
+    }
+    S.armed = false; S.status = "";
+    S.n = to; remember();
+    drawAll();
+    panel.scrollTop = 0;
+  }
+
+  holder.replaceChildren(
+    el("div", { className: "lyedhead" }, tabs, where),
+    el("p", { className: "hint lyedhint" },
+      "_ is a note with no new syllable: after a word ending in - it holds that word "
+      + "(e-lei- _ _ son). A word ending in - carries on into the next system. "
+      + "Empty a box and import to take its words out."),
+    body,
+    el("div", { className: "lyedbar" }, prevBtn, importBtn, statusEl, landedBtn, nextBtn),
+    makeLog());
+  drawAll();
 }
 
 function panelReview(panel, song, P, refresh, actions) {

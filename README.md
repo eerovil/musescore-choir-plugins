@@ -35,8 +35,9 @@ stage at any time; redoing one clears only what depended on it.
    it back. Recorded fixes (for example a slur the scan missed) are kept in
    `fixes.json` and applied again every time the song is cleaned.
 5. **Lyrics** — either paste lyrics from your own AI chat (copy the prompt, give it
-   the PDF, paste the answer back; no API key needed) or type them system by
-   system. The app shows where the words and the notes do not match up.
+   the PDF, paste the answer back; no API key needed) or type them one printed
+   system at a time, each staff of the page with its parts' boxes under it, verse
+   by verse. The app shows where the words and the notes do not match up.
 6. **Review** — one place that says whether the score is ready: health, lyrics,
    whether MuseScore 3 will open the file. Approve it to move on.
 7. **Record** — render the videos. Preview the scrolling picture in the browser
