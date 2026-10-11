@@ -1661,7 +1661,8 @@ def _publish_parts(song: state.Song, cleaned: Optional[str]) -> Dict:
         return {"names": current, "saved": False, "stale": False}
     if len(saved) != len(current):
         return {"names": current, "saved": True, "stale": True,
-                "message": publish.part_count_message(len(current))}
+                "message": publish.part_count_message(len(current))
+                + " These are the score's own names; correct them and press Save settings."}
     return {"names": list(saved), "saved": True, "stale": False}
 
 
@@ -1796,6 +1797,12 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         raise HTTPException(400, "Clean the score before publishing")
     if song.data.get("review", {}).get("approved_against") != fingerprint:
         raise HTTPException(409, "Review and approve the current score before publishing")
+    # Names saved for another number of parts are not replaced by whatever a
+    # publish sends (#402): the owner checks them and saves first.
+    parts = _publish_parts(song, song.cleaned_path())
+    if parts["stale"]:
+        raise HTTPException(409, publish.part_count_message(len(parts["names"]))
+                            + " Save the part names first.")
     settings = _publish_settings(song, body.get("settings") or {})
     if _publish_busy(song) or not job_state.start_if_idle(
             song.dir, "publish", ("scan", "clean", "check", "publish"), fingerprint):

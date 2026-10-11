@@ -284,3 +284,26 @@ def test_a_publish_is_handed_the_part_names(client, song, monkeypatch, tmp_path)
     _cf, seen, _data = _publish(client, song, monkeypatch, tmp_path, {
         "choir": "naiskuoro", "settings": {"part_names": ["A2"]}})
     assert seen["part_names"] == ["A2"]
+
+
+def test_a_publish_with_stale_part_names_is_refused_until_they_are_saved(
+        client, song, monkeypatch, tmp_path):
+    """Review of #402: the panel offers the score's own names when the saved ones
+    no longer fit, and a Publish must not take those as checked."""
+    data = state.load(song.slug)
+    data.data["publish"] = {"part_names": ["S1", "A1"]}
+    data.save()
+    for key, value in (("CLOUDFLARE_ACCOUNT_ID", "acct"), ("CLOUDFLARE_API_TOKEN", "tok"),
+                       ("STEMMANAUHAT_D1_DATABASE_ID", "db1")):
+        monkeypatch.setenv(key, value)
+    reply = client.post(f"/api/songs/{song.slug}/publish",
+                        json={"choir": "naiskuoro", "settings": {"part_names": ["T1"]}})
+    assert reply.status_code == 409
+    assert "check the part names" in reply.json()["detail"]
+    assert _saved(song)["part_names"] == ["S1", "A1"]
+    assert "publish" not in client.get(f"/api/songs/{song.slug}").json()["jobs"]
+
+    assert client.post(f"/api/songs/{song.slug}/publish-settings",
+                       json={"part_names": ["A2"]}).status_code == 200
+    _cf, seen, _data = _publish(client, song, monkeypatch, tmp_path, {"choir": "naiskuoro"})
+    assert seen["part_names"] == ["A2"]

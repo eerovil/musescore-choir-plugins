@@ -2931,7 +2931,7 @@ function panelPublish(panel, song, P, refresh, actions) {
     ...(partNames.length ? [
       el("label", {}, "Part names"),
       el("div", { className: "row part-names", "data-part-names": "" }, ...partNames),
-      el("span", { className: publishParts.stale ? "hint err" : "hint" },
+      el("span", { className: `part-names-note hint${publishParts.stale ? " err" : ""}` },
         publishParts.stale ? publishParts.message : "as the singers see them, top staff first"),
     ] : []),
     el("div", { className: "row" }, saveBtn, saveNote),

@@ -227,6 +227,42 @@ def test_the_part_names_typed_on_the_panel_are_published(live, page, size, monke
     assert errors == []
 
 
+def test_stale_part_names_stop_publish_until_saved(live, page, monkeypatch, tmp_path):
+    """Review of #402: after a re-clean changed the number of parts, Publish is
+    refused until the names on screen are saved."""
+    base, slug, cf = live
+    handed = []
+
+    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None,
+                    log=None):
+        handed.append(part_names)
+        return _bundle(tmp_path, parts=tuple(part_names))
+    monkeypatch.setattr(publish, "build_bundle", fake_bundle)
+    song = state.load(slug)
+    song.data["publish"] = {"part_names": ["S1", "S2", "A1"]}
+    song.save()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/#/song/{slug}")
+
+    expect(page.locator("[data-part-names] input")).to_have_count(2)
+    expect(page.locator(".part-names-note")).to_contain_text("The score now has 2 parts")
+    page.locator(".publish-section button.publish-btn").click()
+    status = page.locator(".publish-section .publish-status")
+    expect(status).to_contain_text("Save the part names first")
+    page.locator("[data-part-names]").scroll_into_view_if_needed()
+    _shot(page, "publish-part-names-stale.png")
+    assert handed == [] and cf.listed("jm") == []
+
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+    assert handed == [["S1", "A1"]]
+    assert errors == []
+
+
 def test_a_song_published_before_one_record_per_choir_still_shows_as_published(live, page):
     """A song published before #384 kept one record under `site`. The library's badge
     and rail, and the song's own stage rail, still count it as published."""
