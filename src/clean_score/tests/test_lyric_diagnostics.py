@@ -71,7 +71,7 @@ def test_mismatch_survives_serialization_for_the_browser():
     d = place_lyrics(root, _line("yk-si"), replace=True).mismatches[0].to_dict()
     assert d == {
         "kind": TOO_FEW, "message": d["message"], "measure_start": 1, "measure_end": 1,
-        "staff_ids": [1], "syllables": 2, "slots": 8,
+        "staff_ids": [1], "syllables": 2, "slots": 8, "verse": 1, "voice": 1,
     }
 
 

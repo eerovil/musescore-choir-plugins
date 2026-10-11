@@ -180,27 +180,26 @@ def test_per_system_answers_clean_the_score_and_lyrics_land_on_their_cell(live_a
     # --- lyrics: type one short line into the first system's top part ---
     page.locator(".stagebar .step", has_text="Lyrics").click()
     page.get_by_role("button", name="Type by system").click()
-    cell = page.locator('textarea[data-sys="0"][data-part="T1"]')
+    cell = page.locator('textarea[data-box="1"]')
     expect(cell).to_be_visible()
-    expect(cell.locator("xpath=preceding-sibling::label")).to_contain_text("lyric slots")
+    expect(cell.locator("xpath=preceding-sibling::label")).to_contain_text("slots")
     cell.fill("yk")  # one syllable for a whole system: too few
-    page.get_by_role("button", name="Import lyrics").click()
+    page.get_by_role("button", name="Import", exact=True).click()
 
-    # The mismatch is attached to the cell that caused it, and says what is wrong.
-    warning = page.locator(".lyrow", has=page.locator('textarea[data-part="T1"]')).locator(".lyerr")
+    # The mismatch is attached to the box that caused it, and says what is wrong.
+    warning = page.locator(".lyrow", has=page.locator('textarea[data-box="1"]')).locator(".lyerr")
     expect(warning.first).to_be_visible(timeout=30_000)
     expect(warning.first).to_contain_text("too few tokens")
     expect(warning.first).to_contain_text("m1–")
     # ...and only there: the parts nobody typed into carry no warning.
-    other = page.locator(".lyrow", has=page.locator('textarea[data-part="T2"]')).first
+    other = page.locator(".lyrow", has=page.locator('textarea[data-box="2"]')).first
     expect(other.locator(".lyerr")).to_have_count(0)
 
-    # What was typed survives the re-render, and every remaining lyric slot is
-    # represented explicitly as a bare-note marker.
-    rendered_cell = page.locator('textarea[data-sys="0"][data-part="T1"]')
-    label = rendered_cell.locator("xpath=preceding-sibling::label").inner_text()
-    capacity = int(re.search(r"(\d+) lyric slots", label).group(1))
-    assert rendered_cell.input_value().split() == ["yk"] + ["_"] * (capacity - 1)
+    # The box shows what landed, and every remaining lyric slot is represented
+    # explicitly as a bare-note marker.
+    label = cell.locator("xpath=preceding-sibling::label").inner_text()
+    capacity = int(re.search(r"(\d+) slots?", label).group(1))
+    assert cell.input_value().split() == ["yk"] + ["_"] * (capacity - 1)
     if evidence := os.getenv("ISSUE_17_EVIDENCE_DIR"):
         page.locator(".stagebar .step", has_text="Review").click()
         expect(page.locator(".verify")).to_contain_text("Health: Current score checked")
@@ -424,47 +423,21 @@ def test_removing_a_system_stops_the_measure_labelling(page, live_app, bounds_so
     assert all(b["measure_start"] == 0 for b in saved)
 
 
-def test_the_lyrics_grid_shows_the_printed_system_it_is_asking_about(page, live_app, bounds_song):
-    """Typing lyrics against a whole page is unreadable; each block gets its crop."""
+def test_the_lyric_editor_shows_the_printed_system_it_is_asking_about(page, live_app, bounds_song):
+    """One printed system per screen, the crop of that system above its boxes (#397)."""
     slug, _, _ = bounds_song
     page.goto(f"{live_app}/#/song/{slug}")
     page.locator(".step", has_text="Lyrics").first.click()
     page.get_by_role("button", name="Type by system").click()
 
-    first = page.locator(".sysblock").first
-    expect(page.locator(".syspeek")).to_have_count(0)      # off by default now
-    page.get_by_role("button", name="Show the score").click()
-    expect(first.locator(".syspeek img")).to_be_visible(timeout=60_000)
-    page.wait_for_function(
-        "() => { const i = document.querySelector('.syspeek img');"
-        "        return i && i.complete && i.naturalWidth > 100; }", timeout=60_000)
+    expect(page.locator(".lyedwhere")).to_have_text("System 1 of 15 · bars 1–3", timeout=30_000)
+    expect(page.locator(".lyedslice img").first).to_be_visible(timeout=60_000)
+    assert "/system/1?" in page.locator(".lyedslice img").first.get_attribute("src")
 
-    # The crop shown is the one whose measures the block is asking about.
-    heading = first.locator("h4").inner_text()
-    src = first.locator(".syspeek img").get_attribute("src")
-    assert "measures 1–3" in heading
-    assert "/system/1?" in src, f"expected system 1 for {heading}, got {src}"
-
-    page.get_by_role("button", name="Hide the score").click()
-    expect(page.locator(".syspeek")).to_have_count(0)
-
-
-def test_focusing_a_lyric_cell_shows_that_system_in_the_viewer(page, live_app, bounds_song):
-    """The sidebar is too narrow to read a system in; the viewer is the space."""
-    slug, _, _ = bounds_song
-    page.goto(f"{live_app}/#/song/{slug}")
-    page.locator(".step", has_text="Lyrics").first.click()
-    page.get_by_role("button", name="Type by system").click()
-    expect(page.locator(".sysblock").first).to_be_visible(timeout=30_000)
-
-    blocks = page.locator(".sysblock")
-    blocks.nth(7).locator("textarea").first.focus()        # system 8, measures 27-30
-    expect(page.locator(".onesystem")).to_be_visible(timeout=30_000)
-    expect(page.locator(".onesystem .muted")).to_have_text("Printed system 8")
-    assert "/system/8?" in page.locator(".onesystem img").get_attribute("src")
-
-    blocks.nth(0).locator("textarea").first.focus()        # and it follows the cursor
-    expect(page.locator(".onesystem .muted")).to_have_text("Printed system 1")
+    page.get_by_role("button", name="Next →").click()
+    expect(page.locator(".lyedwhere")).to_contain_text("System 2 of 15")
+    expect(page.locator(".lyedslice img").first).to_be_visible(timeout=60_000)
+    assert "/system/2?" in page.locator(".lyedslice img").first.get_attribute("src")
 
 
 def test_clicking_empty_page_adds_a_system(page, live_app, bounds_song):
@@ -504,9 +477,12 @@ def test_the_lyrics_view_is_offered_only_once_there_are_lyrics(page, live_app, b
     # Import lyrics through the app, then it appears.
     page.locator(".step", has_text="Lyrics").first.click()
     page.get_by_role("button", name="Type by system").click()
-    expect(page.locator(".sysblock").first).to_be_visible(timeout=30_000)
-    page.locator(".sysblock").first.locator("textarea").first.fill("Vir-ta ven-het-tä")
-    page.get_by_role("button", name="Import lyrics").click()
+    expect(page.locator(".lyedbody textarea").first).to_be_visible(timeout=30_000)
+    page.locator(".lyedbody textarea").first.fill("Vir-ta ven-het-tä")
+    page.get_by_role("button", name="Import", exact=True).click()
+    expect(page.locator(".lyedstatus")).to_contain_text("Imported", timeout=60_000)
+    # The editor has the screen to itself; the viewer is back on the next stage.
+    page.locator(".step", has_text="Review").first.click()
     expect(page.get_by_role("button", name="Cleaned MSCX with lyrics")).to_be_visible(
         timeout=60_000)
 
@@ -543,42 +519,47 @@ def test_compare_says_so_when_it_cannot_pair(page, live_app, bounds_song):
     assert page.locator(".cmprow").count() == 0
 
 
-def test_a_long_panel_scrolls_itself_and_leaves_the_viewer_in_place(page, live_app, bounds_song):
-    """Typing lyrics for 15 systems makes the panel far taller than the window.
+def test_a_long_panel_scrolls_itself_and_keeps_its_buttons_in_place(page, live_app, bounds_song):
+    """One printed system with its boxes is taller than the window.
 
-    It has to scroll inside itself and the viewer has to stay put. The layout used
-    to size the workspace as `100vh - 49px`, a guess at the header's height: one
-    pixel taller -- a longer song name, a different font -- and the workspace
-    overflowed the window, the page scrolled, and the viewer went with it. The
-    header is made taller here because that is the condition that triggers it.
+    It has to scroll inside itself, and the bar with Previous and Next has to stay
+    on screen. The layout used to size the workspace as `100vh - 49px`, a guess at
+    the header's height: one pixel taller -- a longer song name, a different font --
+    and the workspace overflowed the window, the page scrolled, and what should have
+    stayed put went with it. The header is made taller here because that is the
+    condition that triggers it.
     """
     slug, _, _ = bounds_song
+    page.set_viewport_size({"width": 1280, "height": 720})
     page.goto(f"{live_app}/#/song/{slug}")
     page.locator(".step", has_text="Lyrics").first.click()
     page.get_by_role("button", name="Type by system").click()
-    expect(page.locator(".sysblock").first).to_be_visible(timeout=30_000)
-    assert page.locator(".sysblock").count() > 10          # premise: a long panel
+    expect(page.locator(".lyedslice")).to_have_count(2, timeout=30_000)
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('.lyedslice img')]"
+        "  .every(i => i.complete && i.naturalWidth > 100)", timeout=60_000)
 
     page.evaluate("document.querySelector('header').style.padding = '40px 18px'")
     page.wait_for_timeout(200)
 
     m = page.evaluate("""() => {
         const p = document.querySelector('.panel');
-        const v = document.querySelector('.vbody').getBoundingClientRect();
+        const bar = document.querySelector('.lyedbar').getBoundingClientRect();
         return { page_scrolls: document.documentElement.scrollHeight > window.innerHeight + 2,
                  panel_scrolls: p.scrollHeight > p.clientHeight + 2,
-                 viewer_bottom: v.bottom, win: window.innerHeight };
+                 bar_bottom: bar.bottom, win: window.innerHeight };
     }""")
     assert not m["page_scrolls"], "the window scrolls instead of the panel"
     assert m["panel_scrolls"], "the panel is not the thing that scrolls"
-    assert m["viewer_bottom"] <= m["win"] + 2, (
-        f"the viewer runs past the window ({m['viewer_bottom']} > {m['win']})")
+    assert m["bar_bottom"] <= m["win"] + 2, (
+        f"the buttons run past the window ({m['bar_bottom']} > {m['win']})")
 
-    # Scrolling to the last system must not move the viewer.
-    before = page.locator(".vbody").first.bounding_box()
-    page.locator(".sysblock").last.locator("textarea").first.scroll_into_view_if_needed()
-    after = page.locator(".vbody").first.bounding_box()
-    assert abs(after["y"] - before["y"]) < 2, "the viewer moved when the panel scrolled"
+    # Scrolling to the last box must not move the buttons.
+    before = page.locator(".lyedbar").bounding_box()
+    page.locator(".lyedbody textarea").last.scroll_into_view_if_needed()
+    after = page.locator(".lyedbar").bounding_box()
+    assert abs(after["y"] - before["y"]) < 2, "the buttons moved when the panel scrolled"
+    expect(page.get_by_role("button", name="Next →")).to_be_in_viewport()
 
 
 def test_creating_a_song_requires_saying_who_sings_it(page, live_app):

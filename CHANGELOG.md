@@ -10,6 +10,17 @@ developers are listed under *Behind the scenes*.
 - Publish no longer renders an MP3 per part: the site plays the score's MIDI, so a
   publish is now three quick MuseScore exports instead of 4–7 audio renders. Part
   names still reach the site. (stemmanauhat-cf#36)
+- Lyrics: **Type by system** shows one printed system at a time, on a computer and a
+  phone. Each staff of the page is followed by the boxes for its parts, and
+  ← Previous / Next → import first (a warning keeps you on the system). Verse tabs
+  type verse 2 and up, a part's second voice gets its own box where it has notes,
+  and emptying a box takes its words out. Only the boxes you changed are imported;
+  everything else keeps its words. **Show what landed** draws this system's bars as
+  they are now. Held words keep joined: `e-lei- _ _ son`. (#397)
+- Lyrics: **Paste from AI** reads every verse (`"verse": n`) and second voices
+  (`"voice": 2`), and changes only what the pasted lines name instead of replacing
+  all of verse 1. Where a staff has words on two voices, the first voice's words
+  move above the staff so they no longer print on top of each other. (#397)
 - Review and Fix: **Check again** compares the notes with the scan, asks MuseScore 3
   whether it opens the score, and checks health — on the cleaned score as it is now,
   without cleaning. A score fixed by hand no longer shows those checks as stale. It

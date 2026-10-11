@@ -10,9 +10,12 @@ Tokens are space-separated; hyphen merges syllables (e.g. il-man). Underscore _
 means lyric-eligible note with no lyric. The number in brackets is the syllable count
 for that voice in that measure (helps LLMs keep count when fixing text). Lyrics are ineligible for export when inside a spanner (slur/tie continuation) or in a verse other than 1;
 those positions get no token on export and verse 1 lyrics are cleared from them on import.
-Verse 1 only, voice 0. Rests get no token.
+The TXT format is verse 1 of the first voice. Rests get no token.
 
-JSON format (line-by-line): array of objects with "measure_start" (int) and part keys (e.g. S1, S2, A1, A2) whose values are lyric lines. Tokens are distributed across measures using the score. Use a .json path with import_file to import this format.
+JSON format (line-by-line): array of objects with "measure_start" (int) and part keys (e.g. S1, S2, A1, A2) whose values are lyric lines, or a "lyrics" array whose lines may name a "verse" and a "voice" (#397). Tokens are distributed across measures using the score. Use a .json path with import_file to import this format.
+
+An import changes only what it names: the parts, voices, verses and printed systems
+its lines cover. Every other word in the score stays (#392, #397).
 
 This module owns lyric placement end to end — format normalization, target routing,
 chord eligibility, syllable distribution, XML placement and the diagnostics that come
@@ -23,7 +26,9 @@ song app's manual editor. Its interface:
     place_lyrics(root, source, replace=, split=)   put lyrics in; returns LyricImport
     editor_grid(root) -> EditorGrid                what the manual editor renders
     slot_counts(root) -> {staff: {measure: n}}     notes that take a syllable
-    blocks_from_cells(grid, cells) -> [block]      that editor's cells as lyric JSON
+    blocks_from_boxes(grid, verse, boxes)          the by-system editor's changed boxes
+    printed_staves(root, start, end)               a system's printed staves
+    blocks_from_cells(grid, cells) -> [block]      the older editor's cells as lyric JSON
     export_file(...) / import_file(...)            the .txt/.json file adapters
 
 Mismatches (a line whose syllables do not fit its chords, a measure_start that could
@@ -65,6 +70,8 @@ class Mismatch:
     staff_ids: Tuple[int, ...] = ()
     syllables: int = 0
     slots: int = 0
+    verse: int = 1
+    voice: int = 1
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -75,7 +82,28 @@ class Mismatch:
             "staff_ids": list(self.staff_ids),
             "syllables": self.syllables,
             "slots": self.slots,
+            "verse": self.verse,
+            "voice": self.voice,
         }
+
+
+@dataclass(frozen=True)
+class Written:
+    """Bars an import rewrote the words of: one part, voice and verse (#397).
+
+    A caller keeping earlier warnings drops the ones these bars answer, since an
+    import now changes only what it names and the rest of the score keeps its words.
+    """
+
+    staff: int
+    voice: int
+    verse: int
+    start: int          # 1-based inclusive
+    end: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"staff": self.staff, "voice": self.voice, "verse": self.verse,
+                "start": self.start, "end": self.end}
 
 
 @dataclass(frozen=True)
@@ -84,6 +112,7 @@ class LyricImport:
 
     mismatches: List[Mismatch] = field(default_factory=list)
     filled_measure_starts: List[int] = field(default_factory=list)
+    written: List[Written] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -108,13 +137,45 @@ class EditorSystem:
 
 
 @dataclass(frozen=True)
+class EditorBox:
+    """One box of the editor: a part's voice in one printed system (#397).
+
+    `key` is the part's staff id for voice 1 and `id@2` for its second voice: a
+    name would not do, since two parts can share one. `text`
+    holds every verse's words, so changing the verse tab needs no new request.
+    `printed` is the printed staff the part sits on in this system (from the
+    clean's part-to-staff record), or None when the score does not say.
+    """
+
+    key: str
+    part: str
+    id: int
+    voice: int
+    slots: int
+    printed: Optional[int]
+    text: Dict[int, str] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"key": self.key, "part": self.part, "id": self.id, "voice": self.voice,
+                "slots": self.slots, "printed": self.printed,
+                "text": {str(v): t for v, t in self.text.items()}}
+
+
+@dataclass(frozen=True)
 class EditorGrid:
-    """The manual editor's projection: a text cell per (printed system, part)."""
+    """The manual editor's projection: a text cell per (printed system, part).
+
+    `cells` and `capacities` are verse 1 of each part's first voice, as before;
+    `boxes` is the whole of it, every voice that sings in a system with every
+    verse's words, and `verses` how many verses the score has.
+    """
 
     parts: List[EditorPart] = field(default_factory=list)
     systems: List[EditorSystem] = field(default_factory=list)
     cells: Dict[int, Dict[str, str]] = field(default_factory=dict)
     capacities: Dict[int, Dict[str, int]] = field(default_factory=dict)
+    verses: List[int] = field(default_factory=lambda: [1])
+    boxes: Dict[int, List[EditorBox]] = field(default_factory=dict)
 
     def text(self, system_index: int, part_name: str) -> str:
         return self.cells.get(system_index, {}).get(part_name, "")
@@ -127,51 +188,13 @@ class EditorGrid:
             "cells": {str(si): dict(cells) for si, cells in self.cells.items()},
             "capacities": {str(si): dict(counts)
                            for si, counts in self.capacities.items()},
+            "verses": list(self.verses),
+            "boxes": {str(si): [b.to_dict() for b in boxes]
+                      for si, boxes in self.boxes.items()},
         }
 
 # Default mapping from JSON part keys (e.g. S1, A2) to staff id. Overridable.
 _DEFAULT_PART_TO_STAFF: Dict[str, int] = {"S1": 1, "S2": 2, "A1": 3, "A2": 4}
-
-
-# Duration type to ticks (fraction of whole). Division from score multiplies this.
-_DURATION_MAP = {
-    "whole": 1,
-    "half": 1 / 2,
-    "quarter": 1 / 4,
-    "eighth": 1 / 8,
-    "16th": 1 / 16,
-    "32nd": 1 / 32,
-    "64th": 1 / 64,
-    "128th": 1 / 128,
-}
-
-
-def _get_division(score: etree._Element) -> int:
-    el = score.find(".//Division")
-    return int(el.text.strip()) if el is not None and el.text else 480
-
-
-def _resolve_duration_ticks(
-    duration_type: str, dots: str, division: int
-) -> int:
-    if "/" in duration_type:
-        try:
-            num, den = map(int, duration_type.split("/"))
-            return int(division * 4 * num / den)
-        except ValueError:
-            return 0
-    frac = _DURATION_MAP.get(duration_type.lower(), 0)
-    if frac == 0:
-        return 0
-    ticks = int(division * 4 * frac)
-    d = dots.strip() if dots else "0"
-    if d == "1":
-        ticks += ticks // 2
-    elif d == "2":
-        ticks += (ticks // 2) + (ticks // 4)
-    elif d == "3":
-        ticks += (ticks // 2) + (ticks // 4) + (ticks // 8)
-    return ticks
 
 
 def _is_slur_continuation(chord: etree._Element) -> bool:
@@ -273,6 +296,84 @@ def _has_verse1(score: etree._Element) -> bool:
     return any(_is_verse1(ly.find("no")) for ly in score.iter("Lyrics"))
 
 
+def _verse_of(lyrics: etree._Element) -> int:
+    """A Lyrics element's verse, 1-based. MuseScore stores `<no>` from 0 and omits it for verse 1."""
+    no = (lyrics.findtext("no") or "").strip()
+    return int(no) + 1 if no.isdigit() else 1
+
+
+def _get_lyric(
+    chord: etree._Element, verse: int, verse2_fallback: bool = False
+) -> Optional[Tuple[str, str]]:
+    """(syllabic, text) of one verse on a chord, or None. See `_get_verse1_lyric`."""
+    if verse == 1:
+        return _get_verse1_lyric(chord, verse2_fallback)
+    for lyrics in chord.findall("Lyrics"):
+        if _verse_of(lyrics) == verse:
+            syllabic = (lyrics.findtext("syllabic") or "").strip() or "single"
+            return syllabic, (lyrics.findtext("text") or "").strip()
+    return None
+
+
+def _clear_lyrics(chord: etree._Element, verse: int) -> None:
+    """Remove one verse's Lyrics from a chord; the other verses stay."""
+    for lyrics in list(chord.findall(".//Lyrics")):
+        if _verse_of(lyrics) == verse:
+            chord.remove(lyrics)
+
+
+def _verses_in(score: etree._Element) -> List[int]:
+    """1 .. the highest verse any word in the score is on."""
+    top = max((_verse_of(ly) for ly in score.iter("Lyrics")), default=1)
+    return list(range(1, top + 1))
+
+
+def _voice_track(measure: etree._Element, voice: int) -> Optional[etree._Element]:
+    """A measure's `<voice>` for a 1-based voice number, or None."""
+    voices = measure.findall("voice")
+    return voices[voice - 1] if len(voices) >= voice else None
+
+
+def _walk_voice(staff: etree._Element, voice: int = 1):
+    """Yield (1-based measure, chord, takes a syllable) for every chord of one voice.
+
+    Eligibility is *stateful along the staff* — a slur opened in one bar silences
+    notes in the next — so it is decided here once, for every reader and writer.
+    No chord is yielded for a Rest, and a slur or tie continuation, or a note in
+    the middle of one, takes no syllable. A second voice follows the same rules on
+    its own notes (#397). Reads only the spanners, so placing words cannot change it.
+    """
+    slur_active = False
+    tie_active = False
+    for mi, measure in enumerate(staff.findall("Measure"), start=1):
+        track = _voice_track(measure, voice)
+        if track is None:
+            continue
+        for el in track:
+            if el.tag != "Chord":
+                continue
+            if _is_continuation_no_lyric(el):
+                slur_active, tie_active = _after_continuation(el, slur_active, tie_active)
+                yield mi, el, False
+                continue
+            if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
+                yield mi, el, False
+                continue
+            if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
+                yield mi, el, False
+                continue
+            yield mi, el, True
+            if _has_slur_start(el):
+                slur_active = True
+            if _has_tie_start(el):
+                tie_active = True
+
+
+def _music_staves(score: etree._Element) -> List[etree._Element]:
+    """The Staff elements that hold measures (not the Part-level stubs)."""
+    return [s for s in score.findall(".//Staff") if s.find("Measure") is not None]
+
+
 def _token_from_lyric(syllabic: str, text: str) -> str:
     """One token string; may end with '-' for begin/middle. Ineligibility (spanner, verse != 1) is handled by caller."""
     t = (text or "").strip()
@@ -326,61 +427,35 @@ def _tokenize_line(line: str) -> List[str]:
     return tokens
 
 
-def _eligibility_per_measure(score: etree._Element) -> Dict[int, Dict[int, List[bool]]]:
+def _eligibility_per_measure(
+    score: etree._Element, voice: int = 1
+) -> Dict[int, Dict[int, List[bool]]]:
     """
-    Return by_staff[staff_id][measure_1based] = one flag per voice-0 chord, in order:
-    does that chord take a syllable?
-
-    Eligibility is *stateful along the staff* — a slur opened in one bar silences notes
-    in the next — so it is worked out once here and both the per-measure counts and the
-    per-note flags are read off the same pass. Same rules as the TXT export: no chord
-    for a Rest, and no token for a slur or tie continuation or a note in the middle of
-    one. Only Staff elements that contain Measure children (skips Part-level stubs).
+    Return by_staff[staff_id][measure_1based] = one flag per chord of `voice`, in
+    order: does that chord take a syllable? Read off `_walk_voice`, so the per-measure
+    counts and the per-note flags cannot disagree. A measure with the voice present
+    but no chords in it reads as an empty list.
     """
     out: Dict[int, Dict[int, List[bool]]] = {}
-    staffs = score.findall(".//Staff")
-    staffs = [s for s in staffs if s.find(".//Measure") is not None]
-    for staff in staffs:
+    for staff in _music_staves(score):
         staff_id = int(staff.get("id", "0"))
-        measure_index = -1
-        slur_active = False
-        tie_active = False
-        for measure in staff.findall(".//Measure"):
-            measure_index += 1
-            voices = measure.findall("voice")
-            if not voices:
-                continue
-            voice = voices[0]
-            flags: List[bool] = []
-            for el in voice:
-                if el.tag == "Chord":
-                    if _is_continuation_no_lyric(el):
-                        slur_active, tie_active = _after_continuation(el, slur_active, tie_active)
-                        flags.append(False)
-                        continue
-                    if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
-                        flags.append(False)
-                        continue
-                    if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
-                        flags.append(False)
-                        continue
-                    flags.append(True)
-                    if _has_slur_start(el):
-                        slur_active = True
-                    if _has_tie_start(el):
-                        tie_active = True
-                elif el.tag in ("Rest", "location"):
-                    continue
-            out.setdefault(staff_id, {})[measure_index + 1] = flags
+        flags = out.setdefault(staff_id, {})
+        for mi, measure in enumerate(staff.findall("Measure"), start=1):
+            if _voice_track(measure, voice) is not None:
+                flags[mi] = []
+        for mi, _chord, eligible in _walk_voice(staff, voice):
+            flags.setdefault(mi, []).append(eligible)
     return out
 
 
-def _get_chord_counts_per_measure(score: etree._Element) -> Dict[int, Dict[int, int]]:
+def _get_chord_counts_per_measure(
+    score: etree._Element, voice: int = 1
+) -> Dict[int, Dict[int, int]]:
     """
-    Return by_staff[staff_id][measure_1based] = number of lyric-eligible chords (voice 0).
+    Return by_staff[staff_id][measure_1based] = number of lyric-eligible chords of `voice`.
     """
     return {staff_id: {measure: sum(flags) for measure, flags in by_measure.items()}
-            for staff_id, by_measure in _eligibility_per_measure(score).items()}
+            for staff_id, by_measure in _eligibility_per_measure(score, voice).items()}
 
 
 def _read_lyrics_staff_map(score_root: etree._Element) -> Dict[int, List[int]]:
@@ -540,15 +615,45 @@ def _derive_target_staves(
     return list(outs)
 
 
-def _convert_lyrics_format_to_legacy(
-    data: List[Dict[str, Any]],
-    staff_map: Optional[Dict[int, List[int]]] = None,
-    system_map: Optional[List[Dict[str, Any]]] = None,
-    name_map: Optional[Dict[str, int]] = None,
-) -> List[Dict[str, Any]]:
+@dataclass(frozen=True)
+class _Line:
+    """One lyric line: one part's words on one voice and verse, from a bar on.
+
+    `end` is the last bar of the system the line was written for, when the source
+    says (the editor always does). A line with no syllables in it clears that
+    system: emptying a box is how a person takes words out (#393).
     """
-    Convert new JSON format (measure_start, lyrics[{text, part(s), staff_number, position}])
-    to legacy format (measure_start, "1": "...", "2": "..."), keyed by output staff id.
+
+    start: int
+    end: Optional[int]
+    staff: int
+    voice: int
+    verse: int
+    text: str
+
+    @property
+    def key(self) -> Tuple[int, int, int]:
+        return (self.staff, self.voice, self.verse)
+
+
+def _int_or(value: Any, default: Any) -> Any:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _block_lines(
+    block: Dict[str, Any],
+    measure_start: int,
+    measure_end: Optional[int],
+    staff_map: Dict[int, List[int]],
+    system_map: Optional[List[Dict[str, Any]]],
+    name_map: Dict[str, int],
+) -> List[_Line]:
+    """The lines one `{measure_start, lyrics: [...]}` block names.
 
     Target output staves are resolved in priority order:
       1. explicit "part"/"parts" — a list (or scalar) of output staff ids and/or part
@@ -558,151 +663,201 @@ def _convert_lyrics_format_to_legacy(
          (clean_score --per-system) the printed numbering shifts per system, so each
          block uses the map for the system covering its measure_start; else the single
          `staff_map` ('lyricsStaffMap') is used for all blocks.
-    Lyrics for verses other than 1 are ignored. If multiple lyrics in a block resolve to
-    the same output staff, texts are space-joined.
+    Each lyric may say its `verse` and `voice` (both default 1, #397). Lyrics of one
+    block that land on the same part, voice and verse are space-joined.
     """
-    name_map = name_map or {}
-    if not data or not isinstance(data[0], dict):
-        return data
-    first = data[0]
-    if "lyrics" not in first or not isinstance(first.get("lyrics"), list):
-        return data  # already legacy
-    staff_map = staff_map or {}
-    result: List[Dict[str, Any]] = []
-    for block in data:
-        measure_start = block.get("measure_start")
-        if measure_start is None:
+    block_map = (
+        _map_for_measure(system_map, measure_start)
+        if system_map is not None
+        else staff_map
+    )
+    block_lyrics = [ly for ly in (block.get("lyrics") or []) if isinstance(ly, dict)]
+    # Positions used per printed staff and verse in THIS block (decides divisi vs
+    # unison locally; a second verse's line is not the other singer's).
+    positions: Dict[Tuple[int, int], set] = {}
+    for lyric in block_lyrics:
+        sn = lyric.get("staff_number")
+        if isinstance(sn, int):
+            positions.setdefault((sn, _int_or(lyric.get("verse"), 1)), set()).add(
+                lyric.get("position"))
+    texts: Dict[Tuple[int, int, int], List[str]] = {}
+    for lyric in block_lyrics:
+        verse = _int_or(lyric.get("verse"), 1)
+        voice = _int_or(lyric.get("voice"), 1)
+        if verse < 1 or voice < 1:
             continue
-        block_map = (
-            _map_for_measure(system_map, measure_start)
-            if system_map is not None
-            else staff_map
-        )
-        block_lyrics = [ly for ly in (block.get("lyrics") or []) if isinstance(ly, dict)]
-        # Positions used per printed staff in THIS block (decides divisi vs unison locally).
-        positions_by_staff: Dict[int, set] = {}
-        for lyric in block_lyrics:
+        text = lyric.get("text")
+        text = text.strip() if isinstance(text, str) else ""
+        parts = lyric.get("parts")
+        if parts is None and lyric.get("part") is not None:
+            parts = lyric.get("part")
+        if not isinstance(parts, list):
+            parts = [parts] if parts is not None else []
+        if parts:
+            targets = _resolve_targets(parts, name_map)
+        else:
             sn = lyric.get("staff_number")
-            if isinstance(sn, int):
-                positions_by_staff.setdefault(sn, set()).add(lyric.get("position"))
-        part_texts: Dict[int, List[str]] = {}
-        for lyric in block_lyrics:
-            verse = lyric.get("verse")
-            if verse not in (None, 1, "1"):
-                continue  # practice track: verse 1 only
-            text = (lyric.get("text") or "").strip()
-            parts = lyric.get("parts")
-            if parts is None and lyric.get("part") is not None:
-                parts = lyric.get("part")
-            if not isinstance(parts, list):
-                parts = [parts] if parts is not None else []
-            if parts:
-                targets = _resolve_targets(parts, name_map)
-            else:
-                targets = _derive_target_staves(
-                    lyric.get("staff_number"),
-                    lyric.get("position"),
-                    block_map,
-                    positions_by_staff.get(lyric.get("staff_number"), set()),
-                )
-            for part_num in targets:
-                part_texts.setdefault(part_num, []).append(text)
-        for base, followers in _follow_for_measure(system_map, measure_start).items():
+            targets = _derive_target_staves(
+                sn, lyric.get("position"), block_map,
+                positions.get((sn, verse), set()) if isinstance(sn, int) else set(),
+            )
+        for staff in targets:
+            texts.setdefault((staff, voice, verse), []).append(text)
+    for base, followers in _follow_for_measure(system_map, measure_start).items():
+        for (staff, voice, verse), words in list(texts.items()):
+            if staff != base:
+                continue
             for child in followers:
-                if base in part_texts and child not in part_texts:
-                    part_texts[child] = list(part_texts[base])
-        legacy: Dict[str, Any] = {"measure_start": measure_start}
-        for part_num in sorted(part_texts.keys()):
-            legacy[str(part_num)] = " ".join(part_texts[part_num])
-        result.append(legacy)
-    return result
+                texts.setdefault((child, voice, verse), list(words))
+    return [_Line(measure_start, measure_end, staff, voice, verse,
+                  " ".join(t for t in words if t))
+            for (staff, voice, verse), words in sorted(texts.items())]
 
 
-def _parse_json_txt(
-    json_str: str,
+def _lines_from_blocks(
+    data: List[Any],
     staff_map: Optional[Dict[int, List[int]]] = None,
     system_map: Optional[List[Dict[str, Any]]] = None,
     name_map: Optional[Dict[str, int]] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Parse JSON format: array of objects with 'measure_start' (int) and part keys (e.g. S1, S2, A1, A2),
-    or new format with 'measure_start' and 'lyrics' array (items with 'text', 'part'/'parts',
-    'staff_number', 'position'). staff_map maps printed staff -> output staves; system_map
-    (per-system mode) overrides it per measure range; name_map maps part names -> staff ids.
-    Returns list of legacy {"measure_start": N, "1": "text", ...} keyed by output staff id.
-    """
-    data = json.loads(json_str)
-    if not isinstance(data, list) or len(data) == 0:
-        return []
-    first = data[0]
-    if not isinstance(first, dict) or "measure_start" not in first:
-        return []
-    return _convert_lyrics_format_to_legacy(
-        data, staff_map=staff_map, system_map=system_map, name_map=name_map
-    )
-
-
-def _json_lines_to_by_measure(
-    json_data: List[Dict[str, Any]],
-    chord_counts: Dict[int, Dict[int, int]],
     part_to_staff: Optional[Dict[str, int]] = None,
-) -> Tuple[Dict[int, Dict[int, List[str]]], List[Mismatch]]:
-    """
-    Convert line-by-line JSON (measure_start + part text per line) into by_measure[measure][staff_id] = tokens.
-    Part keys can be "1", "2" (staff id) or names mapped via part_to_staff. Expands each line to syllables,
-    distributes by chord count, then converts each measure's chunk back to tokens.
+) -> List[_Line]:
+    """Every line a lyric JSON names, in either of its two shapes.
 
-    Returns the by-measure tokens plus one `Mismatch` per (range, kind) whose syllable
-    count did not match the chords available there.
+    The PDF-derived shape is `{measure_start, lyrics: [{text, parts | staff_number +
+    position, verse, voice}]}` (see `_block_lines`). The older one keys a block's
+    lines by part — `{"measure_start": 1, "S1": "...", "3": "..."}` — numeric keys
+    being staff ids and names going through `part_to_staff` (default S1->1, S2->2,
+    A1->3, A2->4); it is verse 1 of the first voice. A part a block does not name
+    has no line there at all, which is not the same as an empty one.
     """
-    if part_to_staff is None:
-        part_to_staff = _DEFAULT_PART_TO_STAFF
-    by_measure: Dict[int, Dict[int, List[str]]] = {}
-    token_mismatches: List[Tuple[int, int, int, str, int, int]] = []  # (m_start, m_end, staff_id, kind, n_syl, slots)
-    # Collect part keys from all rows so a part that appears only in later measures (e.g. "4") is not ignored
-    all_part_keys = {k for row in json_data for k in row.keys() if k != "measure_start"}
-    part_keys = sorted(
-        all_part_keys,
-        key=lambda k: (0, int(k)) if isinstance(k, str) and k.isdigit() else (1, str(k)),
-    )
-    for part_key in part_keys:
-        # Allow numeric part names: "1", "2" etc. map directly to staff id
-        if isinstance(part_key, str) and part_key.isdigit():
-            staff_id = int(part_key)
-        else:
-            staff_id = part_to_staff.get(part_key)
-        if staff_id is None:
+    staff_map = staff_map or {}
+    name_map = name_map or {}
+    part_to_staff = part_to_staff or _DEFAULT_PART_TO_STAFF
+    lines: List[_Line] = []
+    for block in data or []:
+        if not isinstance(block, dict) or block.get("measure_start") is None:
             continue
-        counts = chord_counts.get(staff_id, {})
-        lines: List[Tuple[int, List[str]]] = []
-        for row in json_data:
-            m_start = row.get("measure_start")
-            if m_start is None:
+        start = _int_or(block.get("measure_start"), None)
+        if start is None:
+            continue
+        end = _int_or(block.get("measure_end"), None)
+        if isinstance(block.get("lyrics"), list):
+            lines += _block_lines(block, start, end, staff_map, system_map, name_map)
+            continue
+        for key, text in block.items():
+            if key in ("measure_start", "measure_end"):
                 continue
-            text = row.get(part_key)
-            if text is None or not isinstance(text, str):
-                text = ""
-            text = (text or "").strip()
-            tokens = _tokenize_line(text)
-            lines.append((int(m_start), tokens))
-        lines.sort(key=lambda x: x[0])
+            staff = int(key) if isinstance(key, str) and key.isdigit() else part_to_staff.get(key)
+            if staff is None:
+                continue
+            lines.append(_Line(start, end, staff, 1, 1, text if isinstance(text, str) else ""))
+    return lines
+
+
+def _measure_count(score: etree._Element) -> int:
+    return max((len(s.findall("Measure")) for s in _music_staves(score)), default=0)
+
+
+def _bars_with_words(score: etree._Element, key: Tuple[int, int, int]) -> set:
+    """The bars where one part's voice already carries words of one verse."""
+    staff_id, voice, verse = key
+    fallback = verse == 1 and not _has_verse1(score)
+    for staff in _music_staves(score):
+        if int(staff.get("id", "0")) != staff_id:
+            continue
+        return {m for m, chord, eligible in _walk_voice(staff, voice)
+                if eligible and (_get_lyric(chord, verse, fallback) or ("", ""))[1]}
+    return set()
+
+
+def _lines_to_by_measure(
+    lines: List[_Line],
+    score: etree._Element,
+    systems: Optional[List[Tuple[int, int]]] = None,
+) -> Tuple[Dict[int, Dict[Tuple[int, int, int], List[str]]], List[Mismatch], List[Written]]:
+    """Cut each line into per-bar tokens, and say what did not fit.
+
+    Returns by_measure[measure][(staff, voice, verse)] = tokens — an empty list is a
+    bar whose words go — plus one `Mismatch` per range whose syllables did not match
+    the notes, and the bars each line rewrote.
+
+    A line fills its own system, and runs on into the next one only while that
+    system's box stays empty: it is not named by this import and has no words in the
+    score, or this import empties it (#393). So an import changes only what it names,
+    and a part's words in a later system stop a line that runs long. A line's system
+    is `systems` (the printed ones) when the caller knows them, else the block starts.
+    The syllables are counted against the systems the line reached.
+    """
+    last = _measure_count(score)
+    if systems:
+        cuts = sorted({a for a, _ in systems})
+    else:
+        cuts = sorted({ln.start for ln in lines} | {ln.end + 1 for ln in lines if ln.end})
+
+    def system_end(start: int) -> int:
+        later = [c for c in cuts if c > start]
+        return min(later[0] - 1, last) if later else last
+
+    counts_by_voice: Dict[int, Dict[int, Dict[int, int]]] = {}
+    by_measure: Dict[int, Dict[Tuple[int, int, int], List[str]]] = {}
+    found: List[Tuple[int, int, Tuple[int, int, int], str, int, int]] = []
+    written: List[Written] = []
+
+    by_key: Dict[Tuple[int, int, int], List[_Line]] = {}
+    for ln in lines:
+        by_key.setdefault(ln.key, []).append(ln)
+    for key, key_lines in sorted(by_key.items()):
+        staff, voice, verse = key
+        if voice not in counts_by_voice:
+            counts_by_voice[voice] = _get_chord_counts_per_measure(score, voice)
+        counts = counts_by_voice[voice].get(staff, {})
+        key_lines.sort(key=lambda ln: ln.start)
+        tokens_of = {id(ln): _tokenize_line(ln.text) for ln in key_lines}
+        has_words = lambda ln: any(t != "_" for t in tokens_of[id(ln)])
+        sent = {ln.start: ln for ln in key_lines}
+        words_now: Optional[set] = None
+
+        def own_end(ln: _Line) -> int:
+            return min(ln.end, last) if ln.end else system_end(ln.start)
+
+        def end_known(ln: _Line) -> bool:
+            # A line with no system known to it (a TXT-like JSON naming one bar to
+            # start from) rewrites only the bars its words reach.
+            return bool(ln.end) or any(c > ln.start for c in cuts)
+
+        # Emptied boxes first, so a line running long can still flow into one.
+        for ln in key_lines:
+            if has_words(ln):
+                continue
+            end = own_end(ln)
+            for m in range(ln.start, end + 1):
+                by_measure.setdefault(m, {})[key] = []
+            written.append(Written(staff, voice, verse, ln.start, end))
+
         prev_trailing_hyphen = False
-        for line_idx, (m_start, tokens) in enumerate(lines):
-            # Use the next line that has content for this part as the exclusive end measure
-            # (so we don't end the range at an empty row and cram too many syllables into one measure)
-            next_start = None
-            for j in range(line_idx + 1, len(lines)):
-                if lines[j][1]:  # non-empty tokens
-                    next_start = lines[j][0]
-                    break
-            if next_start is None:
-                next_start = max(counts.keys()) + 1 if counts else m_start + 1
+        for ln in key_lines:
+            if not has_words(ln):
+                continue
+            tokens = tokens_of[id(ln)]
             syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
             prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
-            m_end = next_start
+            # The systems this line may fill: its own, then each next one whose box is empty.
+            segments = [(ln.start, own_end(ln))]
+            while segments[-1][1] < last:
+                nxt = segments[-1][1] + 1
+                ahead = sent.get(nxt)
+                if ahead is not None and has_words(ahead):
+                    break
+                seg = (nxt, system_end(nxt))
+                if ahead is None:
+                    if words_now is None:
+                        words_now = _bars_with_words(score, key)
+                    if any(seg[0] <= m <= seg[1] for m in words_now):
+                        break
+                segments.append(seg)
             syl_offset = 0
             last_m = None
-            for m in range(m_start, m_end):
+            for m in range(ln.start, segments[-1][1] + 1):
                 if syl_offset >= len(syllables):
                     break
                 n_slots = counts.get(m, 0)
@@ -710,134 +865,83 @@ def _json_lines_to_by_measure(
                     continue
                 chunk = syllables[syl_offset : syl_offset + n_slots]
                 syl_offset += len(chunk)
-                if chunk:
-                    by_measure.setdefault(m, {})[staff_id] = _syllables_to_tokens(chunk)
-                    last_m = m
+                by_measure.setdefault(m, {})[key] = _syllables_to_tokens(chunk)
+                last_m = m
             # Too many syllables: keep the excess instead of dropping it — append to the
             # last filled measure so import crams it onto that measure's last note (the
             # mismatch stays visible for the user to fix, rather than silently vanishing).
             if syl_offset < len(syllables) and last_m is not None:
-                by_measure[last_m][staff_id].extend(_syllables_to_tokens(syllables[syl_offset:]))
-                syl_offset = len(syllables)
-            # Record mismatch when syllable count doesn't match chord slots in this line's range
-            if tokens:
-                total_slots = sum(counts.get(m, 0) for m in range(m_start, m_end))
-                n_syllables = len(syllables)
-                if n_syllables > total_slots:
-                    token_mismatches.append((m_start, m_end, staff_id, TOO_MANY, n_syllables, total_slots))
-                elif n_syllables < total_slots:
-                    token_mismatches.append((m_start, m_end, staff_id, TOO_FEW, n_syllables, total_slots))
-    # One record per distinct (range, kind), with every staff it affects listed.
-    key_to_staffs: Dict[Tuple[int, int, str, int, int], List[int]] = {}
-    for m_start, m_end, staff_id, kind, n_syl, slots in token_mismatches:
-        key_to_staffs.setdefault((m_start, m_end, kind, n_syl, slots), []).append(staff_id)
+                by_measure[last_m][key].extend(_syllables_to_tokens(syllables[syl_offset:]))
+            reached = segments[0][1]
+            for a, b in segments:
+                if last_m is not None and last_m >= a:
+                    reached = b
+            cleared = reached if end_known(ln) else (last_m or ln.start)
+            for m in range(ln.start, cleared + 1):
+                by_measure.setdefault(m, {}).setdefault(key, [])
+            written.append(Written(staff, voice, verse, ln.start, cleared))
+            total_slots = sum(counts.get(m, 0) for m in range(ln.start, reached + 1))
+            n_syllables = len(syllables)
+            if n_syllables > total_slots:
+                found.append((ln.start, reached, key, TOO_MANY, n_syllables, total_slots))
+            elif n_syllables < total_slots:
+                found.append((ln.start, reached, key, TOO_FEW, n_syllables, total_slots))
+
+    # One record per distinct (range, kind, voice, verse), with every staff it affects.
+    key_to_staffs: Dict[Tuple[int, int, str, int, int, int, int], List[int]] = {}
+    for m_start, m_end, (staff, voice, verse), kind, n_syl, slots in found:
+        key_to_staffs.setdefault((m_start, m_end, kind, n_syl, slots, verse, voice), []).append(staff)
     mismatches: List[Mismatch] = []
-    for (m_start, m_end, kind, n_syl, slots), staff_ids in sorted(key_to_staffs.items()):
+    for (m_start, m_end, kind, n_syl, slots, verse, voice), staff_ids in sorted(key_to_staffs.items()):
         ids = tuple(sorted(set(staff_ids)))
-        staffs_str = ", ".join(str(s) for s in ids)
+        where = ", ".join(str(s) for s in ids)
+        where += f", verse {verse}" if verse > 1 else ""
+        where += f", voice {voice}" if voice > 1 else ""
         if kind == TOO_MANY:
             message = (
-                f"Measures {m_start}-{m_end - 1} (staffs {staffs_str}): too many tokens "
+                f"Measures {m_start}-{m_end} (staffs {where}): too many tokens "
                 f"({n_syl} syllables, {slots} slots); the extra words are kept on the last note and extra _ are dropped — fix the count."
             )
         else:
             message = (
-                f"Measures {m_start}-{m_end - 1} (staffs {staffs_str}): too few tokens "
+                f"Measures {m_start}-{m_end} (staffs {where}): too few tokens "
                 f"({n_syl} syllables, {slots} slots); some slots will be empty."
             )
         mismatches.append(Mismatch(
             kind=kind, message=message,
-            measure_start=m_start, measure_end=m_end - 1,
-            staff_ids=ids, syllables=n_syl, slots=slots,
+            measure_start=m_start, measure_end=m_end,
+            staff_ids=ids, syllables=n_syl, slots=slots, verse=verse, voice=voice,
         ))
-    return by_measure, mismatches
+    return by_measure, mismatches, written
 
 
-def _iter_voice0_chords(staff: etree._Element, division: int):
-    """Yield (measure_index, chord_el, is_rest, is_slur_continuation) for voice 0 only."""
-    staff_id = int(staff.get("id", "0"))
-    measure_index = -1
-    for measure in staff.findall(".//Measure"):
-        measure_index += 1
-        voices = measure.findall("voice")
-        if not voices:
-            continue
-        voice = voices[0]
-        time_pos = 0
-        for el in voice:
-            if el.tag == "Chord":
-                slur_cont = _is_continuation_no_lyric(el)
-                yield (measure_index, el, False, slur_cont)
-                dur_el = el.find(".//durationType")
-                dots_el = el.find(".//dots")
-                dur = _resolve_duration_ticks(
-                    dur_el.text if dur_el is not None and dur_el.text else "quarter",
-                    dots_el.text if dots_el is not None and dots_el.text else "0",
-                    division,
-                )
-                time_pos += dur
-            elif el.tag == "Rest":
-                yield (measure_index, el, True, False)
-                dur_el = el.find(".//durationType")
-                dots_el = el.find(".//dots")
-                dur = _resolve_duration_ticks(
-                    dur_el.text if dur_el is not None and dur_el.text else "quarter",
-                    dots_el.text if dots_el is not None and dots_el.text else "0",
-                    division,
-                )
-                time_pos += dur
-            elif el.tag == "location":
-                frac_el = el.find(".//fractions")
-                if frac_el is not None and frac_el.text:
-                    time_pos += _resolve_duration_ticks(frac_el.text, "0", division)
-
-
-def _lyrics_by_measure_staff(score_root: etree._Element) -> Dict[int, Dict[int, List[str]]]:
+def _lyrics_by_measure_staff(
+    score_root: etree._Element, voice: int = 1, verse: int = 1
+) -> Dict[int, Dict[int, List[str]]]:
     """Build by_measure_staff[measure_index][staff_id] = [tokens] from the score.
 
     Tokens are the TXT-format syllable tokens (begin/middle end with '-', '_' for an
-    eligible chord with no lyric). Voice 0, verse 1; slur/tie-continuation notes are
-    skipped. Shared by the TXT export and the manual-editor prefill.
+    eligible chord with no lyric). One voice and verse (voice 1, verse 1 by default);
+    slur/tie-continuation notes are skipped. Shared by the TXT export and the
+    manual-editor prefill.
     """
     _add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
     if score is None:
         return {}
-    staffs = score.findall(".//Staff") or score_root.findall(".//Staff")
-    verse2_fallback = not _has_verse1(score)
+    verse2_fallback = verse == 1 and not _has_verse1(score)
     by_measure_staff: Dict[int, Dict[int, List[str]]] = {}
-    for staff in staffs:
+    for staff in _music_staves(score):
         staff_id = int(staff.get("id", "0"))
-        measure_index = -1
-        slur_active = False
-        tie_active = False
-        for measure in staff.findall(".//Measure"):
-            measure_index += 1
-            voices = measure.findall("voice")
-            if not voices:
+        for mi, measure in enumerate(staff.findall("Measure")):
+            if _voice_track(measure, voice) is not None:
+                by_measure_staff.setdefault(mi, {})[staff_id] = []
+        for m, chord, eligible in _walk_voice(staff, voice):
+            if not eligible:
                 continue
-            voice = voices[0]
-            measure_tokens: List[str] = []
-            for el in voice:
-                if el.tag == "Chord":
-                    if _is_continuation_no_lyric(el):
-                        slur_active, tie_active = _after_continuation(el, slur_active, tie_active)
-                        continue
-                    if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
-                        continue  # middle of slur: ineligible, no token
-                    if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
-                        continue  # middle of tie: ineligible, no token
-                    lyric = _get_verse1_lyric(el, verse2_fallback)
-                    if lyric is not None:
-                        syllabic, text = lyric
-                        measure_tokens.append(_token_from_lyric(syllabic, text))
-                    else:
-                        measure_tokens.append("_")
-                    if _has_slur_start(el):
-                        slur_active = True
-                    if _has_tie_start(el):
-                        tie_active = True
-            by_measure_staff.setdefault(measure_index, {})[staff_id] = measure_tokens
+            lyric = _get_lyric(chord, verse, verse2_fallback)
+            token = _token_from_lyric(*lyric) if lyric is not None and lyric[1] else "_"
+            by_measure_staff.setdefault(m - 1, {}).setdefault(staff_id, []).append(token)
     return by_measure_staff
 
 
@@ -910,23 +1014,33 @@ def _parse_txt(txt: str) -> List[Dict[str, Any]]:
 
 def _clear_verse1_lyrics(chord: etree._Element) -> None:
     """Remove all verse 1 Lyrics from chord (verse 1 = omit <no>)."""
-    for lyrics in list(chord.findall(".//Lyrics")):
-        if _is_verse1(lyrics.find("no")):
-            chord.remove(lyrics)
+    _clear_lyrics(chord, 1)
 
 
-def _set_lyric(chord: etree._Element, syllabic: str, text: str, no: str = "1") -> None:
-    """Set or replace verse 1 lyric on chord. Verse 1 = omit <no>. Removes all existing verse 1 lyrics first."""
+def _set_lyric(chord: etree._Element, syllabic: str, text: str, verse: int = 1) -> None:
+    """Set one verse's lyric on a chord, replacing what that verse had there.
+
+    Verse 1 omits `<no>`; verse n writes `<no>n-1</no>`. Where the old word was
+    printed (`<placement>`) is kept.
+    """
+    placement = None
     for lyrics in list(chord.findall(".//Lyrics")):
-        if _is_verse1(lyrics.find("no")):
+        if _verse_of(lyrics) == verse:
+            placement = placement or lyrics.findtext("placement")
             chord.remove(lyrics)
     lyric_el = etree.Element("Lyrics")
-    s_el = etree.SubElement(lyric_el, "syllabic")
-    s_el.text = syllabic
-    t_el = etree.SubElement(lyric_el, "text")
-    t_el.text = text
-    # Verse 1: omit <no>. Do not add <no>1</no> (that would be verse 2).
-    chord.append(lyric_el)
+    if verse > 1:
+        etree.SubElement(lyric_el, "no").text = str(verse - 1)
+    etree.SubElement(lyric_el, "syllabic").text = syllabic
+    if placement:
+        etree.SubElement(lyric_el, "placement").text = placement
+    etree.SubElement(lyric_el, "text").text = text
+    # After the chord's other lyrics, before its notes: where MuseScore writes them.
+    anchor = chord.find("Note")
+    if anchor is not None:
+        anchor.addprevious(lyric_el)
+    else:
+        chord.append(lyric_el)
 
 
 def _tokens_to_syllables(
@@ -944,13 +1058,16 @@ def _tokens_to_syllables(
     Getting this wrong is not cosmetic: a syllable that continues a word but is written
     `end` (or worse, `single`) splits one word into two, so `lai-ne-hil-le` came back as
     `lai-ne-hil` plus a stray `le`.
+
+    A `_` (a note with no syllable) leaves that state alone: after `lei-` it is a note
+    the word is held over, so `e-lei- _ _ son` keeps `son` as the end of the word
+    (#393). It used to end the word, and Kyrie's 48 `son`s came back as words of their own.
     """
     out: List[Tuple[str, str]] = []
     continues_from_previous = first_syllabic_continuation
     for tok in tokens:
         if tok == "_":
             out.append(("_", ""))
-            continues_from_previous = False
             continue
         raw_trailing_hyphen = tok.strip().endswith("-")
         # strip("-") not rstrip: a leading hyphen is how a caller writes "this continues
@@ -970,11 +1087,14 @@ def _tokens_to_syllables(
 
 
 def _last_token_ends_with_hyphen(tokens: List[str]) -> bool:
-    """True if the last token (when not underscore) ends with a hyphen (syllabic begin/middle)."""
-    if not tokens:
-        return False
-    last = tokens[-1].strip()
-    return last != "_" and last.endswith("-")
+    """True if the last syllable ends with a hyphen (begin/middle): the word carries on.
+
+    Trailing `_` are notes the word is held over, so they are looked past.
+    """
+    for tok in reversed(tokens):
+        if tok.strip() != "_":
+            return tok.strip().endswith("-")
+    return False
 
 
 def _syllables_to_tokens(syllables: List[Tuple[str, str]]) -> List[str]:
@@ -998,34 +1118,6 @@ def _syllables_to_tokens(syllables: List[Tuple[str, str]]) -> List[str]:
     return tokens
 
 
-def _count_remaining_eligible_chords(
-    voice_children: List[etree._Element],
-    from_index: int,
-    slur_active: bool,
-    tie_active: bool,
-) -> int:
-    """Count how many chords in voice_children[from_index:] will receive a lyric (same rules as import loop)."""
-    count = 0
-    sa, ta = slur_active, tie_active
-    for i in range(from_index, len(voice_children)):
-        el = voice_children[i]
-        if el.tag != "Chord":
-            continue
-        if _is_continuation_no_lyric(el):
-            sa, ta = _after_continuation(el, sa, ta)
-            continue
-        if sa and not _has_slur_start(el) and not _is_slur_continuation(el):
-            continue
-        if ta and not _has_tie_start(el) and not _is_tie_continuation(el):
-            continue
-        count += 1
-        if _has_slur_start(el):
-            sa = True
-        if _has_tie_start(el):
-            ta = True
-    return count
-
-
 def _clear_all_verse1_lyrics(score_root: etree._Element) -> None:
     """Remove every verse 1 Lyrics element from the whole score (full-replace import)."""
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
@@ -1035,25 +1127,142 @@ def _clear_all_verse1_lyrics(score_root: etree._Element) -> None:
         _clear_verse1_lyrics(chord)
 
 
+def _place_on_voice(
+    staff: etree._Element, voice: int, verse: int, measures: Dict[int, List[str]]
+) -> None:
+    """Write one part's voice and verse: `measures` is {bar: tokens} for the bars to rewrite.
+
+    Every other bar keeps its words. A word a bar starts in the middle of is joined to
+    the last syllable before it — placed just now, or already in the score — so a
+    system imported on its own continues the word the system before it left open.
+    """
+    by_bar: Dict[int, List[Tuple[etree._Element, bool]]] = {}
+    for m, chord, eligible in _walk_voice(staff, voice):
+        by_bar.setdefault(m, []).append((chord, eligible))
+    open_word = False
+
+    def note_open(chords: List[etree._Element]) -> bool:
+        state = open_word
+        for chord in chords:
+            lyric = _get_lyric(chord, verse)
+            if lyric is not None and lyric[1]:
+                state = lyric[0] in ("begin", "middle")
+        return state
+
+    for m in sorted(by_bar):
+        chords = by_bar[m]
+        elig = [c for c, e in chords if e]
+        if m not in measures:
+            open_word = note_open(elig)
+            continue
+        syllables = _tokens_to_syllables(measures[m], first_syllabic_continuation=open_word)
+        for chord, eligible in chords:
+            if not eligible:
+                _clear_lyrics(chord, verse)
+        for i, chord in enumerate(elig):
+            if i >= len(syllables):
+                _clear_lyrics(chord, verse)
+                continue
+            if i == len(elig) - 1 and len(syllables) - i > 1:
+                # More syllables than notes: every earlier note took its own, and the
+                # overflow is kept on this last note so it stays visible (e.g. öt-tä.
+                # forced into one slot). Cramming as soon as the count went over put a
+                # whole bar on its first note (#307). A `_` says "no word here", so
+                # extra ones are dropped rather than printed.
+                chunk = syllables[i:]
+                kept = [chunk[0]] + [s for s in chunk[1:] if s[0] != "_"]
+                if kept[0][0] == "_" and len(kept) > 1:
+                    kept = kept[1:]
+                if len(kept) == 1:
+                    syllabic, text = kept[0]
+                    if syllabic == "_":
+                        _clear_lyrics(chord, verse)
+                    else:
+                        _set_lyric(chord, syllabic, text, verse)
+                else:
+                    merged_text = " ".join(_syllables_to_tokens(kept)).strip()
+                    if merged_text:
+                        _set_lyric(chord, "single", merged_text, verse)
+                    else:
+                        _clear_lyrics(chord, verse)
+                break
+            syllabic, text = syllables[i]
+            if syllabic == "_":
+                _clear_lyrics(chord, verse)
+            else:
+                _set_lyric(chord, syllabic, text, verse)
+        open_word = note_open(elig)
+
+
+def _place_two_voice_words(
+    score: etree._Element,
+    written: List[Written],
+    systems: Optional[List[Tuple[int, int]]] = None,
+) -> None:
+    """Where the words print on a staff singing words on two voices (#393).
+
+    MuseScore puts both voices' words on one line under the staff, so where both sing
+    at once they print on top of each other (Kevät's Soprano 2, bar 27). In a system
+    where a staff's second voice has words, its first voice's words go above the
+    staff; in the others they stay below. Only the systems an import wrote on change,
+    so a placement set by hand elsewhere is left alone.
+    """
+    staves = {int(s.get("id", "0")): s for s in _music_staves(score)}
+    ranges = sorted(set(systems or []))
+    for staff_id in sorted({w.staff for w in written}):
+        staff = staves.get(staff_id)
+        if staff is None:
+            continue
+        bars = staff.findall("Measure")
+        spans = set()
+        for w in written:
+            if w.staff != staff_id:
+                continue
+            hit = [(a, b) for a, b in ranges if a <= w.end and b >= w.start]
+            spans.update(hit or [(m, m) for m in range(w.start, w.end + 1)])
+        for a, b in sorted(spans):
+            tracks = [(_voice_track(bar, 1), _voice_track(bar, 2)) for bar in bars[a - 1:b]]
+            two = any(v2 is not None and v2.find("Chord/Lyrics") is not None for _, v2 in tracks)
+            for v1, v2 in tracks:
+                for track, above in ((v1, two), (v2, False)):
+                    if track is None:
+                        continue
+                    for lyrics in track.findall("Chord/Lyrics"):
+                        here = lyrics.find("placement")
+                        if above and here is None:
+                            here = etree.Element("placement")
+                            text = lyrics.find("text")
+                            if text is not None:
+                                text.addprevious(here)
+                            else:
+                                lyrics.append(here)
+                            here.text = "above"
+                        elif above and here is not None:
+                            here.text = "above"
+                        elif not above and here is not None and (here.text or "").strip() == "above":
+                            lyrics.remove(here)
+
+
 def _import_txt_into_mscx(
     score_root: etree._Element,
     txt: Optional[str] = None,
-    by_measure: Optional[Dict[int, Dict[int, List[str]]]] = None,
+    by_measure: Optional[Dict[int, Dict[Any, List[str]]]] = None,
     clear_existing: bool = False,
 ) -> LyricImport:
     """
-    Import TXT lyrics into the score (in-place). Verse 1, voice 0. Slur-continuation chords are skipped (no lyric).
+    Import lyrics into the score (in-place). Slur-continuation chords are skipped (no lyric).
     Hyphenated tokens (e.g. il-man) are expanded to begin/end syllables on consecutive chords.
-    If the previous measure's last syllable was begin/middle (trailing hyphen), the next measure's
-    first syllable is set as "end". Verse 2 and higher are removed.
+    If the syllable before a bar was begin/middle (trailing hyphen), the bar's first
+    syllable continues that word.
 
     Provide either txt (plain # Measure N / staff: tokens format) or by_measure (precomputed
-    {measure_1based: {staff_id: [tokens]}}). If both are None, nothing is applied.
+    {measure_1based: {target: [tokens]}}); a target is a staff id (verse 1 of its first
+    voice) or a (staff, voice, verse) triple. If both are None, nothing is applied.
 
-    clear_existing: when True, remove all verse 1 lyrics from the whole score before applying
-    (full replace). Use when the score already has lyrics (e.g. OCR from MusicXML) that the
-    imported lyrics should fully supersede. When False, measures/staves not in the input keep
-    their existing lyrics (partial edit).
+    Only the bars named are rewritten, on the voice and verse named: every other verse,
+    voice and bar keeps its words (#392, #397). clear_existing: remove all verse 1
+    lyrics from the whole score first (full replace), for a score whose words (e.g. OCR
+    from MusicXML) the import should fully supersede.
     """
     _add_rests_to_empty_measures(score_root)
     score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
@@ -1067,115 +1276,18 @@ def _import_txt_into_mscx(
         blocks = _parse_txt(txt)
         by_measure = {b["measure"]: b["staff_lines"] for b in blocks}
 
-    staffs = score.findall(".//Staff")
-    if not staffs:
-        staffs = score_root.findall(".//Staff")
-    # Only process Staff elements that contain measures (skip Part/Staff layout stubs)
-    staffs = [s for s in staffs if s.find(".//Measure") is not None]
-
-    for staff in staffs:
-        staff_id = int(staff.get("id", "0"))
-        measure_index = -1
-        slur_active = False
-        tie_active = False
-        for measure in staff.findall(".//Measure"):
-            measure_index += 1
-            one_based = measure_index + 1
-            voices = measure.findall("voice")
-            if not voices:
-                continue
-            voice = voices[0]
-            voice_children = list(voice)
-            # Whether we will place lyrics in this measure (partial JSON may omit measures)
-            placing = (
-                one_based in by_measure and staff_id in by_measure[one_based]
-            )
-            if placing:
-                staff_tokens = by_measure[one_based][staff_id]
-                prev_measure_tokens = (by_measure.get(one_based - 1) or {}).get(staff_id) or []
-                first_syllabic_continuation = _last_token_ends_with_hyphen(prev_measure_tokens)
-                syllables = _tokens_to_syllables(staff_tokens, first_syllabic_continuation=first_syllabic_continuation)
-                syl_index = [0]
-            else:
-                syllables = []
-                syl_index = [0]
-
-            for el_idx, el in enumerate(voice_children):
-                if el.tag != "Chord":
-                    continue
-                if _is_continuation_no_lyric(el):
-                    if placing:
-                        _clear_verse1_lyrics(el)
-                    slur_active, tie_active = _after_continuation(el, slur_active, tie_active)
-                    continue
-                if slur_active and not _has_slur_start(el) and not _is_slur_continuation(el):
-                    if placing:
-                        _clear_verse1_lyrics(el)
-                    continue  # middle of slur
-                if tie_active and not _has_tie_start(el) and not _is_tie_continuation(el):
-                    if placing:
-                        _clear_verse1_lyrics(el)
-                    continue  # middle of tie
-                if not placing:
-                    if _has_slur_start(el):
-                        slur_active = True
-                    if _has_tie_start(el):
-                        tie_active = True
-                    continue
-                if syl_index[0] >= len(syllables):
-                    for lyrics in list(el.findall(".//Lyrics")):
-                        no_el = lyrics.find("no")
-                        if _is_verse1(no_el):
-                            el.remove(lyrics)
-                    if _has_slur_start(el):
-                        slur_active = True
-                    if _has_tie_start(el):
-                        tie_active = True
-                    continue
-                syllables_left = len(syllables) - syl_index[0]
-                eligible_remaining = _count_remaining_eligible_chords(
-                    voice_children, el_idx, slur_active, tie_active
-                )
-                if eligible_remaining == 1 and syllables_left > 1:
-                    # More syllables than notes: every earlier note took its own, and the
-                    # overflow is kept on this last note so it stays visible (e.g. öt-tä.
-                    # forced into one slot). Cramming as soon as the count went over put a
-                    # whole bar on its first note (#307). A `_` says "no word here", so
-                    # extra ones are dropped rather than printed.
-                    chunk = syllables[syl_index[0] :]
-                    kept = [chunk[0]] + [s for s in chunk[1:] if s[0] != "_"]
-                    if kept[0][0] == "_" and len(kept) > 1:
-                        kept = kept[1:]
-                    syl_index[0] += syllables_left
-                    if len(kept) == 1:
-                        syllabic, text = kept[0]
-                        if syllabic == "_":
-                            _clear_verse1_lyrics(el)
-                        else:
-                            _set_lyric(el, syllabic, text, "1")
-                    else:
-                        merged_text = " ".join(_syllables_to_tokens(kept)).strip()
-                        if merged_text:
-                            _set_lyric(el, "single", merged_text, "1")
-                else:
-                    syllabic, text = syllables[syl_index[0]]
-                    syl_index[0] += 1
-                    if syllabic == "_":
-                        for lyrics in list(el.findall(".//Lyrics")):
-                            no_el = lyrics.find("no")
-                            if _is_verse1(no_el):
-                                el.remove(lyrics)
-                    else:
-                        _set_lyric(el, syllabic, text, "1")
-                if _has_slur_start(el):
-                    slur_active = True
-                if _has_tie_start(el):
-                    tie_active = True
-
-    # Verses 2+ are left exactly as they are (#392): an import writes verse 1 only.
-    # Clear verse 1 lyrics from any chord that is inside spanner (ineligible)
-    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
-    if score is not None:
+    plan: Dict[Tuple[int, int, int], Dict[int, List[str]]] = {}
+    for m, row in by_measure.items():
+        for target, tokens in row.items():
+            key = tuple(target) if isinstance(target, (tuple, list)) else (int(target), 1, 1)
+            plan.setdefault(key, {})[int(m)] = tokens
+    staves = {int(s.get("id", "0")): s for s in _music_staves(score)}
+    for (staff_id, voice, verse), measures in sorted(plan.items()):
+        staff = staves.get(staff_id)
+        if staff is not None:
+            _place_on_voice(staff, voice, verse, measures)
+    if clear_existing:
+        # A full replace leaves no verse 1 word on a note that cannot take one.
         for chord in score.findall(".//Chord"):
             if _is_continuation_no_lyric(chord):
                 _clear_verse1_lyrics(chord)
@@ -1183,31 +1295,32 @@ def _import_txt_into_mscx(
 
 
 def _apply_split_to_by_measure(
-    by_measure: Dict[int, Dict[int, List[str]]],
+    by_measure: Dict[int, Dict[Any, List[str]]],
     split: List[int],
-) -> Dict[int, Dict[int, List[str]]]:
+) -> Dict[int, Dict[Any, List[str]]]:
     """
     Expand by_measure so that each split part is duplicated to two consecutive staff ids.
     E.g. split [3, 4]: input part 3 -> output staffs 3 and 4 (same content), input part 4 -> staffs 5 and 6.
     """
     if not split:
         return by_measure
-    new_by_measure: Dict[int, Dict[int, List[str]]] = {}
+    new_by_measure: Dict[int, Dict[Any, List[str]]] = {}
     for measure, staff_lines in by_measure.items():
         new_by_measure[measure] = {}
-        for staff_id, tokens in staff_lines.items():
+        for target, tokens in staff_lines.items():
+            staff_id, rest = (target[0], tuple(target[1:])) if isinstance(target, tuple) else (target, ())
             if staff_id in split:
                 i = split.index(staff_id)
                 output_ids = [staff_id + i, staff_id + i + 1]
             else:
                 output_ids = [staff_id]
             for out_id in output_ids:
-                new_by_measure[measure][out_id] = list(tokens)
+                new_by_measure[measure][(out_id,) + rest if rest else out_id] = list(tokens)
     return new_by_measure
 
 
 def _fill_missing_measure_starts(
-    json_str: str, score_root: etree._Element
+    json_str: str, score_root: etree._Element, starts: Optional[List[int]] = None
 ) -> Tuple[str, List[Mismatch], List[int]]:
     """Infer null `measure_start` values from the score's printed systems.
 
@@ -1227,7 +1340,9 @@ def _fill_missing_measure_starts(
     if not any(b.get("measure_start") is None for b in blocks):
         return json_str, [], []  # nothing to infer
 
-    starts = [r.start for r in system_ranges(score_root)]
+    # The printed systems when the caller knows them: normal-mode cleaning strips the
+    # line breaks this would otherwise read them off.
+    starts = starts or [r.start for r in system_ranges(score_root)]
     if not starts:
         return json_str, [Mismatch(
             kind=NO_SYSTEMS,
@@ -1264,18 +1379,21 @@ def _import_json_txt_into_mscx(
     part_to_staff: Optional[Dict[str, int]] = None,
     split: Optional[List[int]] = None,
     clear_existing: bool = False,
+    systems: Optional[List[Tuple[int, int]]] = None,
 ) -> LyricImport:
     """
     Import line-by-line JSON lyrics into the score. JSON format: array of objects with
     'measure_start' (measure number where the line starts) and either part keys whose values are
-    lyric lines, or a 'lyrics' array of {text, staff_number, position, parts}. staff_number/position
-    are mapped to output staves via the score's 'lyricsStaffMap' (written by clean_score); an
-    explicit 'parts' list overrides that mapping.
+    lyric lines, or a 'lyrics' array of {text, staff_number, position, parts, verse, voice}.
+    staff_number/position are mapped to output staves via the score's 'lyricsStaffMap'
+    (written by clean_score); an explicit 'parts' list overrides that mapping.
     Part keys can be numeric ("1", "2", ...) for staff id directly, or names (e.g. S1, A1) mapped
     via part_to_staff (default S1->1, S2->2, A1->3, A2->4).
     If split is given (e.g. [3, 4]), those input parts are each duplicated to two staves:
     part 3 -> staffs 3 and 4, part 4 -> staffs 5 and 6.
     clear_existing: remove all existing verse 1 lyrics first (full replace).
+    `systems` are the printed systems as (start, end) bars, when the caller knows them:
+    they decide where a line may run on to, and fill a null measure_start.
 
     `source` is the JSON text or the already-parsed blocks (what the manual editor builds).
     """
@@ -1287,18 +1405,24 @@ def _import_json_txt_into_mscx(
     staff_map = _read_lyrics_staff_map(score_root)
     system_map = _read_lyrics_system_map(score_root)
     name_map = _read_part_name_map(score_root)
-    json_str, notes, filled = _fill_missing_measure_starts(json_str, score_root)
-    json_data = _parse_json_txt(
-        json_str, staff_map=staff_map, system_map=system_map, name_map=name_map
-    )
-    if not json_data:
+    json_str, notes, filled = _fill_missing_measure_starts(
+        json_str, score_root, starts=[a for a, _ in systems] if systems else None)
+    data = json.loads(json_str)
+    if (not isinstance(data, list) or not data or not isinstance(data[0], dict)
+            or "measure_start" not in data[0]):
         return LyricImport(mismatches=notes, filled_measure_starts=filled)
-    chord_counts = _get_chord_counts_per_measure(score)
-    by_measure, mismatches = _json_lines_to_by_measure(json_data, chord_counts, part_to_staff)
+    lines = _lines_from_blocks(data, staff_map, system_map, name_map, part_to_staff)
+    if not lines:
+        return LyricImport(mismatches=notes, filled_measure_starts=filled)
+    if clear_existing:
+        _clear_all_verse1_lyrics(score_root)
+    by_measure, mismatches, written = _lines_to_by_measure(lines, score, systems)
     if split:
         by_measure = _apply_split_to_by_measure(by_measure, split)
     _import_txt_into_mscx(score_root, by_measure=by_measure, clear_existing=clear_existing)
-    return LyricImport(mismatches=notes + mismatches, filled_measure_starts=filled)
+    _place_two_voice_words(score, written, systems)
+    return LyricImport(mismatches=notes + mismatches, filled_measure_starts=filled,
+                       written=written)
 
 
 def _add_rests_to_empty_measures(score_root: etree._Element) -> None:
@@ -1358,14 +1482,17 @@ def place_lyrics(
     replace: bool = False,
     split: Optional[List[int]] = None,
     part_to_staff: Optional[Dict[str, int]] = None,
+    systems: Optional[List[Tuple[int, int]]] = None,
 ) -> LyricImport:
     """Put lyrics into the score, in place, and report what did not fit.
 
     `source` is TXT, JSON text, or the already-parsed JSON blocks the manual editor
     builds; `fmt` ("txt"/"json") overrides the format sniff. `replace` clears every
-    verse-1 lyric first (a full replace); without it, measures and staves the source
-    does not name keep what they have. `split` duplicates a part onto two staves
-    (JSON only). Returns the mismatches — nothing is written to stdout or stderr.
+    verse-1 lyric first (a full replace); without it, only the parts, voices, verses
+    and systems the source names change, and everything else keeps its words.
+    `split` duplicates a part onto two staves (JSON only). `systems` are the printed
+    systems as (start, end) bars, when known (JSON only). Returns the mismatches and
+    the bars rewritten — nothing is written to stdout or stderr.
 
     Only the JSON path measures syllables against chords, so a TXT import always
     reports an empty result (TXT is written per measure, so it cannot drift).
@@ -1375,7 +1502,7 @@ def place_lyrics(
     if fmt == "json":
         return _import_json_txt_into_mscx(
             score_root, source, part_to_staff=part_to_staff,
-            split=split, clear_existing=replace,
+            split=split, clear_existing=replace, systems=systems,
         )
     return _import_txt_into_mscx(score_root, txt=source, clear_existing=replace)
 
@@ -1440,6 +1567,43 @@ def lyric_parts(score_root: etree._Element) -> List[EditorPart]:
     return parts
 
 
+def _printed_of(score_root: etree._Element, start: int) -> Dict[int, int]:
+    """{output staff id: printed staff number} for the system starting at `start`.
+
+    Read off the clean's part-to-staff record: the per-system map when there is one,
+    else the one map for the whole score. Empty when the score has neither, which is
+    a song cleaned before the record existed.
+    """
+    system_map = _read_lyrics_system_map(score_root)
+    pmap = (_map_for_measure(system_map, start) if system_map is not None
+            else _read_lyrics_staff_map(score_root))
+    return {sid: printed for printed, ids in pmap.items() for sid in ids}
+
+
+def printed_staves(score_root: etree._Element, start: int, end: int) -> Tuple[List[int], List[int]]:
+    """The printed staves of one system, top first: all of them, and those that sing.
+
+    "All" is every printed staff the clean's part-to-staff record names for the
+    system; "sing" keeps those whose parts have notes in bars `start`-`end`. A page
+    leaves a staff out where its part rests, and a crop shows one of the two counts,
+    which is how the lyric editor knows which picture staff a part's boxes go under.
+    """
+    score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
+    if score is None:
+        return [], []
+    printed = _printed_of(score_root, start)
+    singing = set()
+    for staff in _music_staves(score):
+        sid = int(staff.get("id", "0"))
+        if sid not in printed:
+            continue
+        for bar in staff.findall("Measure")[start - 1:end]:
+            if bar.find("voice/Chord") is not None:
+                singing.add(printed[sid])
+                break
+    return sorted(set(printed.values())), sorted(singing)
+
+
 def editor_grid(
     score_root: etree._Element,
     systems: Optional[List[Tuple[int, int]]] = None,
@@ -1455,8 +1619,13 @@ def editor_grid(
     needed because normal-mode cleaning strips layout breaks, so the cleaned score has
     no systems left to find and the whole piece collapses into one cell per part. The
     printed systems still exist -- on the page -- and are supplied from there.
+
+    `boxes` (#397) is the same per voice and verse: a part's box in every system where
+    it has a note to sing, and a box for its second voice only where that voice does,
+    each holding every verse's words.
     """
     parts = lyric_parts(score_root)
+    score = score_root.find(".//Score") if score_root.tag != "Score" else score_root
 
     if systems:
         ranges = [EditorSystem(index=i, start=a, end=b)
@@ -1465,31 +1634,51 @@ def editor_grid(
         ranges = [EditorSystem(index=r.index, start=r.start, end=r.end)
                   for r in system_ranges(score_root)]
     systems = ranges
-    by_measure = _lyrics_by_measure_staff(score_root)
-    counts = slot_counts(score_root)
+    verses = _verses_in(score) if score is not None else [1]
+    words = {(voice, verse): _lyrics_by_measure_staff(score_root, voice, verse)
+             for voice in (1, 2) for verse in verses}
+    counts = {voice: _get_chord_counts_per_measure(score, voice) if score is not None else {}
+              for voice in (1, 2)}
+
+    def text_of(voice: int, verse: int, part: EditorPart, system: EditorSystem) -> str:
+        tokens: List[str] = []
+        for mi in range(system.start - 1, system.end):
+            tokens += words[(voice, verse)].get(mi, {}).get(part.id, [])
+        # Trailing slots are kept as well as inner ones: a note at the end of
+        # the line with no word under it is worth seeing, and dropping it left
+        # the cell short of its own capacity, so re-saving an untouched system
+        # reported `too_few` out of nowhere. But a cell of *nothing but* empty
+        # slots is a part that does not sing in this system, and that is an
+        # empty cell, not a row of underscores.
+        if not any(t != "_" for t in tokens):
+            return ""
+        return _merge_tokens(tokens).strip()
+
     cells: Dict[int, Dict[str, str]] = {}
     capacities: Dict[int, Dict[str, int]] = {}
+    boxes: Dict[int, List[EditorBox]] = {}
     for system in systems:
+        printed = _printed_of(score_root, system.start)
         for part in parts:
-            capacities.setdefault(system.index, {})[part.name] = sum(
-                counts.get(part.id, {}).get(mi, 0)
-                for mi in range(system.start, system.end + 1)
-            )
-            tokens: List[str] = []
-            for mi in range(system.start - 1, system.end):
-                tokens += by_measure.get(mi, {}).get(part.id, [])
-            # Trailing slots are kept as well as inner ones: a note at the end of
-            # the line with no word under it is worth seeing, and dropping it left
-            # the cell short of its own capacity, so re-saving an untouched system
-            # reported `too_few` out of nowhere. But a cell of *nothing but* empty
-            # slots is a part that does not sing in this system, and that is an
-            # empty cell, not a row of underscores.
-            if not any(t != "_" for t in tokens):
-                continue
-            text = _merge_tokens(tokens).strip()
-            if text:
-                cells.setdefault(system.index, {})[part.name] = text
-    return EditorGrid(parts=parts, systems=systems, cells=cells, capacities=capacities)
+            for voice in (1, 2):
+                slots = sum(counts[voice].get(part.id, {}).get(mi, 0)
+                            for mi in range(system.start, system.end + 1))
+                if voice == 1:
+                    capacities.setdefault(system.index, {})[part.name] = slots
+                    text = text_of(1, 1, part, system)
+                    if text:
+                        cells.setdefault(system.index, {})[part.name] = text
+                if not slots:
+                    continue
+                boxes.setdefault(system.index, []).append(EditorBox(
+                    # By staff id: two parts can share a name (Kaipaava's two "T2").
+                    key=str(part.id) if voice == 1 else f"{part.id}@{voice}",
+                    part=part.name, id=part.id, voice=voice, slots=slots,
+                    printed=printed.get(part.id),
+                    text={v: text_of(voice, v, part, system) for v in verses},
+                ))
+    return EditorGrid(parts=parts, systems=systems, cells=cells, capacities=capacities,
+                      verses=verses, boxes=boxes)
 
 
 def blocks_from_cells(
@@ -1514,6 +1703,36 @@ def blocks_from_cells(
         # Cells naming a part the score doesn't have simply never match a grid part.
         if lyrics:
             blocks.append({"measure_start": system.start, "lyrics": lyrics})
+    return blocks
+
+
+def blocks_from_boxes(
+    grid: EditorGrid, verse: int, boxes: Dict[Any, Dict[str, str]]
+) -> List[Dict[str, Any]]:
+    """The by-system editor's changed boxes as lyric JSON, for one verse (#397).
+
+    `boxes` is {system index: {box key: text}} — only the boxes a person changed,
+    keyed as `EditorBox.key` (staff id `3`, `3@2` for its second voice). An empty box is
+    sent as an empty line, which clears its words; every box not sent keeps its own.
+    Each block carries its system's last bar, so a line knows where its system ends.
+    A key the system has no box for is ignored. Lines name their part by staff id,
+    which no track name can be mistaken for.
+    """
+    blocks: List[Dict[str, Any]] = []
+    for system in grid.systems:
+        typed = boxes.get(system.index, boxes.get(str(system.index))) or {}
+        known = {b.key: b for b in grid.boxes.get(system.index, [])}
+        lyrics = []
+        for key, text in typed.items():
+            box = known.get(key)
+            if box is None or not isinstance(text, str):
+                continue
+            # By staff id, not name: a part may be named "1", or two parts the same.
+            lyrics.append({"parts": [box.id], "voice": box.voice, "verse": int(verse),
+                           "text": text.strip()})
+        if lyrics:
+            blocks.append({"measure_start": system.start, "measure_end": system.end,
+                           "lyrics": lyrics})
     return blocks
 
 
@@ -1543,9 +1762,11 @@ def import_file(
     mscx_path_out: str,
     split: Optional[List[int]] = None,
     replace: bool = False,
+    systems: Optional[List[Tuple[int, int]]] = None,
 ) -> LyricImport:
     """Import lyrics from .txt or .json into a copy of the .mscx file. split only applies to .json (e.g. [3, 4]).
-    replace=True clears all existing verse 1 lyrics first (full replace).
+    replace=True clears all existing verse 1 lyrics first (full replace). `systems` are
+    the printed systems as (start, end) bars, when known (.json only).
     Returns the placement result, so a caller can report mismatches without reading logs."""
     with open(txt_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -1553,7 +1774,7 @@ def import_file(
     result = place_lyrics(
         root, content,
         fmt="json" if txt_path.lower().endswith(".json") else "txt",
-        replace=replace, split=split,
+        replace=replace, split=split, systems=systems,
     )
     _save_mscx(root, mscx_path_out)
     return result

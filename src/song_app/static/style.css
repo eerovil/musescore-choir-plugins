@@ -342,6 +342,31 @@ table.grid .undernote:empty { display: none; }
 .widetoggle:hover { opacity: 1; }
 .ws.wide .widetoggle { left: .35rem; }
 
+/* The by-system lyric editor shows one printed system across the screen (#397):
+   the page picture is in the panel itself, so the viewer steps aside. */
+.ws.lyricwide { grid-template-columns: 150px minmax(0, 1fr); }
+.ws.lyricwide > .viewer { display: none; }
+.ws.wide.lyricwide { grid-template-columns: 1fr; }
+.ws.wide.lyricwide > .viewer { display: flex; }
+.lyed { max-width: 1100px; margin: 0 auto; }
+.lyedhead { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap;
+            align-items: center; gap: 8px; padding: 8px 0; background: var(--panel); }
+.lyedtabs { display: flex; gap: 4px; overflow-x: auto; max-width: 100%; }
+.lyedwhere { margin-left: auto; color: var(--muted); font-size: 13px; }
+.lyedhint { font-size: 12px; }
+.lyedpic { margin-top: 8px; min-height: 2em; }
+.lyedpic img { width: 100%; display: block; background: #fff; border-radius: 4px; }
+.lyedslice { position: relative; overflow: hidden; width: 100%; background: #fff;
+             margin-top: 10px; border-radius: 4px; }
+.lyedslice img { position: absolute; left: 0; width: 100%; display: block; }
+.lyed .lyrow { margin-top: 6px; }
+.lyrow.v2 { margin-left: 18px; border-left: 3px solid var(--warn); padding-left: 8px; }
+.lyrow textarea.changed { border-color: var(--warn); }
+.lyedbar { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px;
+           align-items: center; margin-top: 12px; padding: 10px 0;
+           background: var(--panel); border-top: 1px solid var(--line); }
+.lyedstatus { flex: 1; min-width: 120px; color: var(--muted); font-size: 12px; text-align: center; }
+
 /* Compare: the printed system and the cleaned one, stacked so they can be read
    against each other. Stacked rather than side by side because a system is wide
    and short — side by side would halve the width that matters. */
@@ -432,6 +457,8 @@ table.grid .undernote:empty { display: none; }
   }
   .ws.m-panel > .panel { display: block; }
   .ws.m-viewer > .viewer { display: flex; }
+  .ws.lyricwide { grid-template-columns: 1fr; }
+  .ws.lyricwide.m-viewer > .viewer { display: flex; }
   .ws > .widetoggle { display: none; }   /* hiding the panel is what the bar is for */
 
   .mobilebar {

@@ -46,11 +46,11 @@ def client(tmp_path, monkeypatch):
     song.set_stage("fix")
     song.save()
 
-    def fake_import(json_path, cleaned, replace=True):
+    def fake_import(json_path, cleaned, replace=False, song_dir=""):
         # The real import writes the words into the score in place; that write is
         # what wakes the watcher. Its content is not under test here.
         _edit(cleaned, "<!-- lyrics -->")
-        return types.SimpleNamespace(mismatches=[], ok=True)
+        return types.SimpleNamespace(mismatches=[], ok=True, written=[])
 
     monkeypatch.setattr(pipeline, "run_lyric_import", fake_import)
     return TestClient(server.app), song
@@ -159,10 +159,10 @@ def test_the_import_reply_names_the_bars_that_did_not_take_their_words(client, m
     said = {"kind": "too_many", "measure_start": 9, "measure_end": 9, "staff_ids": [2],
             "syllables": 4, "slots": 3, "message": "m9: 4 syllables for 3 notes"}
 
-    def importing(json_path, cleaned, replace=True):
+    def importing(json_path, cleaned, replace=False, song_dir=""):
         _edit(cleaned, "<!-- lyrics -->")
         return types.SimpleNamespace(
-            mismatches=[types.SimpleNamespace(to_dict=lambda: said)], ok=False)
+            mismatches=[types.SimpleNamespace(to_dict=lambda: said)], ok=False, written=[])
 
     monkeypatch.setattr(pipeline, "run_lyric_import", importing)
     r = api.post(f"/api/songs/{song.slug}/lyrics", json={"json": LYRICS})
