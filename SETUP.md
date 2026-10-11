@@ -1,223 +1,203 @@
-# Setting up on a new machine
+# Setting up your own copy
 
-This was written on macOS. Nothing in the toolkit needs it any more (the live
-app runs on Linux), so read `brew install` as your platform's package manager.
+This gets the song app running on your own computer, from nothing. It is written
+for Linux (tested on Fedora 42 and Ubuntu 24.04) with notes for macOS. To put the
+songs on a practice-track site as well, you also set up your own copy of the
+stemmanauhat site on Cloudflare (step 5).
 
-## 1. The two repos
+What you need:
 
-The songs themselves are **not in this repo** — they are copyrighted sheet music,
-so they live in a separate **private** repo that is cloned into `songs/` (which
-this repo gitignores):
-
-```bash
-git clone git@github.com:eerovil/musescore-choir-plugins.git
-cd musescore-choir-plugins
-git clone git@github.com:eerovil/musescore-choir-songs.git songs
-```
-
-That second clone is what makes a new machine useful rather than empty. Skip it
-and the toolkit still runs — `songs/` is just created empty on first use.
-
-`songs/` is its own git repo, so `git` inside it acts on the songs, and `git` at
-the repo root acts on the code. Neither sees the other's changes.
-
-**Backups.** On the machine the app runs on, `scripts/backup-songs.sh` commits
-everything in `songs/` and pushes it to that private repo, nightly at 03:30
-(`systemd/songs-backup.timer`; a night missed while the machine was off runs at
-the next boot). It pushes with AgentDeck's git credential helper (the GitHub App token; `gh` has no token outside a shell). It commits first, then merges the repo's own `main` in (the homr
-fixture pull requests land there), then pushes; it never rebases or force-pushes,
-and a merge that conflicts fails with the local commit kept. Files the app can
-remake (the scan crop pictures, render keys, the undo copies, about 200 MB) are listed in
-`songs/.gitignore`. Install it once:
-
-```bash
-cp systemd/songs-backup.* ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now songs-backup.timer
-```
-
-To check it works, look at the newest `Backup YYYY-MM-DD` commit in the songs
-repo, or `systemctl --user status songs-backup` (a failure shows in
-`systemctl --user --failed`).
-
-## 2. Python
-
-```bash
-python3 -m venv .venv                        # 3.13 here; 3.11+ should be fine
-.venv/bin/pip install -r pip-requirements.txt
-```
-
-There is no `pip install -e .` step and nothing is on `$PATH`: the CLI wrappers
-do `from src...import`, so **run them from the repo root** — `./song.py`,
-`./clean_score.py`, not from inside `src/`. Use `.venv/bin/python` directly
-rather than activating.
-
-## 3. Things that are not pip packages
-
-```bash
-brew install poppler
-```
-
-| what | needed by | without it |
+| what | why | without it |
 | --- | --- | --- |
-| **MuseScore 3** | everything (`.mscz`/MusicXML conversion, previews, MIDI) | nothing works; MuseScore 4 is a different CLI and is not supported |
-| poppler (`pdftoppm`, `pdfinfo`) | PDF system crops | Systems tab and the lyric editor's score crops are unavailable; their tests skip |
-| homr (below) | reading a scanned page into MusicXML | scanned scores have to be brought in as MusicXML by hand; its tests skip |
+| Python 3.11 or newer | the app | nothing runs |
+| **MuseScore 3** (3.6.2) | reading and writing scores, previews, the MIDI | nothing works. MuseScore 4 will not do: its command line is different |
+| poppler (`pdftoppm`, `pdfinfo`) | cutting the PDF into one picture per printed line | no scanning and no page pictures |
+| homr | reading a scanned PDF into notes | you bring each score as MusicXML yourself |
+| a Cloudflare account and the stemmanauhat site | publishing | the Publish stage says publishing is off |
 
-### homr, for reading scanned scores (optional)
-
-homr turns a page image into MusicXML. It is **not** a pip package of this
-project and does not go into `.venv`: it is ~660 MB of onnxruntime and opencv
-wheels plus ~150 MB of model weights it keeps inside its own site-packages, and
-the unattended deploy reinstalls this project's requirements on every merge.
-So it gets a venv of its own, outside the checkout, built by a script:
+## 1. Get the code and run the setup script
 
 ```bash
-scripts/install-homr.sh          # ~10 minutes, ~660 MB on disk
-scripts/install-homr.sh --status # installed commit vs the fork's main; installs nothing
+git clone https://github.com/eerovil/musescore-choir-plugins.git
+cd musescore-choir-plugins
+scripts/setup.sh
 ```
 
-Or press **Install homr** in the *homr* box at the bottom of the app's Library
-page — it runs this same script and shows its log, so a phone can do it. The box
-also says when the fork's `main` has moved past the installed commit and offers
-**Update homr**. It is refused while a song is scanning, cleaning or publishing, and scans wait while it runs. If `uv` is missing, the script installs
-it into `~/.local/bin` with astral's own installer first.
+`scripts/setup.sh` does everything it can without `sudo`, and is safe to run
+again:
 
-That creates `~/.local/share/musescore-choir-plugins/homr-venv` on python 3.12
-and downloads the model weights, so the first scan is not the slow one.
-Re-running it is safe. Set `HOMR_VENV` to put it elsewhere, and then `HOMR_BIN`
-in `.env` so the app can find it. `HOMR_SOURCE` is where homr is installed
-from. It follows `main` in our fork, which tracks upstream — so an install takes
-whatever homr is on the day it runs, and a re-run can change how scores parse.
-Set `HOMR_SOURCE` to a commit to get a particular parse back.
-Without homr, `src/song_app/omr.py` raises a message saying so and its tests
-skip; nothing else in the app is affected.
+- makes `.venv` and installs `pip-requirements.txt` into it;
+- finds MuseScore 3, or on Linux offers to download the official 3.6.2 AppImage
+  into `~/.local/bin` (unpacking it into `~/.local/opt/MuseScore3` where an
+  AppImage cannot start, as in a container);
+- checks for poppler and prints the command to install it;
+- copies `.env.default` to `.env` and writes the MuseScore path into it, leaving
+  any value you already set alone;
+- offers to install homr (about 10 minutes and 660 MB; see below);
+- ends with `./song.py --check`.
 
-A branch of the fork needs **no install at all**. Clone the fork somewhere (or
-add a git worktree to an existing clone) and the app will run it from source,
-borrowing the installed venv's dependencies:
+`--yes` answers yes to every question, `--no-homr` skips homr.
+
+**The system packages it cannot install for you.** MuseScore's AppImage needs a
+few libraries a desktop has and a bare server does not:
 
 ```bash
-git clone https://github.com/eerovil/homr.git ~/homr
-git -C ~/homr worktree add ~/homr-trees/system-4 prototype/system-4
+# Fedora
+sudo dnf install python3 git curl poppler-utils alsa-lib mesa-libGL mesa-libEGL \
+    libX11 libxcb fontconfig freetype expat libgpg-error nss fuse-libs
+# Ubuntu / Debian
+sudo apt install python3 python3-venv git curl poppler-utils libasound2t64 libgl1 \
+    libegl1 libx11-6 libx11-xcb1 libxcb1 libfontconfig1 libfreetype6 libexpat1 \
+    libgpg-error0 libnss3 libfuse2t64
 ```
 
-`HOMR_CHECKOUT` says where the working copy is (default `~/homr`); its git
-worktrees are found from it. The Scan panel then offers a **Read with** picker
-listing the installed venv plus each working copy, labelled with the branch it
-has out *at that moment* — switch a branch there and the next scan runs it, with
-nothing to reinstall. The choice applies to that scan run only; nothing is
-recorded, so comparing two engines means reading a system with one, then the
-other, and looking at both against the page. The picker is hidden when the
-installed venv is all there is.
+**macOS:** `brew install python@3.13 poppler`, and install MuseScore 3.6.2 from
+<https://github.com/musescore/MuseScore/releases/tag/v3.6.2>. The script finds it
+at `/Applications/MuseScore 3.app/Contents/MacOS/mscore`.
 
-The first time a working copy is picked, the venv's model weights are symlinked
-into it — homr keeps its weights beside its own source, so otherwise every
-worktree would download its own 150 MB.
-
-Install the QML plugins separately by copying or symlinking `plugins/` into
-`~/Documents/MuseScore3/Plugins` — MuseScore loads them from there, not from this
-repo. They are all hand tools; nothing in the app runs them.
-
-## 4. `.env`
-
-`.env` is gitignored (it points at local paths), so copy the defaults and check
-them:
+## 2. Check it
 
 ```bash
-cp .env.default .env
+.venv/bin/python song.py --check
 ```
 
-The one that must be right is `MUSESCORE_CLI_PATH` — on a stock macOS install
-`/Applications/MuseScore 3.app/Contents/MacOS/mscore`. Verify:
+One line for each thing the app uses:
+
+```
+  ok      Python packages  all of pip-requirements.txt
+  ok      MuseScore 3      /home/you/.local/bin/MuseScore3.AppImage (3.6.2)
+  ok      poppler          pdftoppm and pdfinfo
+  ok      songs/           /home/you/musescore-choir-plugins/songs (made on first start)
+  off     homr             not installed: scanned PDFs cannot be read — ...
+  off     Publish          off: set CLOUDFLARE_ACCOUNT_ID, ... in .env (see SETUP.md)
+
+Ready: ./song.py starts the app.
+```
+
+`MISSING` is something the app cannot work without (the Python packages or
+MuseScore 3) and makes the check fail; `off` is something optional.
+
+## 3. Start the app
 
 ```bash
-"$(grep MUSESCORE_CLI_PATH .env | cut -d'"' -f2)" --version
+.venv/bin/python song.py               # opens the browser at http://127.0.0.1:8000/
+.venv/bin/python song.py --no-browser --port 8123
 ```
 
-`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and
-`STEMMANAUHAT_D1_DATABASE_ID` turn on the Publish button (below); blank, the
-Publish stage says publishing is off on this host. The other keys in
-`.env.default` (`MUSESCORE_EXPORT_PATH`, `VIDEO_EXPORT_PATH`,
-`YOUTUBE_CLIENT_SECRETS_PATH`, `MEDIA_ROOT`, `STEMMANAUHAT_DISPATCH_TOKEN`) belonged
-to the video and YouTube stages, which are gone; nothing reads them.
-
-### AgentDeck song chats (optional)
-
-The song workspace can keep one normal AgentDeck chat mapped to each song. The
-mapping is stored in that song's `.song.json`, so reopening the song reuses the
-same chat instead of creating another one.
-
-Set these in `.env` when AgentDeck is available:
-
-```dotenv
-AGENTDECK_URL="https://agentdeck.example"       # URL the browser should open
-AGENTDECK_API_URL="http://127.0.0.1:PORT"       # optional; blank = AGENTDECK_URL
-AGENTDECK_ACCOUNT_KEY="provider:account"         # exact AgentDeck account key
-```
-
-`AGENTDECK_API_URL` is useful when AgentDeck's browser URL sits behind a reverse
-proxy or access layer but Choir and AgentDeck run on the same host. It is used
-only for Choir → AgentDeck requests; the persisted link always uses
-`AGENTDECK_URL`. The account key is the value AgentDeck shows/uses for the account,
-not merely its display label.
-
-Creating a song chat uses AgentDeck's ordinary **New chat** path, with the song
-folder as its working directory. It is deliberately not an AgentDeck delegation:
-the mapped chat is a long-lived user workspace and should keep normal boss-chat
-semantics. If AgentDeck later reports that the mapped session is gone, the Choir
-header changes the action to **Recreate AgentDeck**. A temporary AgentDeck outage
-does not erase the mapping.
-
-Leave the keys blank and the button is still there, but there is nothing for it to
-open. This pull request proposes labelling that state **AgentDeck ⚠** and, on a tap,
-writing the reason into a strip under the header. Before it, the button was disabled
-and carried its reason in a `title` tooltip, which a phone never shows — so the whole
-state read as a button that does nothing (#52).
-
-## 5. Check it works
-
-```bash
-.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/ src/score_export/tests/ -q
-```
-
-180 pass with everything installed; fewer is expected — browser tests skip
-without Playwright, the PDF tests without poppler, the MuseScore tests without a
-MuseScore CLI. Then the real check:
-
-```bash
-./song.py
-```
-
-Open a song that has already reached **review**, and look at the Cleaned MSCX
-preview. If it renders, MuseScore, the Python side and the songs clone are all
-talking to each other.
-
-The prototyping fixture is a public-domain song kept in this repo, so it works
-before the songs clone exists:
+To try it on a real song before you have your own, drop the public-domain song
+kept in this repo into `songs/`:
 
 ```bash
 fixtures/virta-venhetta-vie/reset.sh
 ```
 
-## 6. Publishing (only if you publish from this machine)
+**From a phone.** The app listens on `127.0.0.1` only. To reach it from a phone,
+either start it with `--host 0.0.0.0` and open `http://<computer's address>:8000/`
+on the same network (anyone on that network can then use it: there is no login),
+or keep it on `127.0.0.1` and put it behind something that adds a login, such as
+[Tailscale Serve](https://tailscale.com/kb/1312/serve). The app installs to a
+phone's home screen; see [docs/PWA.md](docs/PWA.md).
 
-Publish sends a song to the Cloudflare stemmanauhat site. It needs one API token
-with *R2 Storage: Edit* and *D1: Edit* on that account, plus the account id and the
-D1 database id, all in `.env`. The site's own migrations create its tables, so a
-fresh database has to have them applied before the first publish. The formats are
-in [docs/stemmanauhat-site.md](docs/stemmanauhat-site.md).
+## 4. homr, for reading scanned scores (optional)
 
-## Working across machines
+homr turns a picture of a page into notes. It gets a venv of its own, outside the
+checkout, because it is large (~660 MB of libraries plus ~150 MB of model weights):
 
-Commit and push `songs/` when you stop working on a song — the state file
-`.song.json` is the thing that matters, and it is tiny. One rule follows from
-what the songs repo does *not* carry:
+```bash
+scripts/install-homr.sh          # ~10 minutes
+scripts/install-homr.sh --status # installed version against the newest; installs nothing
+```
 
-- **Rendered previews rebuild themselves.** `.pages/`, `*.render.pdf` and the
-  `.persystem_cache.json` answer cache are all derived; the first page load on a
-  new machine is slow while MuseScore re-renders, then it is cached again.
+Or press **Install homr** in the *homr* box on a song's **Scan** stage, which runs
+the same script and shows its log. The box also says when a newer homr is out. If
+`uv` is missing, the script installs it into `~/.local/bin` first.
 
-There is no locking. Editing the same song on two machines at once gives you a
-merge conflict in a `.mscx`, which is not something you want to resolve by hand —
-push before you switch.
+It goes into `~/.local/share/musescore-choir-plugins/homr-venv`. Set `HOMR_VENV`
+to put it elsewhere, and then `HOMR_BIN` in `.env` so the app can find it.
+`HOMR_SOURCE` is where it is installed from: it follows `main` of
+[eerovil/homr](https://github.com/eerovil/homr), so a later install may read
+scores differently. Set it to a commit to get a particular version back.
+
+A branch of homr needs no install: clone the fork to `~/homr` (or set
+`HOMR_CHECKOUT`), and the Scan panel's **Read with** picker offers it and each of
+its git worktrees, borrowing the installed venv's libraries and model weights.
+
+## 5. Publishing to your own stemmanauhat site (optional)
+
+Publish sends a song to a copy of the stemmanauhat site
+([eerovil/stemmanauhat-cf](https://github.com/eerovil/stemmanauhat-cf)), which
+draws the score and plays it part by part, behind a per-choir login. Each copy
+runs on its own Cloudflare account. Set one up by following that repository's
+README, *Run your own copy*, which ends with three values for this app's `.env`:
+
+```dotenv
+CLOUDFLARE_ACCOUNT_ID="..."
+CLOUDFLARE_API_TOKEN="..."        # R2 Storage: Edit and D1: Edit on that account
+STEMMANAUHAT_D1_DATABASE_ID="..."
+STEMMANAUHAT_R2_BUCKET=""         # blank for the bucket called "stemmanauhat"
+```
+
+Then `./song.py --check` lists the site's choirs on its **Publish** line. The
+Publish stage offers those same choirs: they are read from the site's database,
+so a choir added there (`scripts/add-choir.sh` in the site's repo) shows up here
+without changing anything. The last list read is kept in `songs/.choirs.json`, so
+the panel still shows the choirs while Cloudflare cannot be reached; publishing
+itself waits until it can. The formats the site reads are in
+[docs/stemmanauhat-site.md](docs/stemmanauhat-site.md).
+
+## 6. Keeping your songs (optional)
+
+Each song is a folder under `songs/`, with its state in `.song.json`. `songs/` is
+not part of this repo (it is in `.gitignore`), because the songs are usually
+sheet music under copyright. To keep them safe or move them between computers,
+make `songs/` a git repository of its own and push it to a **private** repository:
+
+```bash
+cd songs && git init && git remote add origin git@github.com:you/your-songs.git
+```
+
+Run `git` inside `songs/` for the songs and at the top for the code; neither sees
+the other's changes. Rendered previews (`.pages/`, `*.render.pdf`) rebuild
+themselves and need not be kept. There is no locking: editing one song on two
+computers at once gives you a merge conflict in a `.mscx` file, so push before you
+switch.
+
+`scripts/backup-songs.sh` commits and pushes `songs/` unattended, and
+`systemd/songs-backup.timer` runs it nightly. It is written for the original host
+(it pushes with AgentDeck's git credential helper), so read it before using it.
+
+## 7. Keeping it running (optional)
+
+To run the app all the time on Linux, as a systemd user service:
+
+```bash
+cp systemd/song-app.service ~/.config/systemd/user/
+# The unit expects the checkout at ~/musescore-choir-plugins: edit
+# WorkingDirectory and ExecStart if yours is elsewhere.
+systemctl --user daemon-reload
+systemctl --user enable --now song-app.service
+loginctl enable-linger "$USER"     # keep it running while you are logged out
+```
+
+It serves on `127.0.0.1:8123`, and `/healthz` answers `{"status": "ok"}`.
+
+To have it follow `main` by itself, also install `song-app-deploy.service` and
+`song-app-deploy.timer`: every two minutes, `scripts/deploy-song-app.sh
+--unattended` fast-forwards the checkout to `origin/main`, installs the
+requirements and restarts the app. It refuses to touch a checkout with local
+changes, on another branch, or with commits that are not on `origin/main`. Leave
+it out if you want to choose when you update.
+
+## 8. Other things in this repo
+
+- The MuseScore plugins in `plugins/` are hand tools for MuseScore itself;
+  nothing in the app runs them. Copy or link them into
+  `~/Documents/MuseScore3/Plugins`. See [TOOLS.md](TOOLS.md).
+- AgentDeck song chats: the app can open one AgentDeck chat per song. Leave
+  `AGENTDECK_URL`, `AGENTDECK_API_URL` and `AGENTDECK_ACCOUNT_KEY` blank unless
+  you run [AgentDeck](https://github.com/eerovil/agentdeck); the header button then
+  says it is not set up.
+- The tests: `.venv/bin/python -m pytest src/clean_score/tests/ src/song_app/tests/
+  src/score_export/tests/ -q`. Tests that need something missing skip rather than
+  fail: the browser tests without Playwright, the PDF tests without poppler, the
+  MuseScore tests without MuseScore.

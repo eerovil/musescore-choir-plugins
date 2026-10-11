@@ -76,6 +76,40 @@ env_value() {  # the value of $1 in .env, quotes taken off; empty if unset
   sed -n "s/^$1=//p" .env | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
 }
 is_musescore3() { "$1" --version 2>/dev/null | grep -Eq 'MuseScore3? *3\.'; }
+HEADLESS="$HOME/.local/bin/musescore3-headless"
+# Sets $musescore to a MuseScore 3 that answers, or leaves it empty. MuseScore 3's
+# Linux build only draws on an X display, even from the command line, so on a
+# machine with no screen (a server, a container) it is run inside xvfb-run, through
+# a two-line wrapper that MUSESCORE_CLI_PATH then names.
+use_if_musescore3() {
+  local candidate="$1"
+  [ -n "$candidate" ] && [ -x "$candidate" ] || return 1
+  if is_musescore3 "$candidate"; then musescore="$candidate"; return 0; fi
+  if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1 \
+     && xvfb-run -a "$candidate" --version 2>/dev/null | grep -Eq 'MuseScore3? *3\.'; then
+    mkdir -p "$(dirname "$HEADLESS")"
+    printf '#!/bin/sh\n# MuseScore 3 on a machine with no screen (scripts/setup.sh).\nexec xvfb-run -a "%s" "$@"\n' \
+      "$candidate" > "$HEADLESS"
+    chmod +x "$HEADLESS"
+    echo "    no screen here: MuseScore runs inside xvfb-run, through $HEADLESS"
+    musescore="$HEADLESS"
+    return 0
+  fi
+  return 1
+}
+why_not() {  # what MuseScore says when it does not start
+  echo "What it says:" >&2
+  if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
+    xvfb-run -a "$1" --version 2>&1 | tail -5 >&2 || true
+  else
+    "$1" --version 2>&1 | tail -5 >&2 || true
+  fi
+  echo "A missing library (\"cannot open shared object file\") is a system package; SETUP.md lists them." >&2
+  if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && ! command -v xvfb-run >/dev/null 2>&1; then
+    echo "There is no screen here, and MuseScore 3 needs one: install xvfb-run" >&2
+    echo "(dnf install xorg-x11-server-Xvfb, apt install xvfb) and run this again." >&2
+  fi
+}
 
 musescore=""
 for candidate in "${MUSESCORE_CLI_PATH:-}" "$(env_value MUSESCORE_CLI_PATH)" \
@@ -83,12 +117,10 @@ for candidate in "${MUSESCORE_CLI_PATH:-}" "$(env_value MUSESCORE_CLI_PATH)" \
     "$(command -v mscore || true)" "$HOME/.local/bin/MuseScore3.AppImage" \
     "$HOME/.local/opt/MuseScore3/AppRun" \
     "/Applications/MuseScore 3.app/Contents/MacOS/mscore"; do
-  if [ -n "$candidate" ] && [ -x "$candidate" ] && is_musescore3 "$candidate"; then
-    musescore="$candidate"
-    break
-  fi
+  use_if_musescore3 "$candidate" && break
 done
 
+APPIMAGE="$HOME/.local/bin/MuseScore3.AppImage"
 if [ -z "$musescore" ]; then
   if [ "$OS" = Darwin ]; then
     echo "MuseScore 3 is not installed. Get MuseScore 3.6.2 for macOS from" >&2
@@ -97,25 +129,22 @@ if [ -z "$musescore" ]; then
   elif [ "$(uname -m)" != x86_64 ]; then
     echo "MuseScore 3 is not installed, and its AppImage is for x86_64 only." >&2
     echo "Install MuseScore 3 from your distribution, set MUSESCORE_CLI_PATH in .env, and run this again." >&2
-  elif ask "MuseScore 3 was not found. Download the official MuseScore 3.6.2 AppImage (160 MB) into ~/.local/bin?"; then
-    mkdir -p "$HOME/.local/bin"
-    target="$HOME/.local/bin/MuseScore3.AppImage"
-    curl -fL --progress-bar -o "$target.part" "$MUSESCORE_URL"
-    mv "$target.part" "$target"
-    chmod +x "$target"
-    if is_musescore3 "$target"; then
-      musescore="$target"
-    else
-      # No FUSE (common in containers and some desktops): unpack it instead.
-      echo "    the AppImage does not start here (no FUSE?); unpacking it into ~/.local/opt/MuseScore3"
+  elif [ -x "$APPIMAGE" ] || ask "MuseScore 3 was not found. Download the official MuseScore 3.6.2 AppImage (160 MB) into ~/.local/bin?"; then
+    if [ ! -x "$APPIMAGE" ]; then
+      mkdir -p "$HOME/.local/bin"
+      curl -fL --progress-bar -o "$APPIMAGE.part" "$MUSESCORE_URL"
+      mv "$APPIMAGE.part" "$APPIMAGE"
+      chmod +x "$APPIMAGE"
+    fi
+    if ! use_if_musescore3 "$APPIMAGE"; then
+      # No FUSE (containers, some desktops): an unpacked AppImage runs without it.
+      echo "    the AppImage does not start as it is; unpacking it into ~/.local/opt/MuseScore3"
       rm -rf "$HOME/.local/opt/MuseScore3"
       mkdir -p "$HOME/.local/opt"
-      (cd "$HOME/.local/opt" && "$target" --appimage-extract >/dev/null && mv squashfs-root MuseScore3)
-      if is_musescore3 "$HOME/.local/opt/MuseScore3/AppRun"; then
-        musescore="$HOME/.local/opt/MuseScore3/AppRun"
-      else
-        echo "MuseScore 3 was downloaded but does not start. What it says:" >&2
-        "$HOME/.local/opt/MuseScore3/AppRun" --version >&2 || true
+      (cd "$HOME/.local/opt" && "$APPIMAGE" --appimage-extract >/dev/null && mv squashfs-root MuseScore3)
+      if ! use_if_musescore3 "$HOME/.local/opt/MuseScore3/AppRun"; then
+        echo "MuseScore 3 is downloaded but does not start." >&2
+        why_not "$HOME/.local/opt/MuseScore3/AppRun"
       fi
     fi
   else
