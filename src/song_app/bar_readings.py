@@ -879,7 +879,7 @@ def option_svg(song: state.Song, oid: str, letter: str) -> str:
     """The option engraved, as SVG — verovio, which needs no MuseScore and is quick."""
     import verovio  # noqa: PLC0415 - only the picker needs it
 
-    from src.scrollvideo.engrave import RESOURCE_PATH  # noqa: PLC0415
+    from src.score_export.engraving import RESOURCE_PATH  # noqa: PLC0415
 
     offer = _find(song, oid)
     option = next((o for o in offer["options"] if o["letter"] == letter), None)

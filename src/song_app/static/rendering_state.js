@@ -1,10 +1,7 @@
 "use strict";
 
-// Workspace state that must survive a browser reload, plus a polling safety net for
-// long renders. The main app normally refreshes from its WebSocket; phones can suspend
-// or drop that socket while a render runs, so this small companion also watches the
-// durable job state. An observed render completion reloads once, and the remembered
-// tabs make that reload land exactly where the user was.
+// Workspace state that must survive a browser reload: the stage, the viewer tabs and
+// the phone's pane, so a reload lands exactly where the user was.
 (() => {
   const STORAGE_PREFIX = "songWorkspace:";
   // The phone bar's tabs, in order. Stages left it for a drawer (#258); a "stages"
@@ -14,9 +11,6 @@
 
   let restoreQueued = false;
   let restoring = false;
-  let pollTimer = null;
-  let observedSlug = null;
-  let snapshot = null;
 
   function currentSlug() {
     const match = location.hash.match(/^#\/song\/(.+)$/);
@@ -136,145 +130,6 @@
   const observer = new MutationObserver(queueRestore);
   if (appRoot) observer.observe(appRoot, { childList: true, subtree: true });
 
-  function renderedMedia(data) {
-    const media = Array.isArray(data.media) ? data.media : [];
-    const merged = media.filter((item) => item.merged);
-    return merged.length ? merged : media;
-  }
-
-  function completionToken(data) {
-    const job = data.jobs?.render || {};
-    return job.finished_at || data.record?.rendered_against || "";
-  }
-
-  function mediaUrl(url, token) {
-    const parsed = new URL(url, location.href);
-    // The server already versions media by mtime and size. The durable job token is
-    // an extra guarantee for a same-name, same-size render completed within one mtime
-    // tick, and lets an already-mounted <video> unequivocally load the new take.
-    if (token) parsed.searchParams.set("completed", String(token));
-    return parsed.pathname + parsed.search;
-  }
-
-  function mediaSignature(data) {
-    const token = completionToken(data);
-    return renderedMedia(data).map((item) => `${item.label}:${mediaUrl(item.url, token)}`).join("|");
-  }
-
-  function syncProgress(data) {
-    const logs = data.jobs?.render?.logs || [];
-    const latest = [...logs].reverse().find((entry) => entry.type === "progress");
-    if (!latest) return;
-    const log = document.querySelector(".panel .log");
-    if (!log) return;
-    const rows = log.querySelectorAll(".progress");
-    let row = rows[rows.length - 1];
-    if (!row) {
-      row = document.createElement("div");
-      row.className = "progress";
-      log.append(row);
-    }
-    row.textContent = latest.line;
-    log.scrollTop = log.scrollHeight;
-  }
-
-  function refreshVideosInPlace(data) {
-    const expected = renderedMedia(data);
-    if (!expected.length) return true;
-    const rows = [...document.querySelectorAll(".panel .result")];
-    if (rows.length !== expected.length) return false;
-
-    for (let index = 0; index < expected.length; index += 1) {
-      const label = rows[index].querySelector(".rlabel")?.textContent.trim();
-      const video = rows[index].querySelector("video");
-      if (!video || label !== expected[index].label) return false;
-    }
-
-    const token = completionToken(data);
-    rows.forEach((row, index) => {
-      const video = row.querySelector("video");
-      const wanted = mediaUrl(expected[index].url, token);
-      const shown = video.getAttribute("src") || "";
-      if (shown !== wanted) {
-        video.src = wanted;
-        video.load();
-      }
-    });
-    return true;
-  }
-
-  function renderRunning(data) {
-    return !!data.recording || data.jobs?.render?.status === "running";
-  }
-
-  function schedulePoll(delay) {
-    if (pollTimer) clearTimeout(pollTimer);
-    pollTimer = setTimeout(poll, delay);
-  }
-
-  async function poll() {
-    pollTimer = null;
-    const slug = currentSlug();
-    if (!slug) {
-      observedSlug = null;
-      snapshot = null;
-      schedulePoll(3000);
-      return;
-    }
-    if (slug !== observedSlug) {
-      observedSlug = slug;
-      snapshot = null;
-      queueRestore();
-    }
-
-    let delay = 2500;
-    try {
-      const response = await fetch(`/api/songs/${encodeURIComponent(slug)}`, { cache: "no-store" });
-      if (!response.ok) throw new Error(response.statusText);
-      const data = await response.json();
-      syncProgress(data);
-
-      const current = {
-        running: renderRunning(data),
-        signature: mediaSignature(data),
-      };
-      const completed = snapshot?.running && !current.running;
-      const outputsChanged = !!snapshot && snapshot.signature !== current.signature
-        && renderedMedia(data).length > 0;
-      const updated = refreshVideosInPlace(data);
-
-      // A complete refresh clears the old running banner, re-enables the controls,
-      // and mounts the final output set. It happens once because the next page starts
-      // with an idle snapshot; the saved workspace state restores the exact tab/pane.
-      if (completed) {
-        location.reload();
-        return;
-      }
-      // Also recover if outputs changed without this page ever observing the running
-      // state (for example, a phone resumed after the whole render) and its old panel
-      // cannot be updated safely in place.
-      if (outputsChanged && !updated) {
-        location.reload();
-        return;
-      }
-
-      snapshot = current;
-      delay = current.running ? 1000 : 4000;
-    } catch {
-      // A transient request failure must not affect the render. Keep trying quietly.
-      delay = 2000;
-    }
-    schedulePoll(delay);
-  }
-
-  window.addEventListener("hashchange", () => {
-    observedSlug = null;
-    snapshot = null;
-    queueRestore();
-    schedulePoll(0);
-  });
-  window.addEventListener("DOMContentLoaded", () => {
-    queueRestore();
-    schedulePoll(0);
-  });
+  window.addEventListener("hashchange", queueRestore);
+  window.addEventListener("DOMContentLoaded", queueRestore);
 })();

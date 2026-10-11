@@ -257,36 +257,9 @@ table.grid .undernote:empty { display: none; }
 .approval-summary.attention strong { color: var(--warn); }
 .approval-summary span { color: var(--muted); }
 .approval-summary button { justify-self: start; margin-top: 6px; }
-.renderer-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.renderer-card {
-  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px;
-  border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
-  color: var(--text); cursor: pointer;
-}
-.renderer-card.selected { border-color: var(--accent); background: rgba(110,168,254,.1); }
-.renderer-card > span { display: grid; min-width: 0; }
-.renderer-card small { color: var(--muted); line-height: 1.3; }
-.record-common { margin-top: 10px; }
-.record-advanced { margin: 12px 0; border: 1px solid var(--line); border-radius: 9px; padding: 0 10px; }
-.record-advanced summary { cursor: pointer; padding: 10px 0; color: var(--muted); }
-.record-actions { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 8px; }
-.record-actions.screen { grid-template-columns: 1fr; }
-.record-actions .primary { width: 100%; }
-.result { margin: 12px 0; }
-.result .rlabel { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
-.result video { width: 100%; border-radius: 8px; background: #000; }
-.uploads { margin: 4px 0 8px; padding-left: 18px; }
-.uploads li { margin: 2px 0; }
-.videostate { margin: 4px 0 8px; padding-left: 18px; }
-.videostate li.changed, .videostate li.not_uploaded { color: #b3261e; }
-.free-note.err { color: #b3261e; }
-.playlists .plrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
-.playlists .plrow label { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .tempo-row { flex-wrap: nowrap; }
 .tempo-row input[type=number] { min-width: 0; }
 .tempo-row label.tempo-start { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--text); white-space: nowrap; }
-.playlists .plnote { color: var(--muted); font-size: 0.9em; }
-.playlists .plhide { flex: none; font-size: 0.85em; padding: 2px 8px; }
 
 /* ---- Systems: printed-system boundaries drawn over the page ---- */
 .sysbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
@@ -387,34 +360,10 @@ table.grid .undernote:empty { display: none; }
 .scanhole .row, .scandone .row { margin-top: .4rem; }
 .panel .warn { color: var(--warn); }
 
-/* ---- Scroll preview ------------------------------------------------------
-   The video before it is a video: a canvas the exact shape of the frame, holding
-   a window onto the strip the renderer rasterised. The canvas carries the frame's
-   own pixel size and the element scales it, so nothing here decides how the music
-   is drawn — only how big it is shown. */
-.svgpreview { margin: .4rem 0 .2rem; }
-.pvviewport { width: 100%; overflow: hidden; background: #fff;
-              border: 1px solid var(--line); border-radius: 6px; }
-.pvviewport canvas { display: block; width: 100%; height: 100%; }
-.pvcontrols { align-items: center; gap: .4rem; }
-.pvseek { flex: 1 1 8rem; min-width: 5rem; }
-.pvtime { font-variant-numeric: tabular-nums; color: var(--muted); }
-.pvstatus { margin: .3rem 0; color: var(--muted); font-size: .85rem; }
-.pvstatus.err { color: #b3261e; }
+/* ---- Publish ---------------------------------------------------------- */
 .save-note { display: block; min-height: 1.2em; margin-top: 4px; }
 .save-note.err { color: #b3261e; }
-/* No real percentage exists while the score is drawn, so the bar only says "working". */
-.pvprogress { position: relative; height: 4px; width: min(100%, 360px); overflow: hidden;
-  border-radius: 2px; background: rgba(127, 127, 127, .25); margin: .3rem 0; }
-.pvprogress::after { content: ""; position: absolute; top: 0; bottom: 0; width: 35%;
-  background: #4c8dff; animation: pvprogress 1.3s ease-in-out infinite; }
-@keyframes pvprogress { from { left: -35%; } to { left: 100%; } }
-.pvaudio-controls { align-items: center; gap: .5rem; margin-top: .35rem; }
-.pvaudio { flex: 1 1 16rem; min-width: 12rem; max-width: 100%; height: 34px; }
-.pvaudio-status { color: var(--muted); font-size: .8rem; }
-.pvaudio-status.err { color: #b3261e; }
-.recordpreview { padding: 14px; text-align: left; background: #0e0f13; }
-.recordpreview .svgpreview { width: min(100%, 1100px); margin: 0 auto; }
+.credits { margin-top: 10px; }
 
 /* ---- Phone ---------------------------------------------------------------
    The bar that switches panes, the stage drawer's ☰ and backdrop, and the
@@ -533,15 +482,6 @@ table.grid .undernote:empty { display: none; }
   }
 
   .approval-summary { padding: 8px 10px; }
-  .renderer-card { padding: 9px 8px; }
-  .renderer-card small { font-size: 11px; }
-  .record-common label { margin-top: 8px; }
-  .output-row { align-items: center; }
-  .output-row .hint { font-size: 11px; }
-  .record-advanced { margin: 10px 0; }
-  .record-actions { position: sticky; bottom: -14px; padding: 8px 0 14px; background: var(--bg); }
-  .recordpreview { padding: 8px; }
-  .recordpreview .svgpreview { min-height: 100%; }
 
   /* The clean grid is four columns of a table on a 390px screen. One card per staff
      instead, header row dropped — the cells label themselves. */

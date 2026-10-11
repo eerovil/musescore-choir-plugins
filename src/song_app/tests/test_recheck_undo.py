@@ -180,21 +180,22 @@ def test_undo_takes_away_records_the_old_score_never_had(song, monkeypatch):
     assert "health" not in fresh and "verification" not in fresh and "lyrics" not in fresh
 
 
-@pytest.mark.parametrize("running", ["render", "upload"])
-def test_a_check_and_a_render_or_upload_never_overlap(song, monkeypatch, running):
+def test_a_check_and_a_publish_never_overlap(song, monkeypatch):
     monkeypatch.setattr(server, "_run_check", lambda slug: None)
+    for key, value in (("CLOUDFLARE_ACCOUNT_ID", "acct"), ("CLOUDFLARE_API_TOKEN", "tok"),
+                       ("STEMMANAUHAT_D1_DATABASE_ID", "db1")):
+        monkeypatch.setenv(key, value)
     song.data["review"] = {"approved_against": song.data["cleaned_fingerprint"]}
     song.save()
     client = TestClient(server.app)
-    job_state.start(song.dir, running)
+    job_state.start(song.dir, "publish")
     assert client.post(f"/api/songs/{song.slug}/recheck").status_code == 409
-    job_state.finish(song.dir, running)
+    job_state.finish(song.dir, "publish")
 
     assert client.post(f"/api/songs/{song.slug}/recheck").status_code == 200
-    # The stub leaves the check running: now the render or upload must wait.
-    body = {"upload_only": True} if running == "upload" else {}
-    reply = client.post(f"/api/songs/{song.slug}/record", json=body)
-    assert reply.status_code == 409 and "check" in reply.json()["detail"]
+    # The stub leaves the check running: now the publish must wait.
+    reply = client.post(f"/api/songs/{song.slug}/publish", json={"choir": "jm"})
+    assert reply.status_code == 409
 
 
 def test_a_score_upload_waits_for_a_running_check(song):

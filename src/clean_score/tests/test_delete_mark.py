@@ -256,7 +256,7 @@ def _musescore():
 def test_playback_stops_holding_the_beat_once_both_fermatas_are_out(root, tmp_path):
     import mido  # noqa: PLC0415
 
-    from src.scrollvideo.audio import run_musescore  # noqa: PLC0415
+    from src.score_export.musescore import run_musescore  # noqa: PLC0415
 
     def seconds(name):
         score, midi = tmp_path / f"{name}.mscx", tmp_path / f"{name}.mid"

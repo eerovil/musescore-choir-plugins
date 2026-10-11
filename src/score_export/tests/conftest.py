@@ -17,12 +17,6 @@ def fermata_mscx():
     return os.path.join(FILES, "fermata.mscx")
 
 
-@pytest.fixture
-def fermata_musicxml():
-    """The same score as MusicXML, so engraving tests need no MuseScore."""
-    return os.path.join(FILES, "fermata.musicxml")
-
-
 def musescore_available() -> bool:
     cli = os.getenv("MUSESCORE_CLI_PATH", "musescore3")
     return bool(shutil.which(cli) or (os.path.isfile(cli) and os.access(cli, os.X_OK)))
@@ -30,5 +24,3 @@ def musescore_available() -> bool:
 
 needs_musescore = pytest.mark.skipif(
     not musescore_available(), reason="MuseScore CLI not available (MUSESCORE_CLI_PATH)")
-needs_ffmpeg = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")

@@ -6,27 +6,23 @@ import asyncio
 import json
 import os
 import subprocess
-import sys
 import tempfile
-import time
 import traceback
 from typing import Dict, List, Optional, Set
 
 import dotenv
 from lxml import etree
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
+from fastapi.responses import (FileResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import (agentdeck, bar_readings, free_videos, health, heavy_slot, homr_install,
-               job_state, omr,
-               pdf_systems, pipeline, playlists, problems, publish, pwa_assets, scan, site_refresh,
+from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_state, omr,
+               pdf_systems, pipeline, problems, publish, pwa_assets, scan,
                state, system_finder, verification)
 from . import clean_backup
 from src.clean_score.utils.score_fixes import FixError
-from src.scrollvideo.score import START as START_TEMPO, format_groups, parse_groups
-from src.media_root import media_dir
+from src.score_export.score import START as START_TEMPO
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -42,12 +38,11 @@ app.include_router(agentdeck.router)
 # --------------------------------------------------------------------------
 # Freshness
 # --------------------------------------------------------------------------
-# The app deploys over itself every couple of minutes, and a recorded video is
-# rewritten under the same name whenever a part is re-rendered. Neither the SPA
-# files nor the videos carried any Cache-Control, which does NOT mean "do not
+# The app deploys over itself every couple of minutes. The SPA files carried no
+# Cache-Control, which does NOT mean "do not
 # cache": a browser given no instruction is free to invent a freshness lifetime
 # from Last-Modified, and Chrome on Android invents a generous one. The phone
-# then serves old code and old video off its own disk without ever asking us,
+# then serves old code off its own disk without ever asking us,
 # which is why only restarting the browser helped.
 #
 # "no-cache" is not "no-store" — the copy is kept, but the browser has to ask
@@ -114,10 +109,6 @@ def _require(slug: str) -> state.Song:
     return song
 
 
-def _lock_path(song: state.Song) -> str:
-    return song.path(".recording.lock")
-
-
 def _scan_lock_path(song: state.Song) -> str:
     return song.path(".scanning.lock")
 
@@ -141,46 +132,9 @@ def _holds_lock(path: str) -> bool:
     return False
 
 
-def is_recording(song: state.Song) -> bool:
-    return _holds_lock(_lock_path(song))
-
-
 def is_scanning(song: state.Song) -> bool:
     """A scan is minutes long, so a page refresh must not start a second one."""
     return _holds_lock(_scan_lock_path(song))
-
-
-def _media_version(path: str) -> str:
-    """A short stamp that changes whenever the file does (mtime + size)."""
-    try:
-        st = os.stat(path)
-    except OSError:
-        return "0"
-    return f"{int(st.st_mtime)}-{st.st_size}"
-
-
-def _media_list(song: state.Song) -> List[Dict]:
-    """Merged per-voice videos (and the raw recording) available for review."""
-    vdir = song.media_path("video")
-    if not os.path.isdir(vdir):
-        return []
-    out = []
-    for name in sorted(os.listdir(vdir)):
-        if not name.lower().endswith((".mov", ".mp4")):
-            continue
-        prefix = song.slug + " "
-        is_merged = name.startswith(prefix)
-        # Re-recording a part rewrites the same file name, so without the stamp
-        # the URL is identical and a phone happily plays yesterday's video.
-        version = _media_version(os.path.join(vdir, name))
-        out.append({
-            "name": name,
-            "label": name[len(prefix):].rsplit(".", 1)[0] if is_merged else "raw recording",
-            "merged": is_merged,
-            "url": f"/api/songs/{song.slug}/media/{name}?v={version}",
-        })
-    out.sort(key=lambda m: (not m["merged"], m["label"]))
-    return out
 
 
 def _derived(song: state.Song) -> Dict:
@@ -215,15 +169,14 @@ def _derived(song: state.Song) -> Dict:
         # Slurs a person recorded off the page. Shown for the same reason: a record
         # nobody can see is a file nobody opens.
         "recorded_slurs": pipeline.recorded_slurs(song.dir),
-        "recording": is_recording(song),
         "scanning": is_scanning(song),
         # What the scan stage has read, what is still a hole, and what the app
         # threw away this read because its input had moved under it.
         "scan_status": scan.status(song),
         "scan_discarded": [scan.said(line) for line in discarded],
-        "media": _media_list(song),
-        # Which videos YouTube has and whether the local copies can go (#371).
-        "upload_status": free_videos.status(song),
+        # The composer, lyricist and arranger the score itself carries, which
+        # the Publish panel offers until someone saves their own (#400).
+        "score_credits": publish.score_credits(cleaned) if cleaned and os.path.exists(cleaned) else {},
         # Whether this host can publish to the Cloudflare site at all (#382).
         "publish_configured": publish.Config.from_env() is not None,
         "jobs": job_state.load(song.dir),
@@ -273,13 +226,7 @@ def _import_one(name: str) -> bool:
     pdf = next((f for f in files if f.lower().endswith(".pdf") and not f.endswith(".render.pdf")), None)
     lyrics = "lyrics.json" if "lyrics.json" in files else None
 
-    vdir = os.path.join(media_dir(d), "video")
-    outputs = []
-    if os.path.isdir(vdir):
-        outputs = [f for f in sorted(os.listdir(vdir))
-                   if f.lower().endswith((".mov", ".mp4")) and f.startswith(name + " ")]
-
-    if not (inp or cleaned or outputs or pdf):
+    if not (inp or cleaned or pdf):
         return False  # not a recognisable song folder
 
     # per-system if an answer set was recorded for this input score
@@ -306,14 +253,11 @@ def _import_one(name: str) -> bool:
         }
     if lyrics:
         data["lyrics"] = {"json": lyrics, "warnings": []}
-    if outputs:
-        data["record"] = {"exported": True, "outputs": outputs, "audio_delay_ms": 1300}
 
     # A folder with an input score is past scanning whatever else it has, so the
     # 48 legacy songs land where they always did. Only a folder that has nothing
     # but a PDF is a song waiting to be read off the page.
-    data["stage"] = ("upload" if outputs else "review" if cleaned
-                     else "clean" if inp else "scan" if pdf else "register")
+    data["stage"] = ("review" if cleaned else "clean" if inp else "scan" if pdf else "register")
     state.Song(name, data).save()
     return True
 
@@ -488,9 +432,9 @@ def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
         except omr.HomrMissing as exc:
             raise HTTPException(400, str(exc)) from None
     if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "scan", ("scan", "clean", "render", "upload", "publish"),
+            song.dir, "scan", ("scan", "clean", "check", "publish"),
             pdf_systems.file_version(song.source_path("pdf"))):
-        raise HTTPException(409, "Another scan, clean, render, or upload is "
+        raise HTTPException(409, "Another scan, clean, or publish is "
                                  "already running for this song.")
     # The durable start above is the atomic gate; the PID lock is what makes a
     # page refresh unable to start a second scan over the top of this one.
@@ -668,10 +612,10 @@ def _run_clean(slug: str) -> None:
 @app.post("/api/songs/{slug}/clean")
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
-    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "clean", ("scan", "clean", "check", "render", "upload", "publish"),
+    if is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "clean", ("scan", "clean", "check", "publish"),
             state.file_fingerprint(song.source_path("xml"))):
-        raise HTTPException(409, "Another scan, clean, render, or upload is already running for this song.")
+        raise HTTPException(409, "Another scan, clean, or publish is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
     return {"started": True}
 
@@ -680,9 +624,9 @@ async def api_clean(slug: str) -> Dict:
 def api_undo_clean(slug: str) -> Dict:
     """Put back the cleaned score the last clean replaced, with its records (#391)."""
     song = _require(slug)
-    if is_recording(song) or is_scanning(song) or any(
+    if is_scanning(song) or any(
             job_state.is_running(song.dir, kind)
-            for kind in ("clean", "check", "render", "upload", "publish")):
+            for kind in ("clean", "check", "publish")):
         raise HTTPException(409, "Something is running for this song; undo once it has finished.")
     with state.song_lock(song.slug):
         fresh = state.load(song.slug) or song
@@ -768,11 +712,11 @@ def _run_check(slug: str) -> None:
 async def api_recheck(slug: str) -> Dict:
     song = _require(slug)
     _cleaned_or_400(song)
-    # Not beside a render or an upload either: each saves the whole song state, and
-    # the later save would put back the earlier one's copy of the other's result.
-    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "check", ("scan", "clean", "check", "render", "upload")):
-        raise HTTPException(409, "A scan, clean, check, render, or upload is already running "
+    # Not beside a publish either: each saves the whole song state, and the later
+    # save would put back the earlier one's copy of the other's result.
+    if is_scanning(song) or not job_state.start_if_idle(
+            song.dir, "check", ("scan", "clean", "check", "publish")):
+        raise HTTPException(409, "A scan, clean, check, or publish is already running "
                                  "for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_check, slug)
     return {"started": True}
@@ -941,10 +885,10 @@ def api_pick_reading(slug: str, body: Dict) -> Dict:
     offer, choice = str(body.get("offer") or ""), str(body.get("choice") or "")
     if not offer or not choice:
         raise HTTPException(400, "say which bar (offer) and which reading (choice)")
-    # A clean or render reads the score this rewrites.
+    # A clean or a publish reads the score this rewrites.
     if is_scanning(song) or any(
-            job_state.is_running(song.dir, kind) for kind in ("clean", "render", "upload")):
-        raise HTTPException(409, "A scan, clean, render, or upload is running for this "
+            job_state.is_running(song.dir, kind) for kind in ("clean", "publish")):
+        raise HTTPException(409, "A scan, clean, or publish is running for this "
                                  "song — wait for it to finish, then pick again.")
     try:
         done = bar_readings.record_pick(song, offer, choice)
@@ -984,8 +928,8 @@ def api_pick_problem(slug: str, body: Dict) -> Dict:
     if not choice or not letter:
         raise HTTPException(400, "say which problem (choice) and which answer (letter)")
     if is_scanning(song) or any(
-            job_state.is_running(song.dir, k) for k in ("clean", "render", "upload")):
-        raise HTTPException(409, "A scan, clean, render, or upload is running for this "
+            job_state.is_running(song.dir, k) for k in ("clean", "publish")):
+        raise HTTPException(409, "A scan, clean, or publish is running for this "
                                  "song — wait for it to finish, then pick again.")
     try:
         if kind == "slur":
@@ -1015,38 +959,15 @@ def api_dismiss(slug: str, issue_id: str) -> Dict:
     return _derived(song)
 
 
-def _rename_uploads_task(slug: str, old_name: str, new_name: str) -> None:
-    song = _require(slug)
-    log = lambda m: hub.emit(slug, {"type": "log", "line": m})
-    try:
-        from src.stemmanauha.upload_to_youtube import rename_uploads
-        uploads = song.data.get("record", {}).get("uploads", [])
-        log("Updating YouTube titles…")
-        updated = rename_uploads(uploads, old_name, new_name, log=log)
-        song.data.setdefault("record", {})["uploads"] = updated
-        song.save()
-        log("YouTube titles updated.")
-    except Exception as exc:
-        traceback.print_exc()
-        hub.emit(slug, {"type": "error", "line": f"YouTube rename failed: {exc}"})
-    finally:
-        hub.emit(slug, {"type": "state"})
-
-
 @app.post("/api/songs/{slug}/rename")
 async def api_rename(slug: str, body: Dict) -> Dict:
-    """Change the song's display name; retitle uploaded YouTube videos if any."""
+    """Change the song's display name. The site shows the new one at the next publish."""
     song = _require(slug)
     new_name = (body or {}).get("name", "").strip()
     if not new_name:
         raise HTTPException(400, "Name is required")
-    old_name = song.name
     song.data["name"] = new_name
     song.save()
-    uploads = song.data.get("record", {}).get("uploads", [])
-    if uploads and new_name != old_name:
-        asyncio.get_running_loop().run_in_executor(
-            None, _rename_uploads_task, slug, old_name, new_name)
     return _derived(song)
 
 
@@ -1075,7 +996,7 @@ def api_set_stage(slug: str, stage: str) -> Dict:
 
 @app.post("/api/songs/{slug}/approve-review")
 def api_approve_review(slug: str, body: Dict = None) -> Dict:
-    """Record which cleaned score a person approved, then advance to Record."""
+    """Record which cleaned score a person approved, then advance to Publish."""
     song = _require(slug)
     cleaned = song.cleaned_path()
     approved_against = state.file_fingerprint(cleaned) if cleaned else None
@@ -1090,7 +1011,7 @@ def api_approve_review(slug: str, body: Dict = None) -> Dict:
         # derived from the scan too: re-reading a system means nobody has seen
         # what would be recorded now.
         song.data["review"]["scan_revision"] = scan.revision(song)
-    song.set_stage("record")
+    song.set_stage("publish")
     song.save()
     return _derived(song)
 
@@ -1098,75 +1019,6 @@ def api_approve_review(slug: str, body: Dict = None) -> Dict:
 # --------------------------------------------------------------------------
 # Lyrics stage
 # --------------------------------------------------------------------------
-@app.get("/api/playlists")
-def api_playlists() -> List[Dict]:
-    return state.load_playlists()
-
-
-def _youtube_failed(exc: Exception) -> HTTPException:
-    """YouTube refusing or unreachable, said in words (#338)."""
-    from src.stemmanauha.upload_to_youtube import QuotaExceeded
-    if isinstance(exc, QuotaExceeded):
-        return HTTPException(503, str(exc))
-    return HTTPException(503, f"YouTube could not be reached: {exc}")
-
-
-@app.post("/api/playlists")
-def api_remember_playlist(body: Dict) -> List[Dict]:
-    """Offer one more of the account's playlists for songs to be picked into."""
-    playlist_id = (body.get("playlist_id") or "").strip()
-    if not playlist_id:
-        raise HTTPException(400, "Which playlist?")
-    state.save_playlist(playlist_id, body.get("title") or None)
-    return state.load_playlists()
-
-
-@app.delete("/api/playlists/{playlist_id}")
-def api_forget_playlist(playlist_id: str) -> List[Dict]:
-    """Stop offering a playlist. It is not touched on YouTube."""
-    state.forget_playlist(playlist_id)
-    return state.load_playlists()
-
-
-@app.get("/api/youtube-playlists")
-def api_youtube_playlists() -> List[Dict]:
-    try:
-        return playlists.account_playlists()
-    except Exception as exc:
-        raise _youtube_failed(exc)
-
-
-@app.get("/api/songs/{slug}/playlists")
-def api_song_playlists(slug: str) -> Dict:
-    song = _require(slug)
-    try:
-        return playlists.song_playlists(song)
-    except playlists.PlaylistError as exc:
-        raise HTTPException(400, str(exc))
-    except Exception as exc:
-        raise _youtube_failed(exc)
-
-
-@app.post("/api/songs/{slug}/playlists")
-def api_song_playlist_membership(slug: str, body: Dict) -> Dict:
-    """Put this song's videos into a playlist, or take them out (#338)."""
-    song = _require(slug)
-    if is_recording(song):
-        raise HTTPException(409, "A recording or upload is running; try again when it is done.")
-    log = lambda m: hub.emit(slug, {"type": "log", "line": m})
-    try:
-        row = playlists.set_membership(song, (body.get("playlist_id") or "").strip(),
-                                       bool(body.get("member")), log,
-                                       title=body.get("title") or None)
-    except playlists.PlaylistError as exc:
-        raise HTTPException(400, str(exc))
-    except Exception as exc:
-        raise _youtube_failed(exc)
-    # The site lists the choir's playlists, so it would otherwise wait for its schedule.
-    site_refresh.refresh_stemmanauhat(log)
-    return row
-
-
 @app.get("/api/prompt")
 def api_prompt() -> Dict:
     path = os.path.join(SCRIPT_DIR, "lyric_json_prompt.txt")
@@ -1498,17 +1350,6 @@ def api_page(slug: str, page: int, dpi: int = 150, grid: bool = False):
     return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
 
 
-def _printed_systems(song) -> list:
-    """The bars that begin a printed system, for the scrolling video's bar numbers.
-
-    Read off the converted input rather than the cleaned score: normal-mode
-    cleaning strips the line breaks, so the cleaned file usually cannot say where
-    the page's systems were. Empty when the source never had breaks — the renderer
-    then falls back to numbering at a regular interval.
-    """
-    return pipeline.cleaned_system_starts(song.dir, _bounds_score(song))
-
-
 def _cleaned_breaks(song) -> tuple:
     """(cleaned .mscx, printed line breaks) for the compare view, or (None, [])."""
     cleaned = song.cleaned_path()
@@ -1670,10 +1511,10 @@ async def api_upload_score_file(slug: str, file: UploadFile = None) -> Dict:
     cleaned = _cleaned_or_400(song)
     if not file or not file.filename:
         raise HTTPException(400, "No file was uploaded")
-    if is_recording(song) or is_scanning(song) or any(
+    if is_scanning(song) or any(
             job_state.is_running(song.dir, kind)
-            for kind in ("clean", "check", "render", "upload")):
-        raise HTTPException(409, "A scan, clean, check, render, or upload is running for this "
+            for kind in ("clean", "check", "publish")):
+        raise HTTPException(409, "A scan, clean, check, or publish is running for this "
                                  "song — replacing the score underneath it would be read "
                                  "half-written.")
     try:
@@ -1701,39 +1542,9 @@ def api_reveal_pdf(slug: str) -> Dict:
     return {"ok": True}
 
 
-MARGIN_LIMITS = (-40.0, 100.0)
-
-# What the margins start at when a song has never been asked. The renderer's own
-# default is 0 — "leave the framing alone" — but the app wants a little white
-# space under the bottom staff, so the lowest lyrics are not against the frame
-# edge. `static/app.js` prefills the same numbers; keep the two in step.
-DEFAULT_TOP_MARGIN_PERCENT = 0.0
-DEFAULT_BOTTOM_MARGIN_PERCENT = 5.0
-
-
-def _margin(value, label: str) -> float:
-    """One video margin, as a number inside the range the renderer accepts."""
-    try:
-        margin = float(value if value is not None else 0.0)
-    except (TypeError, ValueError):
-        raise HTTPException(400, f"{label} video margin must be a number") from None
-    low, high = MARGIN_LIMITS
-    if not low <= margin <= high:
-        raise HTTPException(
-            400, f"{label} video margin must be between {low:g}% and {high:g}%")
-    return margin
-
-
-def _staff_groups(cleaned: str, text) -> str:
-    """A staff grouping ("S1+S2, A1+A2") checked against this score, written the
-    one way it is stored. Blank is no grouping; a part the video does not have is
-    a 400 saying which."""
-    try:
-        return format_groups(pipeline.staff_groups(cleaned, str(text or "")))
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from None
-
-
+# --------------------------------------------------------------------------
+# Publish to the stemmanauhat site (#382, #400)
+# --------------------------------------------------------------------------
 def _whole_number(value) -> int:
     """`value` as an int when it is a whole number, or ValueError. `int()` alone
     would turn bar 13.5 into 13 and play the change in the wrong place."""
@@ -1751,8 +1562,8 @@ def _whole_number(value) -> int:
 def _tempo_changes(cleaned: str, value) -> List[Dict]:
     """Tempo changes (#387) checked against this score, in the one way they are
     stored: `[{"measure": 13, "bpm": 112}, {"measure": 23, "bpm": "start"}]`,
-    sorted by bar. Accepts that list or the same as JSON text (a query string
-    carries it that way). A bad bar or BPM is a 400 naming it."""
+    sorted by bar. Accepts that list or the same as JSON text. A bad bar or BPM
+    is a 400 naming it."""
     if isinstance(value, str):
         try:
             value = json.loads(value) if value.strip() else []
@@ -1786,531 +1597,124 @@ def _tempo_changes(cleaned: str, value) -> List[Dict]:
     return [out[m] for m in sorted(out)]
 
 
-def _remember_record_settings(song: state.Song, **wanted) -> None:
-    """Keep the Record settings this song was last shown or rendered with.
-
-    The framing (margins, and the staff grouping of #246 — it changes what is
-    drawn, not what is heard), the output quality, the tempo the app supplies and
-    the encoder choice. Written when a render is asked for, when the panel's
-    Preview or Save settings is pressed (#301), and when a preview succeeds, so
-    nudging a value to see what it looks like is enough to keep it — that is the
-    moment the choice is actually made. Only a real change is written, and never
-    while a job is running: the state file is saved whole, so a needless write
-    here could land on top of what a finishing render just recorded. Pass a
-    freshly loaded song for the same reason.
-    """
-    rec = song.data.get("record", {})
-    if all(rec.get(key) == value for key, value in wanted.items()):
-        return
-    if is_recording(song):
-        return
-    song.data.setdefault("record", {}).update(wanted)
-    song.save()
+CREDIT_LIMIT = 200
 
 
-def _scroll_settings(song: state.Song, opts: Dict) -> Dict:
-    """The scrolling renderer's settings out of a request, checked the way a render
-    checks them; anything the request leaves out falls back to what this song
-    chose last, then to the app-wide default.
-
-    One place for both the render and Save settings, so a value the render would
-    refuse is refused on save too, with the same message. The staff grouping and
-    the tempo need the cleaned score; without one they are left out. The tempo is
-    left out too when the score carries its own, since it would be ignored.
-    """
-    remembered = song.data.get("record", {})
-    quality = opts.get("quality", remembered.get("quality"))
-    out = {
-        "quality": quality if quality in pipeline.SCROLL_QUALITY else "4k",
-        "hardware_encoding": opts.get(
-            "hardware_encoding", remembered.get("hardware_encoding")) is not False,
-    }
-    for key, label, default in (
-            ("top_margin", "Top", DEFAULT_TOP_MARGIN_PERCENT),
-            ("bottom_margin", "Bottom", DEFAULT_BOTTOM_MARGIN_PERCENT)):
-        out[key] = _margin(opts.get(key, remembered.get(key, default)), label)
-    cleaned = song.cleaned_path()
-    if cleaned and os.path.exists(cleaned):
-        out["staff_groups"] = _staff_groups(
-            cleaned, opts.get("staff_groups", remembered.get("staff_groups", "")))
-        out["tempo_changes"] = _tempo_changes(
-            cleaned, opts.get("tempo_changes", remembered.get("tempo_changes", [])))
-        if not pipeline.has_opening_tempo(cleaned):
-            try:
-                bpm = int(opts.get("bpm", remembered.get("bpm", 80)))
-            except (TypeError, ValueError):
-                raise HTTPException(400, "BPM must be a whole number") from None
-            if not 20 <= bpm <= 300:
-                raise HTTPException(400, "BPM must be between 20 and 300")
-            out["bpm"] = bpm
+def _credits(value) -> Dict[str, str]:
+    """Composer, lyricist and arranger as the Publish panel sends them: each one
+    text, trimmed; an empty one is kept empty, so clearing a name the score
+    carries stays cleared."""
+    if not isinstance(value, dict):
+        raise HTTPException(400, "Credits must be composer, lyricist and arranger")
+    out = {}
+    for name in publish.CREDITS:
+        text = value.get(name, "")
+        if text is None:
+            text = ""
+        if not isinstance(text, str):
+            raise HTTPException(400, f"The {name} must be text")
+        text = " ".join(text.split())
+        if len(text) > CREDIT_LIMIT:
+            raise HTTPException(400, f"The {name} is longer than {CREDIT_LIMIT} characters")
+        out[name] = text
     return out
 
 
-def _remembered_tempos(song: state.Song, asked: Optional[str]):
-    """The tempo changes a preview asked for, or this song's when it named none: a
-    preview opened without them must not play, nor save, a song without them."""
-    return song.data.get("record", {}).get("tempo_changes", []) if asked is None else asked
+def _publish_settings(song: state.Song, opts: Dict) -> Dict:
+    """What the site plays and shows a song with, out of a request (#400).
 
-
-@app.get("/api/songs/{slug}/scroll-preview")
-async def api_scroll_preview(slug: str, quality: str = "4k",
-                             top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
-                             bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
-                             bpm: Optional[int] = None, staff_groups: str = "",
-                             tempo_changes: Optional[str] = None):
-    """The scrolling render as pictures the browser can play, before any video exists.
-
-    This is the picture without the encoding: the same engraving, viewport, clock,
-    scroll curve and *pixels* `build_videos` would use, drawn by the same code at a
-    height a page can carry. It does not count as a render — no stage moves and no
-    video appears; the only files it leaves behind are its own cache. The one thing
-    it does record is the settings it was asked for (`_remember_record_settings`), because
-    nudging a margin and looking at the result *is* how the choice gets made, and
-    having to render before it would stick lost it every time.
-
-    It also fails where a render would, and that is half its value: a D.C./D.S.
-    jump that cannot be matched to the page or margins that leave no picture come
-    back here as an ordinary error message, seconds in, instead of after minutes of engraving and encoding.
+    The tempo the app supplies (only for a score without its own), the tempo
+    changes (#387) and the credits. Anything the request leaves out falls back
+    to what this song saved last; the credits fall back to the score's own
+    metaTags.
     """
-    song = _require(slug)
+    saved = song.data.get("publish") or {}
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
-        raise HTTPException(400, "No cleaned score yet — clean the song first.")
-    settings = {
-        "quality": quality if quality in pipeline.SCROLL_QUALITY else "4k",
-        "top_margin_percent": _margin(top_margin, "Top"),
-        "bottom_margin_percent": _margin(bottom_margin, "Bottom"),
-        # A score with its own opening tempo ignores this, so it is only part of
-        # what the preview is *of* when the app is the one supplying the tempo.
-        "initial_bpm": bpm if bpm and not pipeline.has_opening_tempo(cleaned) else None,
-        # The picture shows a bar number where the page started a system, so the
-        # preview has to be told the same grouping the render is told.
-        "system_starts": _printed_systems(song),
-    }
-    groups = _staff_groups(cleaned, staff_groups)
-    settings["staff_groups"] = parse_groups(groups)
-    tempos = _tempo_changes(cleaned, _remembered_tempos(song, tempo_changes))
-    settings["tempo_changes"] = tempos
-    try:
-        payload = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: pipeline.scroll_preview(song.dir, cleaned, **settings))
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(400, str(exc) or exc.__class__.__name__)
-    # Only once the picture came out: a framing the renderer refuses is not one to
-    # come back to. Reloaded, because preparing can take seconds.
-    remember = {"quality": settings["quality"],
-                "top_margin": settings["top_margin_percent"],
-                "bottom_margin": settings["bottom_margin_percent"],
-                "staff_groups": groups, "tempo_changes": tempos}
-    if settings["initial_bpm"]:
-        remember["bpm"] = settings["initial_bpm"]
-    _remember_record_settings(_require(slug), **remember)
-    return JSONResponse(payload, headers=dict(REVALIDATE))
+        raise HTTPException(400, "Clean the score first")
+    out: Dict = {"tempo_changes": _tempo_changes(
+        cleaned, opts.get("tempo_changes", saved.get("tempo_changes", [])))}
+    if not pipeline.has_opening_tempo(cleaned):
+        try:
+            bpm = _whole_number(opts.get("bpm", saved.get("bpm", publish.DEFAULT_BPM)))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "BPM must be a whole number") from None
+        if not 20 <= bpm <= 300:
+            raise HTTPException(400, "BPM must be between 20 and 300")
+        out["bpm"] = bpm
+    if "credits" in opts:
+        out["credits"] = _credits(opts["credits"])
+    elif "credits" in saved:
+        out["credits"] = saved["credits"]
+    return out
 
 
-@app.get("/api/songs/{slug}/scroll-preview/{name}")
-async def api_scroll_preview_tile(slug: str, name: str):
-    """One tile of the prepared preview strip.
+def _publish_busy(song: state.Song) -> bool:
+    return is_scanning(song) or any(job_state.is_running(song.dir, kind)
+                                    for kind in ("clean", "check", "publish"))
 
-    The payload names these; preparing writes them. They are served rather than
-    inlined because a score's strip is megabytes of PNG, and a phone should get it
-    as images the browser can cache and decode, not as base64 inside JSON.
+
+@app.post("/api/songs/{slug}/publish-settings")
+async def api_publish_settings(slug: str, body: Dict = None) -> Dict:
+    """Save the tempo, tempo changes and credits without publishing (#400).
+
+    Refused while a job runs: a publish writes the same record when it finishes,
+    and the state file is saved whole.
     """
     song = _require(slug)
-    path = pipeline.scroll_preview_tile(song.dir, name)
-    if not path:
-        raise HTTPException(404, "No such preview tile")
-    return FileResponse(path, media_type="image/png", headers=dict(REVALIDATE))
-
-
-@app.get("/api/songs/{slug}/scroll-preview-audio")
-async def api_scroll_preview_audio(slug: str, revision: str, mix: str = "ALL",
-                                   quality: str = "4k",
-                                   top_margin: float = DEFAULT_TOP_MARGIN_PERCENT,
-                                   bottom_margin: float = DEFAULT_BOTTOM_MARGIN_PERCENT,
-                                   bpm: Optional[int] = None, staff_groups: str = "",
-                                   tempo_changes: Optional[str] = None):
-    """One selected MuseScore mix, prepared lazily for the browser preview."""
-    song = _require(slug)
-    cleaned = song.cleaned_path()
-    if not cleaned or not os.path.exists(cleaned):
-        raise HTTPException(400, "No cleaned score yet — clean the song first.")
-    settings = {
-        "quality": quality if quality in pipeline.SCROLL_QUALITY else "4k",
-        "top_margin_percent": _margin(top_margin, "Top"),
-        "bottom_margin_percent": _margin(bottom_margin, "Bottom"),
-        "initial_bpm": bpm if bpm and not pipeline.has_opening_tempo(cleaned) else None,
-        "system_starts": _printed_systems(song),
-    }
-    settings["staff_groups"] = parse_groups(_staff_groups(cleaned, staff_groups))
-    settings["tempo_changes"] = _tempo_changes(
-        cleaned, _remembered_tempos(song, tempo_changes))
-    try:
-        path, reused = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: pipeline.scroll_preview_audio(
-                song.dir, cleaned, mix, revision, **settings))
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(400, str(exc) or exc.__class__.__name__)
-    headers = {**REVALIDATE, "X-Scroll-Audio-Cache": "hit" if reused else "miss"}
-    return FileResponse(path, media_type="audio/wav", headers=headers)
-
-
-# --------------------------------------------------------------------------
-# Record stage
-# --------------------------------------------------------------------------
-def _run_record(slug: str, opts: Dict) -> None:
-    song = _require(slug)
-    start_fingerprint = opts.get("_source_fingerprint")
-    previous_record = song.data.get("record", {})
-    previous_rendered_against = previous_record.get("rendered_against")
-    legacy_screen_against = previous_rendered_against \
-        if previous_record.get("renderer") in (None, "screen") else None
-    previous_audio_against = previous_record.get(
-        "audio_rendered_against", legacy_screen_against)
-    previous_video_against = previous_record.get(
-        "video_rendered_against", legacy_screen_against)
-    job_kind = "upload" if opts.get("upload_only") else "render"
-    log = lambda m: _job_emit(slug, job_kind, m)
-    progress = lambda m: _job_emit(slug, job_kind, m, "progress")
-
-    def on_uploaded(info: Dict) -> None:
-        current_song = _require(slug)
-        rec = current_song.data.setdefault("record", {})
-        rec.setdefault("uploads", []).append(info)
-        rec["playlist_id"] = info.get("playlist_id")
-        current_song.save()
-        hub.emit(slug, {"type": "state"})
-
-    try:
-        merge_only = bool(opts.get("merge_only"))
-        upload_only = bool(opts.get("upload_only"))
-
-        # Two renderers write the same "<slug> <part>" files into media/video, so
-        # everything downstream (review, upload, retitling) is renderer-agnostic.
-        # "scroll" renders from the score; "screen" drives MuseScore and records it.
-        if (opts.get("renderer") or "scroll") == "scroll" and not (merge_only or upload_only):
-            cleaned = song.cleaned_path()
-            if not cleaned or not os.path.exists(cleaned):
-                raise FileNotFoundError("No cleaned score yet — clean the song first.")
-            quality = opts.get("quality") or "4k"
-            hardware_encoding = opts.get("hardware_encoding") is not False
-            top_margin = float(opts.get("top_margin", DEFAULT_TOP_MARGIN_PERCENT))
-            bottom_margin = float(opts.get("bottom_margin",
-                                           DEFAULT_BOTTOM_MARGIN_PERCENT))
-            margin_options = {
-                "top_margin_percent": top_margin,
-                "bottom_margin_percent": bottom_margin,
-            }
-            log(f"Rendering the scrolling video ({quality})…")
-            # Minutes of every core the host has, so it waits its turn behind
-            # anything else heavy running here — an agent's test suite, a scan,
-            # another song's render. The slot is AgentDeck's host-wide pool; a
-            # deck that is down or busy costs a log line, never the render.
-            # Losing a slot we were granted is the other way round: the render is
-            # guarded through its own progress reports and stops, because another
-            # job may already have been told the cores are free.
-            with heavy_slot.heavy_slot(f"song app render {song.slug}", log=log) as slot:
-                outputs = pipeline.run_scroll_video(song.dir, cleaned, song.slug,
-                                                    quality=quality,
-                                                    hardware_encoding=hardware_encoding,
-                                                    initial_bpm=opts.get("bpm"),
-                                                    tempo_changes=opts.get("tempo_changes"),
-                                                    system_starts=_printed_systems(song),
-                                                    staff_groups=parse_groups(
-                                                        opts.get("staff_groups")),
-                                                    log=slot.guard(log),
-                                                    progress=slot.guard(progress),
-                                                    **margin_options)
-                slot.check()
-            song = _require(slug)
-            rec = song.data.setdefault("record", {})
-            rec["exported"] = True
-            rec["renderer"] = "scroll"
-            rec["quality"] = quality
-            rec["hardware_encoding"] = hardware_encoding
-            rec["top_margin"] = top_margin
-            rec["bottom_margin"] = bottom_margin
-            rec["staff_groups"] = opts.get("staff_groups") or ""
-            rec["outputs"] = [os.path.basename(p) for p in outputs]
-            rec["rendered_against"] = start_fingerprint
-            rec["verification"] = verification.verify_media(
-                song, rec["outputs"], verification.singing_parts(cleaned))
-            rec["error"] = None
-            rec.pop("freed", None)  # the videos are on disk again
-            song.set_stage("upload")
-            song.save()
-            log(f"Done. {len(outputs)} video(s) ready.")
-            _job_finish(song, job_kind)
-            return
-
-        from src.stemmanauha.create_video import run
-        youtube = bool(opts.get("youtube")) or upload_only
-        if youtube:  # fresh upload run — clear any stale record of prior uploads
-            song.data.setdefault("record", {})["uploads"] = []
-            song.save()
-            if opts.get("playlist"):  # remember the chosen target playlist
-                state.save_playlist(opts["playlist"], opts.get("playlist_title"))
-        log("Uploading to YouTube…" if upload_only
-            else "Re-merging with new offset…" if merge_only
-            else "Starting recording pipeline…")
-        redo_mp3 = bool(opts.get("redo_mp3"))
-        redo_video = bool(opts.get("redo_video"))
-        if not (merge_only or upload_only):
-            stale_audio = previous_audio_against != start_fingerprint
-            stale_video = previous_video_against != start_fingerprint
-            if stale_audio:
-                redo_mp3 = True
-            if stale_video:
-                redo_video = True
-            if stale_audio or stale_video:
-                log("The score changed; refreshing its MP3 audio and screen recording.")
-        results = run(
-            song_dir=song.dir,
-            youtube=youtube,
-            extra_playlist_id=opts.get("playlist") or None,
-            audio_delay_ms=int(opts.get("audio_delay_ms", 1300)),
-            redo_mp3=redo_mp3,
-            redo_video=redo_video,
-            merge_only=merge_only,
-            upload_only=upload_only,
-            log=log, progress=progress,
-            display_name=song.name, on_uploaded=on_uploaded,
-            existing_outputs=opts.get("_existing_outputs"),
-        )
-        song = _require(slug)
-        rec = song.data.setdefault("record", {})
-        if not upload_only:
-            rec.pop("freed", None)  # the videos are on disk again
-            rec["exported"] = True
-            rec["renderer"] = "screen"
-            rec["audio_delay_ms"] = int(opts.get("audio_delay_ms", 1300))
-            rec["outputs"] = [os.path.basename(str(r)) for r in (results or [])]
-            cleaned = song.cleaned_path()
-            if redo_mp3:
-                rec["audio_rendered_against"] = start_fingerprint
-            if redo_video:
-                rec["video_rendered_against"] = start_fingerprint
-            audio_against = rec.get("audio_rendered_against", previous_audio_against)
-            video_against = rec.get("video_rendered_against", previous_video_against)
-            rec["rendered_against"] = start_fingerprint \
-                if audio_against == video_against == start_fingerprint \
-                else previous_rendered_against
-            rec["verification"] = verification.verify_media(
-                song, rec["outputs"], verification.singing_parts(cleaned))
-        if youtube and rec.get("uploads"):
-            # One refresh picks up every video this run uploaded (#321).
-            rec["site_refresh"] = {"at": time.time(),
-                                   "ok": site_refresh.refresh_stemmanauhat(log)}
-        rec["error"] = None
-        # After recording, move on to the Upload stage; uploading stays there.
-        if not merge_only:
-            song.set_stage("upload")
-        song.save()
-        log("Upload complete." if upload_only else f"Done. {len(results or [])} video(s) ready.")
-        _job_finish(song, job_kind)
-    except Exception as exc:
-        traceback.print_exc()
-        song.data.setdefault("record", {})["error"] = str(exc)
-        song.save()
-        _job_emit(slug, job_kind, str(exc), "error")
-        _job_finish(song, job_kind, str(exc))
-    finally:
-        lock = _lock_path(song)
-        if os.path.exists(lock):
-            os.remove(lock)
-        hub.emit(slug, {"type": "state"})
-
-
-RECORD_SETTINGS = ("quality", "hardware_encoding", "top_margin", "bottom_margin",
-                   "staff_groups", "bpm", "tempo_changes")
-
-
-@app.post("/api/songs/{slug}/record-settings")
-async def api_record_settings(slug: str, body: Dict = None) -> Dict:
-    """Save the scrolling renderer's settings without rendering (#301).
-
-    The Record panel's Save settings button, and its Preview button before it
-    opens the preview. Refused while a job runs: a render writes these same
-    fields when it finishes, and the state file is saved whole.
-    """
-    song = _require(slug)
-    if is_recording(song) or is_scanning(song) or job_state.is_running(song.dir, "clean"):
-        raise HTTPException(409, "A scan, clean or render is running — save the "
+    if _publish_busy(song):
+        raise HTTPException(409, "A scan, clean, check or publish is running — save the "
                                  "settings after it finishes.")
-    settings = _scroll_settings(song, body or {})
-    _remember_record_settings(song, **settings)
-    return {"record": {key: song.data.get("record", {}).get(key) for key in RECORD_SETTINGS}}
-
-
-@app.post("/api/songs/{slug}/record")
-async def api_record(slug: str, body: Dict = None) -> Dict:
-    song = _require(slug)
-    if is_recording(song) or is_scanning(song) or job_state.is_running(song.dir, "check"):
-        raise HTTPException(409, "Another scan, clean, check, render, or upload is already "
-                                 "running for this song.")
-    opts = body or {}
-    source_fingerprint = state.file_fingerprint(song.cleaned_path())
-    if not (opts.get("upload_only") or opts.get("merge_only")):
-        if not source_fingerprint:
-            raise HTTPException(400, "Clean the score before rendering")
-        if song.data.get("review", {}).get("approved_against") != source_fingerprint:
-            raise HTTPException(409, "Review and approve the current score before rendering")
-    scrolling_render = (opts.get("renderer") or "scroll") == "scroll" \
-        and not (opts.get("merge_only") or opts.get("upload_only"))
-    if scrolling_render:
-        # Remembered at request time, falling back to what this song chose last
-        # before the app-wide default. Writing them only after a render succeeded
-        # meant a margin nudged against a render that then failed was gone by the
-        # next page load, and the panel offered the default again.
-        settings = _scroll_settings(song, opts)
-        opts.pop("bpm", None)  # only a tempo the score lacks is passed on
-        opts.update(settings)
-        _remember_record_settings(song, **settings)
-    else:
-        opts.pop("bpm", None)
-    if opts.get("upload_only"):
-        names = song.data.get("record", {}).get("outputs", [])
-        # An empty list is an older song: the upload finds its videos by name, as before.
-        if names and not all(os.path.exists(song.media_path("video", os.path.basename(n)))
-                             for n in names):
-            raise HTTPException(409, "The videos are not on disk (freed after an "
-                                     "upload?) — record again to make them.")
-    kind = "upload" if opts.get("upload_only") else "render"
-    if not job_state.start_if_idle(
-            song.dir, kind, ("scan", "clean", "check", "render", "upload", "free"),
-            source_fingerprint):
-        raise HTTPException(409, "Another scan, clean, check, render, or upload is already "
-                                 "running for this song.")
-    # The durable start above is the atomic gate; the PID lock keeps the existing
-    # process-aware recording indicator and stale-lock recovery behavior.
-    try:
-        with open(_lock_path(song), "w") as f:
-            f.write(str(os.getpid()))
-    except Exception as exc:
-        _job_finish(song, kind, str(exc))
-        raise
-    opts["_source_fingerprint"] = source_fingerprint
-    if opts.get("upload_only"):
-        opts["_existing_outputs"] = [
-            song.media_path("video", os.path.basename(name))
-            for name in song.data.get("record", {}).get("outputs", [])
-        ]
-    asyncio.get_running_loop().run_in_executor(None, _run_record, slug, opts)
-    return {"started": True}
-
-
-@app.get("/api/songs/{slug}/media/{name}")
-def api_media(slug: str, name: str):
-    song = _require(slug)
-    safe = os.path.basename(name)
-    path = song.media_path("video", safe)
-    if not os.path.exists(path):
-        raise HTTPException(404, "No such media")
-    kind = "video/mp4" if safe.lower().endswith(".mp4") else "video/quicktime"
-    return FileResponse(path, media_type=kind, headers=dict(REVALIDATE))
-
-
-@app.post("/api/songs/{slug}/youtube-delete")
-def api_youtube_delete(slug: str) -> Dict:
-    """Delete this song's uploaded videos from YouTube so they can be re-uploaded."""
-    song = _require(slug)
-    uploads = song.data.get("record", {}).get("uploads", [])
-    ids = [u.get("video_id") for u in uploads if u.get("video_id")]
-    if not ids:
-        raise HTTPException(400, "Nothing uploaded to delete")
-    if job_state.is_running(song.dir, "free"):
-        raise HTTPException(409, "The local videos are being freed — try again in a moment.")
-    try:
-        from src.stemmanauha.upload_to_youtube import delete_videos
-        delete_videos(ids, log=lambda m: hub.emit(slug, {"type": "log", "line": m}))
-    except Exception as exc:
-        raise HTTPException(500, f"Delete failed: {exc}")
-    song.data["record"]["uploads"] = []
-    song.data["record"]["playlist_id"] = None
-    song.save()
-    # The site would otherwise list the deleted videos until its schedule runs.
-    site_refresh.refresh_stemmanauhat(lambda m: hub.emit(slug, {"type": "log", "line": m}))
+    settings = _publish_settings(song, body or {})
+    with state.song_lock(slug):
+        song = _require(slug)
+        song.data.setdefault("publish", {}).update(settings)
+        song.save()
     return _derived(song)
 
 
-def _free_videos(slug: str) -> Dict:
-    song = _require(slug)
-    log = lambda m: _job_emit(slug, "free", m)
-    try:
-        from src.stemmanauha.upload_to_youtube import confirm_uploads
-        freed = free_videos.free(song, lambda ids: confirm_uploads(ids, log=log), log=log)
-        _job_finish(song, "free")
-        return freed
-    except Exception as exc:
-        _job_emit(slug, "free", str(exc), "error")
-        _job_finish(song, "free", str(exc))
-        raise
-
-
-@app.post("/api/songs/{slug}/free-videos")
-async def api_free_videos(slug: str) -> Dict:
-    """Delete the local videos once YouTube is confirmed to have every one (#371).
-
-    Holds the song's job gate while it runs, so no render, upload or second free
-    starts underneath it, and refuses while one is running.
-    """
-    song = _require(slug)
-    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "free", ("scan", "clean", "render", "upload", "free")):
-        raise HTTPException(409, "A recording or upload is running — free the "
-                                 "videos after it finishes.")
-    try:
-        await asyncio.get_running_loop().run_in_executor(None, _free_videos, slug)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
-    except Exception as exc:
-        raise HTTPException(502, f"Could not confirm with YouTube: {exc}") from None
-    finally:
-        hub.emit(slug, {"type": "state"})
-    return _derived(_require(slug))
-
-
-# --------------------------------------------------------------------------
-# Publish to the Cloudflare stemmanauhat site (#382)
-# --------------------------------------------------------------------------
 def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
     song = _require(slug)
     log = lambda m: _job_emit(slug, "publish", m)
     try:
         cleaned = song.cleaned_path()
+        settings = song.data.get("publish") or {}
         bpm = None if pipeline.has_opening_tempo(cleaned) \
-            else song.data.get("record", {}).get("bpm", 80)
-        published = publish.records(song.data.get("publish"))
+            else settings.get("bpm", publish.DEFAULT_BPM)
+        credits = settings.get("credits")
+        if credits is None:
+            credits = publish.score_credits(cleaned)
+        published = publish.records(settings)
         with tempfile.TemporaryDirectory() as tmp:
             with heavy_slot.heavy_slot(f"song app publish {song.slug}", log=log) as slot:
                 bundle = publish.build_bundle(
                     cleaned, tmp, initial_bpm=bpm,
-                    tempo_changes=song.data.get("record", {}).get("tempo_changes"),
+                    tempo_changes=settings.get("tempo_changes"),
                     log=slot.guard(log))
                 slot.check()
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
-                client=publish.Cloudflare(config),
+                client=publish.Cloudflare(config), credits=credits,
                 published=published, log=log)
         record["published_against"] = state.file_fingerprint(cleaned)
-        song = _require(slug)
-        sites = publish.records(song.data.get("publish"))
-        for gone in publish.replaced(choir, sites):
-            del sites[gone]
-        sites[choir] = record
-        # One record per choir (#384): a song can be in public and one choir at once.
-        song.data["publish"] = {"sites": sites, "choir": choir, "error": None}
-        song.save()
+        with state.song_lock(slug):
+            song = _require(slug)
+            pub = song.data.setdefault("publish", {})
+            sites = publish.records(pub)
+            for gone in publish.replaced(choir, sites):
+                del sites[gone]
+            sites[choir] = record
+            # One record per choir (#384): a song can be in public and one choir at once.
+            pub.pop("site", None)
+            pub.update({"sites": sites, "choir": choir, "error": None})
+            song.save()
         _job_finish(song, "publish")
     except Exception as exc:
         traceback.print_exc()
-        song = _require(slug)
-        song.data.setdefault("publish", {}).update({"error": str(exc), "choir": choir})
-        song.save()
+        with state.song_lock(slug):
+            song = _require(slug)
+            song.data.setdefault("publish", {}).update({"error": str(exc), "choir": choir})
+            song.save()
         _job_emit(slug, "publish", str(exc), "error")
         _job_finish(song, "publish", str(exc))
     finally:
@@ -2319,13 +1723,15 @@ def _run_publish(slug: str, choir: str, config: "publish.Config") -> None:
 
 @app.post("/api/songs/{slug}/publish")
 async def api_publish(slug: str, body: Dict = None) -> Dict:
-    """Send the score, one MP3 per part and the timing to the site, for one choir.
+    """Send the score, its MIDI, the timing and the credits to the site, for one choir.
 
-    Made off the approved cleaned score, like a render. YouTube is untouched:
-    the old site keeps working until the new one replaces it.
+    Made off the approved cleaned score, with the settings saved on the Publish
+    panel; settings sent with the request are saved first, so what is published
+    is what the panel shows.
     """
     song = _require(slug)
-    choir = (body or {}).get("choir") or ""
+    body = body or {}
+    choir = body.get("choir") or ""
     if choir not in publish.CHOIRS:
         raise HTTPException(400, f"Choose a choir: {', '.join(publish.CHOIRS)}")
     config = publish.Config.from_env()
@@ -2336,23 +1742,17 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         raise HTTPException(400, "Clean the score before publishing")
     if song.data.get("review", {}).get("approved_against") != fingerprint:
         raise HTTPException(409, "Review and approve the current score before publishing")
-    if is_recording(song) or is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "publish", ("scan", "clean", "render", "upload", "free", "publish"),
-            fingerprint):
+    settings = _publish_settings(song, body.get("settings") or {})
+    if _publish_busy(song) or not job_state.start_if_idle(
+            song.dir, "publish", ("scan", "clean", "check", "publish"), fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
+    with state.song_lock(slug):
+        song = _require(slug)
+        song.data.setdefault("publish", {}).update(settings)
+        song.save()
     asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config)
     return {"started": True}
-
-
-@app.post("/api/songs/{slug}/reveal-media")
-def api_reveal_media(slug: str) -> Dict:
-    song = _require(slug)
-    vdir = song.media_path("video")
-    if not os.path.isdir(vdir):
-        raise HTTPException(404, "No media yet")
-    subprocess.Popen(["open", vdir])
-    return {"ok": True}
 
 
 # --------------------------------------------------------------------------

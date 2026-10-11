@@ -10,7 +10,7 @@ import os
 from lxml import etree
 
 from src.clean_score.utils.problem_marks import PREFIX, mark_bar, marks, strip_marks
-from src.scrollvideo import score as score_mod
+from src.score_export import score as score_mod
 from src.song_app import health, pipeline
 
 

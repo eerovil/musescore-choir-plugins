@@ -80,7 +80,7 @@ def live(tmp_path, monkeypatch):
     cleaned = song.path("hanget_cleaned.mscx")
     with open(FERMATA, "rb") as src, open(cleaned, "wb") as dst:
         dst.write(src.read())
-    song.data.update(cleaned=os.path.basename(cleaned), stage="upload",
+    song.data.update(cleaned=os.path.basename(cleaned), stage="publish",
                      review={"approved_against": state.file_fingerprint(cleaned)})
     song.save()
 

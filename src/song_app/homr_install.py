@@ -70,7 +70,7 @@ TIMEOUT_S = 45 * 60
 LOG_LINES = 200
 
 #: Song jobs that run homr or would be read half-written by one being replaced.
-SONG_JOBS = ("scan", "clean", "render", "upload")
+SONG_JOBS = ("scan", "clean", "check", "publish")
 
 _log: "collections.deque[str]" = collections.deque(maxlen=LOG_LINES)
 _result: Dict[str, object] = {}

@@ -106,7 +106,7 @@ def live(tmp_path_factory):
     with open(cleaned, "w") as handle:
         handle.write("<museScore><Score/></museScore>")
     song.data["cleaned"] = os.path.basename(cleaned)
-    song.data["stage"] = "upload"
+    song.data["stage"] = "publish"
     song.save()
 
     port = _free_port()

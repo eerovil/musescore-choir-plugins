@@ -1,23 +1,26 @@
-"""Publish a song to the Cloudflare stemmanauhat site (#382).
+"""Publish a song to the Cloudflare stemmanauhat site (#382, #400).
 
-The new site (eerovil/stemmanauhat#8) draws the score in the browser and plays
-the parts itself, so what it needs from here is not a video but:
+This is where a song ends: the site (eerovil/stemmanauhat-cf) draws the score
+with OpenSheetMusicDisplay and plays its MIDI with a piano soundfont, so what it
+needs from here is:
 
 - the score as **MusicXML**;
+- the score's **MIDI**, which the site plays;
 - a **timing file** saying where in the score playback is at each moment;
-- the **part names**, in score order.
+- the **part names**, in score order, which the site matches to the MIDI tracks;
+- the **credits**: composer, lyricist and arranger, when they are known.
 
-The site plays the score's MIDI with a piano soundfont (stemmanauhat-cf), so no
-audio is rendered here: the per-part MP3s it once played are no longer made
-(stemmanauhat-cf#36).
+No audio is rendered here (stemmanauhat-cf#36), and nothing goes to YouTube any
+more (#400).
 
 All of it is made off one prepared copy of the cleaned score
-(`scrollvideo.score.prepare`: silent parts dropped, red marks stripped, the
-fermata hold, the opening tempo the app supplies), so the parts in the
-MusicXML and the timing are the same parts and the same clock as the video. The clock is MuseScore's own: bar order from its ``.mpos`` export (which
-follows repeats and D.C./D.S. jumps the way playback does) and seconds from its
-MIDI tempo map, which carries the fermata stretches. The two are checked
-against each other before anything is uploaded.
+(`score_export.score.prepare`: silent parts dropped, red marks stripped, the
+fermata hold, the opening tempo and the tempo changes set on the Publish
+panel), so the parts in the MusicXML, the MIDI and the timing are the same parts
+on the same clock. The clock is MuseScore's own: bar order from its ``.mpos``
+export (which follows repeats and D.C./D.S. jumps the way playback does) and
+seconds from its MIDI tempo map, which carries the fermata stretches. The two
+are checked against each other before anything is uploaded.
 
 The files go to the site's R2 bucket under a fresh version prefix, and only
 then is the song's row in the site's D1 database pointed at them, so a reader
@@ -30,7 +33,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -52,24 +54,20 @@ API = "https://api.cloudflare.com/client/v4"
 TIMEOUT = 120
 TRIES = 3
 
-# The site's song table. The site owns its schema; this is the shape it was
-# agreed in, created here only if missing so a publish works before the site's
-# first migration has run.
-SONGS_TABLE = """CREATE TABLE IF NOT EXISTS songs (
-  choir TEXT NOT NULL,
-  slug TEXT NOT NULL,
-  title TEXT NOT NULL,
-  prefix TEXT NOT NULL,
-  parts TEXT NOT NULL,
-  duration REAL NOT NULL,
-  published_at TEXT NOT NULL,
-  PRIMARY KEY (choir, slug)
-)"""
+# What a score without an opening tempo plays at until someone sets one.
+DEFAULT_BPM = 80
 
-UPSERT = ("INSERT INTO songs (choir, slug, title, prefix, parts, duration, published_at) "
-          "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (choir, slug) DO UPDATE SET "
+# Who wrote the song. The site's song table has a column for each (its migration
+# 0004), and the manifest carries the ones that are set.
+CREDITS = ("composer", "lyricist", "arranger")
+
+UPSERT = ("INSERT INTO songs (choir, slug, title, prefix, parts, duration, published_at, "
+          "composer, lyricist, arranger) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+          "ON CONFLICT (choir, slug) DO UPDATE SET "
           "title = excluded.title, prefix = excluded.prefix, parts = excluded.parts, "
-          "duration = excluded.duration, published_at = excluded.published_at")
+          "duration = excluded.duration, published_at = excluded.published_at, "
+          "composer = excluded.composer, lyricist = excluded.lyricist, "
+          "arranger = excluded.arranger")
 
 
 def _noop(_msg: str) -> None:
@@ -129,8 +127,7 @@ def timing(mscx_path: str, mpos_path: str, midi_path: str) -> Dict:
     A repeat or a jump shows as the next point naming an earlier (or a much
     later) bar.
     """
-    from src.scrollvideo.playorder import read_mpos
-    from src.scrollvideo.timing import TempoMap
+    from src.score_export.clock import TempoMap, read_mpos
 
     lengths = bar_lengths(mscx_path)
     units = _beat_unit(mscx_path)
@@ -176,25 +173,38 @@ class Bundle:
     musicxml: str
     timing: Dict
     parts: List[str] = field(default_factory=list)  # part names, in score order
+    midi: str = ""
+
+
+def score_credits(mscx_path: str) -> Dict[str, str]:
+    """The composer, lyricist and arranger the score's own metaTags name, the ones set."""
+    try:
+        score = etree.parse(mscx_path).getroot().find("Score")
+    except (OSError, etree.XMLSyntaxError):
+        return {}
+    if score is None:
+        return {}
+    tags = {m.get("name"): " ".join((m.text or "").split()) for m in score.findall("metaTag")}
+    return {name: tags[name] for name in CREDITS if tags.get(name)}
 
 
 def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] = None,
                  tempo_changes: Optional[List[Dict]] = None,
                  log: Logger = _noop) -> Bundle:
-    """MusicXML, the timing and the part names, made off one prepared score."""
-    from src.scrollvideo import audio, score
+    """MusicXML, MIDI, the timing and the part names, made off one prepared score."""
+    from src.score_export import musescore, score
 
     source, dropped = score.prepare(cleaned_path, out_dir, initial_bpm=initial_bpm,
                                     tempo_changes=tempo_changes)
     if dropped:
         log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
-    names = audio.part_names(etree.parse(source).getroot())
+    names = musescore.part_names(etree.parse(source).getroot())
     log("Exporting the score (MusicXML), its play order and its clock (MuseScore CLI)")
-    musicxml = audio.run_musescore(source, os.path.join(out_dir, "score.musicxml"))
-    mpos = audio.run_musescore(source, os.path.join(out_dir, "score.mpos"))
-    midi = audio.run_musescore(source, os.path.join(out_dir, "score.mid"))
+    musicxml = musescore.run_musescore(source, os.path.join(out_dir, "score.musicxml"))
+    mpos = musescore.run_musescore(source, os.path.join(out_dir, "score.mpos"))
+    midi = musescore.run_musescore(source, os.path.join(out_dir, "score.mid"))
     clock = timing(source, mpos, midi)
-    return Bundle(musicxml=musicxml, timing=clock, parts=list(names))
+    return Bundle(musicxml=musicxml, timing=clock, parts=list(names), midi=midi)
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +322,7 @@ def replaced(choir: str, published: Dict[str, Dict]) -> List[str]:
 
 
 def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudflare,
+            credits: Optional[Dict[str, str]] = None,
             published: Optional[Dict[str, Dict]] = None, log: Logger = _noop) -> Dict:
     """Upload `bundle` and register it for `choir`. Returns the record to keep.
 
@@ -320,7 +331,8 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     `published` is the record each choir's last publish returned
     (``records``). What this choir's last publish left is taken away
     afterwards, and so is the song in any other private choir — rows and files
-    — while its public listing stays (``replaced``).
+    — while its public listing stays (``replaced``). `credits` names the
+    composer, lyricist and arranger; an empty or missing one is left out.
     """
     if choir not in CHOIRS:
         raise PublishError(f"Unknown choir {choir!r}; choose one of {', '.join(CHOIRS)}.")
@@ -328,13 +340,17 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     prefix = f"songs/{choir}/{slug}/{version}/"
     parts = [{"name": name} for name in bundle.parts]
     duration = bundle.timing.get("duration", 0.0)
+    named = {name: (credits or {}).get(name, "").strip() for name in CREDITS}
+    named = {name: text for name, text in named.items() if text}
     manifest = {"slug": slug, "title": title, "choir": choir, "version": version,
-                "score": "score.musicxml", "timing": "timing.json", "parts": parts,
-                "duration": duration}
+                "score": "score.musicxml", "timing": "timing.json", "midi": "score.mid",
+                "parts": parts, "duration": duration, **named}
 
     uploads: List[Tuple[str, bytes, str]] = []
     with open(bundle.musicxml, "rb") as f:
         uploads.append(("score.musicxml", f.read(), "application/vnd.recordare.musicxml+xml"))
+    with open(bundle.midi, "rb") as f:
+        uploads.append(("score.mid", f.read(), "audio/midi"))
     uploads.append(("timing.json", json.dumps(bundle.timing).encode(), "application/json"))
     uploads.append(("manifest.json", json.dumps(manifest, ensure_ascii=False).encode(),
                     "application/json"))
@@ -345,13 +361,12 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
 
     log(f"Registering the song for {choir}")
     published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    client.query(SONGS_TABLE)
     client.query(UPSERT, [choir, slug, title, prefix, json.dumps(parts, ensure_ascii=False),
-                          duration, published_at])
+                          duration, published_at, *(named.get(name) for name in CREDITS)])
 
     record = {"choir": choir, "slug": slug, "version": version, "prefix": prefix, "at": time.time(),
               "files": [prefix + name for name, _data, _kind in uploads],
-              "parts": [p["name"] for p in parts], "duration": duration}
+              "parts": [p["name"] for p in parts], "duration": duration, "credits": named}
     _clean_up(published or {}, record, client, log)
     log(f"Published to the {choir} list.")
     return record
