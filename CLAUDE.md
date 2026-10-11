@@ -2699,6 +2699,11 @@ change gitignores `.worktrees/`. A worktree is a separate working directory, so 
 fast-forward of `main` cannot disturb one; leaving it visible bought nothing and cost
 every deploy made while a card was open.
 
+**`songs/` is backed up nightly** (#406): `songs-backup.timer` runs
+`scripts/backup-songs.sh` at 03:30, which commits everything in `songs/`, merges the
+songs repo's `main` in and pushes it. A failure is a failed unit
+(`systemctl --user --failed`); see SETUP.md.
+
 `/healthz` exists for that watcher. It returns `{"status": "ok"}` and touches nothing —
 it has to answer while a scan, clean or publish is occupying the worker threads.
 

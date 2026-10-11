@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The songs folder is backed up again: every night at 03:30 the app's machine
+  commits everything in `songs/` and pushes it to the private songs repo. Until
+  now it had been saved there once, by hand, on 23 August. (#406)
 - Publish: a **Part names** row lets you correct what the site calls each part,
   top staff first. Cleaning names parts by guessing from pitch, so a women's choir
   song could come out with tenors. The names are saved with the song's other

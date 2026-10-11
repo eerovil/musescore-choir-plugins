@@ -1,0 +1,21 @@
+[Unit]
+Description=Commit songs/ and push it to the private songs repo
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/musescore-choir-plugins
+# A timer job inherits almost no PATH, and the push needs git and its credential helper.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The songs repo is private. `gh auth git-credential` (the global helper) has no
+# token outside a shell, so git would fall back to a password prompt nobody sees
+# and hang; AgentDeck's helper mints a GitHub App token for eerovil's repos on its own.
+Environment=GIT_CONFIG_COUNT=3
+Environment=GIT_CONFIG_KEY_0=credential.https://github.com.helper
+Environment=GIT_CONFIG_VALUE_0=
+Environment=GIT_CONFIG_KEY_1=credential.https://github.com.helper
+Environment="GIT_CONFIG_VALUE_1=!%h/agentdeck/.venv/bin/python3 -m agentdeck.git_credential"
+Environment=GIT_CONFIG_KEY_2=credential.https://github.com.useHttpPath
+Environment=GIT_CONFIG_VALUE_2=true
+ExecStart=%h/musescore-choir-plugins/scripts/backup-songs.sh
+TimeoutStartSec=1800
