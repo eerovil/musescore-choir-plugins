@@ -18,6 +18,14 @@ pytest.importorskip("pytest_playwright", reason=_NEEDS)
 pytest.importorskip("uvicorn")
 
 
+def _shot(page, name):
+    """Screenshots go to `EVIDENCE_DIR` when the run names one, never into the repo."""
+    where = os.environ.get("EVIDENCE_DIR")
+    if where:
+        os.makedirs(where, exist_ok=True)
+        page.screenshot(path=os.path.join(where, name), full_page=True)
+
+
 def _browser_installed() -> bool:
     """Launching is the only honest check; see test_ui_flow for why it runs here."""
     from playwright.sync_api import sync_playwright
@@ -155,11 +163,7 @@ def test_a_collapsed_meter_summary_reads_as_a_finding_not_as_silence(live, page)
     assert page.get_by_text("18 bar(s) sit at a length").is_visible()
     assert not page.get_by_text("No issues").is_visible()
 
-    evidence = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))))), "evidence")
-    os.makedirs(evidence, exist_ok=True)
-    page.screenshot(path=os.path.join(evidence, "issue-124-meter-collapsed.png"),
-                    full_page=True)
+    _shot(page, "issue-124-meter-collapsed.png")
 
     page.get_by_role("button", name="Dismiss").click()
     page.wait_for_selector("text=No issues")
@@ -200,11 +204,7 @@ def test_the_review_stage_shows_the_findings_behind_the_collapsed_line(live, pag
     assert "21 open issue(s)" in health_row.inner_text()
     assert "18 of them are meter findings" in health_row.inner_text()
 
-    evidence = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))))), "evidence")
-    os.makedirs(evidence, exist_ok=True)
-    page.screenshot(path=os.path.join(evidence, "issue-124-review-count.png"),
-                    full_page=True)
+    _shot(page, "issue-124-review-count.png")
     assert not errors, f"the panel raised: {errors}"
 
     song.data["health"] = {"checked_against": None, "issues": []}
@@ -236,10 +236,6 @@ def test_a_rest_the_scan_moved_is_listed_as_outstanding(live, page):
     assert page.get_by_text("printed system 3, bar 2").is_visible()
     assert page.get_by_text("not applied automatically").is_visible()
 
-    evidence = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))))), "evidence")
-    os.makedirs(evidence, exist_ok=True)
-    page.screenshot(path=os.path.join(evidence, "issue-164-moved-rest-recorded.png"),
-                    full_page=True)
+    _shot(page, "issue-164-moved-rest-recorded.png")
     assert not errors, f"the panel raised: {errors}"
     os.remove(path)

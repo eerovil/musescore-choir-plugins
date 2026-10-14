@@ -30,6 +30,10 @@ stage at any time; redoing one clears only what depended on it.
 3. **Clean** — split staves that carry two voices into one staff per voice and
    name the parts (S1, A1, T1, B1, …). When the staves change parts from one
    system to the next, you fill in a small grid saying who sings on which staff.
+   A part split in two is named with a **b**: S1 and S1b, S2 and S2b, A1b, T1b.
+   Never S2-2 or S1-1/S1-2: the site knows S1b as the second half of S1, so a
+   singer whose part is S1b hears S1 in songs that have no S1b, and a part left
+   out of a system takes its base part's notes there.
 4. **Fix** — a health check lists bars that look damaged: a voice that does not
    fill its bar, an extra voice, a bar longer than its time signature. Fix them in
    MuseScore — on this machine, or download the score, fix it anywhere and upload
@@ -45,7 +49,7 @@ stage at any time; redoing one clears only what depended on it.
    opening tempo (for a score that prints none), the bars where the tempo changes,
    and the composer, lyricist and arranger the site shows, then press *Publish*.
    The site gets the score, its MIDI and a timing file; publishing again replaces
-   the song there.
+   the song there. Part names follow the same rule as Clean: S2b, not S2-2.
 
 <img src="docs/images/scan.png" width="400" alt="Scan stage: proposed system bands drawn over the page"> <img src="docs/images/review.png" width="400" alt="Review stage with the original PDF beside it">
 
