@@ -21,9 +21,44 @@ def git(cwd, *args):
                           capture_output=True, text=True).stdout.strip()
 
 
-def backup(songs):
-    return subprocess.run([str(SCRIPT)], env={**ENV, "SONGS_DIR": str(songs)},
+def _tmpdir(songs):
+    """Each test's own temporary folder, where the run's lock lives."""
+    tmp = songs.parent / "tmp"
+    tmp.mkdir(exist_ok=True)
+    return tmp
+
+
+def backup(songs, *args):
+    return subprocess.run([str(SCRIPT), *args],
+                          env={**ENV, "SONGS_DIR": str(songs), "TMPDIR": str(_tmpdir(songs))},
                           capture_output=True, text=True)
+
+
+def lock_path(songs) -> Path:
+    """Where the script puts its lock. Refused unless it is a full path inside this
+    test's temporary folder, so a script that answers something else (an older
+    one, which runs the backup instead) makes nothing anywhere."""
+    result = backup(songs, "--lock-path")
+    assert result.returncode == 0, result.stderr
+    lock = Path(result.stdout.strip())
+    assert lock.is_absolute() and lock.parent == _tmpdir(songs), \
+        f"--lock-path answered {result.stdout!r}"
+    return lock
+
+
+def hold_lock(songs, pid) -> Path:
+    """Take the lock the way the script does, in the name of process `pid`."""
+    lock = lock_path(songs)
+    lock.mkdir()
+    (lock / "pid").write_text(f"{pid}\n")
+    return lock
+
+
+def ended_pid() -> int:
+    """The number of a process that has run and finished."""
+    done = subprocess.Popen(["true"])
+    done.wait()
+    return done.pid
 
 
 @pytest.fixture
@@ -106,3 +141,53 @@ def test_a_conflict_fails_and_keeps_the_local_commit(repos):
     assert git(songs, "log", "-1", "--format=%s").startswith("Backup ")
     assert git(songs, "status", "--porcelain") == ""
     assert not (songs / ".git" / "MERGE_HEAD").exists()
+
+
+# The lock (macOS has no flock) -------------------------------------------
+
+
+def test_the_lock_is_in_this_machines_temporary_folder_not_in_the_synced_repo(repos):
+    """songs/ sits in a synced folder (Nextcloud here); a lock in its git folder
+    would travel to other machines."""
+    _, songs, _ = repos
+    lock = lock_path(songs)
+    assert lock.parent == _tmpdir(songs)
+    assert songs not in lock.parents
+
+
+def test_a_run_while_another_holds_the_lock_skips_and_commits_nothing(repos):
+    origin, songs, _ = repos
+    before = git(origin, "rev-parse", "main")
+    (songs / "a.txt").write_text("changed\n")
+    hold_lock(songs, os.getpid())
+    result = backup(songs)
+    assert result.returncode == 0, result.stderr
+    assert "another run is in progress" in result.stdout
+    assert git(origin, "rev-parse", "main") == before
+    assert git(songs, "status", "--porcelain") != ""
+
+
+def test_a_lock_left_by_a_run_that_ended_is_taken_over(repos):
+    origin, songs, _ = repos
+    (songs / "a.txt").write_text("changed\n")
+    hold_lock(songs, ended_pid())
+    result = backup(songs)
+    assert result.returncode == 0, result.stderr
+    assert "stale lock" in result.stdout
+    assert "committed 1 file(s)" in result.stdout
+    assert git(origin, "show", "main:a.txt") == "changed"
+
+
+def test_a_run_leaves_no_lock_behind(repos):
+    _, songs, _ = repos
+    (songs / "a.txt").write_text("changed\n")
+    assert backup(songs).returncode == 0
+    assert not lock_path(songs).exists()
+    second = backup(songs)
+    assert second.returncode == 0, second.stderr
+    assert "nothing changed" in second.stdout
+
+
+def test_the_script_does_not_depend_on_flock():
+    code = [line.split("#", 1)[0] for line in SCRIPT.read_text().splitlines()]
+    assert not any("flock" in line for line in code)
