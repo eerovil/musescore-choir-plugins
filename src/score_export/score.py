@@ -15,6 +15,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from lxml import etree
 
+from src.clean_score.utils.utils import part_staff_ids
+
 from src.clean_score.utils.problem_marks import strip_marks, strip_red_notes
 from src.clean_score.utils.staff_display import fix_staff_display
 
@@ -248,7 +250,13 @@ def _part_name(part: etree._Element, index: int) -> str:
 
 
 def _staff_ids(part: etree._Element) -> List[str]:
-    return [s.get("id") for s in part.findall("Staff") if s.get("id")]
+    """The staves this part owns: by number when the part names them, by position
+    when it does not. MuseScore 4 saves a part's staves without their number, so a
+    score saved there would otherwise read as having no music at all."""
+    score = part.getparent()
+    if score is None:
+        return [s.get("id") for s in part.findall("Staff") if s.get("id")]
+    return part_staff_ids(score)[score.findall("Part").index(part)]
 
 
 def silent_parts(root: etree._Element) -> List[str]:

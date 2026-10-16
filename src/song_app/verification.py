@@ -8,6 +8,8 @@ from typing import Dict, Iterable, List, Optional
 
 from lxml import etree
 
+from src.clean_score.utils.utils import part_staff_ids
+
 from . import health as health_check
 from . import state
 
@@ -30,8 +32,9 @@ def _note_events(path: str, only: Optional[Iterable[str]] = None) -> Counter:
     """(measure, pitch, duration) counts; `only` limits it to staves of those parts."""
     root = etree.parse(path).getroot()
     score = root.find(".//Score") if root.tag != "Score" else root
-    names = {stub.get("id"): (part.findtext("trackName") or "").strip()
-             for part in score.findall("Part") for stub in part.findall("Staff")}
+    names = {staff_id: (part.findtext("trackName") or "").strip()
+             for part, owned in zip(score.findall("Part"), part_staff_ids(score))
+             for staff_id in owned}
     wanted = set(only) if only is not None else None
     events = Counter()
     for staff in score.findall("Staff"):

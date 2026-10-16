@@ -26,6 +26,26 @@ def starts_new_system(measure: etree._Element) -> bool:
                for lb in measure.findall(".//LayoutBreak"))
 
 
+def part_staff_ids(score: etree._Element) -> List[List[str]]:
+    """Which staves of music each Part owns: one list of Staff ids per Part, in order.
+
+    MuseScore 3 writes the id on each Part's own `<Staff>`. MuseScore 4 does not (and
+    gives every Part the same id), so a score saved there says whose staff is whose
+    only by position: the first Part owns the first staff of music, a two-staff Part
+    the next two, and so on. A cleaned score that somebody opened and saved in
+    MuseScore 4 used to lose every part that way -- Record showed "0 parts".
+
+    The ids are used when every Part states them. Otherwise the staves of music are
+    handed out in order, as many to each Part as it lists.
+    """
+    stubs = [part.findall("Staff") for part in score.findall("Part")]
+    if all(stub.get("id") for owned in stubs for stub in owned):
+        return [[stub.get("id") for stub in owned] for owned in stubs]
+    music = iter([staff.get("id") for staff in score.findall("Staff")])
+    handed = [[next(music, None) for _ in owned] for owned in stubs]
+    return [[staff_id for staff_id in owned if staff_id] for owned in handed]
+
+
 def resolve_duration(fraction_or_duration: str, dots: str = "0") -> int:
     """
     Resolves a duration string (either a fraction like "1/4" or a MuseScore duration type like "quarter")

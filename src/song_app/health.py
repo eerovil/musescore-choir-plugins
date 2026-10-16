@@ -36,6 +36,7 @@ from typing import Dict, Iterable, List, Optional
 from lxml import etree
 
 from src.clean_score.utils.problem_marks import marks
+from src.clean_score.utils.utils import part_staff_ids
 
 # durationType (and fraction) -> whole-note fraction
 _DUR = {
@@ -150,10 +151,10 @@ def scan(cleaned_path: str) -> List[Dict]:
 
     # Map staff id -> part display name (for friendly labels).
     staff_name: Dict[int, str] = {}
-    for part in score.findall("Part"):
+    for part, owned in zip(score.findall("Part"), part_staff_ids(score)):
         name = part.findtext("trackName") or part.findtext("Instrument/trackName") or ""
-        for st in part.findall("Staff"):
-            staff_name[int(st.get("id", "0"))] = name.strip()
+        for staff_id in owned:
+            staff_name[int(staff_id)] = name.strip()
 
     # Does this score mostly carry its own bar lengths? Decided once, for the whole
     # score -- and it decides how the meter finding is *said*, not whether it is made.

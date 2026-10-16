@@ -1485,7 +1485,11 @@ def api_open_score(slug: str) -> Dict:
     cleaned = song.cleaned_path()
     if not cleaned or not os.path.exists(cleaned):
         raise HTTPException(400, "Nothing to open")
-    subprocess.Popen(["open", "-a", "MuseScore 3", cleaned])
+    # Which application is a setting (MUSESCORE_APP), not a name written here: this
+    # asked macOS for "MuseScore 3" on a machine that has only MuseScore 4, and the
+    # button did nothing at all.
+    from src import musescore_cli
+    musescore_cli.open_score(cleaned)
     return {"ok": True}
 
 

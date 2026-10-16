@@ -20,6 +20,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from lxml import etree
 
 from . import pdf_systems, system_finder
+from src import musescore_cli
 from src.clean_score.main import main as clean_main
 from src.clean_score import lyric_txt
 from src.clean_score.lyric_txt import LyricImport, import_file
@@ -75,13 +76,11 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
     # MusicXML -> MuseScore CLI
     log(f"Converting {os.path.basename(input_path)} with MuseScore CLI")
     cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
-    result = subprocess.run(
-        [cli, input_path, "-o", target], capture_output=True, text=True
-    )
-    if result.returncode != 0 or not os.path.exists(target):
+    result = musescore_cli.run([cli, input_path, "-o", target], target)
+    if not musescore_cli.ok(result, log):
         raise RuntimeError(
             "MuseScore CLI conversion failed. Check MUSESCORE_CLI_PATH.\n"
-            + (result.stderr or result.stdout or "")
+            + result.said
         )
     return target
 
@@ -1089,9 +1088,9 @@ def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(musicxml_path):
         return out
     cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
-    result = subprocess.run(
-        [cli, "-T", "10", "-r", str(dpi), musicxml_path, "-o", out],
-        capture_output=True, text=True, timeout=MUSESCORE_TIMEOUT)
+    result = musescore_cli.run(
+        [cli, "-T", "10", "-r", str(dpi), musicxml_path, "-o", out], out,
+        timeout=MUSESCORE_TIMEOUT)
     # MuseScore numbers the pages it writes, so a one-page export lands as
     # <name>-1.png rather than under the name it was asked for. It is moved into
     # place *whenever it exists*, stale target or not: guarding on the target
@@ -1103,10 +1102,13 @@ def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str
     numbered = f"{os.path.splitext(out)[0]}-1.png"
     if os.path.exists(numbered):
         os.replace(numbered, out)
-    if result.returncode != 0 or not os.path.exists(out):
+    # The verdict comes after the move on purpose: `musescore_cli.ok` asks whether
+    # the file at `out` is one this run wrote, and until the numbered page has been
+    # moved into place the only thing there is the previous picture.
+    if not musescore_cli.ok(result):
         raise RuntimeError(
             "MuseScore CLI could not engrave the scanned system. Check "
-            "MUSESCORE_CLI_PATH.\n" + (result.stderr or result.stdout or ""))
+            "MUSESCORE_CLI_PATH.\n" + result.said)
     return out
 
 
@@ -1158,14 +1160,14 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
     for i, scale in enumerate(scales):
         src = _scaled_staff_mscx(mscx_path, breaks, scale, tidy) or mscx_path
         try:
-            result = subprocess.run([cli, src, "-o", out], capture_output=True, text=True)
+            result = musescore_cli.run([cli, src, "-o", out], out)
         finally:
             if src != mscx_path and os.path.exists(src):
                 os.remove(src)
-        if result.returncode != 0 or not os.path.exists(out):
+        if not musescore_cli.ok(result):
             raise RuntimeError(
                 "MuseScore CLI render failed. Check MUSESCORE_CLI_PATH.\n"
-                + (result.stderr or result.stdout or "")
+                + result.said
             )
         if not want or not staves or i == len(scales) - 1:
             break

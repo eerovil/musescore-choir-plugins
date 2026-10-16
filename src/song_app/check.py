@@ -6,7 +6,7 @@ did nothing. This asks each thing the app depends on directly and says what it
 found. It imports nothing outside the standard library at the top, because the
 first thing it may have to say is that the Python packages are not installed.
 
-Two things are required — the Python packages and MuseScore 3 — and only those
+Two things are required — the Python packages and MuseScore (3 or 4) — and only those
 make it fail. poppler, homr and publishing are each optional: the app runs
 without them and says so where they are used.
 """
@@ -76,25 +76,24 @@ def musescore(run: Runner = subprocess.run, which=shutil.which) -> Check:
     cli = os.getenv("MUSESCORE_CLI_PATH") or "musescore3"
     path = cli if os.sep in cli else which(cli)
     if not path or not os.access(path, os.X_OK):
-        return Check("MuseScore 3", MISSING,
+        return Check("MuseScore", MISSING,
                      f"{cli!r} not found — run scripts/setup.sh, or set MUSESCORE_CLI_PATH "
-                     "in .env to the MuseScore 3 program")
+                     "in .env to the MuseScore 3 or 4 program")
     try:
         result = run([path, "--version"], capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return Check("MuseScore 3", MISSING, f"{path} did not answer --version: {exc}")
+        return Check("MuseScore", MISSING, f"{path} did not answer --version: {exc}")
     said = f"{result.stdout}\n{result.stderr}"
     found = re.search(r"MuseScore\s*(\d)\S*\s+(\d+(?:\.\d+)+)", said) \
         or re.search(r"\b(\d+)\.\d+\.\d+", said)
     if not found:
-        return Check("MuseScore 3", MISSING, f"{path} --version said nothing recognisable")
+        return Check("MuseScore", MISSING, f"{path} --version said nothing recognisable")
     major = found.group(1)
     version = found.group(found.lastindex) if found.lastindex > 1 else found.group(0)
-    if major != "3":
-        return Check("MuseScore 3", MISSING,
-                     f"{path} is MuseScore {version}; the app needs MuseScore 3 "
-                     "(MuseScore 4's command line is different)")
-    return Check("MuseScore 3", OK, f"{path} ({version})")
+    if major not in ("3", "4"):
+        return Check("MuseScore", MISSING,
+                     f"{path} is MuseScore {version}; the app needs MuseScore 3 or 4")
+    return Check("MuseScore", OK, f"{path} ({version})")
 
 
 def poppler(which=shutil.which) -> Check:
