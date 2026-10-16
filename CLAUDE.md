@@ -4,8 +4,10 @@ Guidance for working in this repository.
 
 ## What this project is
 
-A personal toolkit for producing **choir practice tracks** from MuseScore 3
-sheet music. It has two halves:
+A personal toolkit for producing **choir practice tracks** from MuseScore
+sheet music. The app works with MuseScore 3 or 4 (#414); MuseScore 3 is still the
+default and the only one that runs the corruption check below, and the QML plugins
+are MuseScore 3 only. It has two halves:
 
 1. **MuseScore QML plugins** (`plugins/`) that run *inside* MuseScore 3 to edit
    scores and export audio.
@@ -54,7 +56,7 @@ src/clean_score/         Score-cleaning package
   tests/                 pytest
 src/score_export/        The cleaned score made ready to publish (see its section below)
   score.py               the publish copy: silent parts out, marks off, tempos, fermata hold
-  musescore.py           the MuseScore 3 CLI (run_musescore, part_names, CLI_TIMEOUT)
+  musescore.py           the MuseScore 3 or 4 CLI (run_musescore, part_names, CLI_TIMEOUT)
   clock.py               MuseScore's clock: TempoMap from the MIDI, bar order from .mpos
   engraving.py           verovio settings shared by every toolkit (RESOURCE_PATH, XML_ID_SEED)
   tests/                 pytest
@@ -2116,7 +2118,9 @@ state model are in `DESIGN.md`.
 - **Every clean asks MuseScore 3 whether it would open the result** (#235). MuseScore
   checks a score as it opens it (`Score::sanityCheck`: voice 1 of each staff must fill
   the bar exactly, no other voice may run past it) and calls one that fails
-  "corrupted" -- on Sangerhilsen the app crashed instead. Only the app runs that check;
+  "corrupted" -- on Sangerhilsen the app crashed instead. **MuseScore 3 only**: with
+  MuseScore 4 as `MUSESCORE_CLI_PATH` the check answers `None` and the song records
+  "not checked" (#416). Only the app runs that check;
   a command-line export does not, which is why every render went through and nobody
   heard of it until a person opened the file. The one export that does run it is
   `-o x.mlog`, so `pipeline.musescore_check` asks MuseScore itself rather than keeping
@@ -2534,7 +2538,7 @@ timing are the same parts on the same clock.
   6/8), worked out from the span MuseScore stretches: from the fermata's beat to the
   next note or rest on *any* staff. A fermata marked not to play is left alone.
 
-`musescore.py` is the MuseScore 3 command line (`run_musescore`, bounded by
+`musescore.py` is the MuseScore 3 or 4 command line (`run_musescore`, bounded by
 `CLI_TIMEOUT` because a wedged MuseScore otherwise hangs the publish) and the part
 names a score carries (`part_names`), which the site matches to the MIDI tracks.
 `engraving.py` is what every verovio toolkit in the app is set up with:

@@ -44,7 +44,9 @@ stage at any time; redoing one clears only what depended on it.
    system at a time, each staff of the page with its parts' boxes under it, verse
    by verse. The app shows where the words and the notes do not match up.
 6. **Review** — one place that says whether the score is ready: health, lyrics,
-   whether MuseScore 3 will open the file. Approve it to move on.
+   whether MuseScore 3 will open the file. Approve it to move on. That last check
+   needs MuseScore 3: with MuseScore 4 it says "not checked", and a bar MuseScore
+   would call corrupted is not found or reset for you.
 7. **Publish** — send the score to the stemmanauhat site for one choir. Set the
    opening tempo (for a score that prints none), the bars where the tempo changes,
    and the composer, lyricist and arranger the site shows, then press *Publish*.
@@ -75,7 +77,7 @@ be installed to the home screen (see [docs/PWA.md](docs/PWA.md)).
 ```
 
 To set up your own copy, run `scripts/setup.sh` and then `./song.py --check`;
-**[SETUP.md](SETUP.md)** walks through it — Python, MuseScore 3, poppler, the
+**[SETUP.md](SETUP.md)** walks through it — Python, MuseScore 3 (or 4), poppler, the
 optional homr install, and publishing to your own copy of the
 [stemmanauhat site](https://github.com/eerovil/stemmanauhat-cf). `song.py` uses the
 project's virtualenv (`.venv/bin/python song.py` if `.venv` is not active).

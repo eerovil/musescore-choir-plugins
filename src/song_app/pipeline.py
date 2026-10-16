@@ -344,7 +344,8 @@ def musescore_check(mscx_path: str) -> Optional[List[Dict]]:
 
     Each objection is `{measure, staff, voice, message}`, 1-based the way MuseScore
     counts (staff = position in the score, measure = every bar from the top). None
-    when no MuseScore answered -- which is "not checked", never "fine".
+    when no MuseScore answered -- which is "not checked", never "fine". MuseScore 4
+    writes no `.mlog`, so with it this is always None.
     """
     cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
     with tempfile.TemporaryDirectory() as tmp:
@@ -520,8 +521,8 @@ def check_opens_in_musescore(mscx_path: str, song_dir: str, log: Logger = _noop)
     """
     found = musescore_check(mscx_path)
     if found is None:
-        log("Not checked against MuseScore 3's own check: no MuseScore answered "
-            "(MUSESCORE_CLI_PATH).")
+        log("Not checked against MuseScore 3's own check: no MuseScore 3 answered "
+            "(MUSESCORE_CLI_PATH). MuseScore 4 does not run this check.")
         return {"status": "not_checked", "reset": [], "rejected": []}
     if not found:
         record_musescore_resets(song_dir, [])

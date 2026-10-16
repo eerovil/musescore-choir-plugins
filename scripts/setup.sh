@@ -125,7 +125,8 @@ if [ -z "$musescore" ]; then
   if [ "$OS" = Darwin ]; then
     echo "MuseScore 3 is not installed. Get MuseScore 3.6.2 for macOS from" >&2
     echo "  https://github.com/musescore/MuseScore/releases/tag/v3.6.2" >&2
-    echo "(MuseScore 4 will not do: its command line is different), then run this again." >&2
+    echo "and run this again. MuseScore 4 works too, but this script does not look for it:" >&2
+    echo "set MUSESCORE_CLI_PATH in .env to it yourself (it skips one check; see SETUP.md)." >&2
   elif [ "$(uname -m)" != x86_64 ]; then
     echo "MuseScore 3 is not installed, and its AppImage is for x86_64 only." >&2
     echo "Install MuseScore 3 from your distribution, set MUSESCORE_CLI_PATH in .env, and run this again." >&2

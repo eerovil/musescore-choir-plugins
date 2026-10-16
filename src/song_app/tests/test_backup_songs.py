@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -191,3 +192,52 @@ def test_a_run_leaves_no_lock_behind(repos):
 def test_the_script_does_not_depend_on_flock():
     code = [line.split("#", 1)[0] for line in SCRIPT.read_text().splitlines()]
     assert not any("flock" in line for line in code)
+
+
+def test_a_skip_says_which_lock_to_delete(repos):
+    _, songs, _ = repos
+    lock = hold_lock(songs, os.getpid())
+    result = backup(songs)
+    assert result.returncode == 0, result.stderr
+    assert f"delete {lock}" in result.stdout
+
+
+def test_a_lock_older_than_the_timers_limit_is_taken_over(repos):
+    """A live number in an old lock is another process given the dead run's number:
+    the timer stops a run after 30 minutes."""
+    origin, songs, _ = repos
+    (songs / "a.txt").write_text("changed\n")
+    lock = hold_lock(songs, os.getpid())
+    old = time.time() - 31 * 60
+    os.utime(lock, (old, old))
+    result = backup(songs)
+    assert result.returncode == 0, result.stderr
+    assert "stale lock" in result.stdout
+    assert git(origin, "show", "main:a.txt") == "changed"
+
+
+def test_a_stale_lock_replaced_before_it_is_cleared_is_left_alone(repos, tmp_path):
+    """Two runs find the same dead number; the other clears it and takes a fresh
+    lock between this run's check and its clearing. This run must not remove that
+    fresh lock, and must not run."""
+    origin, songs, _ = repos
+    before = git(origin, "rev-parse", "main")
+    (songs / "a.txt").write_text("changed\n")
+    lock = hold_lock(songs, ended_pid())
+    # `ps` is the check; this one answers "ended" after the other run has
+    # replaced the lock with its own.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    ps = bin_dir / "ps"
+    ps.write_text(f"#!/bin/sh\nrm -rf '{lock}'\nmkdir '{lock}'\n"
+                  f"echo {os.getpid()} > '{lock}/pid'\nexit 1\n")
+    ps.chmod(0o755)
+    result = subprocess.run(
+        [str(SCRIPT)], capture_output=True, text=True,
+        env={**ENV, "SONGS_DIR": str(songs), "TMPDIR": str(_tmpdir(songs)),
+             "PATH": f"{bin_dir}:{ENV['PATH']}"})
+    assert result.returncode == 0, result.stderr
+    assert "another run is in progress" in result.stdout
+    assert (lock / "pid").read_text().strip() == str(os.getpid())
+    assert git(origin, "rev-parse", "main") == before
+    assert not list(_tmpdir(songs).glob("*.stale.*"))

@@ -7,6 +7,13 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The app works with MuseScore 4 as well as MuseScore 3: set `MUSESCORE_CLI_PATH`
+  to either. A score opened and saved in MuseScore 4 keeps its parts. One thing is
+  MuseScore 3 only: the check that a cleaned score would open without being called
+  corrupted says "not checked" with MuseScore 4. (#414, #416)
+- The nightly songs backup runs on macOS as well as Linux. Two runs that both find
+  a lock left by a killed run no longer both go ahead, a lock older than 30 minutes
+  is taken over, and a skipped run says which lock to delete. (#415, #416)
 - Setting the app up on another computer is one script: `scripts/setup.sh`
   makes the Python environment, finds MuseScore 3 or downloads it (Linux), writes
   `.env`, and offers homr. `./song.py --check` then says, one line each, what this
