@@ -134,3 +134,36 @@ def test_a_worded_tempo_mark_plays_at_the_recorded_speed(fermata_mscx, tmp_path)
     assert "Adagio" in "".join(words.itertext())
     tempo = TempoMap.from_midi(run_musescore(source, str(tmp_path / "c.mid")))
     assert round(60 * 0.5 / (tempo.seconds(4.5) - tempo.seconds(4))) == 140
+
+
+def _eighth_starts(midi_path):
+    """Each track's eighth-note starts, in quarters, in the fixture's bar 2."""
+    midi = mido.MidiFile(midi_path)
+    starts = []
+    for track in midi.tracks:
+        tick, ons = 0, []
+        for msg in track:
+            tick += msg.time
+            if msg.type == "note_on" and msg.velocity and 6 <= tick / midi.ticks_per_beat < 7:
+                ons.append(round(tick / midi.ticks_per_beat, 2))
+        if ons:
+            starts.append(ons)
+    return starts
+
+
+@needs_musescore
+def test_a_swing_fix_swings_every_part_and_moves_no_bar(fermata_mscx, tmp_path):
+    """eeron-omat-taskit#52: the fixture's bar 2 has two eighths on beat 3 in both
+    parts. Swung, the second starts two thirds of the way into the beat; the bars
+    start where they did."""
+    from src.clean_score.utils.score_fixes import apply_fixes
+    straight = run_musescore(fermata_mscx, str(tmp_path / "straight.mid"))
+    assert _eighth_starts(straight) == [[6.0, 6.5], [6.0, 6.5]]
+    root = etree.parse(fermata_mscx).getroot()
+    apply_fixes(root, [{"kind": "swing", "measure": 2, "swing": True, "why": "test"}])
+    swung_mscx = tmp_path / "swung.mscx"
+    swung_mscx.write_bytes(etree.tostring(root))
+    swung = run_musescore(str(swung_mscx), str(tmp_path / "swung.mid"))
+    assert _eighth_starts(swung) == [[6.0, 6.67], [6.0, 6.67]]
+    assert (read_mpos(run_musescore(str(swung_mscx), str(tmp_path / "swung.mpos")))
+            == read_mpos(run_musescore(fermata_mscx, str(tmp_path / "straight.mpos"))))
