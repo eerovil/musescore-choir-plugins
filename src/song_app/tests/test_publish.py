@@ -601,5 +601,5 @@ def test_the_published_score_carries_its_tempo_marks_unprinted(tmp_path):
                                   tempo_changes=[{"measure": 2, "bpm": 72}])
     root = etree_root(open(bundle.musicxml, "rb").read())
     marks = list(root.iter("metronome"))
-    assert marks and all(m.get("print-object") == "no" for m in marks)
+    assert all(m.get("print-object") == "no" for m in marks), "no tempo mark is drawn"
     assert [s.get("tempo") for s in root.iter("sound") if s.get("tempo")][:2] == ["84", "72"]

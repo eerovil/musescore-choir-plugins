@@ -946,8 +946,8 @@ def test_the_per_system_grid_sees_the_systems_the_page_has(tmp_path):
         [scan(1, 2, bars=2), scan(2, 3, bars=2), scan(3, 2, bars=2)],
         str(tmp_path / "assembled.musicxml"))
     mscx = str(tmp_path / "assembled.mscx")
-    subprocess.run([_musescore(), "-o", mscx, assembled],
-                   check=True, capture_output=True, timeout=300)
+    from src import musescore_cli
+    musescore_cli.export(_musescore(), assembled, mscx, timeout=300)
 
     root = etree.parse(mscx).getroot()
     layout = per_system.system_layout(root)
@@ -1188,8 +1188,8 @@ def test_musescore_keeps_a_start_repeat_read_on_half_the_staves(tmp_path):
     with_barline(second.staves[1], 0, START)
     assembled = omr_systems.assemble([first, second], str(tmp_path / "s.musicxml"))
     mscx = str(tmp_path / "s.mscx")
-    subprocess.run([_musescore(), "-o", mscx, assembled],
-                   check=True, capture_output=True, timeout=300)
+    from src import musescore_cli
+    musescore_cli.export(_musescore(), assembled, mscx, timeout=300)
     measures = etree.parse(mscx).getroot().find(".//Score/Staff").findall("Measure")
     assert [m.find("startRepeat") is not None for m in measures] == [False, False, True, False]
 # --- a slur carried over the line break (#318) -------------------------------

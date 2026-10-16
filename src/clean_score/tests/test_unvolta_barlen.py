@@ -205,8 +205,8 @@ def test_musescore_plays_the_endings_the_page_prints(tmp_path):
     src = tmp_path / "endings.mscx"
     etree.ElementTree(root).write(str(src), encoding="UTF-8", xml_declaration=True)
     out = tmp_path / "endings.musicxml"
-    subprocess.run([os.environ["MUSESCORE_CLI_PATH"], "-o", str(out), str(src)],
-                   check=True, capture_output=True, timeout=120)
+    from src import musescore_cli
+    musescore_cli.export(os.environ["MUSESCORE_CLI_PATH"], str(src), str(out), timeout=120)
     part = etree.parse(str(out)).getroot().find("part")
     measures = part.findall("measure")
     endings = [(m.get("number"), e.get("number"), e.get("type"))

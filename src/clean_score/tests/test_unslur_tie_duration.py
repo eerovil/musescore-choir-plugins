@@ -368,6 +368,9 @@ def test_musescore_opens_the_bar_the_double_dot_was_missing_from(root, tmp_path)
     before = tmp_path / "before.mscx"
     etree.ElementTree(root).write(str(before))
     rejected = pipeline.musescore_check(str(before))
+    if rejected is None:
+        pytest.skip("this MuseScore did not write the check file: "
+                    "MuseScore 3 does, MuseScore 4 does not")
     assert [(r["measure"], r["staff"]) for r in rejected] == [(3, 3)]
 
     apply_fixes(root, [_fix(root, "duration", 2, 3, index=0, to="quarter..")])
