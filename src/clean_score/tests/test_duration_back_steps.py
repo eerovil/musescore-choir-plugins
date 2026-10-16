@@ -236,4 +236,8 @@ def test_musescore_opens_every_voice_of_the_bar_after_the_fixes(build, fixes, tm
                                              ("note_4", 57, 17)])])
     path = tmp_path / "fixed.mscx"
     etree.ElementTree(root).write(str(path))
-    assert pipeline.musescore_check(str(path)) == []
+    found = pipeline.musescore_check(str(path))
+    if found is None:
+        pytest.skip("this MuseScore did not write the check file: "
+                    "MuseScore 3 does, MuseScore 4 does not")
+    assert found == []

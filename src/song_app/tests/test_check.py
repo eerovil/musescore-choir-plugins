@@ -9,6 +9,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 from src.song_app import check
 
 
@@ -33,10 +35,21 @@ def test_musescore_3_is_found_and_its_version_said(tmp_path, monkeypatch):
     assert found.status == check.OK and "3.6.2" in found.detail
 
 
-def test_musescore_4_is_refused_by_name(tmp_path, monkeypatch):
+def test_musescore_4_is_found_and_its_version_said(tmp_path, monkeypatch):
+    """The fork runs on MuseScore 4 as well as 3 (joyweshare 2.7)."""
     monkeypatch.setenv("MUSESCORE_CLI_PATH", _exe(tmp_path))
-    found = check.musescore(run=_ran(stdout="MuseScore4 4.4.2\n"))
-    assert found.status == check.MISSING and "MuseScore 4.4.2" in found.detail
+    found = check.musescore(run=_ran(stdout="MuseScore4 4.7.5\n"))
+    assert found.status == check.OK and "4.7.5" in found.detail
+    assert found.name == "MuseScore"
+
+
+@pytest.mark.parametrize("said", ["MuseScore2 2.3.2\n", "MuseScore5 5.0.0\n"])
+def test_a_musescore_other_than_3_or_4_is_refused_by_name(tmp_path, monkeypatch, said):
+    monkeypatch.setenv("MUSESCORE_CLI_PATH", _exe(tmp_path))
+    found = check.musescore(run=_ran(stdout=said))
+    version = said.split()[1]
+    assert found.status == check.MISSING
+    assert f"MuseScore {version}" in found.detail and "MuseScore 3 or 4" in found.detail
 
 
 def test_no_musescore_is_missing_and_says_how_to_get_one(monkeypatch):
@@ -108,5 +121,5 @@ def test_song_py_check_runs_and_exits_by_what_is_missing(tmp_path):
                             capture_output=True, text=True, env=env, cwd=str(tmp_path),
                             timeout=120)
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "MISSING MuseScore 3" in result.stdout
-    assert "Missing: MuseScore 3" in result.stdout
+    assert "MISSING MuseScore " in result.stdout
+    assert "Missing: MuseScore." in result.stdout

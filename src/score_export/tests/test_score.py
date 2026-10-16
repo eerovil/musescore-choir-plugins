@@ -180,6 +180,73 @@ def test_prepare_holds_fermatas_only_in_its_copy(tmp_path):
     assert original.read_bytes() == before
 
 
+# A score saved by MuseScore 4 ----------------------------------------------
+#
+# MuseScore 4 writes a Part's staves without an id (and gives every Part the same
+# one), so a part is matched to its music by position: the first Part owns the
+# first staff of music, a two-staff Part the next two, and so on.
+
+_NOTE = "<Measure><voice><Chord><Note><pitch>60</pitch></Note></Chord></voice></Measure>"
+_REST = "<Measure><voice><Rest/></voice></Measure>"
+
+MS4_SCORE = f"""<museScore version="4.70"><Score>
+  <Part id="1"><Staff/><trackName>T1</trackName></Part>
+  <Part id="1"><Staff/><trackName>Drumset</trackName>
+    <Instrument id="drumset"><useDrumset>1</useDrumset></Instrument></Part>
+  <Part id="1"><Staff/><trackName>Click</trackName></Part>
+  <Staff id="1">{_NOTE}</Staff>
+  <Staff id="2">{_REST}</Staff>
+  <Staff id="3">{_REST}</Staff>
+</Score></museScore>"""
+
+MS4_CLICK_FIRST = f"""<museScore version="4.70"><Score>
+  <Part id="1"><Staff/><trackName>Click</trackName></Part>
+  <Part id="1"><Staff/><trackName>T1</trackName></Part>
+  <Staff id="1">{_REST}</Staff>
+  <Staff id="2">{_NOTE}</Staff>
+</Score></museScore>"""
+
+MS4_PIANO_FIRST = f"""<museScore version="4.70"><Score>
+  <Part id="1"><Staff/><Staff/><trackName>Piano</trackName></Part>
+  <Part id="1"><Staff/><trackName>T1</trackName></Part>
+  <Staff id="1">{_REST}</Staff>
+  <Staff id="2">{_REST}</Staff>
+  <Staff id="3">{_NOTE}</Staff>
+</Score></museScore>"""
+
+
+def test_a_singing_part_saved_by_musescore_4_is_not_silent():
+    assert "T1" not in silent_parts(etree.fromstring(MS4_SCORE))
+
+
+def test_percussion_and_rest_only_parts_saved_by_musescore_4_are_silent():
+    assert silent_parts(etree.fromstring(MS4_SCORE)) == ["Drumset", "Click"]
+
+
+def test_dropping_a_part_saved_by_musescore_4_takes_its_own_staff():
+    root = etree.fromstring(MS4_CLICK_FIRST)
+    assert drop_parts(root, ["Click"]) == 1
+    assert [p.findtext("trackName") for p in root.iter("Part")] == ["T1"]
+    assert [s.get("id") for s in root.find("Score").findall("Staff")] == ["2"]
+
+
+def test_prepare_keeps_the_singing_parts_saved_by_musescore_4(tmp_path):
+    original = tmp_path / "score.mscx"
+    original.write_text(MS4_SCORE)
+    path, dropped = prepare(str(original), str(tmp_path))
+    assert dropped == ["Drumset", "Click"]
+    kept = etree.parse(path).getroot()
+    assert [p.findtext("trackName") for p in kept.iter("Part")] == ["T1"]
+    assert kept.find("Score").find("Staff").find(".//Chord") is not None
+
+
+def test_a_two_staff_part_saved_by_musescore_4_takes_two_staves():
+    root = etree.fromstring(MS4_PIANO_FIRST)
+    assert silent_parts(root) == ["Piano"]
+    assert drop_parts(root, ["Piano"]) == 1
+    assert [s.get("id") for s in root.find("Score").findall("Staff")] == ["3"]
+
+
 # Tempo changes a person records (#387) -------------------------------------
 
 def _bars(count, staves=2, opening=None):

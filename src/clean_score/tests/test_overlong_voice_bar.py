@@ -126,7 +126,11 @@ def test_musescore_opens_the_bar_after_the_fix(tmp_path):
     root = lasinkuultava()
     path = tmp_path / "scanned.mscx"
     etree.ElementTree(root).write(str(path))
-    assert pipeline.musescore_check(str(path)) != []
+    first = pipeline.musescore_check(str(path))
+    if first is None:
+        pytest.skip("this MuseScore did not write the check file: "
+                    "MuseScore 3 does, MuseScore 4 does not")
+    assert first != []
     apply_fixes(root, [_bar(PAGE)])
     etree.ElementTree(root).write(str(path))
     assert pipeline.musescore_check(str(path)) == []

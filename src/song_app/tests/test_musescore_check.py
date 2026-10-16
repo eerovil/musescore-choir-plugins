@@ -25,6 +25,25 @@ def _musescore() -> bool:
 
 needs_musescore = pytest.mark.skipif(not _musescore(), reason="MUSESCORE_CLI_PATH is not set to a real binary")
 
+# A score the check passes, so that no answer about it says something about the
+# program asked and nothing about the score.
+SOUND = os.path.join(TEST_FILES, "simple_1_output.mscx")
+
+
+@pytest.fixture(scope="module")
+def musescore_that_checks():
+    """Skip where the MuseScore on this machine cannot run the check at all.
+
+    The check is MuseScore 3's. Asked for ``x.mlog``, MuseScore 4 writes no file and
+    says nothing about it, so ``musescore_check`` has no answer to give. The app
+    reports that as "not checked" (the test above), and a test that needs a verdict
+    has nothing to assert on. The program is asked, not its version.
+    """
+    if pipeline.musescore_check(SOUND) is None:
+        pytest.skip("this MuseScore did not write the check file: "
+                    "MuseScore 3 does, MuseScore 4 does not")
+
+
 # Three bars on one staff: a half tied over the barline into bar 2, bar 2 the bar to
 # reset (a slur starts in it and ends in bar 3), and a second staff left alone.
 TIE_OUT = ('<Spanner type="Tie"><Tie/><next><location><measures>1</measures>'
@@ -147,7 +166,7 @@ def test_no_musescore_is_not_checked_rather_than_fine(tmp_path, monkeypatch):
 
 
 @needs_musescore
-def test_musescore_names_the_bar_it_refuses_and_accepts_it_once_reset(tmp_path):
+def test_musescore_names_the_bar_it_refuses_and_accepts_it_once_reset(tmp_path, musescore_that_checks):
     score = tmp_path / "s.mscx.building"   # the name a clean checks it under
     tree = etree.parse(os.path.join(TEST_FILES, "simple_1_output.mscx"))
     voice = tree.getroot().findall(".//Score/Staff")[0].findall("Measure")[1].find("voice")
@@ -165,8 +184,8 @@ def test_musescore_names_the_bar_it_refuses_and_accepts_it_once_reset(tmp_path):
 
 
 @needs_musescore
-def test_a_sound_score_passes():
-    assert pipeline.musescore_check(os.path.join(TEST_FILES, "simple_1_output.mscx")) == []
+def test_a_sound_score_passes(musescore_that_checks):
+    assert pipeline.musescore_check(SOUND) == []
 
 
 REJECTED = {"measure": 2, "staff": 1, "voice": 1,

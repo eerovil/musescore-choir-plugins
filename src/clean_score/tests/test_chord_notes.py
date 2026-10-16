@@ -218,4 +218,8 @@ def test_musescore_opens_the_score_after_a_tied_note_is_dropped(root, tmp_path):
     apply_fixes(root, [_fix(root, "addnote", 2, index=1, pitch=32)])
     after = tmp_path / "after.mscx"
     etree.ElementTree(root).write(str(after))
-    assert pipeline.musescore_check(str(after)) == []
+    found = pipeline.musescore_check(str(after))
+    if found is None:
+        pytest.skip("this MuseScore did not write the check file: "
+                    "MuseScore 3 does, MuseScore 4 does not")
+    assert found == []

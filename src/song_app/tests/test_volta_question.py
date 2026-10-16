@@ -224,8 +224,8 @@ def test_musescore_reads_the_brackets_back(tmp_path):
     src = tmp_path / "volta.mscx"
     etree.ElementTree(root).write(str(src), encoding="UTF-8", xml_declaration=True)
     out = tmp_path / "volta.musicxml"
-    subprocess.run([os.environ["MUSESCORE_CLI_PATH"], "-o", str(out), str(src)],
-                   check=True, capture_output=True, timeout=120)
+    from src import musescore_cli
+    musescore_cli.export(os.environ["MUSESCORE_CLI_PATH"], str(src), str(out), timeout=120)
     xml = etree.parse(str(out)).getroot()
     endings = [(m.get("number"), e.get("number"), e.get("type"))
                for m in xml.find("part").findall("measure") for e in m.iter("ending")]

@@ -18,20 +18,20 @@ def musescore_cli() -> str:
 
 
 def run_musescore(input_path: str, output_path: str, timeout: int = CLI_TIMEOUT) -> str:
-    """Convert/export via the MuseScore CLI; returns output_path."""
+    """Convert/export via the MuseScore CLI; returns output_path.
+
+    Whether it worked is decided by `src.musescore_cli`, which also accepts
+    MuseScore 4's crash on exit after a complete file.
+    """
+    from src import musescore_cli as cli_run
+
     try:
-        result = subprocess.run([musescore_cli(), input_path, "-o", output_path],
-                                capture_output=True, text=True, timeout=timeout)
+        return cli_run.export(musescore_cli(), input_path, output_path, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(
             f"MuseScore CLI did not finish within {timeout}s writing "
             f"{os.path.basename(output_path)}. A stuck MuseScore process will do this; "
             "check for a running mscore and kill it.") from None
-    if result.returncode != 0 or not os.path.exists(output_path):
-        raise RuntimeError(
-            f"MuseScore CLI failed writing {os.path.basename(output_path)}. "
-            "Check MUSESCORE_CLI_PATH.\n" + (result.stderr or result.stdout or ""))
-    return output_path
 
 
 def part_name(part: etree._Element, index: int) -> str:

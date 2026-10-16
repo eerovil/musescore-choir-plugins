@@ -20,6 +20,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from lxml import etree
 
 from .score_fixes import note_name
+from .utils import part_staff_ids
 
 _DUR = {
     "whole": Fraction(1), "half": Fraction(1, 2), "quarter": Fraction(1, 4),
@@ -188,9 +189,11 @@ def clear_bar(root: etree._Element, staff_index: int, measure_no: int) -> Option
 def staff_names(root: etree._Element) -> Dict[int, str]:
     """1-based staff position -> the part name a person knows it by."""
     by_id: Dict[str, str] = {}
-    for part in root.findall(".//Score/Part"):
+    score = root.find(".//Score")
+    parts = score.findall("Part") if score is not None else []
+    for part, owned in zip(parts, part_staff_ids(score) if parts else []):
         name = (part.findtext("trackName") or part.findtext("Instrument/trackName") or "").strip()
-        for st in part.findall("Staff"):
-            by_id[st.get("id", "")] = name
+        for staff_id in owned:
+            by_id[staff_id] = name
     return {i: by_id.get(st.get("id", ""), "") or f"staff {i}"
             for i, st in enumerate(root.findall(".//Score/Staff"), start=1)}
