@@ -1,4 +1,4 @@
-"""The MuseScore 3 command line: exports, and the part names a score carries."""
+"""The MuseScore 3 or 4 command line: exports, and the part names a score carries."""
 
 from __future__ import annotations
 

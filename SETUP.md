@@ -10,7 +10,7 @@ What you need:
 | what | why | without it |
 | --- | --- | --- |
 | Python 3.11 or newer | the app | nothing runs |
-| **MuseScore 3** (3.6.2) | reading and writing scores, previews, the MIDI | nothing works. MuseScore 4 will not do: its command line is different |
+| **MuseScore 3** (3.6.2) or 4 | reading and writing scores, previews, the MIDI | nothing works |
 | poppler (`pdftoppm`, `pdfinfo`) | cutting the PDF into one picture per printed line | no scanning and no page pictures |
 | homr | reading a scanned PDF into notes | you bring each score as MusicXML yourself |
 | a Cloudflare account and the stemmanauhat site | publishing | the Publish stage says publishing is off |
@@ -58,6 +58,14 @@ two-line wrapper that runs MuseScore inside `xvfb-run`, and puts that in `.env`.
 These two lists are what a clean Fedora 42 and Ubuntu 24.04 container needed to
 take the fixture song (step 3) through cleaning and lyrics to Review.
 
+**MuseScore 4 works too, with one thing less.** Set `MUSESCORE_CLI_PATH` in `.env`
+to the MuseScore 4 program yourself: the script looks for and downloads MuseScore 3 only.
+Everything runs the same except MuseScore's own corruption check: every clean asks
+MuseScore 3 whether it would open the score, and resets a bar it would call
+corrupted, and MuseScore 4's command line does not run that check. With MuseScore 4
+the Review stage's *Opens in MuseScore* row says "not checked", so a score MuseScore 3
+would refuse to open is not caught. Keep MuseScore 3 if you can.
+
 **macOS:** `brew install python@3.13 poppler`, and install MuseScore 3.6.2 from
 <https://github.com/musescore/MuseScore/releases/tag/v3.6.2>. The script finds it
 at `/Applications/MuseScore 3.app/Contents/MacOS/mscore`.
@@ -82,7 +90,7 @@ Ready: ./song.py starts the app.
 ```
 
 `MISSING` is something the app cannot work without (the Python packages or
-MuseScore 3) and makes the check fail; `off` is something optional.
+MuseScore 3 or 4) and makes the check fail; `off` is something optional.
 
 ## 3. Start the app
 

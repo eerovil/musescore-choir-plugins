@@ -112,7 +112,7 @@ def _musescore_result(stored: Optional[Dict], current: Optional[str]) -> Dict:
         still = "still calls" if reset else "calls"
         return _result("warning", f"MuseScore 3 {still} it corrupted ({left} problem(s)); "
                                   "see the Fix panel.", reset=reset, rejected=left)
-    return _result("not_checked", "No MuseScore 3 was available to check it.")
+    return _result("not_checked", "No MuseScore 3 was available to check it (MuseScore 4 does not run this check).")
 
 
 def summary(song: state.Song, systems: int) -> Dict:

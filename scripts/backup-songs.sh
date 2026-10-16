@@ -43,16 +43,38 @@ take_lock() {
     mkdir "$LOCK" 2>/dev/null || return 1
     echo "$$" >"$LOCK/pid"
 }
+skip() {
+    echo "songs backup: another run is in progress, skipping" \
+        "(if none is, delete $LOCK)"
+    exit 0
+}
+# A lock is stale when its process has ended (that run was killed), or when it is
+# older than STALE_MINUTES: the timer stops a run after 30 minutes
+# (TimeoutStartSec), and a lock that old whose number is alive belongs to some
+# other process that was given the same number.
+STALE_MINUTES="${SONGS_BACKUP_STALE_MINUTES:-30}"
 if ! take_lock; then
     holder=$(cat "$LOCK/pid" 2>/dev/null || true)
-    if [ -n "$holder" ] && ! ps -p "$holder" >/dev/null 2>&1; then
-        echo "songs backup: stale lock from process $holder, which has ended; taking it over"
-        rm -rf "$LOCK"
-        take_lock || { echo "songs backup: another run is in progress, skipping"; exit 0; }
-    else
-        echo "songs backup: another run is in progress, skipping"
-        exit 0
+    if [ -z "$(find "$LOCK" -maxdepth 0 -mmin "+$STALE_MINUTES" 2>/dev/null)" ]; then
+        # Not old: stale only if its process has ended. No number yet is a run
+        # that has just made the lock.
+        if [ -z "$holder" ] || ps -p "$holder" >/dev/null 2>&1; then
+            skip
+        fi
     fi
+    echo "songs backup: stale lock from process ${holder:-unknown}; taking it over"
+    # Move it aside under a name of this run's own, then look at what was moved.
+    # Two runs can both find the same stale lock; if the other one cleared it and
+    # took a fresh lock first, what this run moved is that fresh lock, so it goes
+    # back and this run skips. Removing in place would delete it and both would run.
+    aside="$LOCK.stale.$$"
+    mv "$LOCK" "$aside" 2>/dev/null || skip
+    if [ "$(cat "$aside/pid" 2>/dev/null || true)" != "$holder" ]; then
+        mv "$aside" "$LOCK" 2>/dev/null || rm -rf "$aside"
+        skip
+    fi
+    rm -rf "$aside"
+    take_lock || skip
 fi
 trap 'rm -rf "$LOCK"' EXIT
 
