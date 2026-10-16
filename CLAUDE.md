@@ -2645,6 +2645,9 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   on the mapping: `{"staff_number": 1, "text": "...", "parts": ["T1"]}`, then `["T2"]`, `["B1"]`,
   `["B2"]` for the others (one entry per part per printed system). Each `too_many`/`too_few`
   left over was a slur the page prints differently (see the table above).
+- **Swing:** a printed swing marking (♫ = ♩♪ in triplets), or straight again (♫ = ♫),
+  is a `swing` fix per marked bar, `{"kind": "swing", "measure": 81, "swing": false, ...}`.
+  The scan never reads one, and without it the piano and the sung parts play straight.
 - **Tempo and credits:** save the printed tempos and who wrote the song with
   `POST /api/songs/<slug>/publish-settings` (`bpm`, `tempo_changes`, `credits` with
   `composer`/`lyricist`/`arranger`); the score has no tempo after a clean, and the

@@ -136,6 +136,16 @@ required, as for `delbar`.
 
     {"kind": "barlen", "measure": 19, "from": ["whole:R"], "to": "6/4", "why": "..."}
 
+`swing` (eeron-omat-taskit#52) puts back a swing or straight marking the page prints
+over a bar and the scan lost (♫ = ♩♪ in triplets): a "Swing" or "Straight" text at
+the head of the bar on the top staff, carrying MuseScore's swing setting. It is a
+system text, so it plays on every part from that bar until the next marking --
+eighths at 2:1, the triplet feel the marking draws, or straight again. MuseScore's
+MIDI export, which the site plays, follows it; beats and bar times do not move. A
+swing marking already in that bar is replaced.
+
+    {"kind": "swing", "measure": 81, "swing": false, "why": "the page prints ♫ = ♫ at bar 81"}
+
 Three kinds came out of fixing a song from its page with an LLM (#340), where each
 had to be faked and every fake damaged the score. `unslur` takes out the slur that
 starts on chord `index`, both of its halves, wherever the end half sits. `tie` joins
@@ -2361,6 +2371,38 @@ def _set_timesig(root: etree._Element, measure_no: int, expect, to) -> str:
     return f"{was_n}/{was_d} became {new[0]}/{new[1]} on all {len(signs)} staves"
 
 
+SWING_RATIO = 67  # percent of the beat the on-beat eighth takes: 2:1, a triplet feel
+
+
+def _set_swing(root: etree._Element, measure_no: int, on: bool) -> str:
+    """Mark bar ``measure_no`` to play its eighths swung (``on``) or straight from here."""
+    staff = next((s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None),
+                 None)
+    if staff is None:
+        raise FixError("the score has no staves")
+    measures = staff.findall("Measure")
+    if not 1 <= measure_no <= len(measures):
+        raise FixError(f"the score has bars 1-{len(measures)}, not {measure_no}")
+    for other in root.findall(".//Score/Staff"):
+        bars = other.findall("Measure")
+        if measure_no <= len(bars):
+            for el in list(bars[measure_no - 1].iter("SystemText", "StaffText")):
+                if el.find("swing") is not None:
+                    el.getparent().remove(el)
+    bar = measures[measure_no - 1]
+    voice = bar.find("voice")
+    if voice is None:
+        voice = etree.SubElement(bar, "voice")
+    at = next((i for i, child in enumerate(voice) if child.tag in ("Chord", "Rest")),
+              len(voice))
+    word = "Swing" if on else "Straight"
+    text = etree.Element("SystemText")
+    etree.SubElement(text, "swing", unit="eighth" if on else "zero", ratio=str(SWING_RATIO))
+    etree.SubElement(text, "text").text = word
+    voice.insert(at, text)
+    return f"{word.lower()} eighths from here"
+
+
 def free_text(fixes: List[Dict]) -> List[str]:
     """The sentences among the recorded fixes, in file order.
 
@@ -2431,6 +2473,16 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 what = _add_volta(root, measure, int(fix["bars"]), int(fix.get("second", 1)))
             except FixError as exc:
                 raise FixError(f"m{measure} (volta): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind == "swing":
+            measure = int(fix["measure"])
+            if not isinstance(fix.get("swing"), bool):
+                raise FixError(f"m{measure} (swing): say \"swing\": true or false")
+            try:
+                what = _set_swing(root, measure, fix["swing"])
+            except FixError as exc:
+                raise FixError(f"m{measure} (swing): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         if kind in ("unrepeat", "unvolta", "barlen"):
