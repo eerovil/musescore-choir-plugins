@@ -363,11 +363,11 @@ So: **verify your change with its own tests, push, and read CI.** Cite the CI ru
 the PR body rather than a local "full suite passed" count.
 
 Two things follow from that, because **nothing is gated**. `main` has no branch
-protection and no required checks — deliberately, this is a one-person project merged
-by hand — and `scripts/deploy-song-app.sh` runs no tests, so a merge is on the live
-app within two minutes. **Check CI is green before commenting `/merge`.** It is the
-only thing that ran the suite, and nothing will stop you merging while it is red or
-still running.
+protection and no required checks, and `scripts/deploy-song-app.sh` runs no tests, so a
+merge is on the live app within two minutes. The deck merges a pull request by itself
+once its review passed and every GitHub check is green on its head (agentdeck#3269), so
+**a red or unfinished CI run is what holds a merge**. CI is the only thing that ran
+the suite; a person's `/merge` or Merge press goes through the same gates.
 
 The full run is still the right thing before a release you are nervous about, or when
 you have touched something with reach (`lyric_txt.py`, `main.py`, `publish.py`):
@@ -748,7 +748,7 @@ proposed by this pull request and settled on #141. This file carries the full
 reasoning; the fork's `README.md` carries a short statement of the rule ("About this
 fork", merged as `eerovil/homr#22`).
 
-`/merge` on a card here releases a fork pull request too, as long as its description
+The deck releases a fork pull request with its card too, as long as its description
 names the card in full (`eerovil/musescore-choir-plugins#<n>` or the issue URL; a bare
 `#<n>` does not count). It goes through the same review and test gates and is not
 merged by hand.
@@ -2809,13 +2809,15 @@ script. The deploy does not touch it, on purpose: it is not in `pip-requirements
 so a merge cannot churn 150 MB of model weights, and `/healthz` does not know it
 exists.
 
-Issues are worked from a GitHub Project board by the AgentDeck poller (instance
-`musescore`, unit `agentdeck-poller@musescore.timer`). Its manifest is **not** in this
-repo: it lives in `~/agentdeck/poller/manifests/musescore/`, with every project's
-alongside it, and the host half (paths, account, token) is the uncommitted overlay in
+Issues are worked by AgentDeck (instance `musescore`, unit
+`agentdeck-poller@musescore.timer`): the `claude` label starts a Work, and the deck runs
+it. Its manifest is **not** in this repo: it lives in
+`~/agentdeck/poller/manifests/musescore/`, with every project's alongside it, and the
+host half (paths, account, token) is the uncommitted overlay in
 `~/.local/share/agentdeck/poller/instances/musescore/`. Comment `/claude <what you want>`
-on an issue to start or steer work; `/merge` from **In review** releases it. Nothing
-merges without that comment.
+on an issue to steer work. The deck merges a pull request by itself once its review
+passed and its checks are green on the same head, so nobody presses Merge
+(agentdeck#3269); the `paused` label holds a Work, and a draft is never merged.
 
 ## Conventions & gotchas
 
