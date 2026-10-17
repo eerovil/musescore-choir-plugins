@@ -2672,18 +2672,35 @@ Worked through twice, with the wrong turn left in, in
 
 An errand like "new song, put it on the new stemmanauhat site" runs every stage here, then
 publishes. The playbook above is how to read the page; this is the rest, learnt on Insomnis
-(eerovil/eeron-omat-taskit#33). The running app is at `http://localhost:8123`; drive it through its API.
+(eerovil/eeron-omat-taskit#33) and Laulu reiän tarpeesta (#61). The running app is at
+`http://localhost:8123`; drive it through its API.
+
+- **Start:** `POST /api/songs` (form: `name`, `per_system=true`, `voicing=men`, `pdf=@file`),
+  `POST /find-systems` (`{}`, the quick method) and check the bands against the page, `PUT
+  /bounds` with them, `POST /scan`, then name each staff's lines (`PUT /systems`, e.g.
+  `{"1": {"1": "T1,T2", "2": "B1,B2"}}` for every system) and `POST /clean`.
 
 - **Check every bar of every part** against the page with `GET /api/songs/<slug>/bar`, before
   lyrics. On Insomnis the notes were nearly all right; the scan swapped two parts in one chord and
   lost or merged about twenty melisma slurs.
 - **Every correction goes in `fixes.json`**, then clean again (`POST /clean`). A hand edit to the
   cleaned score, red marks included, is gone at the next clean. An `unmark` entry, saying what
-  was checked, is how a homr `slur?`/`tie?` mark comes off.
+  was checked, is how a homr `slur?`/`tie?` mark comes off. Expect triplets to be the worst
+  of it: on #61 the scan got most of them wrong, so a recurring figure needed a `bar` fix in
+  nearly every bar it appears.
+- **Fix gotchas** (#61): a bar MuseScore rejected and reset to a rest is matched against its
+  reading *before* the reset, so its `from` is the `scanned_from` of that bar's `text` entry
+  in `fixes.json`, not what `/bar` shows. A `bar` fix cuts ties coming into the bar, so add
+  the previous bar's tie again after it. A bar the scan gave the wrong length (`len` on the
+  Measure) takes three steps: `bar` every staff to the same rest (`rest_1`, ...), `barlen`
+  (it needs every staff to read the same), then `bar` each staff again with `from:
+  ["measure:R"]`. Check `len`, time signatures and voltas in the cleaned `.mscx` too; the
+  scan invented a "1." ending on #61.
 - **Lyrics:** give each part its own entry and name that part in `parts`, rather than relying
   on the mapping: `{"staff_number": 1, "text": "...", "parts": ["T1"]}`, then `["T2"]`, `["B1"]`,
   `["B2"]` for the others (one entry per part per printed system). Each `too_many`/`too_few`
-  left over was a slur the page prints differently (see the table above).
+  left over was a slur the page prints differently (see the table above). A sentence spoken on
+  one held chord is one syllable: join its words with `‿` (a space would split it).
 - **Swing:** a printed swing marking (♫ = ♩♪ in triplets), or straight again (♫ = ♫),
   is a `swing` fix per marked bar, `{"kind": "swing", "measure": 81, "swing": false, ...}`.
   The scan never reads one, and without it the piano and the sung parts play straight.
@@ -2691,11 +2708,18 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   `POST /api/songs/<slug>/publish-settings` (`bpm`, `tempo_changes`, `credits` with
   `composer`/`lyricist`/`arranger`); the score has no tempo after a clean, and the
   credits otherwise come from the score's metaTags.
-- **Publish** from the app: `POST /api/songs/<slug>/publish` with `{"choir": "jm"}`
-  (it needs the Review approval and the Cloudflare keys in `.env`, and refuses
-  without either). `jm` is the men's choir; only public-domain songs go in `public`.
-  The stand-in bundle scripts in stemmanauhat-cf (`scripts/song-app-bundle.py`,
-  `scripts/publish-songs.*`) are superseded by this.
+- **Publish with the stemmanauhat-cf scripts, not the app.** The app's Publish button needs
+  Cloudflare keys in `.env`, and this host has none, so `GET /api/choirs` answers "Publishing is
+  off". The scripts take the token from `~/.local/share/stemmanauhat/cloudflare.env`. Build the
+  bundle with `.venv/bin/python ~/stemmanauhat-cf/scripts/song-app-bundle.py
+  ~/musescore-choir-plugins <out-dir> <slug>`, then run `~/stemmanauhat-cf/scripts/publish-songs.sh
+  jm <out-dir>/<slug>`. The bundle script reads `bpm` and `tempo_changes` from the song's
+  `record` (the Record panel), not `publish`, and credits from the score's metaTags only. For a
+  song that was never recorded, #61 used a copy of the script that reads `publish` instead. Check
+  that the bundle's duration fits the tempos and repeats, then check the live row:
+  `./scripts/run.sh --cloudflare corepack pnpm exec wrangler d1 execute stemmanauhat --remote
+  --command "SELECT * FROM songs WHERE slug='<slug>'"`. `jm` is the men's choir; only
+  public-domain songs go in `public`. Publishing does not need the Review approval.
 - Leave the Review approval to Eero.
 
 ## MuseScore plugins (`plugins/`)
