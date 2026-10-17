@@ -354,7 +354,10 @@ def test_shared_staves_are_offered_above_five_parts_and_published_as_set(
     song = state.load(slug)
     with open(_six_parts(tmp_path), "rb") as src, open(song.cleaned_path(), "wb") as dst:
         dst.write(src.read())
-    song.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    # Recorded as already checked, so the file watcher does not redraw the panel
+    # (and drop what was typed in it) when it notices the new score.
+    fingerprint = state.file_fingerprint(song.cleaned_path())
+    song.data.update(review={"approved_against": fingerprint}, cleaned_fingerprint=fingerprint)
     song.save()
     handed = []
 
@@ -376,6 +379,7 @@ def test_shared_staves_are_offered_above_five_parts_and_published_as_set(
     _shot(page, f"publish-shared-staves-{size[0]}.png")
 
     shared.fill("S1+S1b, S2+T1")
+    expect(page.locator(".staff-groups-note")).to_have_text("set by hand")
     page.locator("button.publish-save").click()
     expect(page.locator("[data-save-note]")).to_contain_text("No such part: T1")
     shared.fill("S1+S1b")
