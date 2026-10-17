@@ -2708,27 +2708,15 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   `POST /api/songs/<slug>/publish-settings` (`bpm`, `tempo_changes`, `credits` with
   `composer`/`lyricist`/`arranger`); the score has no tempo after a clean, and the
   credits otherwise come from the score's metaTags.
-- **Publish with the stemmanauhat-cf scripts, not the app.** The app's Publish button needs
-  Cloudflare keys in `.env`, and this host has none, so `GET /api/choirs` answers "Publishing is
-  off". The scripts take the token from `~/.local/share/stemmanauhat/cloudflare.env`. Build the
-  bundle with `.venv/bin/python ~/stemmanauhat-cf/scripts/song-app-bundle.py
-  ~/musescore-choir-plugins <out-dir> <slug>`, then run `~/stemmanauhat-cf/scripts/publish-songs.sh
-  jm <out-dir>/<slug>`. The bundle script reads `bpm` and `tempo_changes` from the song's
-  `record` (the Record panel), not `publish`, and credits from the score's metaTags only. For a
-  song that was never recorded, #61 used a copy of the script that reads `publish` instead. Check
-  that the bundle's duration fits the tempos and repeats, then check the live row:
-  `./scripts/run.sh --cloudflare corepack pnpm exec wrangler d1 execute stemmanauhat --remote
-  --command "SELECT * FROM songs WHERE slug='<slug>'"`. `jm` is the men's choir; only
-  public-domain songs go in `public`. Publishing does not need the Review approval.
-- **Then sing it.** Every live Finnish song has AI-sung parts (REMY for men's choirs, LYSE for
-  women's; eeron-omat-taskit#36), so a new song is not done until it has them too. A publish
-  makes a new version without them. `/var/tmp/i36-all/run_all.py` renders each part on the
-  published version's clock and publishes the song again as sung. Give it a one-song `TODO`
-  file shaped like `/var/tmp/i36-live/todo.json`, with the bundle's files copied under
-  `~/stemmanauhat-cf/.wrangler/live/v/<prefix>`. Run it as an `agentdeck job`: about 10–20
-  minutes on the GTX 970. The renderer sings one syllable per note, so a sentence spoken on one
-  chord (#61) is split for the render only: one equal note per syllable on the chord's pitch,
-  numbers spelled out (`/var/tmp/i61-sing/spoken.py`).
+- **Publish and sing it with `~/eeron-omat-taskit/sing-song/`** (read its README.md):
+  `.venv/bin/python ~/eeron-omat-taskit/sing-song/publish_song.py <slug> jm`, run as an
+  `agentdeck job` (a few minutes on the GTX 970). It builds the bundle with this app's publish
+  code from the song's Publish settings, sings every part (every live Finnish song has AI-sung
+  parts, eeron-omat-taskit#36), and publishes through stemmanauhat-cf, whose token is in
+  `~/.local/share/stemmanauhat/cloudflare.env`. The app's own Publish button cannot do this
+  here: it has no Cloudflare keys in `.env`, so `GET /api/choirs` answers "Publishing is off".
+  `jm` is the men's choir; only public-domain songs go in `public`. Publishing does not need
+  the Review approval. Check the live row afterwards as the tool's AGENTS.md says.
 - Leave the Review approval to Eero.
 
 ## MuseScore plugins (`plugins/`)
