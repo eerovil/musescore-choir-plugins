@@ -471,15 +471,26 @@ CHOIRS_FILE = ".choirs.json"
 
 
 def site_choirs(client: "Cloudflare") -> List[Dict]:
-    """The site's choirs, ``[{"id", "name", "public"}]``, the private ones first."""
-    result = client.query("SELECT id, name, public FROM choirs ORDER BY public, name")
+    """The site's choirs, ``[{"id", "name", "public", "staging"}]``, the private ones first.
+
+    ``staging`` marks the site's test list (stemmanauhat-cf#73): a song is tried
+    out there before it moves to a choir. A site older than that column has none.
+    """
+    try:
+        result = client.query("SELECT id, name, public, staging FROM choirs "
+                              "ORDER BY public, name")
+    except PublishError as exc:
+        if "staging" not in str(exc):
+            raise
+        result = client.query("SELECT id, name, public, 0 FROM choirs ORDER BY public, name")
     choirs = []
     for part in result:
         for row in part.get("results") or []:
             if isinstance(row, dict):
-                row = (row.get("id"), row.get("name"), row.get("public"))
-            choir, name, public = row
-            choirs.append({"id": choir, "name": name or choir, "public": bool(public)})
+                row = tuple(row.values())
+            choir, name, public, staging = row
+            choirs.append({"id": choir, "name": name or choir, "public": bool(public),
+                           "staging": bool(staging)})
     return choirs
 
 
@@ -531,14 +542,18 @@ def records(state: Optional[Dict]) -> Dict[str, Dict]:
     return {site["choir"]: site} if site and site.get("choir") else {}
 
 
-def replaced(choir: str, published: Dict[str, Dict]) -> List[str]:
+def replaced(choir: str, published: Dict[str, Dict],
+             staging: Sequence[str] = ()) -> List[str]:
     """The choirs whose listing a publish for `choir` takes away.
 
     A song may be in the public list and one choir's list at once, so
     publishing to ``public`` takes nothing away and publishing to a choir takes
     away only the other private choirs: a move between two choirs stays a move.
+    Publishing to a test list (`staging`, #422) takes nothing away either, so a
+    fix tried out there leaves the song on its choir's list; publishing to a
+    choir still takes it off the test list, since it has moved.
     """
-    if choir == PUBLIC:
+    if choir == PUBLIC or choir in staging:
         return []
     return [c for c in published if c not in (choir, PUBLIC)]
 
@@ -546,7 +561,7 @@ def replaced(choir: str, published: Dict[str, Dict]) -> List[str]:
 def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudflare,
             credits: Optional[Dict[str, str]] = None,
             published: Optional[Dict[str, Dict]] = None,
-            choirs: Optional[Sequence[str]] = None, log: Logger = _noop) -> Dict:
+            choirs: Optional[Sequence[Dict]] = None, log: Logger = _noop) -> Dict:
     """Upload `bundle` and register it for `choir`. Returns the record to keep.
 
     The files go under a fresh version prefix first; the D1 row is pointed at
@@ -554,12 +569,15 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     `published` is the record each choir's last publish returned
     (``records``). What this choir's last publish left is taken away
     afterwards, and so is the song in any other private choir — rows and files
-    — while its public listing stays (``replaced``). `credits` names the
-    composer, lyricist and arranger; an empty or missing one is left out.
-    `choirs` is the site's choir ids when the caller has just read them; without
-    it they are read here (``site_choirs``).
+    — while its public listing stays (``replaced``); publishing to a test list
+    takes nothing away. `credits` names the composer, lyricist and arranger; an
+    empty or missing one is left out. `choirs` is the site's choirs
+    (``site_choirs``) when the caller has just read them; without it they are
+    read here.
     """
-    known = list(choirs) if choirs is not None else [c["id"] for c in site_choirs(client)]
+    listed = list(choirs) if choirs is not None else site_choirs(client)
+    known = [c["id"] for c in listed]
+    staging = [c["id"] for c in listed if c.get("staging")]
     if choir not in known:
         raise PublishError(f"Unknown choir {choir!r}; the site has {', '.join(known) or 'none'}.")
     version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -593,16 +611,16 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     record = {"choir": choir, "slug": slug, "version": version, "prefix": prefix, "at": time.time(),
               "files": [prefix + name for name, _data, _kind in uploads],
               "parts": [p["name"] for p in parts], "duration": duration, "credits": named}
-    _clean_up(published or {}, record, client, log)
+    _clean_up(published or {}, record, client, log, staging)
     log(f"Published to the {choir} list.")
     return record
 
 
 def _clean_up(published: Dict[str, Dict], current: Dict, client: Cloudflare,
-              log: Logger) -> None:
+              log: Logger, staging: Sequence[str] = ()) -> None:
     """Take away what this publish replaces. A failure here costs storage, not the song."""
     try:
-        if current["choir"] != PUBLIC:
+        if current["choir"] != PUBLIC and current["choir"] not in staging:
             # The site's own rule (stemmanauhat-cf#20): a song is in at most one
             # private choir, and a hand-published row we hold no record of goes too.
             gone = client.query("DELETE FROM songs WHERE slug = ? AND choir NOT IN (?, ?) "
@@ -611,7 +629,7 @@ def _clean_up(published: Dict[str, Dict], current: Dict, client: Cloudflare,
                                  for result in gone for row in result.get("results") or []}):
                 log(f"Removed it from the {choir} list.")
         stale = [published.get(current["choir"])]
-        stale += [published[c] for c in replaced(current["choir"], published)]
+        stale += [published[c] for c in replaced(current["choir"], published, staging)]
         for record in stale:
             for key in (record or {}).get("files") or []:
                 if key not in current["files"]:
