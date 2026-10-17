@@ -2727,7 +2727,8 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   file shaped like `/var/tmp/i36-live/todo.json`, with the bundle's files copied under
   `~/stemmanauhat-cf/.wrangler/live/v/<prefix>`. Run it as an `agentdeck job`: about 10–20
   minutes on the GTX 970. The renderer sings one syllable per note, so a sentence spoken on one
-  chord (#61) is hummed instead (`mm`).
+  chord (#61) is split for the render only: one equal note per syllable on the chord's pitch,
+  numbers spelled out (`/var/tmp/i61-sing/spoken.py`).
 - Leave the Review approval to Eero.
 
 ## MuseScore plugins (`plugins/`)
