@@ -502,6 +502,10 @@ def _publish_client(monkeypatch, tmp_path):
         seen.update(cleaned=cleaned, initial_bpm=initial_bpm, tempo_changes=tempo_changes)
         return _bundle(tmp_path)
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)
+    # No deck to queue at: a publish asks the host's AgentDeck for a heavy slot, and run
+    # inside a deck test job (which holds the slot) it waited 30 minutes and timed out (#426)
+    from src.song_app import heavy_slot
+    monkeypatch.setattr(heavy_slot, "_api_base", lambda: "")
     return TestClient(server.app), cf, seen
 
 
