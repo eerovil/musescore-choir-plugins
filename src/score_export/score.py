@@ -2,12 +2,14 @@
 
 Publish-only edits live here: dropping staves that carry no music, taking out
 the red marks cleaning leaves for a person, supplying an opening tempo when the
-score has none, the tempo changes set on the Publish panel, and holding each
-fermata one beat longer than written. The source score is never changed.
+score has none, the tempo changes set on the Publish panel, holding each
+fermata one beat longer than written, and letting parts share a staff in the
+published picture (#420). The source score is never changed.
 """
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 from fractions import Fraction
@@ -419,3 +421,231 @@ def _walk(voice: etree._Element):
             for ratio in tuplets:
                 value *= ratio
             at += value
+
+
+# ---------------------------------------------------------------------------
+# Two parts on one staff in the published picture (#246, #420)
+# ---------------------------------------------------------------------------
+# Elements a voice carries that belong to the staff or the score rather than to
+# the voice. The upper voice already has them, so the moved voice drops its copy.
+_STAFF_ELEMENTS = ("Clef", "KeySig", "TimeSig", "Tempo")
+
+
+def _music_voices(measure: etree._Element) -> List[etree._Element]:
+    return [v for v in measure.findall("voice")
+            if v.find("Chord") is not None or v.find("Rest") is not None]
+
+
+def _is_measure_rest(voice: etree._Element) -> bool:
+    events = [e for e in voice if e.tag in ("Chord", "Rest")]
+    return (len(events) == 1 and events[0].tag == "Rest"
+            and (events[0].findtext("durationType") or "").strip() == "measure")
+
+
+def _verse(lyric: etree._Element) -> int:
+    try:
+        return int((lyric.findtext("no") or "0").strip() or 0)
+    except ValueError:
+        return 0
+
+
+def _words(voice: etree._Element) -> List[Tuple[int, str]]:
+    return [(_verse(lyric), (lyric.findtext("text") or "").strip())
+            for lyric in voice.iter("Lyrics")]
+
+
+def _clefs_at(voice: etree._Element) -> List[Tuple[Fraction, etree._Element]]:
+    """Every clef in this voice, with where in the bar it stands."""
+    return [(at, element) for element, at in _walk(voice) if element.tag == "Clef"]
+
+
+def _first_voice(measure: etree._Element) -> etree._Element:
+    voice = measure.find("voice")
+    if voice is None:
+        voice = etree.Element("voice")
+        index = next((i for i, child in enumerate(measure) if child.tag != "voice"),
+                     len(measure))
+        measure.insert(index, voice)
+    return voice
+
+
+def _insert_at(voice: etree._Element, at: Fraction, clef: etree._Element) -> None:
+    """Put a clef into this voice where the bar reaches `at`: in front of the first
+    chord or rest starting there, or at the end of the bar when nothing does."""
+    anchor = 0
+    for index, (element, start) in enumerate(_walk(voice)):
+        if element.tag in ("Chord", "Rest"):
+            if start >= at:
+                voice.insert(anchor, clef)
+                return
+            anchor = index + 1
+        elif element.tag == "location":
+            anchor = index + 1
+    voice.append(clef)
+
+
+def _staff_of(root: etree._Element, name: str) -> etree._Element:
+    score = root.find("Score")
+    for index, part in enumerate(score.findall("Part")):
+        if _part_name(part, index) == name:
+            ids = _staff_ids(part)
+            staff = score.find(f"Staff[@id='{ids[0]}']") if len(ids) == 1 else None
+            if staff is None:
+                raise ValueError(f"{name} is not one staff, so it cannot share one.")
+            return staff
+    raise ValueError(f"No such part: {name}")
+
+
+def voice_count(root: etree._Element, name: str) -> int:
+    """How many voices this part uses: the highest voice that carries music, in
+    any bar. MuseScore counts a bar's voices by their place in it."""
+    count = 1
+    for measure in _staff_of(root, name).findall("Measure"):
+        voices = measure.findall("voice")
+        for index, voice in enumerate(voices, 1):
+            if voice.find("Chord") is not None or voice.find("Rest") is not None:
+                count = max(count, index)
+    return count
+
+
+#: How many voices of its own a part may bring to a shared staff. MuseScore holds
+#: four and stems voices 1 and 3 up, 2 and 4 down, so the upper part takes 1 and
+#: 3 and the lower part 2 and 4: a unison of the two then shares one notehead.
+MAX_VOICES = 2
+
+
+def can_share(root: etree._Element, upper: str, lower: str) -> bool:
+    """Whether both parts' voices fit on one staff."""
+    return max(voice_count(root, upper), voice_count(root, lower)) <= MAX_VOICES
+
+
+def merge_staves(root: etree._Element, groups: Sequence[Sequence[str]]
+                 ) -> Dict[str, Dict]:
+    """Put each group's lower part on its upper part's staff: the upper part in
+    voices 1 and 3, the lower part in voices 2 and 4.
+
+    Returns where each part is drawn: {name: {"staff": n, "voices": [1, ...]}},
+    the staff being the 0-based MusicXML part it lands in and the voices numbered
+    from 1 the way MuseScore exports them to MusicXML. Raises `ValueError` when a part sings more than two
+    voices. MuseScore lays the voices out itself (stems, rests, beams). Words both
+    parts sing are printed once; words that differ go on lines below the upper
+    part's verses. A bar both rest through keeps one rest.
+    """
+    score = root.find("Score")
+    for upper_name, lower_name in groups:
+        if not can_share(root, upper_name, lower_name):
+            raise ValueError(
+                f"{upper_name} and {lower_name} sing {voice_count(root, upper_name)} and "
+                f"{voice_count(root, lower_name)} voices, more than one staff holds.")
+    names = [_part_name(p, i) for i, p in enumerate(score.findall("Part"))]
+    by_name = dict(zip(names, score.findall("Part")))
+    voices_of = {name: list(range(1, voice_count(root, name) + 1)) for name in names}
+
+    for upper_name, lower_name in groups:
+        upper, lower = _staff_of(root, upper_name), _staff_of(root, lower_name)
+        upper_bars, lower_bars = upper.findall("Measure"), lower.findall("Measure")
+
+        # The staff's clefs: in a bar where the lower part sets one (its opening
+        # clef included), the lower part's, at the beat each stands on, since tenor
+        # and bass share a bass clef; in any other bar the upper part's own change
+        # stays, or the rest of the song would be drawn under the wrong clef.
+        # Pitches are absolute, so no note moves whichever clef is drawn.
+        for top, bottom in zip(upper_bars, lower_bars):
+            clefs = [(at, clef) for voice in bottom.findall("voice")
+                     for at, clef in _clefs_at(voice)]
+            if not clefs:
+                continue
+            for voice in top.findall("voice"):
+                for element in voice.findall("Clef"):
+                    voice.remove(element)
+            for at, clef in clefs:
+                _insert_at(_first_voice(top), at, copy.deepcopy(clef))
+
+        # Lines the lower part's own words go on, below every verse of the upper's.
+        upper_verses = [_verse(lyric) for lyric in upper.iter("Lyrics")]
+        shift = max(upper_verses) + 1 if upper_verses else 0
+        for top, bottom in zip(upper_bars, lower_bars):
+            above = top.findall("voice")
+            below = [v for v in bottom.findall("voice")[:MAX_VOICES]
+                     if v.find("Chord") is not None or v.find("Rest") is not None]
+            both_rest = (above and _is_measure_rest(above[0])
+                         and len(_music_voices(top)) == 1
+                         and len(below) == 1 and _is_measure_rest(below[0]))
+            same = bool(above) and bool(below) and _words(below[0]) == _words(above[0])
+            moved = []
+            for voice in ([] if both_rest or not below
+                          else bottom.findall("voice")[:MAX_VOICES]):
+                voice = copy.deepcopy(voice)
+                for tag in _STAFF_ELEMENTS:
+                    for element in voice.findall(tag):
+                        voice.remove(element)
+                for lyric in list(voice.iter("Lyrics")):
+                    if same:
+                        lyric.getparent().remove(lyric)
+                        continue
+                    verse = _verse(lyric) + shift
+                    for no in lyric.findall("no"):
+                        lyric.remove(no)
+                    if verse:
+                        no = etree.Element("no")
+                        no.text = str(verse)
+                        lyric.insert(0, no)
+                moved.append(voice)
+            # A bar's voices are told apart by their place in it: interleave them,
+            # writing an unused place as an empty voice.
+            slots = [etree.Element("voice") for _ in range(2 * MAX_VOICES)]
+            for index, voice in enumerate(above[:MAX_VOICES]):
+                slots[2 * index] = voice
+            for index, voice in enumerate(moved):
+                slots[2 * index + 1] = voice
+            while len(slots) > 1 and len(slots[-1]) == 0:
+                slots.pop()
+            at = top.index(above[0]) if above else 0
+            for voice in above:
+                top.remove(voice)
+            for offset, voice in enumerate(slots):
+                top.insert(at + offset, voice)
+
+        # Cleaning forces every stem up; with two voices MuseScore has to choose.
+        for element in [*upper.iter("StemDirection")]:
+            element.getparent().remove(element)
+
+        # The staff is labelled with both parts, so a singer finds their line.
+        label = f"{upper_name}/{lower_name}"
+        upper_part = by_name[upper_name]
+        for element in [upper_part.find("trackName"),
+                        *upper_part.findall("Instrument/longName"),
+                        *upper_part.findall("Instrument/shortName"),
+                        *upper_part.findall("Instrument/trackName")]:
+            if element is not None:
+                element.text = label
+        score.remove(lower)
+        score.remove(by_name[lower_name])
+        voices_of[upper_name] = [2 * v - 1 for v in voices_of[upper_name]]
+        voices_of[lower_name] = [2 * v for v in voices_of[lower_name]]
+
+    # Number the staves that are left 1, 2, 3 again, so none leaves a gap.
+    if groups:
+        renumber = {staff.get("id"): str(i)
+                    for i, staff in enumerate(score.findall("Staff"), 1)}
+        for staff in [*score.findall("Staff"), *score.findall("Part/Staff")]:
+            if staff.get("id") in renumber:
+                staff.set("id", renumber[staff.get("id")])
+
+    # The staff a part is drawn on is told as the part it ends up in, which is
+    # what the MusicXML (and the site) counts by.
+    kept = [name for name in names if by_name[name].getparent() is not None]
+    staff_of: Dict[str, int] = {name: index for index, name in enumerate(kept)}
+    for upper_name, lower_name in groups:
+        staff_of[lower_name] = staff_of[upper_name]
+    return {name: {"staff": staff_of[name], "voices": voices_of[name]} for name in names}
+
+
+def merged_copy(source: str, work_dir: str, groups: Sequence[Sequence[str]]
+                ) -> Tuple[str, Dict[str, Dict]]:
+    """Write the published picture's score: `source` with these parts sharing staves."""
+    tree = etree.parse(source)
+    where = merge_staves(tree.getroot(), groups)
+    target = os.path.join(work_dir, "picture_score.mscx")
+    tree.write(target, encoding="UTF-8", xml_declaration=True)
+    return target, where

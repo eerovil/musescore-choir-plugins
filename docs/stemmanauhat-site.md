@@ -54,6 +54,20 @@ unread.
  "duration": 96.375, "composer": "…", "lyricist": "…"}
 ```
 
+**Parts that share a staff** (#420). A song with more than five singing parts
+is drawn with its parts back on the staves the page prints them on, so
+`score.musicxml` can have fewer parts than `parts`. Then every entry says where
+it is drawn: `staff` is the 0-based `<part>` of `score.musicxml` and `voices` the
+`<voice>` numbers of its notes there:
+
+```json
+"parts": [{"name": "S1", "staff": 0, "voices": [1]},
+          {"name": "S1b", "staff": 0, "voices": [2]}, ...]
+```
+
+An entry without them is one part on its own staff in voice order, as every song
+published before had. The MIDI still has one track per part.
+
 `composer`, `lyricist` and `arranger` are the credits set on song-app's Publish
 panel (prefilled from the score's own metaTags until someone saves them). Each is
 present only when it is set; a manifest from before them has none, and none had

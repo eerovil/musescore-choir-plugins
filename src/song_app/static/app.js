@@ -2898,9 +2898,40 @@ function panelPublish(panel, song, P, refresh, actions) {
     return input;
   });
 
+  // Parts that share a staff on the site (#420). Above five parts the site draws
+  // them two to a staff, paired the way the page prints them; the pairing can be
+  // changed here, or emptied to give every part a staff of its own.
+  const shared = song.publish_staff_groups || { shown: false };
+  const groupsText = (groups) => (groups || []).map((g) => g.join("+")).join(", ");
+  let sharedAuto = !shared.saved;
+  const sharedInput = el("input", { type: "text", value: groupsText(shared.groups),
+    placeholder: "none: every part on its own staff", "data-staff-groups": "",
+    style: "width:100%" });
+  const sharedNote = el("span", { className: "hint staff-groups-note" });
+  const sayShared = () => {
+    sharedNote.className = `hint staff-groups-note${shared.message ? " err" : ""}`;
+    sharedNote.textContent = shared.message || (sharedAuto
+      ? (shared.source === "part names"
+        ? "guessed from the part names — check against the PDF"
+        : shared.groups?.length ? "as the page prints them" : "the page prints every part on its own staff")
+      : "set by hand");
+    sharedReset.hidden = sharedAuto;
+  };
+  const sharedReset = el("button", { "data-staff-groups-auto": "", onclick: () => {
+    sharedAuto = true;
+    sharedInput.value = groupsText(shared.proposal);
+    shared.groups = shared.proposal;
+    shared.message = "";
+    changed();
+    sayShared();
+  } }, "Use the automatic pairing");
+  sayShared();
+  sharedInput.addEventListener("input", () => { sharedAuto = false; changed(); sayShared(); });
+
   const settings = () => ({
     tempo_changes: tempoChanges(),
     ...(partNames.length ? { part_names: partNames.map((input) => input.value.trim()) } : {}),
+    ...(shared.shown ? { staff_groups: sharedAuto ? null : sharedInput.value.trim() } : {}),
     credits: Object.fromEntries(CREDITS.map(([key]) => [key, credits[key].value.trim()])),
     ...(song.needs_initial_bpm ? { bpm: Number(bpm.value) } : {}),
   });
@@ -2933,6 +2964,13 @@ function panelPublish(panel, song, P, refresh, actions) {
       el("div", { className: "row part-names", "data-part-names": "" }, ...partNames),
       el("span", { className: `part-names-note hint${publishParts.stale ? " err" : ""}` },
         publishParts.stale ? publishParts.message : "as the singers see them, top staff first"),
+    ] : []),
+    ...(shared.shown ? [
+      el("label", {}, "Shared staves"),
+      el("div", { className: "row staff-groups", "data-staff-groups-row": "" }, sharedInput),
+      el("div", { className: "row" }, sharedNote, sharedReset),
+      el("span", { className: "hint" },
+        `More than ${shared.max_staves} parts: the site draws two parts on one staff, e.g. S1+S1b, S2+S2b. The sound stays one part each.`),
     ] : []),
     el("div", { className: "row" }, saveBtn, saveNote),
     publishSection(P, song, refresh, settings, saveNote),

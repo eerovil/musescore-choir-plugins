@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A song with more than five parts is drawn on the stemmanauhat site with its
+  parts back on the staves the PDF prints them on, two to a staff (S1 and S1b on
+  one staff, as voice 1 and voice 2). The sound, the mix and the part list stay one
+  per part. The Publish panel shows the pairing, says when it was guessed from the
+  part names, and lets you change it or empty it. Needs the site's matching change
+  (eerovil/stemmanauhat-cf). (#420)
 - The app works with MuseScore 4 as well as MuseScore 3: set `MUSESCORE_CLI_PATH`
   to either. A score opened and saved in MuseScore 4 keeps its parts. One thing is
   MuseScore 3 only: the check that a cleaned score would open without being called
