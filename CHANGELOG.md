@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Publishing a song to the site's test list ("Testilista") no longer takes it off
+  the choir's list it is already on; publishing it to a choir still takes it off
+  the test list. The Publish panel marks the test list "test". Needs the site's
+  matching change (eerovil/stemmanauhat-cf#73). (#422)
 - A song with more than five parts is drawn on the stemmanauhat site with its
   parts back on the staves the PDF prints them on, two to a staff (S1 and S1b on
   one staff, as voice 1 and voice 2). The sound, the mix and the part list stay one
