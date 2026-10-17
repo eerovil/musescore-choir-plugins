@@ -21,9 +21,13 @@ Three things about homr that this module exists to absorb:
   the run happens on a copy in a scratch directory and only the MusicXML is
   kept.
 * ``--gpu`` defaults to ``auto``, which asks whether the CUDA provider is
-  *registered* and not whether it can run. This host's card is below
-  onnxruntime's floor (issue #93), so auto would pick CUDA and die on the
-  first segnet node without falling back. Every call passes ``no``.
+  *registered* and not whether it can run. The stock onnxruntime GPU build
+  starts at compute 6.0 and this host's GTX 970 is 5.2 (issue #93), so auto
+  could pick CUDA and die on the first segnet node. So the value is never left
+  to homr: it is ``no`` unless the venv says it was installed with an
+  onnxruntime built for this card (``gpu=force`` in its marker file, written by
+  ``scripts/install-homr.sh`` with ``HOMR_ORT_WHEEL``; issue #418), and
+  ``OMR_GPU`` overrides both.
 * Its **slurs used to come out unpaired**, so a dropped stop let one slur run
   away over bars nobody engraved and swallow their syllable slots. That repair
   lived here until #144 and is now homr's own (``homr/slur_resolution.py``,
@@ -173,6 +177,8 @@ class Engine:
     default: bool = False
     commit: Optional[str] = None
     dirty: bool = False
+    #: homr's ``--gpu`` value for this engine; see :func:`_gpu_mode`.
+    gpu: str = "no"
 
 
 #: Written by the installer into the venv it builds, saying what is in it.
@@ -194,6 +200,25 @@ def _marker(venv: str) -> dict:
     except OSError:
         return {}
     return dict(line.split("=", 1) for line in lines if "=" in line)
+
+
+#: The values homr's ``--gpu`` takes.
+GPU_MODES = ("no", "auto", "force")
+
+
+def _gpu_mode(venv: str) -> str:
+    """homr's ``--gpu`` value for the engines that run on ``venv``.
+
+    ``no`` unless the installer put an onnxruntime built for this host's card
+    into the venv and said so (``gpu=force`` in its marker, #418): a stock GPU
+    onnxruntime registers CUDA on a card it cannot run (#93), so nothing is
+    inferred from what is installed. ``OMR_GPU`` overrides it either way.
+    """
+    configured = os.getenv("OMR_GPU", "").strip().lower()
+    if configured in GPU_MODES:
+        return configured
+    marked = _marker(venv).get("gpu", "").strip().lower()
+    return marked if marked in GPU_MODES else "no"
 
 
 def _installed_vcs(venv: str) -> Dict[str, str]:
@@ -246,7 +271,8 @@ def default_engine() -> Optional[Engine]:
              or fields.get("source") or "installed")
     return Engine(key=DEFAULT_ENGINE, label=f"installed: {label}",
                   command=[binary], default=True,
-                  commit=_installed_vcs(venv).get("commit") or fields.get("commit"))
+                  commit=_installed_vcs(venv).get("commit") or fields.get("commit"),
+                  gpu=_gpu_mode(venv))
 
 
 def _venv_python() -> Optional[str]:
@@ -404,6 +430,9 @@ def engines() -> List[Engine]:
     if not python:
         return found
     used = {DEFAULT_ENGINE}
+    # A working copy runs on the installed venv's onnxruntime, so it can use
+    # the GPU exactly when the installed engine can.
+    gpu = _gpu_mode(os.path.dirname(os.path.dirname(python)))
     for path, label, commit in _worktrees(CHECKOUT):
         if not os.path.isdir(_package_dir(path)):
             continue                       # not a homr working copy after all
@@ -418,7 +447,7 @@ def engines() -> List[Engine]:
         found.append(Engine(key=key, label=f"{label} — {key}",
                             command=[python, "-c", RUN_HOMR],
                             env={"PYTHONPATH": path},
-                            commit=commit, dirty=_is_dirty(path)))
+                            commit=commit, dirty=_is_dirty(path), gpu=gpu))
     return found
 
 
@@ -652,7 +681,7 @@ def read_page(
             # that is where the lease is checked (heavy_slot.Slot.guard).
             watched = slot.guard(log)
             watched(f"Reading {os.path.basename(image_path)} with homr")
-            argv = list(engine.command) + ["--gpu", "no", "--no-title"]
+            argv = list(engine.command) + ["--gpu", engine.gpu, "--no-title"]
             if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
                 argv += [BAR_LENGTH_FLAG, str(bar_length)]
             if engine_supports(engine, MARK_DOUBT_FLAG):

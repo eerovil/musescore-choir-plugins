@@ -23,7 +23,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "$UV_LOG"
 if [[ "$1" == "venv" ]]; then
     venv="${@: -1}"
-    mkdir -p "$venv/bin"
+    mkdir -p "$venv/bin" "$venv/lib/python3.12/site-packages/onnxruntime/capi"
     printf '#!/usr/bin/env bash\\nprintf "%%s\\\\n" "$*" >> "$HOMR_LOG"\\n' > "$venv/bin/homr"
     chmod +x "$venv/bin/homr"
 fi
@@ -50,7 +50,7 @@ def install(tmp_path: Path):
                 "HOMR_LOG": str(homr_log),
             }
         )
-        for key in ("HOMR_SOURCE", "HOMR_VENV"):
+        for key in ("HOMR_SOURCE", "HOMR_VENV", "HOMR_ORT_WHEEL"):
             env.pop(key, None)
         for key, value in overrides.items():
             if value is not None:
@@ -150,3 +150,49 @@ def test_status_reports_both_commits_and_installs_nothing(tmp_path: Path) -> Non
 
     assert out == ["installed=" + "a" * 40, f"latest={head}"]
     assert not (tmp_path / "home").exists()
+
+
+def test_a_gpu_wheel_replaces_the_cpu_onnxruntime(install, tmp_path: Path) -> None:
+    """#418: an onnxruntime built for the GTX 970 goes in whole, and the venv says so."""
+    wheel = tmp_path / "onnxruntime_gpu-1.29.0-cp312-cp312-linux_x86_64.whl"
+    wheel.write_bytes(b"")
+    venv = tmp_path / "venv"
+    uv_log, homr_log = install(HOMR_ORT_WHEEL=str(wheel), HOMR_VENV=str(venv))
+
+    assert "pip uninstall onnxruntime onnxruntime-gpu" in uv_log
+    reinstall = [line for line in uv_log if line.startswith("pip install --reinstall")]
+    assert reinstall and str(wheel) in reinstall[0]
+    assert "nvidia-cudnn-cu12==9.10.2.*" in reinstall[0]
+    marker = (venv / "homr-engine.txt").read_text(encoding="utf-8").splitlines()
+    assert "gpu=force" in marker
+    assert f"ort_wheel={wheel}" in marker
+    # onnxruntime's own start-up file would switch the GPU off (it looks for the
+    # CUDA runtime by bare name only); the one beside the build recipe replaces it.
+    preload = venv / "lib/python3.12/site-packages/onnxruntime/capi/_ld_preload.py"
+    assert "nvidia" in preload.read_text(encoding="utf-8")
+    # The GPU route reads with homr's fp16 weights, fetched now.
+    assert homr_log == ["--init --gpu force"]
+
+
+def test_a_later_plain_run_keeps_the_gpu_wheel(install, tmp_path: Path) -> None:
+    """The app's Update button runs the script bare; it must not fall back to the CPU."""
+    wheel = tmp_path / "onnxruntime_gpu.whl"
+    wheel.write_bytes(b"")
+    venv = tmp_path / "venv"
+    install(HOMR_ORT_WHEEL=str(wheel), HOMR_VENV=str(venv))
+    uv_log, _ = install(HOMR_VENV=str(venv))
+
+    assert sum(line.startswith("pip install --reinstall") for line in uv_log) == 2
+    assert "gpu=force" in (venv / "homr-engine.txt").read_text(encoding="utf-8")
+
+
+def test_a_missing_gpu_wheel_is_refused(install, tmp_path: Path) -> None:
+    with pytest.raises(subprocess.CalledProcessError):
+        install(HOMR_ORT_WHEEL=str(tmp_path / "nope.whl"), HOMR_VENV=str(tmp_path / "venv"))
+
+
+def test_without_a_gpu_wheel_the_venv_reads_on_the_cpu(install, tmp_path: Path) -> None:
+    venv = tmp_path / "venv"
+    uv_log, _ = install(HOMR_VENV=str(venv))
+    assert not any("onnxruntime" in line for line in uv_log)
+    assert "gpu=" not in (venv / "homr-engine.txt").read_text(encoding="utf-8")

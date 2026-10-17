@@ -288,12 +288,50 @@ def test_reading_a_page_again_replaces_its_answer(monkeypatch, tmp_path):
 
 def test_the_gpu_is_switched_off_explicitly(monkeypatch, tmp_path):
     # --gpu auto asks whether CUDA is registered, not whether it works, and
-    # this host's card is below onnxruntime's floor (#93).
+    # this host's card is below the stock onnxruntime's floor (#93).
+    monkeypatch.delenv("OMR_GPU", raising=False)
     monkeypatch.setenv("HOMR_BIN", stub_homr(
         tmp_path,
         'echo "$@" > ' + str(tmp_path / "args") + '\n'
         'echo "<score/>" > "${!#%.*}.musicxml"\n',
     ))
+    omr.read_page(a_page(tmp_path))
+    assert "--gpu no" in open(tmp_path / "args").read()
+
+
+def venv_homr(tmp_path, marker=None):
+    """A stub homr inside a venv-shaped directory, with its marker file."""
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    path = venv / "bin" / "homr"
+    path.write_text("#!/usr/bin/env bash\n"
+                    'echo "$@" > ' + str(tmp_path / "args") + '\n'
+                    'echo "<score/>" > "${!#%.*}.musicxml"\n')
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    if marker is not None:
+        (venv / omr.ENGINE_MARKER).write_text(marker)
+    return str(path)
+
+
+def test_a_venv_installed_with_a_gpu_onnxruntime_reads_on_the_gpu(monkeypatch, tmp_path):
+    # The installer writes gpu=force only after putting in an onnxruntime built
+    # for this host's card (#418).
+    monkeypatch.delenv("OMR_GPU", raising=False)
+    monkeypatch.setenv("HOMR_BIN", venv_homr(tmp_path, "source=x\ngpu=force\n"))
+    omr.read_page(a_page(tmp_path))
+    assert "--gpu force" in open(tmp_path / "args").read()
+
+
+def test_omr_gpu_overrides_the_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("OMR_GPU", "no")
+    monkeypatch.setenv("HOMR_BIN", venv_homr(tmp_path, "gpu=force\n"))
+    omr.read_page(a_page(tmp_path))
+    assert "--gpu no" in open(tmp_path / "args").read()
+
+
+def test_a_marker_gpu_value_homr_does_not_take_is_ignored(monkeypatch, tmp_path):
+    monkeypatch.delenv("OMR_GPU", raising=False)
+    monkeypatch.setenv("HOMR_BIN", venv_homr(tmp_path, "gpu=yes\n"))
     omr.read_page(a_page(tmp_path))
     assert "--gpu no" in open(tmp_path / "args").read()
 

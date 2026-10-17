@@ -133,6 +133,19 @@ to put it elsewhere, and then `HOMR_BIN` in `.env` so the app can find it.
 [eerovil/homr](https://github.com/eerovil/homr), so a later install may read
 scores differently. Set it to a commit to get a particular version back.
 
+homr reads on the CPU. An NVIDIA card can make it quicker and leave the CPU free;
+on a GTX 970 or another Maxwell card (compute 5.x), which onnxruntime's own GPU
+builds do not support, build one first (about two hours, ~25 GB of disk, needs
+podman and NVIDIA driver 580):
+
+```bash
+ORT_SM52_DIR=/a/disk/with/room scripts/onnxruntime-sm52/build.sh
+HOMR_ORT_WHEEL=/a/disk/with/room/dist/onnxruntime_gpu-1.29.0-cp312-cp312-linux_x86_64.whl \
+    scripts/install-homr.sh
+```
+
+The venv remembers the wheel, so the Scan stage's Update button keeps it.
+
 A branch of homr needs no install: clone the fork to `~/homr` (or set
 `HOMR_CHECKOUT`), and the Scan panel's **Read with** picker offers it and each of
 its git worktrees, borrowing the installed venv's libraries and model weights.

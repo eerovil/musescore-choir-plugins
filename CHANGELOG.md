@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- homr can read on this host's GTX 970: `scripts/onnxruntime-sm52/build.sh` builds an
+  onnxruntime the card can run, and `HOMR_ORT_WHEEL=<wheel> scripts/install-homr.sh`
+  installs it. A system then reads in about 9 seconds instead of 14 and leaves most of
+  the CPU free. The notes can differ slightly from a CPU read, always in a bar marked
+  ⚠. Without the wheel nothing changes. (#418)
 - Publishing a song to the site's test list ("Testilista") no longer takes it off
   the choir's list it is already on; publishing it to a choir still takes it off
   the test list. The Publish panel marks the test list "test". Needs the site's
