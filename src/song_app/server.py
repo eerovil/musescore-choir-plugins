@@ -23,6 +23,7 @@ from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_st
 from . import clean_backup
 from src.clean_score.utils.score_fixes import FixError
 from src.score_export.score import START as START_TEMPO
+from src.score_export import staff_groups
 
 SCRIPT_DIR = state.SCRIPT_DIR
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -180,6 +181,8 @@ def _derived(song: state.Song) -> Dict:
         # The part names the site will show, which the Publish panel lets a
         # person correct: cleaning names parts by guessing from pitch (#402).
         "publish_parts": _publish_parts(song, cleaned),
+        # The parts the site draws on one staff, as the page prints them (#420).
+        "publish_staff_groups": _publish_staff_groups(song, cleaned),
         # Whether this host can publish to the Cloudflare site at all (#382).
         "publish_configured": publish.Config.from_env() is not None,
         # The choirs it is listed for, a pre-#384 single `site` record included.
@@ -1671,6 +1674,45 @@ def _publish_parts(song: state.Song, cleaned: Optional[str]) -> Dict:
     return {"names": list(saved), "saved": True, "stale": False}
 
 
+def _publish_staff_groups(song: state.Song, cleaned: Optional[str]) -> Dict:
+    """The shared staves a publish would draw, for the Publish panel (#420): the
+    saved pairing, or the one worked out from the page while none is saved. `shown`
+    once there is something to say: more than five parts, or a saved pairing."""
+    if not cleaned or not os.path.exists(cleaned):
+        return {"shown": False}
+    settings = song.data.get("publish") or {}
+    proposal = publish.staff_group_proposal(cleaned, settings.get("part_names"))
+    saved = settings.get("staff_groups")
+    out = {"proposal": proposal["groups"], "source": proposal["source"],
+           "skipped": proposal["skipped"], "saved": saved is not None,
+           "groups": proposal["groups"] if saved is None else saved,
+           "shown": proposal["parts"] > staff_groups.MAX_STAVES or saved is not None,
+           "max_staves": staff_groups.MAX_STAVES}
+    if saved:
+        try:
+            publish.check_staff_groups(cleaned, saved, settings.get("part_names"))
+        except publish.PublishError as exc:
+            out["message"] = str(exc) + " Change them or use the automatic pairing."
+    return out
+
+
+def _staff_groups(value, cleaned: str, part_names: Optional[List[str]]):
+    """Shared staves as the Publish panel sends them: text like "S1+S1b, S2+S2b",
+    or a list of pairs; null for the automatic pairing and "" for none (#420)."""
+    if value is None:
+        return None
+    try:
+        groups = staff_groups.parse_groups(value) if isinstance(value, str) \
+            else [tuple(g) for g in value]
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, f"Shared staves: {exc}") from None
+    try:
+        publish.check_staff_groups(cleaned, groups, part_names)
+    except publish.PublishError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return [list(g) for g in groups]
+
+
 def _publish_settings(song: state.Song, opts: Dict) -> Dict:
     """What the site plays and shows a song with, out of a request (#400).
 
@@ -1705,6 +1747,10 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
         if len(names) != count:
             raise HTTPException(400, publish.part_count_message(count))
         out["part_names"] = names
+    if "staff_groups" in opts:
+        out["staff_groups"] = _staff_groups(opts["staff_groups"], cleaned, names)
+    elif saved.get("staff_groups") is not None:
+        out["staff_groups"] = saved["staff_groups"]
     return out
 
 
@@ -1751,6 +1797,7 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
                     cleaned, tmp, initial_bpm=bpm,
                     tempo_changes=settings.get("tempo_changes"),
                     part_names=settings.get("part_names"),
+                    staff_groups=settings.get("staff_groups"),
                     log=slot.guard(log))
                 slot.check()
             record = publish.publish(

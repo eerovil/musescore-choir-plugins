@@ -176,6 +176,9 @@ class Bundle:
     timing: Dict
     parts: List[str] = field(default_factory=list)  # part names, in score order
     midi: str = ""
+    # Where each part is drawn when some share a staff (#420): name -> {"staff":
+    # 0-based MusicXML part, "voices": [MusicXML voice numbers]}. Empty: one each.
+    layout: Dict[str, Dict] = field(default_factory=dict)
 
 
 def score_credits(mscx_path: str) -> Dict[str, str]:
@@ -204,15 +207,67 @@ def part_count_message(count: int) -> str:
     return f"The score now has {count} parts; check the part names on the Publish panel."
 
 
+def _published_root(cleaned_path: str, part_names: Optional[List[str]]) -> etree._Element:
+    """The score as a publish names it: silent parts out, the saved names on."""
+    from src.score_export import score
+    root = etree.parse(cleaned_path).getroot()
+    score.drop_parts(root, score.silent_parts(root))
+    if part_names is not None and len(part_names) == len(score.singing_part_names(root)):
+        score.rename_parts(root, part_names)
+    return root
+
+
+def staff_group_proposal(cleaned_path: str,
+                         part_names: Optional[List[str]] = None) -> Dict:
+    """The parts that would share a staff on the site, worked out from the page
+    (#420): {"groups": [[upper, lower], ...], "source": ..., "parts": n}. A pair
+    whose parts sing too many voices between them to share a staff is left out
+    and named under "skipped"."""
+    from src.score_export import score, staff_groups
+    try:
+        root = _published_root(cleaned_path, part_names)
+    except (OSError, etree.XMLSyntaxError):
+        return {"groups": [], "source": "", "parts": 0, "skipped": []}
+    groups, source = staff_groups.proposal(root)
+    fits = [list(g) for g in groups if score.can_share(root, *g)]
+    return {"groups": fits, "source": source,
+            "parts": len(score.singing_part_names(root)),
+            "skipped": [list(g) for g in groups if list(g) not in fits]}
+
+
+def check_staff_groups(cleaned_path: str, groups: Sequence[Sequence[str]],
+                       part_names: Optional[List[str]] = None) -> None:
+    """Refuse a hand-set pairing the score cannot draw: a part it does not have,
+    one named twice, or two parts singing more voices than one staff holds."""
+    from src.score_export import score, staff_groups
+    root = _published_root(cleaned_path, part_names)
+    names = score.singing_part_names(root)
+    try:
+        staff_groups.validate_groups(groups, names)
+    except ValueError as exc:
+        raise PublishError(f"Shared staves: {exc}") from None
+    for upper, lower in groups:
+        if not score.can_share(root, upper, lower):
+            raise PublishError(
+                f"Shared staves: {upper} and {lower} sing two voices of their own "
+                "somewhere, more than one staff can hold for both.")
+
+
 def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] = None,
                  tempo_changes: Optional[List[Dict]] = None,
                  part_names: Optional[List[str]] = None,
+                 staff_groups: Optional[Sequence[Sequence[str]]] = None,
                  log: Logger = _noop) -> Bundle:
     """MusicXML, MIDI, the timing and the part names, made off one prepared score.
 
     `part_names` are the names saved on the Publish panel, by position (#402). A
     score that has since been cleaned into another number of parts is refused
     rather than named by guesswork.
+
+    `staff_groups` are the parts that share a staff in the MusicXML (#420); None
+    works them out from the page when there are more than five singing parts, and
+    an empty list shares none. Only the picture changes: the MIDI and the timing
+    come off the unmerged copy, so the site still mixes one track per part.
     """
     from src.score_export import musescore, score
 
@@ -225,8 +280,26 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
     if dropped:
         log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
     names = musescore.part_names(etree.parse(source).getroot())
+
+    if staff_groups is None:
+        proposal = staff_group_proposal(source)
+        groups = proposal["groups"]
+        for upper, lower in proposal["skipped"]:
+            log(f"{upper} and {lower} keep a staff each: between them they sing more "
+                "voices than one staff holds.")
+        how = {"page": "from the page", "page, per system": "from the page",
+               "part names": "guessed from the part names"}.get(proposal["source"], "")
+    else:
+        groups = [list(g) for g in staff_groups]
+        check_staff_groups(source, groups)
+        how = "as set on the Publish panel"
+    picture, layout = source, {}
+    if groups:
+        log("Shared staves: " + ", ".join("/".join(g) for g in groups) + f" ({how})")
+        picture, layout = score.merged_copy(source, out_dir, groups)
+
     log("Exporting the score (MusicXML), its play order and its clock (MuseScore CLI)")
-    musicxml = musescore.run_musescore(source, os.path.join(out_dir, "score.musicxml"))
+    musicxml = musescore.run_musescore(picture, os.path.join(out_dir, "score.musicxml"))
     with open(musicxml, "rb") as f:
         hidden, count = hide_tempo_marks(f.read())
     if count:
@@ -236,7 +309,18 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
     mpos = musescore.run_musescore(source, os.path.join(out_dir, "score.mpos"))
     midi = musescore.run_musescore(source, os.path.join(out_dir, "score.mid"))
     clock = timing(source, mpos, midi)
-    return Bundle(musicxml=musicxml, timing=clock, parts=list(names), midi=midi)
+    if groups:
+        bars = _musicxml_bars(musicxml)
+        if bars != len(bar_lengths(source)):
+            raise PublishError(f"The score with shared staves has {bars} bars and the "
+                               f"score it was made from {len(bar_lengths(source))}.")
+    return Bundle(musicxml=musicxml, timing=clock, parts=list(names), midi=midi,
+                  layout=layout)
+
+
+def _musicxml_bars(path: str) -> int:
+    part = etree.parse(path).getroot().find("part")
+    return len(part.findall("measure")) if part is not None else 0
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +564,7 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
         raise PublishError(f"Unknown choir {choir!r}; the site has {', '.join(known) or 'none'}.")
     version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     prefix = f"songs/{choir}/{slug}/{version}/"
-    parts = [{"name": name} for name in bundle.parts]
+    parts = [{"name": name, **bundle.layout.get(name, {})} for name in bundle.parts]
     duration = bundle.timing.get("duration", 0.0)
     named = {name: (credits or {}).get(name, "").strip() for name in CREDITS}
     named = {name: text for name, text in named.items() if text}

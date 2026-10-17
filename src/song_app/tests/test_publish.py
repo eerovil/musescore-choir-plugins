@@ -362,6 +362,88 @@ def test_the_names_given_are_the_bundles_parts_and_its_midi_tracks(tmp_path):
     assert "<part-name>Sopraano</part-name>" in open(bundle.musicxml).read()
 
 
+SIX = ["S1", "S1b", "S2", "S2b", "A1", "A2"]
+
+
+def _six_parts(tmp_path):
+    """repeat.mscx with its two parts copied into six, and no record of the page,
+    so the pairs come from the part names: S1+S1b, S2+S2b, A1+A2 (#420)."""
+    import copy
+    from lxml import etree
+    from src.score_export import score
+    tree = etree.parse(os.path.join(FIXTURES, "repeat.mscx"))
+    root = tree.getroot()
+    sc = root.find("Score")
+    for tag in sc.findall("metaTag[@name='lyricsStaffMap']"):
+        sc.remove(tag)
+    (s_part, a_part), (s_staff, a_staff) = sc.findall("Part"), sc.findall("Staff")
+    anchor = a_staff
+    for element in (s_part, a_part, s_staff, a_staff):
+        sc.remove(element)
+    parts, staves = [], []
+    for number, name in enumerate(SIX, 1):
+        part = copy.deepcopy(s_part if name.startswith("S") else a_part)
+        staff = copy.deepcopy(s_staff if name.startswith("S") else a_staff)
+        part.find("Staff").set("id", str(number))
+        staff.set("id", str(number))
+        parts.append(part)
+        staves.append(staff)
+    for element in parts + staves:
+        sc.append(element)
+    score.rename_parts(root, SIX)
+    path = tmp_path / "six.mscx"
+    tree.write(str(path), encoding="UTF-8", xml_declaration=True)
+    return str(path)
+
+
+def test_the_published_parts_say_which_staff_and_voices_each_is_drawn_on(tmp_path):
+    cf = FakeCloudflare()
+    bundle = _bundle(tmp_path)
+    bundle.layout = {"S1": {"staff": 0, "voices": [1]}, "A1": {"staff": 0, "voices": [2]}}
+    record = publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=bundle,
+                             client=publish.Cloudflare(CONFIG, cf))
+    [(_slug, _title, prefix, parts)] = cf.listed("jm")
+    expected = [{"name": "S1", "staff": 0, "voices": [1]},
+                {"name": "A1", "staff": 0, "voices": [2]}]
+    assert json.loads(parts) == expected
+    assert json.loads(cf.objects[prefix + "manifest.json"])["parts"] == expected
+    assert record["parts"] == ["S1", "A1"]
+
+
+def test_six_parts_are_paired_the_way_the_page_prints_them(tmp_path):
+    proposal = publish.staff_group_proposal(_six_parts(tmp_path))
+    assert proposal["groups"] == [["S1", "S1b"], ["S2", "S2b"], ["A1", "A2"]]
+    assert proposal["source"] == "part names" and proposal["parts"] == 6
+
+
+def test_a_hand_set_pairing_the_score_cannot_draw_is_refused(tmp_path):
+    with pytest.raises(publish.PublishError, match="No such part: T1"):
+        publish.build_bundle(_six_parts(tmp_path), str(tmp_path), staff_groups=[["S1", "T1"]])
+
+
+@needs_musescore
+def test_more_than_five_parts_share_staves_in_the_picture_and_not_in_the_sound(tmp_path):
+    """#420: the MusicXML draws six parts on three staves; the MIDI the site mixes
+    still has a track per part, and the timing is the same either way."""
+    six = _six_parts(tmp_path)
+    (tmp_path / "shared").mkdir()
+    (tmp_path / "apart").mkdir()
+    shared = publish.build_bundle(six, str(tmp_path / "shared"))
+    from lxml import etree
+    xml = etree.parse(shared.musicxml).getroot()
+    assert [p.text for p in xml.iter("part-name")] == ["S1/S1b", "S2/S2b", "A1/A2"]
+    assert shared.parts == SIX
+    assert shared.layout["S2b"] == {"staff": 1, "voices": [2]}
+    assert shared.layout["A1"] == {"staff": 2, "voices": [1]}
+    tracks = [t.name.rstrip("\x00") for t in mido.MidiFile(shared.midi).tracks if t.name]
+    assert tracks == SIX
+
+    apart = publish.build_bundle(six, str(tmp_path / "apart"), staff_groups=[])
+    assert len(etree.parse(apart.musicxml).getroot().findall("part")) == 6
+    assert apart.layout == {}
+    assert apart.timing == shared.timing
+
+
 def test_a_score_cleaned_into_another_number_of_parts_is_refused(tmp_path):
     with pytest.raises(publish.PublishError,
                        match="The score now has 2 parts; check the part names"):
@@ -404,7 +486,7 @@ def _publish_client(monkeypatch, tmp_path):
     seen = {}
 
     def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None,
-                    part_names=None, log=lambda m: None):
+                    part_names=None, staff_groups=None, log=lambda m: None):
         seen.update(cleaned=cleaned, initial_bpm=initial_bpm, tempo_changes=tempo_changes)
         return _bundle(tmp_path)
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)

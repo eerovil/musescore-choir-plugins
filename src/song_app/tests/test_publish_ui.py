@@ -73,7 +73,7 @@ def live(tmp_path, monkeypatch):
     cf = FakeCloudflare()
     monkeypatch.setattr(publish.urllib.request, "urlopen", cf)
     monkeypatch.setattr(publish, "build_bundle",
-                        lambda cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, log=None: _bundle(
+                        lambda cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, log=None: _bundle(
                             tmp_path, parts=("T1", "T2", "B1", "B2")))
 
     song = state.create("Hanget soi", per_system=False, voicing="men")
@@ -200,7 +200,7 @@ def test_the_part_names_typed_on_the_panel_are_published(live, page, size, monke
     base, slug, _cf = live
     handed = []
 
-    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None,
+    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None,
                     log=None):
         handed.append(part_names)
         return _bundle(tmp_path, parts=tuple(part_names))
@@ -241,7 +241,7 @@ def test_stale_part_names_stop_publish_until_saved(live, page, monkeypatch, tmp_
     base, slug, cf = live
     handed = []
 
-    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None,
+    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None,
                     log=None):
         handed.append(part_names)
         return _bundle(tmp_path, parts=tuple(part_names))
@@ -341,4 +341,58 @@ def test_another_sites_own_choirs_are_offered_and_published_to(live, page, size)
     expect(section.locator("select.publish-choir")).to_have_value("aurora")
     section.scroll_into_view_if_needed()
     _shot(page, f"publish-site-offline-{size[0]}.png")
+    assert errors == []
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_shared_staves_are_offered_above_five_parts_and_published_as_set(
+        live, page, size, monkeypatch, tmp_path):
+    """#420: a song of six parts shows the pairing the page prints, can be set by
+    hand and back, and Publish is handed what the panel shows."""
+    base, slug, _cf = live
+    from src.song_app.tests.test_publish import SIX, _six_parts
+    song = state.load(slug)
+    with open(_six_parts(tmp_path), "rb") as src, open(song.cleaned_path(), "wb") as dst:
+        dst.write(src.read())
+    song.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    song.save()
+    handed = []
+
+    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None,
+                    staff_groups=None, log=None):
+        handed.append(staff_groups)
+        return _bundle(tmp_path, parts=tuple(SIX))
+    monkeypatch.setattr(publish, "build_bundle", fake_bundle)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    shared = page.locator("[data-staff-groups]")
+    expect(shared).to_have_value("S1+S1b, S2+S2b, A1+A2")
+    expect(page.locator(".staff-groups-note")).to_contain_text("guessed from the part names")
+    expect(page.locator("[data-staff-groups-auto]")).to_be_hidden()
+    shared.scroll_into_view_if_needed()
+    _shot(page, f"publish-shared-staves-{size[0]}.png")
+
+    shared.fill("S1+S1b, S2+T1")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_contain_text("No such part: T1")
+    shared.fill("S1+S1b")
+    expect(page.locator(".staff-groups-note")).to_have_text("set by hand")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    assert state.load(slug).data["publish"]["staff_groups"] == [["S1", "S1b"]]
+
+    page.locator(".publish-section select.publish-choir").select_option("jm")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "6 part(s)", timeout=15000)
+
+    page.locator("[data-staff-groups-auto]").click()
+    expect(page.locator("[data-staff-groups]")).to_have_value("S1+S1b, S2+S2b, A1+A2")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    assert state.load(slug).data["publish"]["staff_groups"] is None
+    assert handed == [[["S1", "S1b"]]]
     assert errors == []

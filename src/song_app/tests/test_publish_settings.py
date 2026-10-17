@@ -151,8 +151,10 @@ def _publish(client, song, monkeypatch, tmp_path, body):
     seen = {}
 
     def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None,
-                    part_names=None, log=None):
+                    part_names=None, staff_groups=None, log=None):
         seen.update(initial_bpm=initial_bpm, tempo_changes=tempo_changes)
+        if staff_groups is not None or "staff_groups" in seen:
+            seen["staff_groups"] = staff_groups
         if part_names is not None:
             seen["part_names"] = part_names
         return _bundle(tmp_path)
@@ -307,3 +309,67 @@ def test_a_publish_with_stale_part_names_is_refused_until_they_are_saved(
                        json={"part_names": ["A2"]}).status_code == 200
     _cf, seen, _data = _publish(client, song, monkeypatch, tmp_path, {"choir": "naiskuoro"})
     assert seen["part_names"] == ["A2"]
+
+
+# ---------------------------------------------------------------------------
+# Shared staves (#420): above five parts the site draws them as the page prints them
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def six(song, tmp_path):
+    """The song's cleaned score with six parts: S1, S1b, S2, S2b, A1, A2."""
+    from src.song_app.tests.test_publish import _six_parts
+    with open(_six_parts(tmp_path), "rb") as src, open(song.cleaned_path(), "wb") as dst:
+        dst.write(src.read())
+    data = state.load(song.slug)
+    data.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    data.save()
+    return song
+
+
+def test_a_song_of_five_parts_or_fewer_is_not_offered_shared_staves(client, song):
+    assert not client.get(f"/api/songs/{song.slug}").json()["publish_staff_groups"]["shown"]
+
+
+def test_the_panel_is_offered_the_pages_pairing_until_one_is_saved(client, six):
+    shared = client.get(f"/api/songs/{six.slug}").json()["publish_staff_groups"]
+    assert shared["shown"] and not shared["saved"]
+    assert shared["groups"] == shared["proposal"] == [["S1", "S1b"], ["S2", "S2b"], ["A1", "A2"]]
+    assert shared["source"] == "part names"
+
+    reply = client.post(f"/api/songs/{six.slug}/publish-settings",
+                        json={"staff_groups": "S1+S2, A1+A2"})
+    assert reply.status_code == 200, reply.json()
+    shared = reply.json()["publish_staff_groups"]
+    assert shared["saved"] and shared["groups"] == [["S1", "S2"], ["A1", "A2"]]
+    assert _saved(six)["staff_groups"] == [["S1", "S2"], ["A1", "A2"]]
+
+    # Saving something else keeps the pairing; null goes back to the automatic one.
+    client.post(f"/api/songs/{six.slug}/publish-settings", json={"credits": {}})
+    assert _saved(six)["staff_groups"] == [["S1", "S2"], ["A1", "A2"]]
+    client.post(f"/api/songs/{six.slug}/publish-settings", json={"staff_groups": None})
+    assert _saved(six)["staff_groups"] is None
+    assert not client.get(f"/api/songs/{six.slug}").json()["publish_staff_groups"]["saved"]
+
+    # An empty pairing is saved as none: every part keeps its own staff.
+    client.post(f"/api/songs/{six.slug}/publish-settings", json={"staff_groups": ""})
+    assert _saved(six)["staff_groups"] == []
+
+
+@pytest.mark.parametrize("text, message", [
+    ("S1+T1", "No such part: T1"),
+    ("S1+S2+S3", "at most two parts"),
+    ("S1+S2, S2+A1", "S2 is in more than one"),
+])
+def test_a_pairing_the_score_cannot_draw_is_refused(client, six, text, message):
+    reply = client.post(f"/api/songs/{six.slug}/publish-settings", json={"staff_groups": text})
+    assert reply.status_code == 400 and message in reply.json()["detail"]
+    assert "staff_groups" not in _saved(six)
+
+
+def test_a_publish_is_handed_the_saved_pairing_or_none_for_the_automatic_one(
+        client, six, monkeypatch, tmp_path):
+    _cf, seen, _data = _publish(client, six, monkeypatch, tmp_path, {"choir": "naiskuoro"})
+    assert "staff_groups" not in seen, "None: worked out from the page"
+    _cf, seen, _data = _publish(client, six, monkeypatch, tmp_path, {
+        "choir": "naiskuoro", "settings": {"staff_groups": "S1+S1b"}})
+    assert seen["staff_groups"] == [["S1", "S1b"]]

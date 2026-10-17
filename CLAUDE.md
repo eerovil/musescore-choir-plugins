@@ -2532,6 +2532,21 @@ timing are the same parts on the same clock.
   of each bar; `"start"` is the tempo the copy opens at. Kept beside the BPM rather
   than in `fixes.json`: it is a playback setting, a re-clean must not need it
   replayed, and changing it needs only a re-publish.
+- **Above five parts, parts share staves in the picture** (#420, `staff_groups.py`,
+  `score.merge_staves`). The site's score of a big song was too tall to read, so
+  once the split score has more than `staff_groups.MAX_STAVES` (5) singing parts,
+  every part goes back onto the staff the PDF prints it on (owner's rule: all of
+  them, not just enough to reach five). The pairs come from `lyricsStaffMap`, or for
+  a per-system song the pairs sharing a printed staff in the most bars (a part
+  cannot move between staves on the site), or failing both a guess from the names
+  (a b-part with its main part, then S1+S2). The upper part takes voices 1 and 3
+  and the lower 2 and 4, since MuseScore stems 1/3 up and 2/4 down and a unison
+  then shares a notehead; a pair needing more is left apart and logged. Only
+  `score.musicxml` is merged: the MIDI and the timing come off the unmerged copy,
+  and the manifest's parts carry `staff` and `voices` so the site knows where each
+  part is drawn. The Publish panel's *Shared staves* field saves
+  `publish.staff_groups` (null: automatic, `[]`: none). It is #246's video option
+  brought back, which #400 removed with the videos.
 - **A fermata holds one beat longer than written** (#380, `score.hold_fermatas`).
   Cleaning writes `timeStretch=3`, which held a dotted half for six seconds at 90 bpm.
   The copy rewrites every fermata's stretch so it adds one beat (a dotted quarter in
