@@ -306,7 +306,7 @@ def test_another_sites_own_choirs_are_offered_and_published_to(live, page, size)
     while the site cannot be reached."""
     base, slug, cf = live
     cf.db.execute("DELETE FROM choirs")
-    cf.db.executemany("INSERT INTO choirs VALUES (?, ?, ?)", [
+    cf.db.executemany("INSERT INTO choirs (id, name, public) VALUES (?, ?, ?)", [
         ("aurora", "Kamarikuoro Aurora", 0), ("kirkko", "Kirkkokuoro", 0),
         ("public", "Demo", 1)])
     cf.db.commit()
