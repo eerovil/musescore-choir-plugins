@@ -443,7 +443,8 @@ Key test modules:
 - `src/song_app/tests/test_omr.py` — added by this pull request. Most of it drives a
   stub standing in for homr, because what `omr.py` owns is the boundary: where the
   binary is found, that the MusicXML lands where the caller asked and the teaser
-  litter does not follow it, that `--gpu no` is actually on the command line, that
+  litter does not follow it, that `--gpu no` is actually on the command line (and
+  `--gpu force` once the venv says it has the GPU build, #418), that
   both streams reach the log, and that each way of failing says something — a bad
   exit, a clean exit with no file, a wedged run, a PDF handed in by mistake, homr not
   installed. It also pins the heavy slot: a page is read under one, held across the
@@ -1458,15 +1459,32 @@ state model are in `DESIGN.md`.
   reversed and the extra is **load-bearing**: onnxruntime has moved out of the base
   dependencies into `cpu`/`cuda`/`rocm`, so a plain install of `main` has no inference
   runtime at all and fails at the first parse rather than at install time. `HOMR_SOURCE`
-  therefore names `homr[cpu] @ git+...`. CPU is still the only one this host can use.
+  therefore names `homr[cpu] @ git+...`; `HOMR_ORT_WHEEL` swaps it for the GPU build below.
   What the module absorbs is the CLI's shape. homr takes one image, writes
   `<image>.musicxml` **beside it**, has no `--output`, and drops a `_teaser.png` next
   to the input, so the run happens on a copy in a scratch dir and only the answer is
-  moved to where the caller asked. `--gpu` is passed **`no`** every time and never
-  left at `auto`: auto asks whether the CUDA provider is *registered*, not whether it
-  can run, and this host's GTX 970 is sm_52 against onnxruntime's sm_60 floor, so auto
-  would pick CUDA and die on the first segnet node without falling back (#93). Note
-  the value is `no`, not `off`. Output is streamed line by line to a `log` callback —
+  moved to where the caller asked. `--gpu` is never left at `auto`: auto asks whether
+  the CUDA provider is *registered*, not whether it can run, and this host's GTX 970 is
+  sm_52 against the stock onnxruntime's sm_60 floor, so auto would pick CUDA and die on
+  the first segnet node without falling back (#93). The value is `no` (not `off`)
+  unless the venv's `homr-engine.txt` says `gpu=force`, and `OMR_GPU` overrides both.
+  **The 970 can read** (#418): `scripts/onnxruntime-sm52/build.sh` builds onnxruntime
+  1.29.0 for compute 5.2 in an NVIDIA CUDA 12.8 container (`patch.py` beside it says what
+  its source needed: a float fallback for one half-precision kernel, and the MoE and
+  4-bit MatMulNBits ops taken out because their kernels only exist from 7.5), and
+  `HOMR_ORT_WHEEL=<wheel> scripts/install-homr.sh` puts it in the venv with pinned CUDA
+  12.8 / cuDNN 9.10.2 wheels, writes `gpu=force`, and keeps the wheel for later plain
+  runs. Two traps, both silent CPU fallbacks: a library with an undefined symbol does
+  not load (the build now refuses one), and a locally built wheel's `_ld_preload.py`
+  finds `libcudart` only on the system path and otherwise sets `ORT_CUDA_UNAVAILABLE`
+  (the installer replaces it). homr's GPU route uses its fp16 models; this card has no
+  fast fp16 but it is still the quicker route (5 systems: fp16 8.6 s and 10 s of CPU time
+  a system, fp32 10.6 s and 17 s). Measured on the Virta fixture's 15 systems
+  (`--mark-doubt`, 200 dpi): GPU 8.6 s and 11 s of CPU time a system against the CPU's
+  13.7 s and 38 s. The readings are not identical — cuDNN's arithmetic is not the CPU's,
+  and borderline calls flip: 10 of 15 systems have the same notes, and across the other
+  five the GPU loses 5 notes the CPU reads (shared unison heads) and gains 2 the CPU
+  misses, of 856. Every differing bar carries a `⚠` mark in both readings. Output is streamed line by line to a `log` callback —
   a page is ~30s and a song 2–5 minutes, so that is the progress channel #93 asked
   for — and every failure raises `HomrError` carrying the tail of what homr said.
   Including the quiet one: homr **deletes its own MusicXML when parsing raises**, so a

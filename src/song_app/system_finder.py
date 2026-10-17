@@ -67,7 +67,7 @@ def _page_from_homr(
     command = _engine_command(engine) + [
         pdf_path,
         "--gpu",
-        "no",
+        engine.gpu,
         "--find-system-bounds",
         "--system-page",
         str(page),

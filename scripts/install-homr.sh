@@ -14,6 +14,13 @@
 #   scripts/install-homr.sh                 # default location
 #   HOMR_VENV=/somewhere/else scripts/install-homr.sh
 #   scripts/install-homr.sh --status        # installed vs the fork's main; installs nothing
+#   HOMR_ORT_WHEEL=/path/onnxruntime_gpu-*.whl scripts/install-homr.sh   # read on the GPU
+#
+# HOMR_ORT_WHEEL swaps homr's CPU onnxruntime for a GPU one built for this
+# host's GTX 970 (scripts/onnxruntime-sm52/build.sh; issue #418). The stock GPU
+# wheels start at compute 6.0 and the card is 5.2 (#93). The wheel's path is
+# kept in the venv's marker, so a later plain run (the app's Update button)
+# puts it back rather than quietly going back to the CPU.
 #
 # The song app's Library page runs this same script behind its Install / Update
 # homr button (src/song_app/homr_install.py), so a phone can update homr too.
@@ -42,8 +49,9 @@ set -euo pipefail
 # The [cpu] extra is now load-bearing and was not on 0.7.0: upstream has moved
 # onnxruntime out of the base dependencies into cpu/cuda/rocm extras, so a plain
 # install of `main` produces a homr with no inference runtime at all. It fails at
-# the first parse, not at install time. CPU is the only one this host can use
-# (issue #93: the GTX 970 is sm_52, below onnxruntime's sm_60 floor).
+# the first parse, not at install time. The stock GPU builds cannot run on this
+# host's GTX 970 (issue #93: sm_52, below their sm_60 floor); HOMR_ORT_WHEEL is
+# the way round that (#418).
 HOMR_REPO="${HOMR_REPO:-https://github.com/eerovil/homr.git}"
 
 DEFAULT_VENV="$HOME/.local/share/musescore-choir-plugins/homr-venv"
@@ -94,6 +102,18 @@ if ! command -v uv >/dev/null 2>&1; then
     fi
 fi
 
+# A GPU onnxruntime chosen on an earlier run stays chosen: the app's Update
+# button runs this script with no environment of its own.
+if [ -z "${HOMR_ORT_WHEEL:-}" ] && [ -f "$HOMR_VENV/homr-engine.txt" ]; then
+    HOMR_ORT_WHEEL=$(sed -n 's/^ort_wheel=//p' "$HOMR_VENV/homr-engine.txt")
+fi
+if [ -n "${HOMR_ORT_WHEEL:-}" ] && [ ! -f "$HOMR_ORT_WHEEL" ]; then
+    echo "HOMR_ORT_WHEEL is not a file: $HOMR_ORT_WHEEL" >&2
+    echo "Build it with scripts/onnxruntime-sm52/build.sh, or unset HOMR_ORT_WHEEL" >&2
+    echo "(and remove the ort_wheel line from $HOMR_VENV/homr-engine.txt) to read on the CPU." >&2
+    exit 1
+fi
+
 echo "Creating $HOMR_VENV (python $HOMR_PYTHON)"
 mkdir -p "$(dirname "$HOMR_VENV")"
 # --allow-existing rather than --clear: re-running this after the source moved
@@ -103,6 +123,30 @@ uv venv --allow-existing --python "$HOMR_PYTHON" "$HOMR_VENV"
 echo "Installing $HOMR_SOURCE"
 VIRTUAL_ENV="$HOMR_VENV" uv pip install "$HOMR_SOURCE"
 
+if [ -n "${HOMR_ORT_WHEEL:-}" ]; then
+    # Both packages write the same onnxruntime/ directory, so both go before
+    # the GPU one is put in whole. The CUDA libraries are pinned to what the
+    # wheel was built and tested against: cuDNN 9.10.2 is the last NVIDIA
+    # recommends for cards older than Volta.
+    echo "Installing the GPU onnxruntime $HOMR_ORT_WHEEL"
+    VIRTUAL_ENV="$HOMR_VENV" uv pip uninstall onnxruntime onnxruntime-gpu || true
+    VIRTUAL_ENV="$HOMR_VENV" uv pip install --reinstall "$HOMR_ORT_WHEEL" \
+        'nvidia-cuda-runtime-cu12==12.8.*' 'nvidia-cuda-nvrtc-cu12==12.8.*' \
+        'nvidia-cublas-cu12==12.8.*' 'nvidia-cufft-cu12==11.3.3.*' \
+        'nvidia-curand-cu12==10.*' 'nvidia-cudnn-cu12==9.10.2.*'
+    # Newer glibc refuses to load a library that asks for an executable stack,
+    # and onnxruntime's does.
+    python3 "$(dirname "$0")/onnxruntime-sm52/clear_execstack.py" \
+        "$HOMR_VENV"/lib/python3.*/site-packages/onnxruntime/capi/*.so
+    # A locally built wheel looks for the CUDA runtime by bare name only and,
+    # not finding it, switches the GPU off for the whole run without a word.
+    # This one looks in the nvidia wheel installed beside it first.
+    for capi in "$HOMR_VENV"/lib/python3.*/site-packages/onnxruntime/capi; do
+        [ -d "$capi" ] || continue
+        cp "$(dirname "$0")/onnxruntime-sm52/_ld_preload.py" "$capi/_ld_preload.py"
+    done
+fi
+
 # What this venv is, in a file: the app labels the default engine with it, and a
 # host reinstalled a month later can say what it got. Written after the install,
 # so a venv that failed to build is not labelled as a working engine.
@@ -110,11 +154,21 @@ echo "source=$HOMR_SOURCE" > "$HOMR_VENV/homr-engine.txt"
 if [ -n "$HOMR_LABEL" ]; then
     echo "branch=$HOMR_LABEL" >> "$HOMR_VENV/homr-engine.txt"
 fi
+if [ -n "${HOMR_ORT_WHEEL:-}" ]; then
+    # src/song_app/omr.py passes --gpu force only when this line is here.
+    echo "gpu=force" >> "$HOMR_VENV/homr-engine.txt"
+    echo "ort_wheel=$HOMR_ORT_WHEEL" >> "$HOMR_VENV/homr-engine.txt"
+fi
 
 # Pull the model weights now rather than on the first parse a person is waiting
 # for. ~150 MB, into the homr package directory inside the venv.
 echo "Downloading model weights (once; ~150 MB)"
-"$HOMR_VENV/bin/homr" --init
+if [ -n "${HOMR_ORT_WHEEL:-}" ]; then
+    # The GPU route reads with homr's fp16 models, a second set of weights.
+    "$HOMR_VENV/bin/homr" --init --gpu force
+else
+    "$HOMR_VENV/bin/homr" --init
+fi
 
 echo
 echo "homr installed: $HOMR_VENV/bin/homr"
