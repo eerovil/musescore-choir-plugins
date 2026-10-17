@@ -116,6 +116,46 @@ def test_the_lower_parts_clef_is_the_staffs_clef():
     assert [c.findtext("concertClefType") for c in staff.iter("Clef")] == ["F"]
 
 
+def _clef(kind):
+    return (f"<Clef><concertClefType>{kind}</concertClefType>"
+            f"<transposingClefType>{kind}</transposingClefType></Clef>")
+
+
+def _clefs(staff):
+    """[(bar, clef, how many chords or rests come before it in its voice)]."""
+    found = []
+    for number, measure in enumerate(staff.findall("Measure"), 1):
+        for voice in measure.findall("voice"):
+            before = 0
+            for element in voice:
+                if element.tag == "Clef":
+                    found.append((number, element.findtext("concertClefType"), before))
+                elif element.tag in ("Chord", "Rest"):
+                    before += 1
+    return found
+
+
+def test_a_clef_change_in_the_lower_part_is_kept_where_it_happens():
+    root = _score([
+        ("T", "G8vb", [_chord(60) + _chord(62), _chord(60) + _chord(62)]),
+        ("B", "F", [_chord(48) + _chord(50), _chord(48) + _clef("G8vb") + _chord(50)]),
+    ])
+    score_mod.merge_staves(root, [("T", "B")])
+    assert _clefs(root.find("Score/Staff[@id='1']")) == [(1, "F", 0), (2, "G8vb", 1)]
+
+
+def test_a_clef_change_only_the_upper_part_makes_is_kept():
+    """Review of #421: the upper part's own change used to go, leaving the rest of
+    the song under the wrong clef."""
+    root = _score([
+        ("S", "G", [_chord(72) + _chord(74), _chord(72) + _clef("F") + _chord(50),
+                    _chord(48) + _chord(50)]),
+        ("A", "G", [_chord(67) + _chord(69), _chord(67) + _chord(69), _chord(55) + _chord(57)]),
+    ])
+    score_mod.merge_staves(root, [("S", "A")])
+    assert _clefs(root.find("Score/Staff[@id='1']")) == [(1, "G", 0), (2, "F", 1)]
+
+
 def test_stems_are_left_for_musescore_to_choose():
     root = _four()
     score_mod.merge_staves(root, [("S1", "S2")])

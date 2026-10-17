@@ -545,15 +545,21 @@ def merge_staves(root: etree._Element, groups: Sequence[Sequence[str]]
         upper, lower = _staff_of(root, upper_name), _staff_of(root, lower_name)
         upper_bars, lower_bars = upper.findall("Measure"), lower.findall("Measure")
 
-        # The lower part's clefs, at the beat each stands on; pitches are absolute,
-        # so no note moves whichever clef is drawn.
-        for voice in upper.iter("voice"):
-            for element in voice.findall("Clef"):
-                voice.remove(element)
+        # The staff's clefs: in a bar where the lower part sets one (its opening
+        # clef included), the lower part's, at the beat each stands on, since tenor
+        # and bass share a bass clef; in any other bar the upper part's own change
+        # stays, or the rest of the song would be drawn under the wrong clef.
+        # Pitches are absolute, so no note moves whichever clef is drawn.
         for top, bottom in zip(upper_bars, lower_bars):
-            for voice in bottom.findall("voice"):
-                for at, clef in _clefs_at(voice):
-                    _insert_at(_first_voice(top), at, copy.deepcopy(clef))
+            clefs = [(at, clef) for voice in bottom.findall("voice")
+                     for at, clef in _clefs_at(voice)]
+            if not clefs:
+                continue
+            for voice in top.findall("voice"):
+                for element in voice.findall("Clef"):
+                    voice.remove(element)
+            for at, clef in clefs:
+                _insert_at(_first_voice(top), at, copy.deepcopy(clef))
 
         # Lines the lower part's own words go on, below every verse of the upper's.
         upper_verses = [_verse(lyric) for lyric in upper.iter("Lyrics")]
