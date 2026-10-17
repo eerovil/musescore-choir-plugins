@@ -2720,6 +2720,14 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   `./scripts/run.sh --cloudflare corepack pnpm exec wrangler d1 execute stemmanauhat --remote
   --command "SELECT * FROM songs WHERE slug='<slug>'"`. `jm` is the men's choir; only
   public-domain songs go in `public`. Publishing does not need the Review approval.
+- **Then sing it.** Every live Finnish song has AI-sung parts (REMY for men's choirs, LYSE for
+  women's; eeron-omat-taskit#36), so a new song is not done until it has them too. A publish
+  makes a new version without them. `/var/tmp/i36-all/run_all.py` renders each part on the
+  published version's clock and publishes the song again as sung. Give it a one-song `TODO`
+  file shaped like `/var/tmp/i36-live/todo.json`, with the bundle's files copied under
+  `~/stemmanauhat-cf/.wrangler/live/v/<prefix>`. Run it as an `agentdeck job`: about 10–20
+  minutes on the GTX 970. The renderer sings one syllable per note, so a sentence spoken on one
+  chord (#61) is hummed instead (`mm`).
 - Leave the Review approval to Eero.
 
 ## MuseScore plugins (`plugins/`)
