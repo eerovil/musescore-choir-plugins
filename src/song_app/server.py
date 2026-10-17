@@ -1779,7 +1779,7 @@ async def api_publish_settings(slug: str, body: Dict = None) -> Dict:
 
 
 def _run_publish(slug: str, choir: str, config: "publish.Config",
-                 choirs: Optional[List[str]] = None) -> None:
+                 choirs: Optional[List[Dict]] = None) -> None:
     song = _require(slug)
     log = lambda m: _job_emit(slug, "publish", m)
     try:
@@ -1809,7 +1809,8 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
             song = _require(slug)
             pub = song.data.setdefault("publish", {})
             sites = publish.records(pub)
-            for gone in publish.replaced(choir, sites):
+            staging = [c["id"] for c in (choirs or []) if c.get("staging")]
+            for gone in publish.replaced(choir, sites, staging):
                 del sites[gone]
             sites[choir] = record
             # One record per choir (#384): a song can be in public and one choir at once.
@@ -1878,7 +1879,8 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         song = _require(slug)
         song.data.setdefault("publish", {}).update(settings)
         song.save()
-    asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config, known)
+    asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config,
+                                               listing["choirs"])
     return {"started": True}
 
 

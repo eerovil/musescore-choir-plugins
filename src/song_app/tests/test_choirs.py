@@ -105,3 +105,69 @@ def test_publishing_while_the_site_cannot_be_reached_is_refused_before_anything_
     refused = client.post(url, json={"choir": "jm"})
     assert refused.status_code == 502 and "choirs" in refused.json()["detail"]
     assert client.post(url, json={}).status_code == 400
+
+
+# The test list (#422, stemmanauhat-cf#73): a choir marked `staging` is where a new
+# song, or a fix of one already on a choir's list, is tried out first.
+WITH_TEST_LIST = [("jm", "Joensuun Mieslaulajat", 0, 0), ("testi", "Testilista", 0, 1),
+                  ("public", "Esittely", 1, 0)]
+
+
+def test_the_test_list_is_read_as_staging_and_an_older_site_has_none(tmp_path):
+    reply = publish.choirs(CONFIG, str(tmp_path), _client(FakeCloudflare(choirs=WITH_TEST_LIST)))
+    assert [(c["id"], c["staging"]) for c in reply["choirs"]] == [
+        ("jm", False), ("testi", True), ("public", False)]
+    older = publish.choirs(CONFIG, str(tmp_path / "old"),
+                           _client(FakeCloudflare(staging=False)))
+    assert older["error"] is None
+    assert [(c["id"], c["staging"]) for c in older["choirs"]] == [
+        ("jm", False), ("naiskuoro", False), ("public", False)]
+
+
+def test_publishing_to_the_test_list_keeps_the_song_on_its_choirs_list(tmp_path):
+    import time
+
+    cf = FakeCloudflare(choirs=WITH_TEST_LIST)
+    client = _client(cf)
+    jm = publish.publish(slug="laulu", title="Laulu", choir="jm",
+                         bundle=_bundle(tmp_path), client=client)
+    log = []
+    testi = publish.publish(slug="laulu", title="Laulu", choir="testi",
+                            bundle=_bundle(tmp_path), client=client,
+                            published={"jm": jm}, log=log.append)
+    assert [r[0] for r in cf.listed("jm")] == ["laulu"]
+    assert [r[0] for r in cf.listed("testi")] == ["laulu"]
+    assert sorted(cf.objects) == sorted(jm["files"] + testi["files"])
+    assert not any(line.startswith("Removed it") for line in log)
+    staging = ["testi"]
+    assert publish.replaced("testi", {"jm": jm}, staging) == []
+
+    # Publishing to the choir again takes it off the test list: it has moved.
+    time.sleep(1.1)
+    jm2 = publish.publish(slug="laulu", title="Laulu", choir="jm",
+                          bundle=_bundle(tmp_path), client=client,
+                          published={"jm": jm, "testi": testi}, log=log.append)
+    assert cf.listed("testi") == [] and cf.listed("jm")[0][2] == jm2["prefix"]
+    assert sorted(cf.objects) == sorted(jm2["files"])
+    assert "Removed it from the testi list." in log
+    assert publish.replaced("jm", {"testi": testi}, staging) == ["testi"]
+
+
+def test_the_app_keeps_the_choirs_record_when_a_song_goes_to_the_test_list(
+        monkeypatch, tmp_path):
+    from src.song_app.tests.test_publish import _job_done
+
+    cf = FakeCloudflare(choirs=WITH_TEST_LIST)
+    client, url = _app(monkeypatch, tmp_path, cf)
+    slug = url.split("/")[3]
+    assert client.post(url, json={"choir": "jm"}).status_code == 200
+    _job_done(client, slug)
+    assert client.post(url, json={"choir": "testi"}).status_code == 200
+    data = _job_done(client, slug)
+    assert data["jobs"]["publish"]["status"] == "succeeded", data["jobs"]["publish"]
+    assert sorted(data["publish"]["sites"]) == ["jm", "testi"]
+    assert cf.listed("jm") and cf.listed("testi")
+
+    assert client.post(url, json={"choir": "jm"}).status_code == 200
+    data = _job_done(client, slug)
+    assert sorted(data["publish"]["sites"]) == ["jm"] and cf.listed("testi") == []

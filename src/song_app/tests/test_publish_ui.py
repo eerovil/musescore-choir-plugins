@@ -400,3 +400,31 @@ def test_shared_staves_are_offered_above_five_parts_and_published_as_set(
     assert state.load(slug).data["publish"]["staff_groups"] is None
     assert handed == [[["S1", "S1b"]]]
     assert errors == []
+
+
+def test_the_test_list_is_marked_and_publishing_there_keeps_the_choirs_listing(live, page):
+    """#422: the site's test list (stemmanauhat-cf#73) says so, and a song tried out
+    there stays on the choir's list it was already on."""
+    base, slug, cf = live
+    cf.db.execute("INSERT INTO choirs VALUES ('testi', 'Testilista', 0, 1)")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+
+    section = page.locator(".publish-section")
+    choir = section.locator("select.publish-choir")
+    expect(choir.locator("option")).to_have_text(
+        ["— choir —", "Joensuun Mieslaulajat (jm)", "Naiskuoro (naiskuoro)",
+         "Testilista (testi, test)", "Esittely (public, open to all)"])
+    status = section.locator(".publish-status")
+    choir.select_option("jm")
+    section.locator("button.publish-btn").click()
+    expect(status).to_contain_text("Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+
+    page.locator(".publish-section select.publish-choir").select_option("testi")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Testilista (testi)", timeout=15000)
+    assert [row[0] for row in cf.listed("jm")] == [slug]
+    assert [row[0] for row in cf.listed("testi")] == [slug]
+    page.locator(".publish-section").scroll_into_view_if_needed()
+    _shot(page, "publish-test-list.png")

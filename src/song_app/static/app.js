@@ -2994,7 +2994,8 @@ function publishSection(P, song, refresh, settings, saveNote) {
     getJSON("/api/choirs").then((reply) => {
       for (const c of reply.choirs) {
         names[c.id] = c.name;
-        choir.append(el("option", { value: c.id }, c.public ? `${c.name} (${c.id}, open to all)` : `${c.name} (${c.id})`));
+        const kind = c.public ? ", open to all" : c.staging ? ", test" : "";
+        choir.append(el("option", { value: c.id }, `${c.name} (${c.id}${kind})`));
       }
       choir.value = pub.choir || "";
       if (reply.error) {

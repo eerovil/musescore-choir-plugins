@@ -1035,7 +1035,9 @@ state model are in `DESIGN.md`.
   `choirs` table (`GET /api/choirs`), keeps the last list in `songs/.choirs.json`
   for when Cloudflare is out of reach, and a publish is refused (502) until a live
   read succeeds. There is no list in the code, and the choir is no longer guessed
-  from the song's voicing; `public` is the one id every site has.
+  from the song's voicing; `public` is the one id every site has. A choir marked
+  `staging` is the site's test list (#422): publishing there removes the song from
+  no other choir, while publishing to a choir still removes it from the test list.
   **Part names** (#402) are set there too: cleaning renames every part by guessing
   from pitch unless the song has a voicing, so older songs reached the site with
   tenors in a women's choir. `publish.part_names` keeps one name per singing part,

@@ -35,6 +35,8 @@ SITE_SONGS = """CREATE TABLE songs (
 # The site's choirs table and the rows its migration 0001 seeds on the live copy.
 SITE_CHOIRS = """CREATE TABLE choirs (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, public INTEGER NOT NULL DEFAULT 0)"""
+# Migration 0007 (stemmanauhat-cf#73): the test list.
+SITE_STAGING = "ALTER TABLE choirs ADD COLUMN staging INTEGER NOT NULL DEFAULT 0"
 SEEDED = [("jm", "Joensuun Mieslaulajat", 0), ("naiskuoro", "Naiskuoro", 0),
           ("public", "Esittely", 1)]
 
@@ -50,7 +52,7 @@ class _Reply(io.BytesIO):
 class FakeCloudflare:
     """Cloudflare's REST API as a publish uses it: R2 objects and D1 queries."""
 
-    def __init__(self, fail_on=None, choirs=SEEDED):
+    def __init__(self, fail_on=None, choirs=SEEDED, staging=True):
         self.objects = {}
         self.types = {}
         self.db = sqlite3.connect(":memory:", check_same_thread=False)
@@ -58,7 +60,12 @@ class FakeCloudflare:
         # site owns the table, and a publish no longer creates it.
         self.db.execute(SITE_SONGS)
         self.db.execute(SITE_CHOIRS)
-        self.db.executemany("INSERT INTO choirs VALUES (?, ?, ?)", choirs)
+        self.db.executemany("INSERT INTO choirs (id, name, public) VALUES (?, ?, ?)",
+                            [c[:3] for c in choirs])
+        if staging:
+            self.db.execute(SITE_STAGING)
+            self.db.executemany("UPDATE choirs SET staging = 1 WHERE id = ?",
+                                [c[:1] for c in choirs if c[3:] == (1,)])
         self.calls = []
         self.fail_on = fail_on
 
@@ -101,7 +108,12 @@ class FakeCloudflare:
             }).encode())
         if path == "/d1/database/db1/query" and method == "POST":
             body = json.loads(request.data)
-            rows = self.db.execute(body["sql"], body["params"]).fetchall()
+            try:
+                rows = self.db.execute(body["sql"], body["params"]).fetchall()
+            except sqlite3.OperationalError as exc:
+                raise urllib.error.HTTPError(
+                    request.full_url, 400, "Bad Request", {}, io.BytesIO(json.dumps(
+                        {"errors": [{"message": f"{exc}: SQLITE_ERROR"}]}).encode()))
             self.db.commit()
             return _Reply(json.dumps({"success": True,
                                       "result": [{"results": rows}]}).encode())
