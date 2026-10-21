@@ -469,3 +469,26 @@ def test_a_new_part_name_is_placed_in_the_voice_tree_from_the_panel(live, page, 
         "men", '["A1"]')
     expect(asks).to_have_count(0)
     assert errors == []
+
+
+def test_a_slow_answer_for_older_part_names_does_not_replace_the_newer_one(live, page):
+    """Review of #430: only the reply for the names on screen now draws the questions."""
+    from src.song_app.tests.test_voice_tree import _with_tree
+    base, slug, cf = live
+    _with_tree(cf)
+    held = []
+
+    def hold_first(route):
+        if "Kertoja" in (route.request.post_data or "") or held:
+            route.continue_()
+        else:
+            held.append(route)  # the lookup for the names as first rendered, answered last
+    page.route("**/api/voice-tree", hold_first)
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator("[data-part-names] input")).to_have_count(2)
+    page.locator("[data-part-names] input").nth(0).fill("Kertoja")
+    asks = page.locator("[data-voice-places] strong")
+    expect(asks).to_have_text(["Kertoja", "A1"])
+    held[0].continue_()
+    page.wait_for_timeout(500)
+    expect(asks).to_have_text(["Kertoja", "A1"])

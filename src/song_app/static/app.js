@@ -2965,9 +2965,16 @@ function panelPublish(panel, song, P, refresh, actions) {
         return el("div", { className: "row voice-place" }, el("strong", {}, name), select);
       }));
   };
-  const checkTree = () => postJSON("/api/voice-tree", { names: currentNames() })
-    .then((reply) => { tree = reply; drawPlaces(); })
-    .catch((e) => { tree = { available: false, unknown: [], error: e.message }; drawPlaces(); });
+  // Only the reply to the latest names may draw: an earlier lookup can finish last.
+  let treeAsked = 0;
+  const checkTree = () => {
+    const asked = ++treeAsked;
+    return postJSON("/api/voice-tree", { names: currentNames() })
+      .then((reply) => { if (asked === treeAsked) { tree = reply; drawPlaces(); } })
+      .catch((e) => {
+        if (asked === treeAsked) { tree = { available: false, unknown: [], error: e.message }; drawPlaces(); }
+      });
+  };
   let treeTimer = null;
   for (const input of partNames) {
     input.addEventListener("input", () => { clearTimeout(treeTimer); treeTimer = setTimeout(checkTree, 400); });
