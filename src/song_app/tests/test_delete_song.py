@@ -191,3 +191,23 @@ def test_a_route_saving_after_the_delete_answers_404(client, monkeypatch):
     r = c.post(f"/api/songs/{song.slug}/rename", json={"name": "Renamed"})
     assert r.status_code == 404
     assert not os.path.exists(songs / "talviuni")
+
+
+def test_an_old_clean_cannot_start_on_a_new_song_with_the_same_slug(client, monkeypatch):
+    """Clean loaded song A; A was deleted and B created as `talviuni` before the job
+    started. The old request is refused and B gets no job."""
+    c, song, songs = client
+    made = {}
+
+    def replace_then_not_scanning(s):
+        if "b" not in made:
+            state.trash(s.slug)
+            made["b"] = state.create("Talviuni", per_system=False)
+        return False
+
+    monkeypatch.setattr(server, "is_scanning", replace_then_not_scanning)
+    r = c.post(f"/api/songs/{song.slug}/clean")
+    assert r.status_code == 404
+    assert made["b"].slug == "talviuni"
+    assert job_state.load(made["b"].dir) == {}
+    assert state.load("talviuni").data == made["b"].data

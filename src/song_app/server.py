@@ -447,8 +447,8 @@ def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
             opts["engine"] = omr.engine_for(key)
         except omr.HomrMissing as exc:
             raise HTTPException(400, str(exc)) from None
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "scan", ("scan", "clean", "check", "publish"),
+    if is_scanning(song) or not state.start_job(
+            song, "scan", ("scan", "clean", "check", "publish"),
             pdf_systems.file_version(song.source_path("pdf"))):
         raise HTTPException(409, "Another scan, clean, or publish is "
                                  "already running for this song.")
@@ -628,8 +628,8 @@ def _run_clean(slug: str) -> None:
 @app.post("/api/songs/{slug}/clean")
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "clean", ("scan", "clean", "check", "publish"),
+    if is_scanning(song) or not state.start_job(
+            song, "clean", ("scan", "clean", "check", "publish"),
             state.file_fingerprint(song.source_path("xml"))):
         raise HTTPException(409, "Another scan, clean, or publish is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
@@ -731,8 +731,8 @@ async def api_recheck(slug: str) -> Dict:
     _cleaned_or_400(song)
     # Not beside a publish either: each saves the whole song state, and the later
     # save would put back the earlier one's copy of the other's result.
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "check", ("scan", "clean", "check", "publish")):
+    if is_scanning(song) or not state.start_job(
+            song, "check", ("scan", "clean", "check", "publish")):
         raise HTTPException(409, "A scan, clean, check, or publish is already running "
                                  "for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_check, slug)
@@ -1902,8 +1902,8 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     known = [c["id"] for c in listing["choirs"]]
     if choir not in known:
         raise HTTPException(400, f"Choose a choir: {', '.join(known) or 'the site has none'}")
-    if _publish_busy(song) or not job_state.start_if_idle(
-            song.dir, "publish", ("scan", "clean", "check", "publish"), fingerprint):
+    if _publish_busy(song) or not state.start_job(
+            song, "publish", ("scan", "clean", "check", "publish"), fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
     with state.song_lock(slug):

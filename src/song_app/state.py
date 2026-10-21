@@ -16,6 +16,7 @@ import unicodedata
 from typing import Dict, List, Optional
 
 from . import health
+from . import job_state
 from .job_state import SongGone
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -135,20 +136,21 @@ class Song:
         one step without another save landing in between (#252).
         """
         with song_lock(self.slug):
-            self._check_still_here()
+            self.check_still_here()
             self.data["updated_at"] = time.time()
             tmp = self.state_path() + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
             os.replace(tmp, self.state_path())
 
-    def _check_still_here(self) -> None:
-        """Refuse to write a song that was deleted after this copy was loaded (#428).
+    def check_still_here(self) -> None:
+        """Raise `SongGone` unless this copy is still the song on disk (#428).
 
-        Deleting moves the folder under the song's lock, so checking here, under
-        the same lock, means a stale copy can neither put the deleted song back nor
-        overwrite a new song that has since taken the same slug (told apart by
-        `created_at`). Folders are made by `create` and `import_legacy`, never here.
+        Call it under `song_lock`. Deleting moves the folder and `create` claims a
+        slug under that lock, so a copy loaded before a delete can neither put the
+        deleted song back, nor save over or start a job on a new song that has
+        since taken the same slug (told apart by `created_at`). Folders are made by
+        `create` and `import_legacy`, never by a save.
         """
         if not os.path.isdir(self.dir):
             raise SongGone(self.dir)
@@ -243,6 +245,19 @@ def list_songs() -> List[Song]:
     return songs
 
 
+def start_job(song: Song, kind: str, conflicts, fingerprint=None) -> Optional[Dict]:
+    """`job_state.start_if_idle` for this very song, or `SongGone` (#428).
+
+    A route loads the song, may wait (publish asks the site first), then starts
+    its job; in between the song may have been deleted and another created under
+    its slug. Checked under the song lock, then the job lock, the same order the
+    delete takes them.
+    """
+    with song_lock(song.slug):
+        song.check_still_here()
+        return job_state.start_if_idle(song.dir, kind, conflicts, fingerprint)
+
+
 def trash(slug: str) -> str:
     """Move a song's folder into `songs/.trash/<slug>-<time>/`; return where it went.
 
@@ -267,12 +282,19 @@ def create(name: str, per_system: bool, voicing: str = "") -> Song:
     and editions often leave the 8 off, so a tenor line reads as a soprano one.
     """
     _ensure_songs_dir()
-    slug = slugify(name)
-    # Avoid collisions with an existing song.
-    base, n = slug, 2
-    while os.path.exists(os.path.join(song_dir(slug), STATE_FILE)):
+    base = slugify(name)
+    # Avoid collisions with an existing song. A slug is claimed under its lock, the
+    # one a delete holds while it moves a folder away (#428).
+    slug, n = base, 2
+    while True:
+        with song_lock(slug):
+            if not os.path.exists(os.path.join(song_dir(slug), STATE_FILE)):
+                return _create_at(slug, name, per_system, voicing)
         slug = f"{base}-{n}"
         n += 1
+
+
+def _create_at(slug: str, name: str, per_system: bool, voicing: str) -> Song:
     s = Song(slug, {
         "name": name,
         "slug": slug,

@@ -701,3 +701,28 @@ def test_the_published_score_carries_its_tempo_marks_unprinted(tmp_path):
     marks = list(root.iter("metronome"))
     assert all(m.get("print-object") == "no" for m in marks), "no tempo mark is drawn"
     assert [s.get("tempo") for s in root.iter("sound") if s.get("tempo")][:2] == ["84", "72"]
+
+
+def test_a_publish_whose_song_was_replaced_meanwhile_touches_neither(app_song, monkeypatch,
+                                                                      tmp_path):
+    """#428: the old request loaded song A and waited on the site's choir list; A was
+    deleted and B created under the same slug. It must not publish B or save onto it."""
+    from src.song_app import job_state, state
+    client, cf, seen = _publish_client(monkeypatch, tmp_path)
+    real_choirs = publish.choirs
+    replaced = {}
+
+    def choirs_then_replace(*args, **kwargs):
+        listing = real_choirs(*args, **kwargs)
+        state.trash(app_song.slug)
+        replaced["b"] = state.create("Hanget soi", per_system=False)
+        return listing
+
+    monkeypatch.setattr(publish, "choirs", choirs_then_replace)
+    reply = client.post(f"/api/songs/{app_song.slug}/publish", json={"choir": "jm"})
+    assert reply.status_code == 404, reply.text
+    b = replaced["b"]
+    assert b.slug == app_song.slug
+    assert job_state.load(b.dir) == {}                 # no job started on B
+    assert state.load(b.slug).data == b.data           # and B's state untouched
+    assert "cleaned" not in seen
