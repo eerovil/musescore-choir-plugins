@@ -4,7 +4,8 @@ Validation only; never mutates the score. Findings:
   - malformed-measure: a voice whose note/rest durations don't fill the bar
     (the auto-fixers couldn't repair it — likely lost notes or a bad tuplet).
   - extra-voices: a staff measure with more than one note-bearing voice
-    (the split didn't fully separate the voices).
+    (the split didn't fully separate the voices). A bar a `voice2` fix in the song's
+    `fixes.json` gave a second line is not one: that voice is meant (#431).
   - unprinted-meter: a bar every voice agrees on, at a length the engraving never
     prints. The engraving is the only authority on meter, and this is the one
     finding that does not compare the score against itself — every other check
@@ -30,12 +31,15 @@ rounding false-positives.
 
 from __future__ import annotations
 
+import json
+import os
 from fractions import Fraction
 from typing import Dict, Iterable, List, Optional
 
 from lxml import etree
 
 from src.clean_score.utils.problem_marks import marks
+from src.clean_score.utils.score_fixes import after_moves, bar_moves
 from src.clean_score.utils.utils import part_staff_ids
 
 # durationType (and fraction) -> whole-note fraction
@@ -143,6 +147,32 @@ def _voice_length(voice: etree._Element, nominal: Fraction) -> tuple[Fraction, b
     return total, has_chord, measure_rest
 
 
+def _second_lines(song_dir: str) -> set:
+    """(staff id, bar) for each bar a `voice2` fix wrote a second line into.
+
+    A fix counts bars in file order, so a `delbar` or `insbar` after it moves its bar.
+    A missing or unreadable `fixes.json` means none: cleaning is where a broken file is
+    refused, not here.
+    """
+    try:
+        with open(os.path.join(song_dir, "fixes.json"), encoding="utf-8") as f:
+            fixes = json.load(f)
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(fixes, list):
+        return set()
+    out = set()
+    for i, fix in enumerate(fixes):
+        if isinstance(fix, dict) and fix.get("kind") == "voice2":
+            try:
+                bar = after_moves(int(fix["measure"]), bar_moves(fixes[i + 1:]))
+                if bar is not None:
+                    out.add((int(fix["staff"]), bar))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
 def scan(cleaned_path: str) -> List[Dict]:
     """Return a list of issue dicts (without status) for the cleaned score."""
     with open(cleaned_path, "r", encoding="utf-8") as f:
@@ -163,6 +193,7 @@ def scan(cleaned_path: str) -> List[Dict]:
     override_share = overridden / len(all_measures) if all_measures else 0.0
     collapse_meter = bool(all_measures) and override_share > _FREE_METER_SHARE
 
+    second_lines = _second_lines(os.path.dirname(os.path.abspath(cleaned_path)))
     issues: List[Dict] = []
     collapsed: List[Dict] = []
     for staff in score.findall("Staff"):
@@ -230,7 +261,7 @@ def scan(cleaned_path: str) -> List[Dict]:
                         "detail": f"bar is {got} but the engraving says {sig}",
                     }
                     (collapsed if collapse_meter else issues).append(found)
-            if note_bearing > 1:
+            if note_bearing > 1 and not (note_bearing == 2 and (sid, mi) in second_lines):
                 issues.append({
                     "id": f"extra-voices-m{mi}-s{sid}",
                     "kind": "extra-voices",

@@ -244,6 +244,18 @@ render refused it. `volta` takes `second`, the bars of the "2." ending (a bracke
 close the score), and `barlen` (`measure`, `from`, `to`) gives a bar every staff rests
 through another length (`len`), for a 2nd ending printed 6/4 that cleaning cut to 4/4.
 
+`voice2` (#431, `staff`, `measure`, `from`, `to`) writes a second line into one bar of a
+part, as that part's voice 2, for a part that splits on the page for a bar or two (Butterfly's
+Sopraano 1 holds an E flat over "Love me" in bar 61). Cleaning gives a staff whose voice 2
+appears anywhere a part of its own for the whole song, which moves every later staff and makes
+the song's other fixes miss, so the line goes in after the clean instead. `to` is a `bar`
+fix's notes; the line must fill the bar, its silences written as rests (the singer reads the
+voice alone and would sing a note early after a gap). `from` is voice 2 as it reads now, `[]`
+for none (`GET /bar` returns it as `voice2`); writing it again replaces the line, keeping its
+words. Its words go in through the lyric editor's voice-2 box. Health does not list such a bar
+as `extra-voices` (it reads `fixes.json` beside the score), and the publish copy keeps both lines.
+Put the upper line in voice 1: sing-song's low line reads voice 2.
+
 `timesig` (#353, `measure`, `from`, `to`) takes a time signature the scan invented off
 every staff (`"to": null`) or writes another in its place (`"to": "6/8"`). Kesäaamu is
 printed in 6/8 and homr read a 3/4 at bar 22; the notes fit both, so `spurious_timesigs`
