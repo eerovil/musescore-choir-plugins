@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The Publish panel asks where each part name the stemmanauhat site does not know
+  yet goes in its voice tree: another name for a voice it has, a new voice under
+  one, or no voice (a solo, a trio). Publish writes that to the site first, so a
+  singer's part carries over from song to song; it refuses while a new name has
+  no answer. A site without the voice tree is published to as before. Needs the
+  site's matching change (eerovil/stemmanauhat-cf#108). (#430)
 - homr can read on this host's GTX 970: `scripts/onnxruntime-sm52/build.sh` builds an
   onnxruntime the card can run, and `HOMR_ORT_WHEEL=<wheel> scripts/install-homr.sh`
   installs it. A system then reads in about 9 seconds instead of 14 and leaves most of
