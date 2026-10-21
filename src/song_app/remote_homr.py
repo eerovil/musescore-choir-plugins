@@ -84,8 +84,14 @@ LOST_AFTER_S = 60.0
 CALL_TIMEOUT_S = 60.0
 CALL_TRIES = 4
 POLL_S = 1.0
+POLL_TIMEOUT_S = 20.0
 #: Building a venv: the wheels, the install (~1-2 min), the weights.
 BUILD_TIMEOUT_S = 1800.0
+#: The slowest transfer still counted as eero-pc answering (a LAN does ~100x this).
+TRANSFER_BYTES_S = 1_000_000
+#: The pod exits by itself when no call has touched this for EXPIRE_MIN minutes.
+ALIVE = "/tmp/homr-alive"
+EXPIRE_MIN = 10
 
 #: Bumped when what the pod is built from changes in a way the pins do not say.
 RECIPE = "1"
@@ -136,21 +142,37 @@ def _err(p: subprocess.CompletedProcess) -> str:
     return text.splitlines()[-1][:300]
 
 
-def _sh(script: str, *, input: Optional[bytes] = None, timeout: float = CALL_TIMEOUT_S,
+def _sh(script: str, *, input: Optional[bytes] = None, timeout: Optional[float] = None,
         tries: int = CALL_TRIES) -> bytes:
     """Run a shell script in the pod, retried when the call fails.
 
     The scripts are written so that running one twice is the same as running it
     once, which is what makes a retry after a cut stream safe.
+
+    Bounded as a whole, retries included: a call may take ``timeout`` (by
+    default :data:`CALL_TIMEOUT_S`, more for the bytes sent at
+    :data:`TRANSFER_BYTES_S`), and all its tries together that plus
+    :data:`LOST_AFTER_S`. Anything that runs longer than a call runs as a
+    detached job (:func:`_start_job`), whose silence is what is bounded.
     """
-    last = ""
+    if timeout is None:
+        timeout = CALL_TIMEOUT_S + len(input or b"") / TRANSFER_BYTES_S
+    budget = time.monotonic() + timeout + LOST_AFTER_S
+    # Each call says it is still wanted; the pod exits by itself when nobody
+    # has for EXPIRE_MIN minutes, even if deleting it failed.
+    script = f"touch {ALIVE} 2>/dev/null; {script}"
+    last = "no time left"
     for attempt in range(tries):
+        left = budget - time.monotonic()
         if attempt:
-            time.sleep(min(2 ** attempt, 8))
+            time.sleep(max(0.0, min(2 ** attempt, 8, left - 1)))
+            left = budget - time.monotonic()
+        if left <= 0:
+            break
         # The script travels as an argument, any data on stdin.
         stdin = ["-i"] if input is not None else []
         p = _kubectl(["exec", *stdin, POD, "--", "sh", "-c", script],
-                     input=input, timeout=timeout)
+                     input=input, timeout=min(timeout, left))
         if p.returncode == 0:
             return p.stdout or b""
         last = _err(p)
@@ -264,7 +286,9 @@ spec:
   containers:
   - name: reader
     image: {IMAGE}
-    command: ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]
+    # Exits (and frees the card) when no call from the app has come for
+    # {EXPIRE_MIN} minutes: the app deletes it sooner, this is in case that failed.
+    command: ["sh", "-c", "trap 'exit 0' TERM; touch {ALIVE}; while sleep 30 & wait $!; do [ -n \\"$(find {ALIVE} -mmin -{EXPIRE_MIN})\\" ] || exit 0; done"]
     resources:
       limits: {{nvidia.com/gpu: 1}}   # the card, or the pod does not start
     volumeMounts:
@@ -305,9 +329,10 @@ def _pod_status() -> Tuple[str, dict]:
     return "waiting", pod
 
 
-def _delete_pod(wait: bool = False) -> None:
+def _delete_pod(wait: bool = False) -> bool:
+    """Delete the pod; False when kubectl could not (the caller tries again)."""
     args = ["delete", "pod", POD, "--ignore-not-found", f"--wait={'true' if wait else 'false'}"]
-    _kubectl(args, timeout=90 if wait else 30)
+    return _kubectl(args, timeout=90 if wait else 30).returncode == 0
 
 
 def _start_pod(log: Logger) -> None:
@@ -446,7 +471,7 @@ def _build(p: Pins, log: Logger) -> None:
     venv = _venv_dir(p)
     log("eero-pc: building its homr venv to match this host's (once per homr "
         "install, a few minutes)")
-    _sh(_BOOTSTRAP.format(keep=KEEP, uv=p.uv, python=p.python), timeout=BUILD_TIMEOUT_S, tries=2)
+    _detached(_BOOTSTRAP.format(keep=KEEP, uv=p.uv, python=p.python), "the setup")
     with tempfile.TemporaryDirectory(prefix="homr-wheel-") as tmp:
         wheel = _build_homr_wheel(p, tmp, log)
         with open(wheel, "rb") as f:
@@ -476,16 +501,22 @@ def _build(p: Pins, log: Logger) -> None:
                            "clear_execstack.py"), "rb") as f:
         _send(f"{KEEP}/wheels/clear_execstack.py", f.read())
     log("eero-pc: installing (a minute or two)")
+    _detached(_INSTALL.format(keep=KEEP, venv=venv, python=p.python, fp=p.fingerprint,
+                              reinstall=reinstall, syslib=SYSLIB, run=RUN_HOMR),
+              "the install")
+    _verify(p, log)
+
+
+def _detached(script: str, what: str) -> None:
+    """Run a long setup step like a band: detached, followed by short calls, so a
+    cut stream does not stop it and a silent eero-pc is given up on in
+    LOST_AFTER_S however long the step itself may run."""
     job = _new_job()
     try:
-        # Detached like a band, so a cut stream does not stop the install.
-        _start_job(job, _INSTALL.format(keep=KEEP, venv=venv, python=p.python,
-                                        fp=p.fingerprint, reinstall=reinstall,
-                                        syslib=SYSLIB, run=RUN_HOMR))
-        _follow(job, "the install", _noop, BUILD_TIMEOUT_S)
+        _start_job(job, script)
+        _follow(job, what, _noop, BUILD_TIMEOUT_S)
     finally:
         _end_job(job)
-    _verify(p, log)
 
 
 def _verify(p: Pins, log: Logger) -> None:
@@ -493,13 +524,19 @@ def _verify(p: Pins, log: Logger) -> None:
     venv = _venv_dir(p)
     log("eero-pc: checking its homr file by file against this host's")
     version = _sh(f"{venv}/bin/python -c 'import sys; print(sys.version)'").decode().strip()
+    # Hashing ~3 GB takes ~10 s there.
     remote = _parse_manifest(_sh(_MANIFEST.format(venv=venv, skip=_manifest_skip()),
-                                 timeout=600).decode())
+                                 timeout=180).decode())
     local = _local_manifest(p.venv)
     local_version = subprocess.run(
         [os.path.join(p.venv, "bin", "python"), "-c", "import sys; print(sys.version)"],
         capture_output=True, text=True, timeout=60).stdout.strip()
     differ = sorted(path for path, sha in remote.items() if local.get(path) != sha)
+    # And nothing of this host's may be missing there, except a model file this
+    # host downloaded for an older homr: its name carries its content hash, so a
+    # homr that wanted it would fetch exactly that file.
+    differ += sorted(f"{path} (missing there)" for path in local
+                     if path not in remote and not _spare_weights(path))
     if version != local_version:
         differ.insert(0, f"python {version!r} against {local_version!r}")
     if not remote:
@@ -512,6 +549,11 @@ def _verify(p: Pins, log: Logger) -> None:
     _sh(f"touch {venv}/.verified && cd {KEEP}/venvs && for d in *; do "
         f"[ \"$d\" = {p.fingerprint} ] || rm -rf \"$d\"; done")
     log(f"eero-pc: its homr matches this host's ({len(remote)} files)")
+
+
+def _spare_weights(path: str) -> bool:
+    import re
+    return bool(re.search(r"-[0-9a-f]{40}(_fp16)?\.onnx$", path))
 
 
 def _ensure_venv(p: Pins, log: Logger) -> None:
@@ -565,6 +607,10 @@ def read(image_path: str, flags: List[str], scratch: str, venv: str,
     p = pins(venv)
     global _uses
     with _lock:
+        # Scans waiting here while another band failed must not ask again.
+        cooling = _cooling()
+        if cooling:
+            raise Unavailable(f"{cooling} (not asking again for a few minutes)")
         with _state_lock:
             _uses += 1
         try:
@@ -643,7 +689,8 @@ def _follow(job: str, what: str, log: Logger, timeout: float) -> List[str]:
             raise Unavailable(f"{what} on eero-pc did not finish within {timeout:.0f}s")
         try:
             out = _sh(f"cat {job}/exit 2>/dev/null || echo -; "
-                      f"tail -c +{offset + 1} {job}/log 2>/dev/null; true", tries=1)
+                      f"tail -c +{offset + 1} {job}/log 2>/dev/null; true",
+                      tries=1, timeout=POLL_TIMEOUT_S)
         except Unavailable:
             if time.monotonic() - last_heard > LOST_AFTER_S:
                 raise Unavailable(f"eero-pc has not answered for {LOST_AFTER_S:.0f}s")
@@ -695,7 +742,10 @@ def _stop_if_idle(seen: int) -> None:
         with _state_lock:
             if _uses != seen:
                 return
-        _delete_pod()
+        if not _delete_pod():
+            # The card would stay held: try again later (the pod also expires
+            # by itself after EXPIRE_MIN minutes without a call).
+            _schedule_idle_stop()
     finally:
         _lock.release()
 
@@ -709,4 +759,7 @@ def release() -> None:
             _idle_timer = None
         started = _uses > 0
     if started and context():
-        _delete_pod()
+        for _ in range(3):
+            if _delete_pod():
+                return
+            time.sleep(2)

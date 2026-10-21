@@ -1555,8 +1555,12 @@ state model are in `DESIGN.md`.
   unknown). Anything that stops eero-pc reading — k3s down in game mode, the card held
   by another pod (sing-song's `singer`), no answer for a minute, homr failing there —
   reads the band here under the heavy slot as before, and eero-pc is not asked again for
-  five minutes. The pod is deleted after two idle minutes and at app shutdown, so the
-  card is free for eero-pc's other pods. `test_remote_homr.py` pins it against a fake pod.
+  five minutes, by songs already waiting for the card too. Every call is bounded,
+  retries included; the venv's setup and install run detached like a band. The pod is
+  deleted after two idle minutes and at app shutdown (retried when the delete fails), and
+  it exits by itself when no call has come for ten minutes, so the card is freed for
+  eero-pc's other pods even if the app could not delete it. The venv check also fails on
+  a file missing there, except a model only an older homr used (named by its hash). `test_remote_homr.py` pins it against a fake pod.
   **One slot per page, not one per song.** The page is the unit `read_page` owns and
   each page writes its own MusicXML, so releasing between pages lets a suite in, and an interruption costs the page in flight rather than the song — the
   pages already read are on disk. A caller that would rather hold one lease across a

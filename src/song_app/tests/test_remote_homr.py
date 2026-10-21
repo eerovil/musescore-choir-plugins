@@ -31,13 +31,20 @@ class FakeEeroPc:
         self.deleted = 0
         self.fail_exec = lambda script: False   # True: this exec is "connection reset"
         self.down = False
+        self.delete_fails = 0           # how many deletes fail before one works
+        self.hang = lambda script: False   # True: this exec never answers
+        self.before_get = lambda: None
 
     def __call__(self, args, *, input=None, timeout=None):
         self.calls.append(args)
         if self.down:
             return subprocess.CompletedProcess(args, 1, b"", b"Unable to connect to the server")
         verb = args[0]
+        if verb == "exec" and self.hang(args[-1]):
+            threading.Event().wait(timeout)        # what kubectl's own timeout ends
+            return subprocess.CompletedProcess(args, 124, b"", b"kubectl timed out")
         if verb == "get":
+            self.before_get()
             if self.pod == "missing":
                 return subprocess.CompletedProcess(args, 1, b"", b'Error (NotFound): pods "reader"')
             cond = ([{"type": "Ready", "status": "True"}] if self.pod == "ready" else
@@ -50,6 +57,9 @@ class FakeEeroPc:
             self.pod = "ready" if self.schedulable else "unschedulable"
             return subprocess.CompletedProcess(args, 0, b"", b"")
         if verb == "delete":
+            if self.delete_fails:
+                self.delete_fails -= 1
+                return subprocess.CompletedProcess(args, 1, b"", b"Unable to connect")
             self.deleted += 1
             self.pod = "missing"
             return subprocess.CompletedProcess(args, 0, b"", b"")
@@ -268,3 +278,104 @@ def test_a_venv_that_differs_from_this_hosts_is_never_used(tmp_path, eero_pc, mo
     (tmp_path / "pod-keep" / "venvs" / "f00d" / ".verified").unlink()
     with pytest.raises(remote_homr.Unavailable, match="does not match"):
         remote_homr._ensure_venv(p, lambda m: None)        # and it is not built again
+
+
+def test_a_file_missing_on_eero_pc_fails_the_check(tmp_path, eero_pc, monkeypatch):
+    local = tmp_path / "local-venv" / "lib" / "python3.12" / "site-packages"
+    remote = tmp_path / "pod-keep" / "venvs" / "f00d" / "lib" / "python3.12" / "site-packages"
+    for site in (local, remote):
+        (site / "homr" / "transformer").mkdir(parents=True)
+        (site / "homr" / "main.py").write_text("print('read')\n")
+        (site / "homr" / "notes.py").write_text("NOTES = 1\n")
+    # A model an older homr used, downloaded here only: named by its hash, so allowed.
+    (local / "homr" / "transformer" / ("old-" + "a" * 40 + ".onnx")).write_bytes(b"w")
+    for venv in (tmp_path / "local-venv", tmp_path / "pod-keep" / "venvs" / "f00d"):
+        (venv / "bin" / "python").unlink(missing_ok=True)
+        _executable(venv / "bin" / "python", "#!/bin/sh\necho 3.12.13\n")
+    monkeypatch.setattr(remote_homr, "_sh", lambda script, **kw: subprocess.run(
+        ["sh", "-c", script], capture_output=True, input=kw.get("input")).stdout)
+    p = remote_homr.pins("x")
+    remote_homr._verify(p, lambda m: None)
+
+    (remote / "homr" / "notes.py").unlink()
+    with pytest.raises(remote_homr.Unavailable, match="notes.py .missing there"):
+        remote_homr._verify(p, lambda m: None)
+
+
+def test_scans_waiting_for_eero_pc_do_not_ask_again_after_it_failed(tmp_path, eero_pc):
+    """Two songs scanning at once: the second waits for the card while the first
+    finds eero-pc down, and then reads here without asking eero-pc again."""
+    eero_pc.down = True
+    release = threading.Event()
+    eero_pc.before_get = lambda: release.wait(5)
+    results = []
+
+    def scan(n):
+        try:
+            remote_homr.read(_page(tmp_path), [], str(tmp_path), "venv")
+        except remote_homr.Unavailable as exc:
+            results.append(str(exc))
+
+    first = threading.Thread(target=scan, args=(1,))
+    first.start()
+    while not eero_pc.calls:
+        threading.Event().wait(0.01)
+    second = threading.Thread(target=scan, args=(2,))
+    second.start()
+    threading.Event().wait(0.2)     # the second is past its first check, waiting
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert len(results) == 2
+    assert len([c for c in eero_pc.calls if c[0] == "get"]) == 1
+    assert any("not asking again" in r for r in results)
+
+
+def test_a_hung_transfer_falls_back_in_bounded_time(tmp_path, eero_pc, monkeypatch,
+                                                    no_heavy_slot):
+    monkeypatch.setattr(remote_homr, "CALL_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(remote_homr, "LOST_AFTER_S", 0.3)
+    eero_pc.pod = "ready"
+    eero_pc.hang = lambda script: ".png" in script and "cat >" in script
+    started = time.monotonic()
+    text, lines = _read(tmp_path, eero_pc.engine)
+    assert time.monotonic() - started < 3
+    assert "read on bazzite" in text
+    hung = [a for a in eero_pc.calls if a[0] == "exec" and ".png" in a[-1]]
+    assert 1 <= len(hung) <= remote_homr.CALL_TRIES
+
+
+def test_a_failed_delete_is_tried_again(tmp_path, eero_pc, monkeypatch):
+    monkeypatch.setattr(remote_homr, "IDLE_S", 0.05)
+    eero_pc.delete_fails = 2
+    _read(tmp_path, eero_pc.engine)
+    deadline = time.monotonic() + 5
+    while eero_pc.deleted == 0 and time.monotonic() < deadline:
+        threading.Event().wait(0.01)
+    assert eero_pc.deleted == 1 and eero_pc.delete_fails == 0
+    assert eero_pc.pod == "missing"
+
+
+@pytest.mark.parametrize("age, exits", [("20 minutes ago", True), ("now", False)])
+def test_the_pod_frees_the_card_when_nobody_calls(tmp_path, age, exits):
+    """The pod's own command, with its 30 s check made quick: it exits once no
+    call has touched the alive file for EXPIRE_MIN minutes."""
+    command = next(line for line in remote_homr.POD_YAML.splitlines() if "command:" in line)
+    script = json.loads(command.split("command:", 1)[1])[2]
+    alive = tmp_path / "alive"
+    script = script.replace(remote_homr.ALIVE, str(alive)).replace("sleep 30", "sleep 0.1")
+    script = script.replace(f"touch {alive};", f"touch -d '{age}' {alive};")
+    p = subprocess.Popen(["sh", "-c", script])
+    try:
+        p.wait(timeout=2)
+        assert exits and p.returncode == 0
+    except subprocess.TimeoutExpired:
+        assert not exits
+    finally:
+        p.kill()
+        p.wait()
+
+
+def test_every_call_says_the_pod_is_still_wanted(tmp_path, eero_pc):
+    _read(tmp_path, eero_pc.engine)
+    assert all(s.startswith(f"touch {remote_homr.ALIVE}") for s in eero_pc.execs())
