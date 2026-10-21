@@ -1705,7 +1705,29 @@ function panelRegister(panel, song, P, refresh) {
     el("p", {}, `PDF: ${song.sources?.pdf || "— (none)"}`),
     el("p", {}, `Mode: ${song.mode}`),
     el("p", { className: "hint" }, "Go to the Clean step to build the score."),
+    deleteSongBox(song, P),
     makeLog());
+}
+
+// Delete the song from the app (#428). The folder goes to songs/.trash/, so moving it
+// back undoes this; the site keeps its own copy of a published song.
+function deleteSongBox(song, P) {
+  const onSite = song.published?.length
+    ? `It stays on the site (${song.published.join(", ")}): deleting here does not touch the site.`
+    : "It is not on the site.";
+  const btn = el("button", { className: "danger deletesong", onclick: async () => {
+    if (!confirm(`Delete “${song.name}”?\n\n${onSite}\n\n`
+        + "The folder is moved to songs/.trash/, so it can be put back by hand.")) return;
+    btn.disabled = true;
+    try {
+      await api(P, { method: "DELETE" });
+      location.hash = "";
+    } catch (e) { btn.disabled = false; appendLog(e.message, true); }
+  }}, "Delete song");
+  return el("div", { className: "deletebox", style: "margin-top:24px" },
+    el("h3", {}, "Delete"),
+    el("p", { className: "hint" }, `Removes the song from this app. ${onSite}`),
+    el("div", { className: "row" }, btn));
 }
 
 async function panelClean(panel, song, slug, P, refresh) {
@@ -2928,8 +2950,68 @@ function panelPublish(panel, song, P, refresh, actions) {
   sayShared();
   sharedInput.addEventListener("input", () => { sharedAuto = false; changed(); sayShared(); });
 
+  // Where each part name the site's voice tree does not know goes (#430). The
+  // site carries a singer's part from song to song by that tree, and refuses a
+  // name in no place; where a part belongs is the publisher's call, never a guess.
+  const placeOf = {};  // part name, lower case without spaces -> "is:<id>" | "under:<id>" | "-"
+  for (const p of pub.places || []) {
+    placeOf[normPart(p.name)] = p.id === "-" ? "-" : p.parent != null ? `under:${p.parent}` : `is:${p.id}`;
+  }
+  let tree = { available: false, unknown: [] };
+  const placesBox = el("div", { className: "voice-places", "data-voice-places": "" });
+  const currentNames = () => partNames.length
+    ? partNames.map((input) => input.value.trim()).filter(Boolean) : publishParts.names;
+  const drawPlaces = () => {
+    placesBox.replaceChildren();
+    if (tree.error && !tree.available) {
+      if (song.publish_configured) placesBox.append(el("span", { className: "hint err" }, tree.error));
+      return;
+    }
+    if (!tree.unknown.length) return;
+    // Each option says which kind it is: a picked option shows without its group's label.
+    const options = (prefix, said, list) => list.map((p) =>
+      el("option", { value: `${prefix}:${p.id}` }, `${"\u00a0\u00a0".repeat(p.depth - 1)}${said} ${p.name} (${p.id})`));
+    placesBox.append(
+      el("label", {}, "New part names on the site"),
+      el("span", { className: "hint" },
+        "The site does not know these names yet. Say where each one goes, so a singer's part carries over from other songs."),
+      ...tree.unknown.map((name) => {
+        const select = el("select", { "data-voice-place": name },
+          el("option", { value: "" }, "— where does it go? —"),
+          el("optgroup", { label: "Another name for" }, ...options("is", "Same as", tree.places)),
+          el("optgroup", { label: "A new place under" }, ...options("under", "New place under", tree.places.filter((p) => p.can_hold))),
+          el("optgroup", { label: "Neither" },
+            el("option", { value: "-" }, "No place: matches only itself (a solo, a trio)")));
+        select.value = placeOf[normPart(name)] || "";
+        select.addEventListener("input", () => { placeOf[normPart(name)] = select.value; changed(); });
+        return el("div", { className: "row voice-place" }, el("strong", {}, name), select);
+      }));
+  };
+  // Only the reply to the latest names may draw: an earlier lookup can finish last.
+  let treeAsked = 0;
+  const checkTree = () => {
+    const asked = ++treeAsked;
+    return postJSON("/api/voice-tree", { names: currentNames() })
+      .then((reply) => { if (asked === treeAsked) { tree = reply; drawPlaces(); } })
+      .catch((e) => {
+        if (asked === treeAsked) { tree = { available: false, unknown: [], error: e.message }; drawPlaces(); }
+      });
+  };
+  let treeTimer = null;
+  for (const input of partNames) {
+    input.addEventListener("input", () => { clearTimeout(treeTimer); treeTimer = setTimeout(checkTree, 400); });
+  }
+  if (song.publish_configured) checkTree();
+  const places = () => tree.unknown.filter((name) => placeOf[normPart(name)]).map((name) => {
+    const choice = placeOf[normPart(name)];
+    if (choice === "-") return { name, id: "-" };
+    const [kind, id] = [choice.slice(0, choice.indexOf(":")), choice.slice(choice.indexOf(":") + 1)];
+    return kind === "under" ? { name, parent: id } : { name, id };
+  });
+
   const settings = () => ({
     tempo_changes: tempoChanges(),
+    ...(tree.available ? { places: places() } : {}),
     ...(partNames.length ? { part_names: partNames.map((input) => input.value.trim()) } : {}),
     ...(shared.shown ? { staff_groups: sharedAuto ? null : sharedInput.value.trim() } : {}),
     credits: Object.fromEntries(CREDITS.map(([key]) => [key, credits[key].value.trim()])),
@@ -2972,10 +3054,14 @@ function panelPublish(panel, song, P, refresh, actions) {
       el("span", { className: "hint" },
         `More than ${shared.max_staves} parts: the site draws two parts on one staff, e.g. S1+S1b, S2+S2b. The sound stays one part each.`),
     ] : []),
+    placesBox,
     el("div", { className: "row" }, saveBtn, saveNote),
     publishSection(P, song, refresh, settings, saveNote),
     makeLog(song.jobs?.publish));
 }
+
+// Part names are the same when they differ only in letter case and spaces, as on the site.
+const normPart = (name) => name.toLowerCase().replace(/\s+/g, "");
 
 function publishSection(P, song, refresh, settings, saveNote) {
   const pub = song.publish || {};

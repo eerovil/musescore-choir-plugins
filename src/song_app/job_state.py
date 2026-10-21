@@ -15,6 +15,10 @@ _locks: Dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
 
+class SongGone(FileNotFoundError):
+    """The song was deleted (#428) after the caller found it: no job, no save."""
+
+
 def _path(song_dir: str) -> str:
     return os.path.join(song_dir, JOBS_FILE)
 
@@ -68,8 +72,15 @@ def start_if_idle(
     conflicts: tuple[str, ...],
     source_fingerprint: Optional[str] = None,
 ) -> Optional[Dict]:
-    """Atomically start `kind`, or return None when a conflicting job is running."""
+    """Atomically start `kind`, or return None when a conflicting job is running.
+
+    Raises `SongGone` when the song's folder is no longer there. Deleting a song
+    moves its folder under this same lock, so a route that found the song a moment
+    ago cannot start a job after the move (which would recreate an empty folder).
+    """
     with _lock(song_dir):
+        if not os.path.isdir(song_dir):
+            raise SongGone(song_dir)
         jobs = load(song_dir)
         if any(jobs.get(other, {}).get("status") == "running" for other in conflicts):
             return None

@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Set
 import dotenv
 from lxml import etree
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import (FileResponse, PlainTextResponse,
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
@@ -101,6 +101,12 @@ class Hub:
 
 
 hub = Hub()
+
+
+@app.exception_handler(job_state.SongGone)
+async def _song_gone(_request, _exc) -> JSONResponse:
+    """A song deleted while a request was working on it (#428): nothing was written."""
+    return JSONResponse({"detail": "This song was deleted."}, status_code=404)
 
 
 def _require(slug: str) -> state.Song:
@@ -276,6 +282,8 @@ def import_legacy() -> int:
         return 0
     count = 0
     for name in sorted(os.listdir(state.SONGS_DIR)):
+        if name.startswith("."):
+            continue  # .trash and the app's own files, never a song
         try:
             if _import_one(name):
                 count += 1
@@ -338,20 +346,15 @@ async def api_create(
 
     if voicing and voicing not in ("men", "women", "mixed"):
         raise HTTPException(400, "voicing must be men, women or mixed")
-    song = state.create(name, per_system, voicing)
-    sources = song.data.setdefault("sources", {})
+    # Read every upload first, then make the song and write them in one step under
+    # its lock (#428): no await may fall between claiming a slug and filling it.
+    sources = {}
     if has_xml:
-        xml_name = os.path.basename(xml.filename)
-        with open(song.path(xml_name), "wb") as f:
-            f.write(await xml.read())
-        sources["xml"] = xml_name
+        sources["xml"] = (xml.filename, await xml.read())
     if has_pdf:
-        pdf_name = os.path.basename(pdf.filename)
-        with open(song.path(pdf_name), "wb") as f:
-            f.write(await pdf.read())
-        sources["pdf"] = pdf_name
-    song.set_stage("clean" if has_xml else "scan")
-    song.save()
+        sources["pdf"] = (pdf.filename, await pdf.read())
+    song = state.create(name, per_system, voicing, sources=sources,
+                        stage="clean" if has_xml else "scan")
     return {"slug": song.slug}
 
 
@@ -439,8 +442,8 @@ def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
             opts["engine"] = omr.engine_for(key)
         except omr.HomrMissing as exc:
             raise HTTPException(400, str(exc)) from None
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "scan", ("scan", "clean", "check", "publish"),
+    if is_scanning(song) or not state.start_job(
+            song, "scan", ("scan", "clean", "check", "publish"),
             pdf_systems.file_version(song.source_path("pdf"))):
         raise HTTPException(409, "Another scan, clean, or publish is "
                                  "already running for this song.")
@@ -620,8 +623,8 @@ def _run_clean(slug: str) -> None:
 @app.post("/api/songs/{slug}/clean")
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "clean", ("scan", "clean", "check", "publish"),
+    if is_scanning(song) or not state.start_job(
+            song, "clean", ("scan", "clean", "check", "publish"),
             state.file_fingerprint(song.source_path("xml"))):
         raise HTTPException(409, "Another scan, clean, or publish is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
@@ -723,8 +726,8 @@ async def api_recheck(slug: str) -> Dict:
     _cleaned_or_400(song)
     # Not beside a publish either: each saves the whole song state, and the later
     # save would put back the earlier one's copy of the other's result.
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "check", ("scan", "clean", "check", "publish")):
+    if is_scanning(song) or not state.start_job(
+            song, "check", ("scan", "clean", "check", "publish")):
         raise HTTPException(409, "A scan, clean, check, or publish is already running "
                                  "for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_check, slug)
@@ -978,6 +981,29 @@ async def api_rename(slug: str, body: Dict) -> Dict:
     song.data["name"] = new_name
     song.save()
     return _derived(song)
+
+
+@app.delete("/api/songs/{slug}")
+def api_delete_song(slug: str) -> Dict:
+    """Delete a song from the app by moving its folder to `songs/.trash/` (#428).
+
+    Refused while a scan, clean, check or publish runs on it: the job would go on
+    writing into a folder that is no longer there. The site keeps its own copy, so a
+    published song stays on it; the reply names the choirs it is listed in.
+    """
+    song = _require(slug)
+    with state.song_lock(slug), job_state._lock(song.dir):
+        song = _require(slug)
+        jobs = job_state.load(song.dir)
+        running = [k for k, j in jobs.items()
+                   if isinstance(j, dict) and j.get("status") == "running"]
+        if is_scanning(song) or running:
+            raise HTTPException(409, "A scan, clean, check or publish is running for this "
+                                     "song — delete it once that has finished.")
+        published = song.published()
+        dest = state.trash(slug)
+    return {"slug": slug, "name": song.name, "published": published,
+            "trash": os.path.join("songs", state.TRASH_DIR_NAME, os.path.basename(dest))}
 
 
 @app.post("/api/songs/{slug}/mode")
@@ -1713,6 +1739,26 @@ def _staff_groups(value, cleaned: str, part_names: Optional[List[str]]):
     return [list(g) for g in groups]
 
 
+def _places(value) -> List[Dict]:
+    """Where new part names go in the site's voice tree, as the Publish panel sends
+    them (#430): ``[{"name", "id"}]`` (a name of a place, or "-" for none) or
+    ``[{"name", "parent"}]`` (a new place under one)."""
+    if not isinstance(value, list):
+        raise HTTPException(400, "Places must be a list")
+    out = []
+    for place in value:
+        if not isinstance(place, dict) or not str(place.get("name") or "").strip():
+            raise HTTPException(400, "Each place needs the part name it is for")
+        vid, parent = place.get("id"), place.get("parent")
+        if (vid is None) == (parent is None) or not str(vid or parent).strip():
+            raise HTTPException(400, f"Part {place['name']}: say a place, a place to put a "
+                                     "new one under, or no place")
+        out.append({"name": str(place["name"]).strip(),
+                    **({"id": str(vid).strip()} if vid is not None
+                       else {"parent": str(parent).strip()})})
+    return out
+
+
 def _publish_settings(song: state.Song, opts: Dict) -> Dict:
     """What the site plays and shows a song with, out of a request (#400).
 
@@ -1747,6 +1793,10 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
         if len(names) != count:
             raise HTTPException(400, publish.part_count_message(count))
         out["part_names"] = names
+    if "places" in opts:
+        out["places"] = _places(opts["places"])
+    elif saved.get("places"):
+        out["places"] = saved["places"]
     if "staff_groups" in opts:
         out["staff_groups"] = _staff_groups(opts["staff_groups"], cleaned, names)
     elif saved.get("staff_groups") is not None:
@@ -1803,7 +1853,8 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
                 client=publish.Cloudflare(config), credits=credits,
-                published=published, choirs=choirs, log=log)
+                published=published, choirs=choirs,
+                places=settings.get("places") or [], log=log)
         record["published_against"] = state.file_fingerprint(cleaned)
         with state.song_lock(slug):
             song = _require(slug)
@@ -1871,8 +1922,15 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     known = [c["id"] for c in listing["choirs"]]
     if choir not in known:
         raise HTTPException(400, f"Choose a choir: {', '.join(known) or 'the site has none'}")
-    if _publish_busy(song) or not job_state.start_if_idle(
-            song.dir, "publish", ("scan", "clean", "check", "publish"), fingerprint):
+    # Every part name in the site's voice tree, or a place said for it (#430),
+    # before the job starts: refused here, the panel can say which names.
+    names = settings.get("part_names") or publish.score_parts(song.cleaned_path())
+    tree = await asyncio.get_running_loop().run_in_executor(
+        None, _voice_tree_check, config, names, settings.get("places") or [])
+    if tree.get("error"):
+        raise HTTPException(tree.get("status", 400), tree["error"])
+    if _publish_busy(song) or not state.start_job(
+            song, "publish", ("scan", "clean", "check", "publish"), fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
     with state.song_lock(slug):
@@ -1882,6 +1940,43 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config,
                                                listing["choirs"])
     return {"started": True}
+
+
+def _voice_tree_check(config: Optional["publish.Config"], names: List[str],
+                      places: List[Dict]) -> Dict:
+    """The site's voice tree against these part names (#430): which it does not
+    know, the places it offers, and whether `places` says where each one goes."""
+    if config is None:
+        return {"available": False, "unknown": [], "places": [], "error": publish.MISSING_CONFIG}
+    try:
+        tree = publish.voice_tree(publish.Cloudflare(config))
+    except publish.PublishError as exc:
+        return {"available": False, "unknown": [], "places": [], "status": 502,
+                "error": f"Could not read the site's voice tree: {exc}"}
+    if tree is None:  # a site from before the voice tree: nothing to ask
+        return {"available": False, "unknown": [], "places": [], "error": None}
+    out = {"available": True, "unknown": publish.unknown_names(tree, names),
+           "places": publish.tree_places(tree), "error": None}
+    try:
+        publish.place_statements(tree, names, places)
+    except publish.PublishError as exc:
+        out["error"] = str(exc)
+    return out
+
+
+@app.post("/api/voice-tree")
+async def api_voice_tree(body: Dict = None) -> Dict:
+    """Which of these part names the site's voice tree does not know, and its
+    places, for the Publish panel to ask where each new one goes (#430)."""
+    names = (body or {}).get("names") or []
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise HTTPException(400, "names must be a list of part names")
+    reply = await asyncio.get_running_loop().run_in_executor(
+        None, _voice_tree_check, publish.Config.from_env(), names, [])
+    reply.pop("status", None)
+    if reply["available"]:
+        reply["error"] = None  # no places were given: the unknown names say it
+    return reply
 
 
 @app.get("/api/choirs")
@@ -1914,8 +2009,11 @@ async def _watch_cleaned() -> None:
                 slug = os.path.basename(os.path.dirname(path))
                 touched.add(slug)
         for slug in touched:
-            if _on_cleaned_saved(slug):
-                hub.emit(slug, {"type": "state"})
+            try:
+                if _on_cleaned_saved(slug):
+                    hub.emit(slug, {"type": "state"})
+            except job_state.SongGone:
+                pass  # deleted while it was being re-checked (#428)
 
 
 def _on_cleaned_saved(slug: str) -> bool:

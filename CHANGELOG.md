@@ -10,6 +10,16 @@ developers are listed under *Behind the scenes*.
 - A part that splits on the page for a bar or two keeps both lines: a `voice2` entry in a
   song's `fixes.json` writes the second line into that bar of the part, with its own words
   from the lyric editor's voice-2 box, and the site gets both lines. (#431)
+- A song can be deleted: **Delete song** on its Start page, after a confirmation that
+  names it and says whether it is on the site. The folder moves to `songs/.trash/`,
+  so moving it back undoes it, and the site keeps its copy. Refused while a scan,
+  clean, check or publish runs. (#428)
+- The Publish panel asks where each part name the stemmanauhat site does not know
+  yet goes in its voice tree: another name for a voice it has, a new voice under
+  one, or no voice (a solo, a trio). Publish writes that to the site first, so a
+  singer's part carries over from song to song; it refuses while a new name has
+  no answer. A site without the voice tree is published to as before. Needs the
+  site's matching change (eerovil/stemmanauhat-cf#108). (#430)
 - homr can read on this host's GTX 970: `scripts/onnxruntime-sm52/build.sh` builds an
   onnxruntime the card can run, and `HOMR_ORT_WHEEL=<wheel> scripts/install-homr.sh`
   installs it. A system then reads in about 9 seconds instead of 14 and leaves most of

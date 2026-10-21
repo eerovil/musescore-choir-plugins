@@ -1018,6 +1018,16 @@ state model are in `DESIGN.md`.
   `hub.emit`, one at a time per song (`job_state`). The song's display name is
   editable on the Start panel (`POST /rename`); the folder slug never changes, and a
   song already on the site shows the new name there once it is published again.
+  **Delete** (#428, `DELETE /api/songs/{slug}`, the Start panel's *Delete song*) moves
+  the folder to `songs/.trash/<slug>-<time>/` (`state.trash`) rather than removing it:
+  moving it back restores the song. Refused (409) while any job or a scan runs; a
+  published song is only named in the reply, since the site keeps its own copy.
+  `import_legacy` skips dot folders so the trash is never adopted as a song.
+  A request that loaded a song before it was deleted (and perhaps re-created under
+  the same slug) must not touch it: `Song.check_still_here` compares the loaded
+  copy's `created_at` with the file, under `song_lock`, and every save and every job
+  start (`state.start_job`, song lock then job lock) goes through it; `create`
+  claims a slug under the same lock. A mismatch is `SongGone`, a 404.
   **Publish** (`publish.py`, `POST /publish`, body `{choir, settings}`) is where a
   song ends: it sends the song to the Cloudflare stemmanauhat site
   (eerovil/stemmanauhat-cf), which draws the score with OpenSheetMusicDisplay and
@@ -1056,7 +1066,14 @@ state model are in `DESIGN.md`.
   tenors in a women's choir. `publish.part_names` keeps one name per singing part,
   top staff first, and `score.prepare` writes them into the publish copy's
   `trackName` and instrument long/short names, so the MIDI tracks, the MusicXML and
-  the database agree; the cleaned score is never renamed. Empty or repeated names
+  the database agree; the cleaned score is never renamed.
+  **New part names go into the site's voice tree** (#430, stemmanauhat-cf#107): the
+  site carries a singer's part between songs by a tree of voices in D1 and refuses
+  a name in neither `voices` nor `unplaced_parts`. `POST /api/voice-tree` says which
+  names are new and offers the places; the panel asks, per name, another name for a
+  place, a new place under one, or no place, saved as `publish.places`, and
+  `publish.place_statements` writes those rows before the upload. Never guessed: an
+  agent publishing asks Eero. A site without the tables is published to as before. Empty or repeated names
   are refused (the site tells parts apart by name), and a re-clean that changes
   the number of parts makes Publish refuse until they are checked
   (`server._publish_parts` says so on the panel).
@@ -2727,6 +2744,8 @@ publishes. The playbook above is how to read the page; this is the rest, learnt 
   parts, eeron-omat-taskit#36), and publishes through stemmanauhat-cf, whose token is in
   `~/.local/share/stemmanauhat/cloudflare.env`. The app's own Publish button cannot do this
   here: it has no Cloudflare keys in `.env`, so `GET /api/choirs` answers "Publishing is off".
+  If the site's script stops on a part name not in its voice tree, ask Eero where it goes
+  and pass his answer as `--place` (stemmanauhat-cf README, "Part names"); never guess.
   `jm` is the men's choir; only public-domain songs go in `public`. Publishing does not need
   the Review approval. Check the live row afterwards as the tool's AGENTS.md says.
 - Leave the Review approval to Eero.

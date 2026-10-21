@@ -428,3 +428,67 @@ def test_the_test_list_is_marked_and_publishing_there_keeps_the_choirs_listing(l
     assert [row[0] for row in cf.listed("testi")] == [slug]
     page.locator(".publish-section").scroll_into_view_if_needed()
     _shot(page, "publish-test-list.png")
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_a_new_part_name_is_placed_in_the_voice_tree_from_the_panel(live, page, size,
+                                                                     monkeypatch, tmp_path):
+    """#430: a part name the site's voice tree does not know is asked about, and
+    the publish puts it where the panel says."""
+    from src.song_app.tests.test_voice_tree import _with_tree
+    base, slug, cf = live
+    _with_tree(cf)
+    monkeypatch.setattr(publish, "build_bundle",
+                        lambda cleaned, out, part_names=None, **_kw: _bundle(
+                            tmp_path, parts=tuple(part_names or ("S1", "A1"))))
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    # The score's parts are S1 and A1, and this site's tree has only men's voices.
+    asks = page.locator("[data-voice-places] select")
+    expect(asks).to_have_count(2)
+    expect(page.locator("[data-voice-places] strong")).to_have_text(["S1", "A1"])
+    page.locator(".publish-section select.publish-choir").select_option("jm")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Say where each new part name goes on the site: S1, A1")
+    assert cf.listed("jm") == []
+
+    # Renaming a part to a name the tree knows takes its question away.
+    page.locator("[data-part-names] input").nth(0).fill("basso 1")
+    expect(asks).to_have_count(1)
+    page.locator("[data-voice-place='A1']").select_option("under:men")
+    page.locator("[data-voice-places]").scroll_into_view_if_needed()
+    _shot(page, f"publish-voice-place-{size[0]}.png")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "2 part(s)", timeout=15000)
+    assert cf.db.execute("SELECT parent, names FROM voices WHERE id = 'A1'").fetchone() == (
+        "men", '["A1"]')
+    expect(asks).to_have_count(0)
+    assert errors == []
+
+
+def test_a_slow_answer_for_older_part_names_does_not_replace_the_newer_one(live, page):
+    """Review of #430: only the reply for the names on screen now draws the questions."""
+    from src.song_app.tests.test_voice_tree import _with_tree
+    base, slug, cf = live
+    _with_tree(cf)
+    held = []
+
+    def hold_first(route):
+        if "Kertoja" in (route.request.post_data or "") or held:
+            route.continue_()
+        else:
+            held.append(route)  # the lookup for the names as first rendered, answered last
+    page.route("**/api/voice-tree", hold_first)
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator("[data-part-names] input")).to_have_count(2)
+    page.locator("[data-part-names] input").nth(0).fill("Kertoja")
+    asks = page.locator("[data-voice-places] strong")
+    expect(asks).to_have_text(["Kertoja", "A1"])
+    held[0].continue_()
+    page.wait_for_timeout(500)
+    expect(asks).to_have_text(["Kertoja", "A1"])

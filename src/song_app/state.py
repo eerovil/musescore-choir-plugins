@@ -16,10 +16,16 @@ import unicodedata
 from typing import Dict, List, Optional
 
 from . import health
+from . import job_state
+from .job_state import SongGone
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
 STATE_FILE = ".song.json"
+# Deleted songs are moved here rather than removed (#428), so a mistake is undone by
+# moving the folder back. Inside songs/ so the move is one rename on one disk, and
+# the nightly backup keeps a copy. A dot folder, so nothing lists it as a song.
+TRASH_DIR_NAME = ".trash"
 
 # Linear stages; `fix` and `lyrics` form a loop (lyric overflow can re-open fix).
 #
@@ -129,13 +135,35 @@ class Song:
         writer that only owns a few fields (`server._rescan`) re-read and write in
         one step without another save landing in between (#252).
         """
-        os.makedirs(self.dir, exist_ok=True)
         with song_lock(self.slug):
+            self.check_still_here()
             self.data["updated_at"] = time.time()
             tmp = self.state_path() + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
             os.replace(tmp, self.state_path())
+
+    def check_still_here(self) -> None:
+        """Raise `SongGone` unless this copy is still the song on disk (#428).
+
+        Call it under `song_lock`. Deleting moves the folder and `create` claims a
+        slug under that lock, so a copy loaded before a delete can neither put the
+        deleted song back, nor save over or start a job on a new song that has
+        since taken the same slug (told apart by `created_at`). Folders are made by
+        `create` and `import_legacy`, never by a save.
+        """
+        if not os.path.isdir(self.dir):
+            raise SongGone(self.dir)
+        mine = self.data.get("created_at")
+        if mine is None or not os.path.exists(self.state_path()):
+            return
+        try:
+            with open(self.state_path(), encoding="utf-8") as f:
+                theirs = json.load(f).get("created_at")
+        except (OSError, ValueError):
+            return
+        if theirs is not None and theirs != mine:
+            raise SongGone(self.dir)
 
     def to_summary(self) -> Dict:
         """Lightweight view for the library list."""
@@ -217,29 +245,76 @@ def list_songs() -> List[Song]:
     return songs
 
 
-def create(name: str, per_system: bool, voicing: str = "") -> Song:
-    """Create a new song folder + state file. Caller then attaches source files.
+def start_job(song: Song, kind: str, conflicts, fingerprint=None) -> Optional[Dict]:
+    """`job_state.start_if_idle` for this very song, or `SongGone` (#428).
+
+    A route loads the song, may wait (publish asks the site first), then starts
+    its job; in between the song may have been deleted and another created under
+    its slug. Checked under the song lock, then the job lock, the same order the
+    delete takes them.
+    """
+    with song_lock(song.slug):
+        song.check_still_here()
+        return job_state.start_if_idle(song.dir, kind, conflicts, fingerprint)
+
+
+def trash(slug: str) -> str:
+    """Move a song's folder into `songs/.trash/<slug>-<time>/`; return where it went.
+
+    Moving it back to `songs/<slug>/` restores it as it was.
+    """
+    trash_dir = os.path.join(SONGS_DIR, TRASH_DIR_NAME)
+    os.makedirs(trash_dir, exist_ok=True)
+    base = f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}"
+    dest, n = os.path.join(trash_dir, base), 2
+    while os.path.exists(dest):
+        dest = os.path.join(trash_dir, f"{base}-{n}")
+        n += 1
+    os.rename(song_dir(slug), dest)
+    return dest
+
+
+def create(name: str, per_system: bool, voicing: str = "",
+           sources: Optional[Dict[str, tuple]] = None, stage: str = "register") -> Song:
+    """Create a new song folder + state file.
+
+    `sources` maps a kind ("xml", "pdf") to `(file name, bytes)`; they are written
+    with the state file under the slug's lock, so nothing lands in a song deleted
+    or re-created meanwhile (#428). Read uploads before calling this.
 
     `voicing` ("men"/"women"/"mixed") settles what the parts are called. Clef and
     pitch cannot: a male-choir score is written in treble sounding an octave down
     and editions often leave the 8 off, so a tenor line reads as a soprano one.
     """
     _ensure_songs_dir()
-    slug = slugify(name)
-    # Avoid collisions with an existing song.
-    base, n = slug, 2
-    while os.path.exists(os.path.join(song_dir(slug), STATE_FILE)):
+    base = slugify(name)
+    # Avoid collisions with an existing song. A slug is claimed under its lock, the
+    # one a delete holds while it moves a folder away (#428).
+    slug, n = base, 2
+    while True:
+        with song_lock(slug):
+            if not os.path.exists(os.path.join(song_dir(slug), STATE_FILE)):
+                return _create_at(slug, name, per_system, voicing, sources or {}, stage)
         slug = f"{base}-{n}"
         n += 1
+
+
+def _create_at(slug: str, name: str, per_system: bool, voicing: str,
+               sources: Dict[str, tuple], stage: str) -> Song:
     s = Song(slug, {
         "name": name,
         "slug": slug,
-        "stage": "register",
+        "stage": stage,
         "mode": "per-system" if per_system else "normal",
         "voicing": voicing or "",
         "sources": {},
         "created_at": time.time(),
     })
     os.makedirs(s.dir, exist_ok=True)
+    for kind, (file_name, data) in sources.items():
+        file_name = os.path.basename(file_name)
+        with open(s.path(file_name), "wb") as f:
+            f.write(data)
+        s.data["sources"][kind] = file_name
     s.save()
     return s
