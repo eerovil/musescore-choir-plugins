@@ -16,7 +16,7 @@ _locks_guard = threading.Lock()
 
 
 class SongGone(FileNotFoundError):
-    """The song's folder is gone: it was deleted (#428) before the job could start."""
+    """The song was deleted (#428) after the caller found it: no job, no save."""
 
 
 def _path(song_dir: str) -> str:

@@ -16,6 +16,7 @@ import unicodedata
 from typing import Dict, List, Optional
 
 from . import health
+from .job_state import SongGone
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
@@ -133,13 +134,34 @@ class Song:
         writer that only owns a few fields (`server._rescan`) re-read and write in
         one step without another save landing in between (#252).
         """
-        os.makedirs(self.dir, exist_ok=True)
         with song_lock(self.slug):
+            self._check_still_here()
             self.data["updated_at"] = time.time()
             tmp = self.state_path() + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
             os.replace(tmp, self.state_path())
+
+    def _check_still_here(self) -> None:
+        """Refuse to write a song that was deleted after this copy was loaded (#428).
+
+        Deleting moves the folder under the song's lock, so checking here, under
+        the same lock, means a stale copy can neither put the deleted song back nor
+        overwrite a new song that has since taken the same slug (told apart by
+        `created_at`). Folders are made by `create` and `import_legacy`, never here.
+        """
+        if not os.path.isdir(self.dir):
+            raise SongGone(self.dir)
+        mine = self.data.get("created_at")
+        if mine is None or not os.path.exists(self.state_path()):
+            return
+        try:
+            with open(self.state_path(), encoding="utf-8") as f:
+                theirs = json.load(f).get("created_at")
+        except (OSError, ValueError):
+            return
+        if theirs is not None and theirs != mine:
+            raise SongGone(self.dir)
 
     def to_summary(self) -> Dict:
         """Lightweight view for the library list."""

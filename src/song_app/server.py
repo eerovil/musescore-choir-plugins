@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Set
 import dotenv
 from lxml import etree
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import (FileResponse, PlainTextResponse,
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
@@ -103,6 +103,12 @@ class Hub:
 hub = Hub()
 
 
+@app.exception_handler(job_state.SongGone)
+async def _song_gone(_request, _exc) -> JSONResponse:
+    """A song deleted while a request was working on it (#428): nothing was written."""
+    return JSONResponse({"detail": "This song was deleted."}, status_code=404)
+
+
 def _require(slug: str) -> state.Song:
     song = state.load(slug)
     if not song:
@@ -131,14 +137,6 @@ def _holds_lock(path: str) -> bool:
         return True
     os.remove(path)  # stale lock from a different/old process
     return False
-
-
-def _start_if_idle(song_dir: str, kind: str, conflicts, fingerprint=None):
-    """`job_state.start_if_idle`, answering 404 when the song was deleted meanwhile."""
-    try:
-        return job_state.start_if_idle(song_dir, kind, conflicts, fingerprint)
-    except job_state.SongGone:
-        raise HTTPException(404, "This song was deleted.") from None
 
 
 def is_scanning(song: state.Song) -> bool:
@@ -449,7 +447,7 @@ def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
             opts["engine"] = omr.engine_for(key)
         except omr.HomrMissing as exc:
             raise HTTPException(400, str(exc)) from None
-    if is_scanning(song) or not _start_if_idle(
+    if is_scanning(song) or not job_state.start_if_idle(
             song.dir, "scan", ("scan", "clean", "check", "publish"),
             pdf_systems.file_version(song.source_path("pdf"))):
         raise HTTPException(409, "Another scan, clean, or publish is "
@@ -630,7 +628,7 @@ def _run_clean(slug: str) -> None:
 @app.post("/api/songs/{slug}/clean")
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
-    if is_scanning(song) or not _start_if_idle(
+    if is_scanning(song) or not job_state.start_if_idle(
             song.dir, "clean", ("scan", "clean", "check", "publish"),
             state.file_fingerprint(song.source_path("xml"))):
         raise HTTPException(409, "Another scan, clean, or publish is already running for this song.")
@@ -733,7 +731,7 @@ async def api_recheck(slug: str) -> Dict:
     _cleaned_or_400(song)
     # Not beside a publish either: each saves the whole song state, and the later
     # save would put back the earlier one's copy of the other's result.
-    if is_scanning(song) or not _start_if_idle(
+    if is_scanning(song) or not job_state.start_if_idle(
             song.dir, "check", ("scan", "clean", "check", "publish")):
         raise HTTPException(409, "A scan, clean, check, or publish is already running "
                                  "for this song.")
@@ -1904,7 +1902,7 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     known = [c["id"] for c in listing["choirs"]]
     if choir not in known:
         raise HTTPException(400, f"Choose a choir: {', '.join(known) or 'the site has none'}")
-    if _publish_busy(song) or not _start_if_idle(
+    if _publish_busy(song) or not job_state.start_if_idle(
             song.dir, "publish", ("scan", "clean", "check", "publish"), fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
@@ -1947,8 +1945,11 @@ async def _watch_cleaned() -> None:
                 slug = os.path.basename(os.path.dirname(path))
                 touched.add(slug)
         for slug in touched:
-            if _on_cleaned_saved(slug):
-                hub.emit(slug, {"type": "state"})
+            try:
+                if _on_cleaned_saved(slug):
+                    hub.emit(slug, {"type": "state"})
+            except job_state.SongGone:
+                pass  # deleted while it was being re-checked (#428)
 
 
 def _on_cleaned_saved(slug: str) -> bool:

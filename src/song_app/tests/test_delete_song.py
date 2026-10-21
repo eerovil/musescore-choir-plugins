@@ -150,3 +150,44 @@ def test_delete_and_job_start_racing_never_leave_a_phantom_folder(client):
         else:
             assert out["deleted"] is True
         assert not os.path.exists(songs / s.slug), f"round {i} left a folder behind"
+
+
+def test_a_stale_save_does_not_bring_a_deleted_song_back(client):
+    c, song, songs = client
+    stale = state.load(song.slug)                  # loaded before the delete
+    c.delete(f"/api/songs/{song.slug}")
+    stale.data["name"] = "Renamed"
+    with pytest.raises(job_state.SongGone):
+        stale.save()
+    assert not os.path.exists(songs / "talviuni")
+
+
+def test_a_stale_save_does_not_overwrite_a_new_song_with_the_same_slug(client):
+    c, song, songs = client
+    stale = state.load(song.slug)
+    c.delete(f"/api/songs/{song.slug}")
+    fresh = state.create("Talviuni", per_system=False)
+    assert fresh.slug == "talviuni"
+    assert fresh.data["created_at"] != stale.data["created_at"]
+    stale.data["name"] = "Old copy"
+    with pytest.raises(job_state.SongGone):
+        stale.save()
+    assert state.load("talviuni").data["created_at"] == fresh.data["created_at"]
+    assert state.load("talviuni").name == "Talviuni"
+
+
+def test_a_route_saving_after_the_delete_answers_404(client, monkeypatch):
+    """Rename found the song, then the delete moved it before the save."""
+    c, song, songs = client
+    real = state.Song.save
+
+    def delete_then_save(self):
+        if not getattr(delete_then_save, "done", False):
+            delete_then_save.done = True
+            state.trash(self.slug)
+        real(self)
+
+    monkeypatch.setattr(state.Song, "save", delete_then_save)
+    r = c.post(f"/api/songs/{song.slug}/rename", json={"name": "Renamed"})
+    assert r.status_code == 404
+    assert not os.path.exists(songs / "talviuni")
