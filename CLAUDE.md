@@ -254,7 +254,10 @@ voice alone and would sing a note early after a gap). `from` is voice 2 as it re
 for none (`GET /bar` returns it as `voice2`); writing it again replaces the line, keeping its
 words. Its words go in through the lyric editor's voice-2 box. Health does not list such a bar
 as `extra-voices` (it reads `fixes.json` beside the score), and the publish copy keeps both lines.
-Put the upper line in voice 1: sing-song's low line reads voice 2.
+Put the upper line in voice 1: sing-song's low line reads voice 2. `tie` and `untie` take `"voice": 2`
+(#434), with `from` and `index` read off voice 2, so the line can hold a note into the next
+bar's voice 2 (Butterfly bar 84 into 85); the tied-into note takes no syllable. List them after
+the `voice2` entries they tie.
 
 `timesig` (#353, `measure`, `from`, `to`) takes a time signature the scan invented off
 every staff (`"to": null`) or writes another in its place (`"to": "6/8"`). Kesäaamu is

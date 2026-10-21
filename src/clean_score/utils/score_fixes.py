@@ -172,6 +172,13 @@ It needs its `from` like the others.
     {"kind": "untie", "staff": 1, "measure": 6, "index": 1, "pitch": 65, "from": [...],
      "why": "dashed tie, verse 2 only"}
 
+Both take `"voice": 2` for a line a `voice2` fix wrote (#434): `from` and `index` are
+then voice 2's, and the tie reaches the next bar's voice 2 (Butterfly's lower line holds
+"fly" from bar 84 into 85). Put the entry after the `voice2` entries it ties.
+
+    {"kind": "tie", "staff": 1, "measure": 84, "voice": 2, "index": 3, "pitch": 60,
+     "from": [...], "why": "..."}
+
 `delete` (#352) takes a mark the scan invented off chord `index`: `what` is one of
 `fermata`, `articulation`, `arpeggio`, `breath`, `staff text`, `tempo` or
 `rehearsal mark` (#366: Trinklied's B1 bar 25 had a printed sharp read as an
@@ -449,15 +456,41 @@ def _expect(measure: etree._Element, expect) -> None:
         raise FixError(f"bar reads {found} now, but the fix was recorded against {list(expect)}")
 
 
-def _voice(measure: etree._Element) -> etree._Element:
-    return measure.find("voice") if measure.find("voice") is not None else measure
+def _voice(measure: etree._Element, voice: int = 1) -> etree._Element:
+    """The bar's first voice, or with `voice` 2 its second (refused when it has none)."""
+    if voice == 1:
+        return measure.find("voice") if measure.find("voice") is not None else measure
+    voices = measure.findall("voice")
+    if voice != 2:
+        raise FixError(f"voice {voice}: a part keeps two at most")
+    if len(voices) < 2:
+        raise FixError(f"m{_bar_no(measure)} has no voice 2")
+    return voices[1]
 
 
-def _positions(staff: etree._Element, mi: int) -> List[Tuple[Fraction, etree._Element]]:
-    """Each child of bar `mi`'s first voice with where it stands in the bar."""
+def _bar_no(measure: etree._Element) -> int:
+    return measure.getparent().findall("Measure").index(measure) + 1
+
+
+def _positions(staff: etree._Element, mi: int,
+               voice: int = 1) -> List[Tuple[Fraction, etree._Element]]:
+    """Each child of bar `mi`'s first voice (or `voice`) with where it stands in the bar."""
     from .rejected_bars import _bar_lengths, _walk  # noqa: PLC0415 - a cycle
     measure = staff.findall("Measure")[mi]
-    return list(_walk(_voice(measure), _bar_lengths(staff)[mi]))
+    return list(_walk(_voice(measure, voice), _bar_lengths(staff)[mi]))
+
+
+def _expect_voice(measure: etree._Element, expect, voice: int) -> None:
+    """`_expect` for a fix that names a voice: voice 2's `from` is voice 2 alone."""
+    if voice == 1:
+        _expect(measure, expect)
+        return
+    if expect is None:
+        raise FixError("record what voice 2 of the bar reads now in 'from'")
+    found = _voice_tokens(_voice(measure, voice))
+    if found != list(expect):
+        raise FixError(f"voice 2 reads {found} now, but the fix was recorded against "
+                       f"{list(expect)}")
 
 
 def _resolve(home: int, pos: Fraction, location: etree._Element,
@@ -678,16 +711,18 @@ def _before_pitch(note: etree._Element, el: etree._Element) -> None:
 
 
 def _tie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch: int,
-         expect: List[str]) -> str:
+         expect: List[str], voice: int = 1) -> str:
     """Tie the note `pitch` of chord `index` to the same pitch in the next chord.
 
     The next chord is the next thing the voice sounds, in this bar or the first of the
     next one. A rest in between, or no such pitch there, refuses: a tie joins one
     pitch to itself across no silence, which is what makes playback hold the note.
+    With `voice` 2 it ties a line a `voice2` fix wrote (#434), to the next bar's voice
+    2; `from` and `index` are then voice 2's.
     """
     measure = _measure(root, staff_id, measure_no)
-    _expect(measure, expect)
-    chords = _chords(root, staff_id, measure_no)
+    _expect_voice(measure, expect, voice)
+    chords = [el for el in _voice(measure, voice) if el.tag == "Chord"]
     if not 0 <= index < len(chords):
         raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
@@ -699,7 +734,7 @@ def _tie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch
     staff = measure.getparent()
     measures = staff.findall("Measure")
     mi = measures.index(measure)
-    here = _positions(staff, mi)
+    here = _positions(staff, mi, voice)
     own = next(at for at, el in here if el is chord)
     after = [(at, el) for at, el in here if el.tag in ("Chord", "Rest")]
     after = after[[el for _, el in after].index(chord) + 1:]
@@ -708,7 +743,8 @@ def _tie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch
         bar = mi + 1
         if bar >= len(measures):
             raise FixError("the last note of the staff has nothing to tie to")
-        after = [(at, el) for at, el in _positions(staff, bar) if el.tag in ("Chord", "Rest")]
+        after = [(at, el) for at, el in _positions(staff, bar, voice)
+                 if el.tag in ("Chord", "Rest")]
     if not after:
         raise FixError(f"m{bar + 1} is empty")
     at, nxt = after[0]
@@ -727,17 +763,18 @@ def _tie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch
 
 
 def _untie(root: etree._Element, staff_id: int, measure_no: int, index: int, pitch: int,
-           expect: List[str]) -> str:
+           expect: List[str], voice: int = 1) -> str:
     """Take out the tie that starts on note `pitch` of chord `index`: both of its halves.
 
     The end half is found where the start half points, in this bar or a later one, and
     must be the same pitch tied back. Strophic songs print dashed ties for a later verse
     only; homr reads them as real ties, so the verse that re-strikes the note loses a
     syllable (#342). A tie whose end cannot be found loses its start all the same.
+    `voice` 2 takes one out of a line a `voice2` fix wrote, as `tie` does (#434).
     """
     measure = _measure(root, staff_id, measure_no)
-    _expect(measure, expect)
-    chords = _chords(root, staff_id, measure_no)
+    _expect_voice(measure, expect, voice)
+    chords = [el for el in _voice(measure, voice) if el.tag == "Chord"]
     if not 0 <= index < len(chords):
         raise _no_index(chords, index, f"m{measure_no}")
     chord = chords[index]
@@ -750,7 +787,7 @@ def _untie(root: etree._Element, staff_id: int, measure_no: int, index: int, pit
     head = starts[0]
     staff = measure.getparent()
     mi = staff.findall("Measure").index(measure)
-    tail, bar = _tie_partner(staff, mi, chord, head, pitch)
+    tail, bar = _tie_partner(staff, mi, chord, head, pitch, voice)
     head.getparent().remove(head)
     if tail is None:
         return f"took out the tie from pitch {pitch} of chord {index} (no end half found)"
@@ -760,7 +797,8 @@ def _untie(root: etree._Element, staff_id: int, measure_no: int, index: int, pit
 
 
 def _tie_partner(staff: etree._Element, mi: int, chord: etree._Element,
-                 half: etree._Element, pitch: int) -> Tuple[Optional[etree._Element], int]:
+                 half: etree._Element, pitch: int,
+                 voice: int = 1) -> Tuple[Optional[etree._Element], int]:
     """The other half of the tie `half` on note `pitch` of `chord` in bar `mi`, and its bar.
 
     A start half (`next`) points forward at the note the tie ends on, an end half
@@ -770,14 +808,16 @@ def _tie_partner(staff: etree._Element, mi: int, chord: etree._Element,
     from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
     side, other_side = ("next", "prev") if half.find("next") is not None else ("prev", "next")
     lengths = _bar_lengths(staff)
-    own = next(at for at, el in _positions(staff, mi) if el is chord)
+    own = next(at for at, el in _positions(staff, mi, voice) if el is chord)
     location = half.find(f"{side}/location")
     if location is None:
         return None, mi
     bar, at = _resolve(mi, own, location, lengths)
     if not 0 <= bar < len(lengths):
         return None, bar
-    for pos, el in _positions(staff, bar):
+    if voice != 1 and len(staff.findall("Measure")[bar].findall("voice")) < voice:
+        return None, bar
+    for pos, el in _positions(staff, bar, voice):
         if el.tag == "Chord" and pos == at and el is not chord:
             other = _pitched(el, pitch)
             if other is None:
@@ -2604,10 +2644,10 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                                     fix.get("from"))
             elif kind == "tie":
                 what = _tie(root, staff, measure, int(fix.get("index", 0)), int(fix["pitch"]),
-                            fix.get("from"))
+                            fix.get("from"), int(fix.get("voice", 1)))
             elif kind == "untie":
                 what = _untie(root, staff, measure, int(fix.get("index", 0)),
-                              int(fix["pitch"]), fix.get("from"))
+                              int(fix["pitch"]), fix.get("from"), int(fix.get("voice", 1)))
             elif kind == "dropnote":
                 what = _drop_note(root, staff, measure, int(fix.get("index", 0)),
                                   int(fix["pitch"]), fix.get("from"))
