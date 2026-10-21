@@ -73,7 +73,7 @@ from typing import Callable, Dict, List, Optional
 
 from lxml import etree
 
-from . import heavy_slot
+from . import heavy_slot, remote_homr
 
 Logger = Callable[[str], None]
 
@@ -676,21 +676,35 @@ def read_page(
         shutil.copy2(image_path, scratch_image)
         produced = os.path.join(scratch, base + ".musicxml")
 
-        with _queued(label or f"song app homr {base}", log, queue) as slot:
-            # homr's own output is the only place a page can be interrupted, so
-            # that is where the lease is checked (heavy_slot.Slot.guard).
-            watched = slot.guard(log)
-            watched(f"Reading {os.path.basename(image_path)} with homr")
-            argv = list(engine.command) + ["--gpu", engine.gpu, "--no-title"]
-            if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
-                argv += [BAR_LENGTH_FLAG, str(bar_length)]
-            if engine_supports(engine, MARK_DOUBT_FLAG):
-                argv.append(MARK_DOUBT_FLAG)
-            else:
-                watched("This homr cannot mark the bars it is unsure of, so none are "
-                        "marked: update homr to have them checked")
-            output = _run(argv + [scratch_image], watched, timeout, engine.env)
-            slot.check()
+        flags = ["--gpu", engine.gpu, "--no-title"]
+        if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
+            flags += [BAR_LENGTH_FLAG, str(bar_length)]
+        if engine_supports(engine, MARK_DOUBT_FLAG):
+            flags.append(MARK_DOUBT_FLAG)
+        else:
+            log("This homr cannot mark the bars it is unsure of, so none are "
+                "marked: update homr to have them checked")
+
+        # eero-pc's card first, when it is free (#437); this host's slot otherwise.
+        output = None
+        if remote_homr.wanted(engine):
+            try:
+                output = remote_homr.read(
+                    scratch_image, flags, scratch,
+                    os.path.dirname(os.path.dirname(engine.command[0])),
+                    log=log, timeout=timeout)
+            except remote_homr.Unavailable as exc:
+                log(f"eero-pc did not read it ({exc}); reading it on this host")
+        watched = log
+        if output is None:
+            with _queued(label or f"song app homr {base}", log, queue) as slot:
+                # homr's own output is the only place a page can be interrupted, so
+                # that is where the lease is checked (heavy_slot.Slot.guard).
+                watched = slot.guard(log)
+                watched(f"Reading {os.path.basename(image_path)} with homr")
+                output = _run(list(engine.command) + flags + [scratch_image],
+                              watched, timeout, engine.env)
+                slot.check()
 
         if not os.path.exists(produced):
             # homr deletes its own output when parsing fails, so a zero exit

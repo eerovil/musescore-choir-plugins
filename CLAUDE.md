@@ -44,6 +44,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
   pdf_systems.py         Crop the source PDF into one image per printed system
   omr.py                 Run homr on a page image -> MusicXML (its own venv; see below)
+  remote_homr.py         Read a band on eero-pc's GPU when it is free (#437)
   omr_systems.py         Scan one printed system at a time; flatten + assemble
   scan.py                The scan stage: crop + read every band, assemble, invalidate
   system_finder.py       Propose the printed-system bands off a page (homr's staves)
@@ -1539,6 +1540,23 @@ state model are in `DESIGN.md`.
   stops with `SlotLost`). homr's own output lines are the checkpoints `Slot.guard`
   needs, and abandoning the read loop kills homr's process group — otherwise it would
   keep running on cores that have been handed away.
+  **A band goes to eero-pc's GPU first** (#437, `remote_homr.py`), when `.env` names the
+  kubectl context (`HOMR_KUBE_CONTEXT=eero-pc` on this host): a pod `reader` in namespace
+  `homr` on its GTX 970, one band at a time across every song, without this host's heavy
+  slot. Only the installed homr reading on the GPU goes there; a branch engine and *Ask
+  homr* read here. The pod's venv (`/var/tmp/homr-gpu` on eero-pc) is rebuilt from this
+  host's pins whenever they change — the installed venv's `uv pip freeze`, homr's wheel
+  built here at the installed commit (the pod has no git), the same sm52 onnxruntime wheel,
+  the same python build — and every file of its site-packages is checked against this
+  host's by sha256 before it is used; one that differs is never used. Measured: byte-identical
+  MusicXML on three Insomnis systems. homr runs detached in the pod and is followed by
+  short `kubectl exec` calls, each retried, because eero-pc's exec stream has been cut
+  after a couple of minutes ("connection reset by peer", eeron-omat-taskit#103, cause
+  unknown). Anything that stops eero-pc reading — k3s down in game mode, the card held
+  by another pod (sing-song's `singer`), no answer for a minute, homr failing there —
+  reads the band here under the heavy slot as before, and eero-pc is not asked again for
+  five minutes. The pod is deleted after two idle minutes and at app shutdown, so the
+  card is free for eero-pc's other pods. `test_remote_homr.py` pins it against a fake pod.
   **One slot per page, not one per song.** The page is the unit `read_page` owns and
   each page writes its own MusicXML, so releasing between pages lets a suite in, and an interruption costs the page in flight rather than the song — the
   pages already read are on disk. A caller that would rather hold one lease across a

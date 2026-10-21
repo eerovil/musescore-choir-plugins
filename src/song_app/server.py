@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_state, omr,
                pdf_systems, pipeline, problems, publish, pwa_assets, scan,
                state, system_finder, verification)
-from . import clean_backup
+from . import clean_backup, remote_homr
 from src.clean_score.utils.score_fixes import FixError
 from src.score_export.score import START as START_TEMPO
 from src.score_export import staff_groups
@@ -2042,6 +2042,12 @@ async def _startup() -> None:
         job_state.interrupt_running(song.dir)
     if os.path.isdir(state.SONGS_DIR):
         asyncio.create_task(_watch_cleaned())
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    # Free eero-pc's card rather than leave the homr pod holding it (#437).
+    await asyncio.get_running_loop().run_in_executor(None, remote_homr.release)
 
 
 # --------------------------------------------------------------------------

@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Scanning reads each system on eero-pc's graphics card when it is free, so several
+  songs scanning at once no longer wait in one queue on this host. The reading is the
+  same either way; when eero-pc is busy, off or stops answering, the system is read here
+  as before. (#437)
 - A part's second line can hold a note across a barline: `tie` and `untie` entries in
   `fixes.json` take `"voice": 2`, and the held note is sung once, not again with a
   word of its own. (#434)
