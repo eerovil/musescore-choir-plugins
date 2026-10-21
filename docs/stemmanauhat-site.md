@@ -104,6 +104,25 @@ song on its choir's list; publishing to a choir still takes it off the test list
 one publish record per choir, so replacing a version deletes only that choir's
 old files.
 
+### The voice tree
+
+The site carries a singer's part from song to song with a tree of voices
+(stemmanauhat-cf#107, its migration 0009): `voices (id, parent, name_fi, name_en,
+names)`, at most four levels, and `unplaced_parts (name)` for names in no place on
+purpose. Names are compared ignoring letter case and spaces, and a name ending in
+"b" counts when the name without it is above the fourth level. song-app reads
+both tables and, for each part name in neither, the Publish panel asks where it
+goes (#430); where a part belongs is the publisher's call, never a guess. Before
+anything goes up, the publish writes:
+
+- another name for a place: `UPDATE voices SET names = json_insert(names, '$[#]', ?)`
+- a new place under one: an `INSERT INTO voices` row whose id and both names are
+  the part name (made unique), until someone renames it on the site
+- no place: `INSERT OR IGNORE INTO unplaced_parts`
+
+A part name with no answer refuses the publish. A database without the tables
+is published to as before.
+
 ## timing.json
 
 ```json
