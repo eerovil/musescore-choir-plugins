@@ -1652,6 +1652,17 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
             body.remove(el)
     for offset, el in enumerate(written):
         body.insert(at + offset, el)
+    _bracket_triplets(written, values, groups)
+    chords = [el for el in written if el.tag == "Chord"]
+    for chord, lyric in zip(chords, words):
+        chord.insert(list(chord).index(chord.find("Note")), lyric)
+    _cut_spanners_into(measures, lengths, measures.index(measure), keep=("Volta",))
+    return (f"wrote the bar afresh as {_bar_tokens(measure)}"
+            + _answered(_strike(root, staff_id, measure_no, _BAR_WORDS)))
+
+
+def _bracket_triplets(written: List[etree._Element], values: List[str], groups) -> None:
+    """Put a triplet bracket round each group `triplet_groups` found in `values`."""
     for first_i, last_i in groups:
         length = sum((value_length(v) for v in values[first_i:last_i + 1]), Fraction(0))
         base = length / 2
@@ -1666,12 +1677,77 @@ def _replace_bar(root: etree._Element, staff_id: int, measure_no: int,
         etree.SubElement(number_el, "text").text = "3"
         written[first_i].addprevious(tuplet)
         written[last_i].addnext(etree.Element("endTuplet"))
-    chords = [el for el in written if el.tag == "Chord"]
-    for chord, lyric in zip(chords, words):
+
+
+def _voice_tokens(voice: Optional[etree._Element]) -> List[str]:
+    """One voice's chords, rests and tuplet brackets, as a fix's `from` reads them."""
+    if voice is None:
+        return []
+    return [_token(el) if el.tag in ("Chord", "Rest") else _MARKERS[el.tag]
+            for el in voice if el.tag in ("Chord", "Rest") or el.tag in _MARKERS]
+
+
+def voice2_tokens(root: etree._Element, staff_id: int, measure_no: int) -> List[str]:
+    """The bar's second voice as a `voice2` fix's `from` reads it: [] when it has none."""
+    voices = _measure(root, staff_id, measure_no).findall("voice")
+    return _voice_tokens(voices[1] if len(voices) > 1 else None)
+
+
+def _write_voice2(root: etree._Element, staff_id: int, measure_no: int,
+                  expect, to: List[Dict]) -> str:
+    """Write a second line into one bar of a part, as that part's voice 2 (#431).
+
+    A part that splits on the page for a bar or two -- a held note over a moving line,
+    with words of its own -- keeps both lines. Cleaning gives a staff whose voice 2
+    appears anywhere a part of its own for the whole song, so the line cannot come in
+    through the source; this writes it into the cleaned part, after the clean, and the
+    entry replays on every clean like the other kinds.
+
+    The line is written whole: its silences are rests, and it fills the bar's own
+    length exactly, so whatever reads the voice on its own (MuseScore's check, the
+    singer) finds every note where the page puts it. Writing it again replaces the
+    voice 2 there, keeping its words in order.
+    """
+    if expect is None:
+        raise FixError("give a 'from': the bar's voice 2 as it reads now, [] for none")
+    if not to:
+        raise FixError("the fix names no notes")
+    measure = _measure(root, staff_id, measure_no)
+    voices = measure.findall("voice")
+    if not voices:
+        raise FixError("the bar has no first voice to write a second one beside")
+    if len(voices) > 2:
+        raise FixError(f"the bar has {len(voices)} voices; a part keeps two at most")
+    old = voices[1] if len(voices) > 1 else None
+    found = _voice_tokens(old)
+    if found != list(expect):
+        raise FixError(f"voice 2 reads {found} now, but the fix was recorded against "
+                       f"{list(expect)}")
+    values = [new["value"] for new in to]
+    written = [_write_moment(new) for new in to]
+    if not any(el.tag == "Chord" for el in written):
+        raise FixError("the line has no notes; a voice 2 of rests says nothing")
+    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+    staff = measure.getparent()
+    bar_length = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
+    total = sum((value_length(v) for v in values), Fraction(0))
+    if total != bar_length:
+        raise FixError(f"the line adds up to {total} of a whole note, the bar to "
+                       f"{bar_length}; write its silences out as rests")
+    groups = triplet_groups(values)
+    voice = etree.Element("voice")
+    for el in written:
+        voice.append(el)
+    _bracket_triplets(written, values, groups)
+    words = [] if old is None else [c.find("Lyrics") for c in old.findall("Chord")]
+    for chord, lyric in zip([el for el in written if el.tag == "Chord"],
+                            [w for w in words if w is not None]):
         chord.insert(list(chord).index(chord.find("Note")), lyric)
-    _cut_spanners_into(measures, lengths, measures.index(measure), keep=("Volta",))
-    return (f"wrote the bar afresh as {_bar_tokens(measure)}"
-            + _answered(_strike(root, staff_id, measure_no, _BAR_WORDS)))
+    if old is not None:
+        measure.replace(old, voice)
+        return f"wrote voice 2 afresh as {_voice_tokens(voice)}"
+    voices[0].addnext(voice)
+    return f"wrote voice 2 as {_voice_tokens(voice)}"
 
 
 # Reading a bar back out, so a fix can be *picked* rather than typed. The indexing
@@ -2510,6 +2586,9 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             elif kind == "bar":
                 what = _replace_bar(root, staff, measure, fix.get("from", []),
                                     fix.get("to", []))
+            elif kind == "voice2":
+                what = _write_voice2(root, staff, measure, fix.get("from"),
+                                     fix.get("to", []))
             elif kind == "pitch":
                 what = _set_pitch(root, staff, measure, int(fix["index"]),
                                   fix.get("from", []), int(fix["was"]), int(fix["to"]),

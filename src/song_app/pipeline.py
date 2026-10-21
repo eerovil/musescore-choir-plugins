@@ -28,7 +28,7 @@ from src.clean_score.utils import per_system
 from src.clean_score.utils.per_system import dropped_voices_for_file
 from src.clean_score.utils.problem_marks import mark_bar, marks
 from src.clean_score.utils.rejected_bars import clear_bar, staff_names
-from src.clean_score.utils.score_fixes import (FixError, after_moves, apply_fixes, bar_items,
+from src.clean_score.utils.score_fixes import (FixError, after_moves, apply_fixes, bar_items, voice2_tokens,
                                                 bar_moves, bar_tokens, free_text, read_bar)
 from src.clean_score.utils.staff_display import fix_staff_display
 from src.clean_score.utils.utils import starts_new_system
@@ -670,6 +670,7 @@ def bar_for_fix(cleaned_path: str, staff: int, measure: int) -> Dict:
     out = {"staff": staff, "measure": measure, "notes": notes,
            "from": bar_tokens(root, staff, measure),
            "items": bar_items(root, staff, measure),
+           "voice2": voice2_tokens(root, staff, measure),
            "syllables": sum(1 for f in slots if f)}
     reset = _reset_as_scanned(root, os.path.dirname(cleaned_path), staff, measure)
     if reset:

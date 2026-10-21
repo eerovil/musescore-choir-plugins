@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A part that splits on the page for a bar or two keeps both lines: a `voice2` entry in a
+  song's `fixes.json` writes the second line into that bar of the part, with its own words
+  from the lyric editor's voice-2 box, and the site gets both lines. (#431)
 - homr can read on this host's GTX 970: `scripts/onnxruntime-sm52/build.sh` builds an
   onnxruntime the card can run, and `HOMR_ORT_WHEEL=<wheel> scripts/install-homr.sh`
   installs it. A system then reads in about 9 seconds instead of 14 and leaves most of
