@@ -1006,6 +1006,16 @@ state model are in `DESIGN.md`.
   `hub.emit`, one at a time per song (`job_state`). The song's display name is
   editable on the Start panel (`POST /rename`); the folder slug never changes, and a
   song already on the site shows the new name there once it is published again.
+  **Delete** (#428, `DELETE /api/songs/{slug}`, the Start panel's *Delete song*) moves
+  the folder to `songs/.trash/<slug>-<time>/` (`state.trash`) rather than removing it:
+  moving it back restores the song. Refused (409) while any job or a scan runs; a
+  published song is only named in the reply, since the site keeps its own copy.
+  `import_legacy` skips dot folders so the trash is never adopted as a song.
+  A request that loaded a song before it was deleted (and perhaps re-created under
+  the same slug) must not touch it: `Song.check_still_here` compares the loaded
+  copy's `created_at` with the file, under `song_lock`, and every save and every job
+  start (`state.start_job`, song lock then job lock) goes through it; `create`
+  claims a slug under the same lock. A mismatch is `SongGone`, a 404.
   **Publish** (`publish.py`, `POST /publish`, body `{choir, settings}`) is where a
   song ends: it sends the song to the Cloudflare stemmanauhat site
   (eerovil/stemmanauhat-cf), which draws the score with OpenSheetMusicDisplay and

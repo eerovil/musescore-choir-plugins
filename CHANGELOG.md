@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A song can be deleted: **Delete song** on its Start page, after a confirmation that
+  names it and says whether it is on the site. The folder moves to `songs/.trash/`,
+  so moving it back undoes it, and the site keeps its copy. Refused while a scan,
+  clean, check or publish runs. (#428)
 - The Publish panel asks where each part name the stemmanauhat site does not know
   yet goes in its voice tree: another name for a voice it has, a new voice under
   one, or no voice (a solo, a trio). Publish writes that to the site first, so a

@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Set
 import dotenv
 from lxml import etree
 from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import (FileResponse, PlainTextResponse,
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
 
@@ -101,6 +101,12 @@ class Hub:
 
 
 hub = Hub()
+
+
+@app.exception_handler(job_state.SongGone)
+async def _song_gone(_request, _exc) -> JSONResponse:
+    """A song deleted while a request was working on it (#428): nothing was written."""
+    return JSONResponse({"detail": "This song was deleted."}, status_code=404)
 
 
 def _require(slug: str) -> state.Song:
@@ -276,6 +282,8 @@ def import_legacy() -> int:
         return 0
     count = 0
     for name in sorted(os.listdir(state.SONGS_DIR)):
+        if name.startswith("."):
+            continue  # .trash and the app's own files, never a song
         try:
             if _import_one(name):
                 count += 1
@@ -338,20 +346,15 @@ async def api_create(
 
     if voicing and voicing not in ("men", "women", "mixed"):
         raise HTTPException(400, "voicing must be men, women or mixed")
-    song = state.create(name, per_system, voicing)
-    sources = song.data.setdefault("sources", {})
+    # Read every upload first, then make the song and write them in one step under
+    # its lock (#428): no await may fall between claiming a slug and filling it.
+    sources = {}
     if has_xml:
-        xml_name = os.path.basename(xml.filename)
-        with open(song.path(xml_name), "wb") as f:
-            f.write(await xml.read())
-        sources["xml"] = xml_name
+        sources["xml"] = (xml.filename, await xml.read())
     if has_pdf:
-        pdf_name = os.path.basename(pdf.filename)
-        with open(song.path(pdf_name), "wb") as f:
-            f.write(await pdf.read())
-        sources["pdf"] = pdf_name
-    song.set_stage("clean" if has_xml else "scan")
-    song.save()
+        sources["pdf"] = (pdf.filename, await pdf.read())
+    song = state.create(name, per_system, voicing, sources=sources,
+                        stage="clean" if has_xml else "scan")
     return {"slug": song.slug}
 
 
@@ -439,8 +442,8 @@ def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
             opts["engine"] = omr.engine_for(key)
         except omr.HomrMissing as exc:
             raise HTTPException(400, str(exc)) from None
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "scan", ("scan", "clean", "check", "publish"),
+    if is_scanning(song) or not state.start_job(
+            song, "scan", ("scan", "clean", "check", "publish"),
             pdf_systems.file_version(song.source_path("pdf"))):
         raise HTTPException(409, "Another scan, clean, or publish is "
                                  "already running for this song.")
@@ -620,8 +623,8 @@ def _run_clean(slug: str) -> None:
 @app.post("/api/songs/{slug}/clean")
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "clean", ("scan", "clean", "check", "publish"),
+    if is_scanning(song) or not state.start_job(
+            song, "clean", ("scan", "clean", "check", "publish"),
             state.file_fingerprint(song.source_path("xml"))):
         raise HTTPException(409, "Another scan, clean, or publish is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
@@ -723,8 +726,8 @@ async def api_recheck(slug: str) -> Dict:
     _cleaned_or_400(song)
     # Not beside a publish either: each saves the whole song state, and the later
     # save would put back the earlier one's copy of the other's result.
-    if is_scanning(song) or not job_state.start_if_idle(
-            song.dir, "check", ("scan", "clean", "check", "publish")):
+    if is_scanning(song) or not state.start_job(
+            song, "check", ("scan", "clean", "check", "publish")):
         raise HTTPException(409, "A scan, clean, check, or publish is already running "
                                  "for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_check, slug)
@@ -978,6 +981,29 @@ async def api_rename(slug: str, body: Dict) -> Dict:
     song.data["name"] = new_name
     song.save()
     return _derived(song)
+
+
+@app.delete("/api/songs/{slug}")
+def api_delete_song(slug: str) -> Dict:
+    """Delete a song from the app by moving its folder to `songs/.trash/` (#428).
+
+    Refused while a scan, clean, check or publish runs on it: the job would go on
+    writing into a folder that is no longer there. The site keeps its own copy, so a
+    published song stays on it; the reply names the choirs it is listed in.
+    """
+    song = _require(slug)
+    with state.song_lock(slug), job_state._lock(song.dir):
+        song = _require(slug)
+        jobs = job_state.load(song.dir)
+        running = [k for k, j in jobs.items()
+                   if isinstance(j, dict) and j.get("status") == "running"]
+        if is_scanning(song) or running:
+            raise HTTPException(409, "A scan, clean, check or publish is running for this "
+                                     "song — delete it once that has finished.")
+        published = song.published()
+        dest = state.trash(slug)
+    return {"slug": slug, "name": song.name, "published": published,
+            "trash": os.path.join("songs", state.TRASH_DIR_NAME, os.path.basename(dest))}
 
 
 @app.post("/api/songs/{slug}/mode")
@@ -1903,8 +1929,8 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         None, _voice_tree_check, config, names, settings.get("places") or [])
     if tree.get("error"):
         raise HTTPException(tree.get("status", 400), tree["error"])
-    if _publish_busy(song) or not job_state.start_if_idle(
-            song.dir, "publish", ("scan", "clean", "check", "publish"), fingerprint):
+    if _publish_busy(song) or not state.start_job(
+            song, "publish", ("scan", "clean", "check", "publish"), fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
     with state.song_lock(slug):
@@ -1983,8 +2009,11 @@ async def _watch_cleaned() -> None:
                 slug = os.path.basename(os.path.dirname(path))
                 touched.add(slug)
         for slug in touched:
-            if _on_cleaned_saved(slug):
-                hub.emit(slug, {"type": "state"})
+            try:
+                if _on_cleaned_saved(slug):
+                    hub.emit(slug, {"type": "state"})
+            except job_state.SongGone:
+                pass  # deleted while it was being re-checked (#428)
 
 
 def _on_cleaned_saved(slug: str) -> bool:
