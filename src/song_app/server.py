@@ -1739,6 +1739,26 @@ def _staff_groups(value, cleaned: str, part_names: Optional[List[str]]):
     return [list(g) for g in groups]
 
 
+def _places(value) -> List[Dict]:
+    """Where new part names go in the site's voice tree, as the Publish panel sends
+    them (#430): ``[{"name", "id"}]`` (a name of a place, or "-" for none) or
+    ``[{"name", "parent"}]`` (a new place under one)."""
+    if not isinstance(value, list):
+        raise HTTPException(400, "Places must be a list")
+    out = []
+    for place in value:
+        if not isinstance(place, dict) or not str(place.get("name") or "").strip():
+            raise HTTPException(400, "Each place needs the part name it is for")
+        vid, parent = place.get("id"), place.get("parent")
+        if (vid is None) == (parent is None) or not str(vid or parent).strip():
+            raise HTTPException(400, f"Part {place['name']}: say a place, a place to put a "
+                                     "new one under, or no place")
+        out.append({"name": str(place["name"]).strip(),
+                    **({"id": str(vid).strip()} if vid is not None
+                       else {"parent": str(parent).strip()})})
+    return out
+
+
 def _publish_settings(song: state.Song, opts: Dict) -> Dict:
     """What the site plays and shows a song with, out of a request (#400).
 
@@ -1773,6 +1793,10 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
         if len(names) != count:
             raise HTTPException(400, publish.part_count_message(count))
         out["part_names"] = names
+    if "places" in opts:
+        out["places"] = _places(opts["places"])
+    elif saved.get("places"):
+        out["places"] = saved["places"]
     if "staff_groups" in opts:
         out["staff_groups"] = _staff_groups(opts["staff_groups"], cleaned, names)
     elif saved.get("staff_groups") is not None:
@@ -1829,7 +1853,8 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
                 client=publish.Cloudflare(config), credits=credits,
-                published=published, choirs=choirs, log=log)
+                published=published, choirs=choirs,
+                places=settings.get("places") or [], log=log)
         record["published_against"] = state.file_fingerprint(cleaned)
         with state.song_lock(slug):
             song = _require(slug)
@@ -1897,6 +1922,13 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     known = [c["id"] for c in listing["choirs"]]
     if choir not in known:
         raise HTTPException(400, f"Choose a choir: {', '.join(known) or 'the site has none'}")
+    # Every part name in the site's voice tree, or a place said for it (#430),
+    # before the job starts: refused here, the panel can say which names.
+    names = settings.get("part_names") or publish.score_parts(song.cleaned_path())
+    tree = await asyncio.get_running_loop().run_in_executor(
+        None, _voice_tree_check, config, names, settings.get("places") or [])
+    if tree.get("error"):
+        raise HTTPException(tree.get("status", 400), tree["error"])
     if _publish_busy(song) or not state.start_job(
             song, "publish", ("scan", "clean", "check", "publish"), fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
@@ -1908,6 +1940,43 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config,
                                                listing["choirs"])
     return {"started": True}
+
+
+def _voice_tree_check(config: Optional["publish.Config"], names: List[str],
+                      places: List[Dict]) -> Dict:
+    """The site's voice tree against these part names (#430): which it does not
+    know, the places it offers, and whether `places` says where each one goes."""
+    if config is None:
+        return {"available": False, "unknown": [], "places": [], "error": publish.MISSING_CONFIG}
+    try:
+        tree = publish.voice_tree(publish.Cloudflare(config))
+    except publish.PublishError as exc:
+        return {"available": False, "unknown": [], "places": [], "status": 502,
+                "error": f"Could not read the site's voice tree: {exc}"}
+    if tree is None:  # a site from before the voice tree: nothing to ask
+        return {"available": False, "unknown": [], "places": [], "error": None}
+    out = {"available": True, "unknown": publish.unknown_names(tree, names),
+           "places": publish.tree_places(tree), "error": None}
+    try:
+        publish.place_statements(tree, names, places)
+    except publish.PublishError as exc:
+        out["error"] = str(exc)
+    return out
+
+
+@app.post("/api/voice-tree")
+async def api_voice_tree(body: Dict = None) -> Dict:
+    """Which of these part names the site's voice tree does not know, and its
+    places, for the Publish panel to ask where each new one goes (#430)."""
+    names = (body or {}).get("names") or []
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise HTTPException(400, "names must be a list of part names")
+    reply = await asyncio.get_running_loop().run_in_executor(
+        None, _voice_tree_check, publish.Config.from_env(), names, [])
+    reply.pop("status", None)
+    if reply["available"]:
+        reply["error"] = None  # no places were given: the unknown names say it
+    return reply
 
 
 @app.get("/api/choirs")

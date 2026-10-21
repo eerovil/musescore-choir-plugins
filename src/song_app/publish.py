@@ -36,6 +36,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -526,6 +527,162 @@ def choirs(config: Optional[Config], songs_dir: str,
 
 
 # ---------------------------------------------------------------------------
+# The site's voice tree (stemmanauhat-cf#107)
+# ---------------------------------------------------------------------------
+# The site carries a singer's part from song to song with a tree of voices in
+# D1: `voices` (id, parent, name_fi, name_en, names) up to four levels deep, and
+# `unplaced_parts`, names in no place on purpose (a solo, a trio). A part name
+# in neither is refused before anything goes up, and the person publishing says
+# where it goes (#430): where a part belongs is their call, never a guess. The
+# rules are the site's own (`knowsName`, `treePlan` in its publish-songs.mjs).
+MAX_DEPTH = 4
+NO_PLACE = "-"
+
+
+def _norm(name: str) -> str:
+    """Names are the same when they differ only in letter case and spaces."""
+    return re.sub(r"\s+", "", name).lower()
+
+
+@dataclass
+class VoiceTree:
+    voices: List[Dict]   # {"id", "parent", "name", "names"}, in the site's order
+    unplaced: List[str]
+
+
+def _rows(result: List[Dict], columns: Sequence[str]) -> List[Dict]:
+    rows = []
+    for part in result:
+        for row in part.get("results") or []:
+            rows.append(dict(row) if isinstance(row, dict) else dict(zip(columns, row)))
+    return rows
+
+
+def voice_tree(client: "Cloudflare") -> Optional[VoiceTree]:
+    """The site's voice tree, or None for a site that has none yet (before its migration 0009)."""
+    try:
+        voices = _rows(client.query("SELECT id, parent, name_fi, names FROM voices"),
+                       ("id", "parent", "name_fi", "names"))
+        unplaced = _rows(client.query("SELECT name FROM unplaced_parts"), ("name",))
+    except PublishError as exc:
+        if "no such table" in str(exc):
+            return None
+        raise
+    return VoiceTree(
+        voices=[{"id": v["id"], "parent": v["parent"], "name": v["name_fi"],
+                 "names": json.loads(v["names"] or "[]")} for v in voices],
+        unplaced=[r["name"] for r in unplaced])
+
+
+def _depth(voices: Sequence[Dict], vid: str) -> float:
+    """How many levels down `vid` is (1 at the top); infinite when its parents are missing or loop."""
+    by_id = {v["id"]: v for v in voices}
+    seen = set()
+    voice = by_id.get(vid)
+    while voice:
+        if voice["id"] in seen:
+            return float("inf")
+        seen.add(voice["id"])
+        if voice["parent"] is None:
+            return len(seen)
+        voice = by_id.get(voice["parent"])
+    return float("inf")
+
+
+def knows_name(tree: VoiceTree, name: str) -> bool:
+    """Whether the site can place `name`: a place's name, a name in no place, or a
+    split part ("S1b") of a name above the fourth level."""
+    key = _norm(name)
+
+    def at(k):
+        return next((v for v in tree.voices if any(_norm(n) == k for n in v["names"])), None)
+    if at(key) or any(_norm(n) == key for n in tree.unplaced):
+        return True
+    above = at(key[:-1]) if len(key) > 1 and key.endswith("b") else None
+    return above is not None and _depth(tree.voices, above["id"]) < MAX_DEPTH
+
+
+def unknown_names(tree: VoiceTree, names: Sequence[str]) -> List[str]:
+    """The part names the tree does not know, once each, as the song spells them."""
+    out: List[str] = []
+    for name in names:
+        if not knows_name(tree, name) and _norm(name) not in {_norm(n) for n in out}:
+            out.append(name)
+    return out
+
+
+def tree_places(tree: VoiceTree) -> List[Dict]:
+    """The places for the Publish panel to offer, each under its parent, with its depth."""
+    children: Dict[Optional[str], List[Dict]] = {}
+    ids = {v["id"] for v in tree.voices}
+    for voice in tree.voices:
+        children.setdefault(voice["parent"] if voice["parent"] in ids else None, []).append(voice)
+    out: List[Dict] = []
+
+    def walk(parent, depth):
+        for voice in children.get(parent, []):
+            if any(o["id"] == voice["id"] for o in out):
+                continue  # a loop in hand-edited rows
+            out.append({"id": voice["id"], "name": voice["name"], "depth": depth,
+                        "can_hold": depth < MAX_DEPTH})
+            walk(voice["id"], depth + 1)
+    walk(None, 1)
+    return out
+
+
+def _said(place: Dict) -> str:
+    """One place choice in words, for the publish log."""
+    if place.get("id") == NO_PLACE:
+        return f"{place['name']} in no place"
+    if place.get("parent") is not None:
+        return f"{place['name']} a new place under {place['parent']}"
+    return f"{place['name']} → {place.get('id')}"
+
+
+def place_statements(tree: VoiceTree, names: Sequence[str],
+                     places: Sequence[Dict]) -> List[Tuple[str, List]]:
+    """The D1 statements that put every unknown part name where the person
+    publishing said, in order. `places` is ``[{"name", "id"}]`` for a name of an
+    existing place, ``[{"name", "parent"}]`` for a new place under one, or
+    ``[{"name", "id": "-"}]`` for no place. Refuses, naming them, when an unknown
+    name has no place given or a place cannot be used.
+    """
+    unknown = {_norm(n): n for n in unknown_names(tree, names)}
+    ids = {v["id"] for v in tree.voices}
+    statements: List[Tuple[str, List]] = []
+    for place in places or []:
+        name = str(place.get("name") or "").strip()
+        if _norm(name) not in unknown:
+            continue  # a choice kept from before, for a name the tree knows now or the song lost
+        del unknown[_norm(name)]
+        vid, parent = place.get("id"), place.get("parent")
+        if vid == NO_PLACE:
+            statements.append(("INSERT OR IGNORE INTO unplaced_parts (name) VALUES (?)", [name]))
+        elif parent is not None:
+            if parent not in ids or _depth(tree.voices, parent) >= MAX_DEPTH:
+                raise PublishError(f"Part {name}: there is no place {parent} to put a new "
+                                   "place under, or it is at the fourth level.")
+            # The new place's id is the name it is made for, made unique; it shows
+            # as that name in both languages until renamed on the site.
+            new_id, n = name, 2
+            while new_id in ids:
+                new_id, n = f"{name} {n}", n + 1
+            ids.add(new_id)
+            statements.append(("INSERT INTO voices (id, parent, name_fi, name_en, names) "
+                               "VALUES (?, ?, ?, ?, ?)",
+                               [new_id, parent, name, name, json.dumps([name], ensure_ascii=False)]))
+        elif vid in ids:
+            statements.append(("UPDATE voices SET names = json_insert(names, '$[#]', ?) "
+                               "WHERE id = ?", [name, vid]))
+        else:
+            raise PublishError(f"Part {name}: the site has no place {vid}.")
+    if unknown:
+        raise PublishError("Say where each new part name goes on the site: "
+                           + ", ".join(unknown.values()) + ".")
+    return statements
+
+
+# ---------------------------------------------------------------------------
 # Publishing
 # ---------------------------------------------------------------------------
 
@@ -561,7 +718,8 @@ def replaced(choir: str, published: Dict[str, Dict],
 def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudflare,
             credits: Optional[Dict[str, str]] = None,
             published: Optional[Dict[str, Dict]] = None,
-            choirs: Optional[Sequence[Dict]] = None, log: Logger = _noop) -> Dict:
+            choirs: Optional[Sequence[Dict]] = None, places: Sequence[Dict] = (),
+            log: Logger = _noop) -> Dict:
     """Upload `bundle` and register it for `choir`. Returns the record to keep.
 
     The files go under a fresh version prefix first; the D1 row is pointed at
@@ -573,7 +731,9 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     takes nothing away. `credits` names the composer, lyricist and arranger; an
     empty or missing one is left out. `choirs` is the site's choirs
     (``site_choirs``) when the caller has just read them; without it they are
-    read here.
+    read here. `places` says where each part name the site's voice tree does
+    not know goes (``place_statements``); those rows are written before
+    anything goes up, as the site's own publish script does.
     """
     listed = list(choirs) if choirs is not None else site_choirs(client)
     known = [c["id"] for c in listed]
@@ -589,6 +749,15 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     manifest = {"slug": slug, "title": title, "choir": choir, "version": version,
                 "score": "score.musicxml", "timing": "timing.json", "midi": "score.mid",
                 "parts": parts, "duration": duration, **named}
+
+    tree = voice_tree(client)
+    if tree is not None:
+        unknown = {_norm(n) for n in unknown_names(tree, bundle.parts)}
+        for sql, params in place_statements(tree, bundle.parts, places):
+            client.query(sql, params)
+        if unknown:
+            log("Voice tree: " + ", ".join(_said(p) for p in places
+                                           if _norm(str(p.get("name") or "")) in unknown))
 
     uploads: List[Tuple[str, bytes, str]] = []
     with open(bundle.musicxml, "rb") as f:
