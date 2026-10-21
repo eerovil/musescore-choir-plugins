@@ -1705,7 +1705,29 @@ function panelRegister(panel, song, P, refresh) {
     el("p", {}, `PDF: ${song.sources?.pdf || "— (none)"}`),
     el("p", {}, `Mode: ${song.mode}`),
     el("p", { className: "hint" }, "Go to the Clean step to build the score."),
+    deleteSongBox(song, P),
     makeLog());
+}
+
+// Delete the song from the app (#428). The folder goes to songs/.trash/, so moving it
+// back undoes this; the site keeps its own copy of a published song.
+function deleteSongBox(song, P) {
+  const onSite = song.published?.length
+    ? `It stays on the site (${song.published.join(", ")}): deleting here does not touch the site.`
+    : "It is not on the site.";
+  const btn = el("button", { className: "danger deletesong", onclick: async () => {
+    if (!confirm(`Delete “${song.name}”?\n\n${onSite}\n\n`
+        + "The folder is moved to songs/.trash/, so it can be put back by hand.")) return;
+    btn.disabled = true;
+    try {
+      await api(P, { method: "DELETE" });
+      location.hash = "";
+    } catch (e) { btn.disabled = false; appendLog(e.message, true); }
+  }}, "Delete song");
+  return el("div", { className: "deletebox", style: "margin-top:24px" },
+    el("h3", {}, "Delete"),
+    el("p", { className: "hint" }, `Removes the song from this app. ${onSite}`),
+    el("div", { className: "row" }, btn));
 }
 
 async function panelClean(panel, song, slug, P, refresh) {

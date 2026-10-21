@@ -20,6 +20,10 @@ from . import health
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
 STATE_FILE = ".song.json"
+# Deleted songs are moved here rather than removed (#428), so a mistake is undone by
+# moving the folder back. Inside songs/ so the move is one rename on one disk, and
+# the nightly backup keeps a copy. A dot folder, so nothing lists it as a song.
+TRASH_DIR_NAME = ".trash"
 
 # Linear stages; `fix` and `lyrics` form a loop (lyric overflow can re-open fix).
 #
@@ -215,6 +219,22 @@ def list_songs() -> List[Song]:
             if s:
                 songs.append(s)
     return songs
+
+
+def trash(slug: str) -> str:
+    """Move a song's folder into `songs/.trash/<slug>-<time>/`; return where it went.
+
+    Moving it back to `songs/<slug>/` restores it as it was.
+    """
+    trash_dir = os.path.join(SONGS_DIR, TRASH_DIR_NAME)
+    os.makedirs(trash_dir, exist_ok=True)
+    base = f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}"
+    dest, n = os.path.join(trash_dir, base), 2
+    while os.path.exists(dest):
+        dest = os.path.join(trash_dir, f"{base}-{n}")
+        n += 1
+    os.rename(song_dir(slug), dest)
+    return dest
 
 
 def create(name: str, per_system: bool, voicing: str = "") -> Song:

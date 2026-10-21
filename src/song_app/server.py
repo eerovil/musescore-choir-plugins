@@ -276,6 +276,8 @@ def import_legacy() -> int:
         return 0
     count = 0
     for name in sorted(os.listdir(state.SONGS_DIR)):
+        if name.startswith("."):
+            continue  # .trash and the app's own files, never a song
         try:
             if _import_one(name):
                 count += 1
@@ -978,6 +980,29 @@ async def api_rename(slug: str, body: Dict) -> Dict:
     song.data["name"] = new_name
     song.save()
     return _derived(song)
+
+
+@app.delete("/api/songs/{slug}")
+def api_delete_song(slug: str) -> Dict:
+    """Delete a song from the app by moving its folder to `songs/.trash/` (#428).
+
+    Refused while a scan, clean, check or publish runs on it: the job would go on
+    writing into a folder that is no longer there. The site keeps its own copy, so a
+    published song stays on it; the reply names the choirs it is listed in.
+    """
+    song = _require(slug)
+    with state.song_lock(slug), job_state._lock(song.dir):
+        song = _require(slug)
+        jobs = job_state.load(song.dir)
+        running = [k for k, j in jobs.items()
+                   if isinstance(j, dict) and j.get("status") == "running"]
+        if is_scanning(song) or running:
+            raise HTTPException(409, "A scan, clean, check or publish is running for this "
+                                     "song — delete it once that has finished.")
+        published = song.published()
+        dest = state.trash(slug)
+    return {"slug": slug, "name": song.name, "published": published,
+            "trash": os.path.join("songs", state.TRASH_DIR_NAME, os.path.basename(dest))}
 
 
 @app.post("/api/songs/{slug}/mode")

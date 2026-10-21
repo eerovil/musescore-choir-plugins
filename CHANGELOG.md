@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A song can be deleted: **Delete song** on its Start page, after a confirmation that
+  names it and says whether it is on the site. The folder moves to `songs/.trash/`,
+  so moving it back undoes it, and the site keeps its copy. Refused while a scan,
+  clean, check or publish runs. (#428)
 - homr can read on this host's GTX 970: `scripts/onnxruntime-sm52/build.sh` builds an
   onnxruntime the card can run, and `HOMR_ORT_WHEEL=<wheel> scripts/install-homr.sh`
   installs it. A system then reads in about 9 seconds instead of 14 and leaves most of
