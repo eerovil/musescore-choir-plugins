@@ -62,6 +62,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import tempfile
@@ -73,7 +74,7 @@ from typing import Callable, Dict, List, Optional
 
 from lxml import etree
 
-from . import heavy_slot, remote_homr
+from . import heavy_slot
 
 Logger = Callable[[str], None]
 
@@ -685,16 +686,8 @@ def read_page(
             log("This homr cannot mark the bars it is unsure of, so none are "
                 "marked: update homr to have them checked")
 
-        # eero-pc's card first, when it is free (#437); this host's slot otherwise.
-        output = None
-        if remote_homr.wanted(engine):
-            try:
-                output = remote_homr.read(
-                    scratch_image, flags, scratch,
-                    os.path.dirname(os.path.dirname(engine.command[0])),
-                    log=log, timeout=timeout)
-            except remote_homr.Unavailable as exc:
-                log(f"eero-pc did not read it ({exc}); reading it on this host")
+        # Another machine first, when .env names a reader for it (#437).
+        output = _read_remotely(engine, flags, scratch_image, scratch, log)
         watched = log
         if output is None:
             with _queued(label or f"song app homr {base}", log, queue) as slot:
@@ -948,6 +941,42 @@ def _split_measure(measure: etree._Element, spare: int) -> List[MovedRest]:
     for offset, el in enumerate(rebuilt):
         measure.insert(first + offset, el)
     return moved
+
+
+#: How long the remote reader may take, its own first-time setup included.
+REMOTE_TIMEOUT = 1800
+
+
+def _read_remotely(engine: Engine, flags: List[str], image: str, out_dir: str,
+                   log: Logger) -> Optional[List[str]]:
+    """Read ``image`` with ``HOMR_REMOTE_READER``, or say why not and return None.
+
+    The reader is a command, run as ``<reader> <homr venv> <out dir> <homr flags...>
+    <image>``; it prints the read's log and exits 0 with ``<out dir>/<image
+    name>.musicxml`` written. Anything else and the page is read here under the heavy
+    slot, as without one. It is this host's business which machine reads and how it
+    reads the same as here (on the owner's host: eero-pc's GPU, eeron-omat-taskit's
+    ``homr-eero-pc``). Only the installed homr is offered: a working copy of a branch
+    is run from this host's disk.
+    """
+    reader = (os.getenv("HOMR_REMOTE_READER") or "").strip()
+    if not reader or not engine.default:
+        return None
+    venv = os.path.dirname(os.path.dirname(engine.command[0]))
+    produced = os.path.join(out_dir, os.path.splitext(os.path.basename(image))[0]
+                            + ".musicxml")
+    try:
+        lines = _run(shlex.split(reader) + [venv, out_dir] + flags + [image], log,
+                     REMOTE_TIMEOUT)
+    except HomrError as exc:
+        why = str(exc).strip().splitlines()
+        log(f"The remote reader did not read it ({why[-1] if why else 'no reason given'}); "
+            "reading it on this host")
+        return None
+    if not os.path.exists(produced):
+        log("The remote reader wrote no MusicXML; reading it on this host")
+        return None
+    return lines
 
 
 @contextmanager
