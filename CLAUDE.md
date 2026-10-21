@@ -1539,6 +1539,15 @@ state model are in `DESIGN.md`.
   stops with `SlotLost`). homr's own output lines are the checkpoints `Slot.guard`
   needs, and abandoning the read loop kills homr's process group — otherwise it would
   keep running on cores that have been handed away.
+  **Another machine may read a band first** (#437): when `.env` names
+  `HOMR_REMOTE_READER`, `read_page` runs it as `<reader> <homr venv> <out dir> <homr
+  flags...> <image>` for the installed homr (never a branch engine), streams what it
+  prints into the log, and uses `<out dir>/<image>.musicxml` when it exits 0 with the file
+  written; anything else reads the band here under the heavy slot, as without one. Which
+  machine and how it reads the same as here is the host's business, not this repo's: on
+  the owner's host it is eero-pc's GPU, `~/eeron-omat-taskit/homr-eero-pc/read_band.py`
+  (its README says how it pins homr to this host's install and survives eero-pc's cut
+  `kubectl exec` streams). `test_remote_reader.py` pins the contract with a stub reader.
   **One slot per page, not one per song.** The page is the unit `read_page` owns and
   each page writes its own MusicXML, so releasing between pages lets a suite in, and an interruption costs the page in flight rather than the song — the
   pages already read are on disk. A caller that would rather hold one lease across a

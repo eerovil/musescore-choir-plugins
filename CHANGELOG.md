@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A scan can hand each system to another machine first (`HOMR_REMOTE_READER` in `.env`),
+  so several songs scanning at once need not wait in one queue on this host; when that
+  machine cannot read it, the system is read here as before. (#438)
 - A part's second line can hold a note across a barline: `tie` and `untie` entries in
   `fixes.json` take `"voice": 2`, and the held note is sung once, not again with a
   word of its own. (#434)

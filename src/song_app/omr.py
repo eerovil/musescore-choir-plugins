@@ -62,6 +62,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import tempfile
@@ -676,21 +677,27 @@ def read_page(
         shutil.copy2(image_path, scratch_image)
         produced = os.path.join(scratch, base + ".musicxml")
 
-        with _queued(label or f"song app homr {base}", log, queue) as slot:
-            # homr's own output is the only place a page can be interrupted, so
-            # that is where the lease is checked (heavy_slot.Slot.guard).
-            watched = slot.guard(log)
-            watched(f"Reading {os.path.basename(image_path)} with homr")
-            argv = list(engine.command) + ["--gpu", engine.gpu, "--no-title"]
-            if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
-                argv += [BAR_LENGTH_FLAG, str(bar_length)]
-            if engine_supports(engine, MARK_DOUBT_FLAG):
-                argv.append(MARK_DOUBT_FLAG)
-            else:
-                watched("This homr cannot mark the bars it is unsure of, so none are "
-                        "marked: update homr to have them checked")
-            output = _run(argv + [scratch_image], watched, timeout, engine.env)
-            slot.check()
+        flags = ["--gpu", engine.gpu, "--no-title"]
+        if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
+            flags += [BAR_LENGTH_FLAG, str(bar_length)]
+        if engine_supports(engine, MARK_DOUBT_FLAG):
+            flags.append(MARK_DOUBT_FLAG)
+        else:
+            log("This homr cannot mark the bars it is unsure of, so none are "
+                "marked: update homr to have them checked")
+
+        # Another machine first, when .env names a reader for it (#437).
+        output = _read_remotely(engine, flags, scratch_image, scratch, log)
+        watched = log
+        if output is None:
+            with _queued(label or f"song app homr {base}", log, queue) as slot:
+                # homr's own output is the only place a page can be interrupted, so
+                # that is where the lease is checked (heavy_slot.Slot.guard).
+                watched = slot.guard(log)
+                watched(f"Reading {os.path.basename(image_path)} with homr")
+                output = _run(list(engine.command) + flags + [scratch_image],
+                              watched, timeout, engine.env)
+                slot.check()
 
         if not os.path.exists(produced):
             # homr deletes its own output when parsing fails, so a zero exit
@@ -934,6 +941,42 @@ def _split_measure(measure: etree._Element, spare: int) -> List[MovedRest]:
     for offset, el in enumerate(rebuilt):
         measure.insert(first + offset, el)
     return moved
+
+
+#: How long the remote reader may take, its own first-time setup included.
+REMOTE_TIMEOUT = 1800
+
+
+def _read_remotely(engine: Engine, flags: List[str], image: str, out_dir: str,
+                   log: Logger) -> Optional[List[str]]:
+    """Read ``image`` with ``HOMR_REMOTE_READER``, or say why not and return None.
+
+    The reader is a command, run as ``<reader> <homr venv> <out dir> <homr flags...>
+    <image>``; it prints the read's log and exits 0 with ``<out dir>/<image
+    name>.musicxml`` written. Anything else and the page is read here under the heavy
+    slot, as without one. It is this host's business which machine reads and how it
+    reads the same as here (on the owner's host: eero-pc's GPU, eeron-omat-taskit's
+    ``homr-eero-pc``). Only the installed homr is offered: a working copy of a branch
+    is run from this host's disk.
+    """
+    reader = (os.getenv("HOMR_REMOTE_READER") or "").strip()
+    if not reader or not engine.default:
+        return None
+    venv = os.path.dirname(os.path.dirname(engine.command[0]))
+    produced = os.path.join(out_dir, os.path.splitext(os.path.basename(image))[0]
+                            + ".musicxml")
+    try:
+        lines = _run(shlex.split(reader) + [venv, out_dir] + flags + [image], log,
+                     REMOTE_TIMEOUT)
+    except HomrError as exc:
+        why = str(exc).strip().splitlines()
+        log(f"The remote reader did not read it ({why[-1] if why else 'no reason given'}); "
+            "reading it on this host")
+        return None
+    if not os.path.exists(produced):
+        log("The remote reader wrote no MusicXML; reading it on this host")
+        return None
+    return lines
 
 
 @contextmanager
