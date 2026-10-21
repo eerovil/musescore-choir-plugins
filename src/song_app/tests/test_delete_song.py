@@ -92,3 +92,61 @@ def test_unknown_song_is_404(client):
     c, _song, _songs = client
     assert c.delete("/api/songs/no-such").status_code == 404
     assert c.delete("/api/songs/.trash").status_code == 404
+
+
+def test_a_job_starting_after_the_delete_is_refused_and_recreates_nothing(client, monkeypatch):
+    """The clean route found the song, then the delete moved it before the job started."""
+    c, song, songs = client
+    monkeypatch.setattr(server, "is_scanning", lambda s: bool(state.trash(s.slug)) and False)
+    r = c.post(f"/api/songs/{song.slug}/clean")
+    assert r.status_code == 404
+    assert not os.path.exists(songs / "talviuni")
+
+
+def test_start_if_idle_on_a_moved_folder_raises_and_writes_nothing(tmp_path):
+    gone = tmp_path / "songs" / "talviuni"
+    with pytest.raises(job_state.SongGone):
+        job_state.start_if_idle(str(gone), "clean", ("clean",))
+    assert not gone.exists()
+
+
+def test_delete_and_job_start_racing_never_leave_a_phantom_folder(client):
+    """Either the job starts first and the delete is refused, or the delete wins and
+    the job is refused -- never a recreated folder holding a running job."""
+    import threading
+    from fastapi import HTTPException
+
+    _c, _song, songs = client
+    for i in range(40):
+        s = state.create("Talviuni", per_system=False)
+        barrier = threading.Barrier(2)
+        out = {}
+
+        def delete():
+            barrier.wait()
+            try:
+                server.api_delete_song(s.slug)
+                out["deleted"] = True
+            except HTTPException as exc:
+                out["deleted"] = exc.status_code
+
+        def start():
+            barrier.wait()
+            try:
+                out["started"] = bool(job_state.start_if_idle(s.dir, "clean", ("clean",)))
+            except job_state.SongGone:
+                out["started"] = False
+
+        threads = [threading.Thread(target=delete), threading.Thread(target=start)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if out["started"]:
+            assert out["deleted"] == 409
+            assert (songs / s.slug / ".song.json").exists()
+            job_state.finish(s.dir, "clean")
+            server.api_delete_song(s.slug)
+        else:
+            assert out["deleted"] is True
+        assert not os.path.exists(songs / s.slug), f"round {i} left a folder behind"
