@@ -95,6 +95,24 @@ def test_writing_it_again_replaces_the_line_and_keeps_its_words(root):
     assert _voices(root)[1].findtext("Chord/Lyrics/text") == "breeze"
 
 
+def test_rewriting_keeps_each_chord_s_words_in_place_every_verse(root):
+    two = [{"value": "note_2", "pitches": [75], "tpcs": [11]},
+           {"value": "note_2", "pitches": [74], "tpcs": [16]}]
+    apply_fixes(root, [_fix(root, to=two)])
+    second = _voices(root)[1].findall("Chord")[1]
+    for verse, text in ((None, "breeze"), ("1", "wind")):
+        lyric = etree.fromstring(f"<Lyrics>{f'<no>{verse}</no>' if verse else ''}"
+                                 f"<text>{text}</text></Lyrics>")
+        second.insert(0, lyric)
+    again = [{"value": "note_2", "pitches": [75], "tpcs": [11]},
+             {"value": "note_2", "pitches": [72], "tpcs": [14]}]
+    apply_fixes(root, [_fix(root, to=again)])
+    first, second = _voices(root)[1].findall("Chord")
+    assert first.find("Lyrics") is None
+    assert sorted(l.findtext("text") for l in second.findall("Lyrics")) == ["breeze", "wind"]
+    assert list(second)[-1].tag == "Note"
+
+
 @pytest.mark.parametrize("to, says", [
     ([{"value": "note_2", "pitches": [75], "tpcs": [11]}], "write its silences out as rests"),
     ([{"value": "rest_1"}], "has no notes"),

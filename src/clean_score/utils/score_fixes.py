@@ -1739,10 +1739,13 @@ def _write_voice2(root: etree._Element, staff_id: int, measure_no: int,
     for el in written:
         voice.append(el)
     _bracket_triplets(written, values, groups)
-    words = [] if old is None else [c.find("Lyrics") for c in old.findall("Chord")]
-    for chord, lyric in zip([el for el in written if el.tag == "Chord"],
-                            [w for w in words if w is not None]):
-        chord.insert(list(chord).index(chord.find("Note")), lyric)
+    # Words stay on the chord at the same place in the line, every verse of them: the
+    # n-th chord keeps the n-th chord's words, and a chord that sang none still sings none.
+    words = [] if old is None else [c.findall("Lyrics") for c in old.findall("Chord")]
+    for chord, lyrics in zip([el for el in written if el.tag == "Chord"], words):
+        at = list(chord).index(chord.find("Note"))
+        for offset, lyric in enumerate(lyrics):
+            chord.insert(at + offset, lyric)
     if old is not None:
         measure.replace(old, voice)
         return f"wrote voice 2 afresh as {_voice_tokens(voice)}"
