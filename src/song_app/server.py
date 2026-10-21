@@ -346,20 +346,15 @@ async def api_create(
 
     if voicing and voicing not in ("men", "women", "mixed"):
         raise HTTPException(400, "voicing must be men, women or mixed")
-    song = state.create(name, per_system, voicing)
-    sources = song.data.setdefault("sources", {})
+    # Read every upload first, then make the song and write them in one step under
+    # its lock (#428): no await may fall between claiming a slug and filling it.
+    sources = {}
     if has_xml:
-        xml_name = os.path.basename(xml.filename)
-        with open(song.path(xml_name), "wb") as f:
-            f.write(await xml.read())
-        sources["xml"] = xml_name
+        sources["xml"] = (xml.filename, await xml.read())
     if has_pdf:
-        pdf_name = os.path.basename(pdf.filename)
-        with open(song.path(pdf_name), "wb") as f:
-            f.write(await pdf.read())
-        sources["pdf"] = pdf_name
-    song.set_stage("clean" if has_xml else "scan")
-    song.save()
+        sources["pdf"] = (pdf.filename, await pdf.read())
+    song = state.create(name, per_system, voicing, sources=sources,
+                        stage="clean" if has_xml else "scan")
     return {"slug": song.slug}
 
 

@@ -274,8 +274,13 @@ def trash(slug: str) -> str:
     return dest
 
 
-def create(name: str, per_system: bool, voicing: str = "") -> Song:
-    """Create a new song folder + state file. Caller then attaches source files.
+def create(name: str, per_system: bool, voicing: str = "",
+           sources: Optional[Dict[str, tuple]] = None, stage: str = "register") -> Song:
+    """Create a new song folder + state file.
+
+    `sources` maps a kind ("xml", "pdf") to `(file name, bytes)`; they are written
+    with the state file under the slug's lock, so nothing lands in a song deleted
+    or re-created meanwhile (#428). Read uploads before calling this.
 
     `voicing` ("men"/"women"/"mixed") settles what the parts are called. Clef and
     pitch cannot: a male-choir score is written in treble sounding an octave down
@@ -289,21 +294,27 @@ def create(name: str, per_system: bool, voicing: str = "") -> Song:
     while True:
         with song_lock(slug):
             if not os.path.exists(os.path.join(song_dir(slug), STATE_FILE)):
-                return _create_at(slug, name, per_system, voicing)
+                return _create_at(slug, name, per_system, voicing, sources or {}, stage)
         slug = f"{base}-{n}"
         n += 1
 
 
-def _create_at(slug: str, name: str, per_system: bool, voicing: str) -> Song:
+def _create_at(slug: str, name: str, per_system: bool, voicing: str,
+               sources: Dict[str, tuple], stage: str) -> Song:
     s = Song(slug, {
         "name": name,
         "slug": slug,
-        "stage": "register",
+        "stage": stage,
         "mode": "per-system" if per_system else "normal",
         "voicing": voicing or "",
         "sources": {},
         "created_at": time.time(),
     })
     os.makedirs(s.dir, exist_ok=True)
+    for kind, (file_name, data) in sources.items():
+        file_name = os.path.basename(file_name)
+        with open(s.path(file_name), "wb") as f:
+            f.write(data)
+        s.data["sources"][kind] = file_name
     s.save()
     return s

@@ -211,3 +211,35 @@ def test_an_old_clean_cannot_start_on_a_new_song_with_the_same_slug(client, monk
     assert made["b"].slug == "talviuni"
     assert job_state.load(made["b"].dir) == {}
     assert state.load("talviuni").data == made["b"].data
+
+
+def test_a_song_made_while_an_upload_is_read_keeps_its_files(client, monkeypatch):
+    """#428: while song A's PDF upload is still being read, A (if it exists yet) is
+    deleted and B takes the slug. A's files must never land in B."""
+    from starlette.datastructures import UploadFile
+    c, song, songs = client
+    c.delete(f"/api/songs/{song.slug}")            # free `talviuni` for A
+    made = {}
+    real_read = UploadFile.read
+
+    async def read_then_replace(self, *args, **kwargs):
+        data = await real_read(self, *args, **kwargs)
+        if self.filename == "a.pdf" and "b" not in made:
+            if (songs / "talviuni").exists():
+                state.trash("talviuni")
+            made["b"] = state.create("Talviuni", per_system=False,
+                                     sources={"pdf": ("a.pdf", b"B's own pdf")}, stage="scan")
+        return data
+
+    monkeypatch.setattr(UploadFile, "read", read_then_replace)
+    r = c.post("/api/songs", data={"name": "Talviuni"},
+               files={"xml": ("a.mscx", b"<museScore/>"), "pdf": ("a.pdf", b"A's pdf")})
+    assert r.status_code == 200, r.text
+    b = made["b"]
+    assert b.slug == "talviuni" and r.json()["slug"] == "talviuni-2"
+    assert (songs / "talviuni" / "a.pdf").read_bytes() == b"B's own pdf"
+    assert not (songs / "talviuni" / "a.mscx").exists()
+    assert state.load("talviuni").data == b.data
+    a = state.load("talviuni-2")
+    assert a.data["sources"] == {"xml": "a.mscx", "pdf": "a.pdf"} and a.stage == "clean"
+    assert (songs / "talviuni-2" / "a.pdf").read_bytes() == b"A's pdf"
