@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A part's second line can hold a note across a barline: `tie` and `untie` entries in
+  `fixes.json` take `"voice": 2`, and the held note is sung once, not again with a
+  word of its own. (#434)
 - A part that splits on the page for a bar or two keeps both lines: a `voice2` entry in a
   song's `fixes.json` writes the second line into that bar of the part, with its own words
   from the lyric editor's voice-2 box, and the site gets both lines. (#431)
