@@ -2,6 +2,10 @@
 
 Guidance for working in this repository.
 
+This guide is about 2,900 lines. List its headings with `grep -n '^#' CLAUDE.md` and read the
+section for your task before writing steps. Live-check song-app with a desktop viewport (about
+1280 wide): below 840 px the stage bar folds into a menu (`style.css`).
+
 ## What this project is
 
 A personal toolkit for producing **choir practice tracks** from MuseScore
