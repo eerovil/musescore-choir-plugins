@@ -85,6 +85,7 @@ jobs:
             src/song_app/tests \
             src/score_export/tests \
             src/sing_song/tests \
+            src/kube_runner/tests \
             -m "not browser" \
             --strict-markers \
             --durations=10 \

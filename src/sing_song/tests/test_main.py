@@ -393,3 +393,132 @@ def test_sing_skips_a_folded_parts_resting_staff_and_sings_its_lettered_line(tmp
                       ["lyse_core", "lyse_core"], "fi", sys.executable, "/ufr", False, groups=[["1", "2"], ["3"]])
     assert [(os.path.basename(js), pitches) for js, pitches in sung] == [
         ("p1-2high.json", [69, 69, 69, 69]), ("p2-high.json", [60, 60, 60, 60])]
+
+
+# REMOTE_RUNNER: lines shared between this host and the runner (share()), as --also-eero-pc did
+import time  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def not_stopping():
+    publish_song.STOPPING.clear()
+    yield
+    publish_song.STOPPING.clear()
+
+
+def singer(log_to, seconds=0.0):
+    def sing(job):
+        time.sleep(seconds)
+        log_to.append(job)
+    return sing
+
+
+def test_without_a_runner_every_line_is_sung_here():
+    here = []
+    done = publish_song.share([1, 2, 3], singer(here))
+    assert here == [1, 2, 3] and set(done.values()) == {"here"}
+
+
+def test_both_sing_and_every_line_once():
+    here, there = [], []
+    done = publish_song.share(list(range(8)), singer(here, 0.05), singer(there, 0.01))
+    assert sorted(here + there) == list(range(8))
+    assert here and there and len(there) > len(here)   # the faster one takes more
+    assert {j for j, w in done.items() if w == "there"} == set(there)
+
+
+def test_a_line_the_runner_fails_is_sung_here_and_it_takes_no_more():
+    here, tried = [], []
+
+    def broken(job):
+        tried.append(job)
+        raise RuntimeError("no card")
+    done = publish_song.share([1, 2, 3, 4], singer(here, 0.05), broken)
+    assert len(tried) == 1 and sorted(here) == [1, 2, 3, 4] and set(done.values()) == {"here"}
+
+
+def test_a_failure_here_stops_the_run():
+    with pytest.raises(SystemExit):
+        publish_song.share([1, 2, 3], lambda job: sys.exit("singer failed"))
+
+
+def runner_script(tmp_path, body):
+    path = tmp_path / "runner"
+    path.write_text("#!/usr/bin/env bash\n" + body)
+    path.chmod(0o755)
+    return str(path)
+
+
+def test_the_runner_is_asked_to_sing_the_line_and_its_wav_is_used(tmp_path):
+    runner = runner_script(tmp_path, 'echo "$@" > "$(dirname "$0")/args"; echo "RIFF $SONG_LANG" > "$3"\n')
+    wav = tmp_path / "p1-high.wav"
+    publish_song.sing_remotely(runner, str(tmp_path / "p1-high.json"), str(wav), "remy_adult",
+                               dict(os.environ, SONG_LANG="la"))
+    assert wav.read_text() == "RIFF la\n"
+    assert (tmp_path / "args").read_text().split() == ["sing-line", str(tmp_path / "p1-high.json"), str(wav),
+                                                        "remy_adult"]
+
+
+def test_a_runner_that_cannot_says_why(tmp_path):
+    runner = runner_script(tmp_path, 'echo "trying"; echo "the card is not free"; exit 3\n')
+    with pytest.raises(RuntimeError, match="the card is not free"):
+        publish_song.sing_remotely(runner, "l.json", str(tmp_path / "o.wav"), "remy_adult", dict(os.environ))
+    with pytest.raises(RuntimeError, match="exit 0"):   # exit 0 and no WAV is not sung
+        publish_song.sing_remotely(runner_script(tmp_path, "exit 0\n"), "l.json", str(tmp_path / "o.wav"),
+                                   "remy_adult", dict(os.environ))
+
+
+def test_a_line_that_hangs_on_the_runner_gives_up_in_time(tmp_path, monkeypatch):
+    # #86 in eeron-omat-taskit: a singer hung in eero-pc's driver and the run waited 13 minutes
+    monkeypatch.setattr(publish_song, "REMOTE_LINE_LIMIT", 1)
+    with pytest.raises(RuntimeError, match="no answer in 1 s"):
+        publish_song.sing_remotely(runner_script(tmp_path, "sleep 5\n"), "l.json", str(tmp_path / "o.wav"),
+                                   "remy_adult", dict(os.environ))
+
+
+def test_a_failure_here_ends_what_the_runner_is_doing(tmp_path):
+    finished = tmp_path / "finished"
+    runner = runner_script(tmp_path, f"sleep 2; touch {finished}\n")
+
+    def here(job):
+        time.sleep(0.3)
+        raise SystemExit(143)   # what stop_on_term() raises
+
+    def there(job):
+        publish_song.sing_remotely(runner, "l.json", str(tmp_path / "o.wav"), "remy_adult", dict(os.environ))
+    started = time.monotonic()
+    with pytest.raises(SystemExit):
+        publish_song.share(["a", "b"], here, there, publish_song.stop_remote)
+    assert time.monotonic() - started < 1.5     # did not wait for the runner
+    time.sleep(2.5)
+    assert not finished.exists()                # and the runner was ended
+    with pytest.raises(RuntimeError):           # nothing new starts once stopping
+        publish_song.sing_remotely(runner, "l.json", "o.wav", "remy_adult", dict(os.environ))
+
+
+def test_sing_hands_lines_to_the_runner_when_there_is_one(tmp_path, monkeypatch):
+    from src.sing_song.tests.test_fold import chord, score
+    cleaned = score(tmp_path / "cleaned.mscx", [("T1", [chord(60, syl="la") * 4]), ("B1", [chord(48, syl="lu") * 4])])
+    bundle, work = tmp_path / "bundle", tmp_path / "work"
+    bundle.mkdir()
+    work.mkdir()
+    (bundle / "timing.json").write_text(json.dumps({"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}))
+    # this host is slow: the runner takes the line it is free for first
+    real_run = publish_song.run
+    here = []
+
+    def run(cmd, **kw):
+        if str(cmd[2]).endswith("unroll.py"):
+            return real_run(cmd, **kw)
+        if cmd[:3] == ["nice", "-n", "19"]:
+            time.sleep(0.5)
+            here.append(os.path.basename(cmd[6]))
+            open(cmd[7], "w").close()
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(publish_song, "run", run)
+    monkeypatch.setenv("REMOTE_RUNNER", runner_script(tmp_path, 'echo "$2" >> "$(dirname "$0")/sung"; : > "$3"\n'))
+    manifest = {"duration": 4, "parts": [{"name": "T1"}, {"name": "B1"}]}
+    publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "fi",
+                      sys.executable, "/ufr", False)
+    there = [os.path.basename(p) for p in (tmp_path / "sung").read_text().split()]
+    assert sorted(here + there) == ["p1-high.json", "p2-high.json"] and here and there

@@ -18,12 +18,15 @@ See docs/pdf-to-practice-track.md for the whole flow and what the machine needs.
 import argparse
 import json
 import os
+import queue
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unicodedata
 
 from lxml import etree
@@ -326,6 +329,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                  f"language comes back with --lang-from {lang}:WORD. A word below that is right as it "
                  "is: name it with the language it is sung in.\n"
                  + "\n".join(f"  {name}, bar {bar}: {word}" for name, bar, word in dict.fromkeys(unmarked)))
+    jobs = []
     for i, name, two, line, notes in plan:
         js = os.path.join(work, f"p{i}-{line}.json")
         with open(js, "w") as f:
@@ -336,11 +340,25 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         if resume and sung_before(work, i, line, voices[i - 1]):
             log(f"{said}: sung before, kept")
             continue
-        log(f"singing {said} ({len(notes)} notes)")
         forget_sung(work, i, line)
-        run(["nice", "-n", "19", python, "-I", SINGER, js, os.path.join(work, f"p{i}-{line}.wav"),
-             "100", voices[i - 1]], env=env)
+        jobs.append((i, said, line, len(notes)))
+
+    def here(job):
+        i, said, line, count = job
+        log(f"singing {said} ({count} notes)")
+        run(["nice", "-n", "19", python, "-I", SINGER, os.path.join(work, f"p{i}-{line}.json"),
+             os.path.join(work, f"p{i}-{line}.wav"), "100", voices[i - 1]], env=env)
         mark_sung(work, i, line, voices[i - 1])
+
+    def there(job):
+        i, said, line, count = job
+        log(f"singing {said} ({count} notes) on the remote runner")
+        sing_remotely(runner, os.path.join(work, f"p{i}-{line}.json"), os.path.join(work, f"p{i}-{line}.wav"),
+                      voices[i - 1], env)
+        mark_sung(work, i, line, voices[i - 1])
+
+    runner = (os.environ.get("REMOTE_RUNNER") or "").strip()
+    share(jobs, here, there if runner else None, stop_remote)
     for i, name in enumerate(names, 1):
         lines = [p[3] for p in plan if p[0] == i]
         mp3 = os.path.join(bundle_dir, sung_file(i, name))
@@ -474,6 +492,97 @@ def check_slug(slug):
     """A song's folder name under songs/, not a path."""
     if not slug or slug in (".", "..") or slug.startswith(".") or "/" in slug or "\\" in slug:
         sys.exit(f"{slug!r} is not a song: give its folder name under songs/")
+
+
+# REMOTE_RUNNER (.env): another machine may sing lines while this one sings others. Run as
+# `<runner> sing-line <line.json> <out.wav> <voice>` with the singer's settings in the
+# environment; exit 0 with the WAV written means sung, anything else sings the line here.
+REMOTE_LINE_LIMIT = 1800   # a first line may wait for the runner to set itself up
+# what the runner is doing right now: stop_remote() kills it, so a cancelled run leaves
+# nothing running over there (#86 review of #90 in eeron-omat-taskit)
+REMOTE, REMOTE_LOCK, STOPPING = set(), threading.Lock(), threading.Event()
+
+
+def sing_remotely(runner, js, wav, voice, env):
+    """One line on the remote runner; raises when it did not sing it, with the reason."""
+    with REMOTE_LOCK:
+        if STOPPING.is_set():
+            raise RuntimeError("the run is stopping")
+        p = subprocess.Popen(shlex.split(runner) + ["sing-line", js, wav, voice], env=env, text=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+        REMOTE.add(p)
+    try:
+        out, _ = p.communicate(timeout=REMOTE_LINE_LIMIT)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        raise RuntimeError(f"no answer in {REMOTE_LINE_LIMIT} s") from None
+    finally:
+        with REMOTE_LOCK:
+            REMOTE.discard(p)
+    if p.returncode or not os.path.exists(wav):
+        last = (out or "").strip().splitlines()
+        raise RuntimeError(last[-1] if last else f"exit {p.returncode}")
+
+
+def stop_remote():
+    """No more remote lines, and end the one running (all its processes)."""
+    with REMOTE_LOCK:
+        STOPPING.set()
+        for p in REMOTE:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def share(jobs, here, there=None, stop=None):
+    """Run here(job) for every job, and with `there`, there(job) for some of them at the same
+    time: each takes the next job when it is free, so the faster machine sings more. When a
+    job fails there, it is sung here instead and `there` takes no more. A failure here stops
+    the run. Returns {job: "here" or "there"}. When this side fails or is cancelled, stop()
+    ends what `there` is doing before it is waited for, so nothing outlives the run."""
+    todo, done, failed = queue.Queue(), {}, []
+    for job in jobs:
+        todo.put(job)
+
+    def take(sing, where):
+        while not failed and not STOPPING.is_set():
+            try:
+                job = todo.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                sing(job)
+                done[job] = where
+            except BaseException as e:   # run() stops with SystemExit
+                if where == "here":
+                    failed.append(e)
+                    return
+                log(f"the remote runner did not sing it ({e}): singing it here, and the rest here too")
+                todo.put(job)
+                return
+
+    helper = threading.Thread(target=take, args=(there, "there")) if there else None
+    if helper:
+        helper.start()
+    try:
+        take(here, "here")
+        if failed and stop:
+            stop()
+        if helper:
+            helper.join()
+    except BaseException:   # cancelled while waiting for the runner
+        if stop:
+            stop()
+        if helper:
+            helper.join()
+        raise
+    take(here, "here")   # what the runner gave back after this side had finished
+    if failed:
+        raise failed[0]
+    return done
 
 
 def stop_on_term(signum, frame):

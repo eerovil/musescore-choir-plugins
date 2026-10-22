@@ -943,38 +943,37 @@ def _split_measure(measure: etree._Element, spare: int) -> List[MovedRest]:
     return moved
 
 
-#: How long the remote reader may take, its own first-time setup included.
+#: How long the remote runner may take, its own first-time setup included.
 REMOTE_TIMEOUT = 1800
 
 
 def _read_remotely(engine: Engine, flags: List[str], image: str, out_dir: str,
                    log: Logger) -> Optional[List[str]]:
-    """Read ``image`` with ``HOMR_REMOTE_READER``, or say why not and return None.
+    """Read ``image`` with ``REMOTE_RUNNER``, or say why not and return None.
 
-    The reader is a command, run as ``<reader> <homr venv> <out dir> <homr flags...>
-    <image>``; it prints the read's log and exits 0 with ``<out dir>/<image
+    The runner is a command, run as ``<runner> read-band <image> <out dir> <homr venv>
+    <homr flags...>``; it prints the read's log and exits 0 with ``<out dir>/<image
     name>.musicxml`` written. Anything else and the page is read here under the heavy
-    slot, as without one. It is this host's business which machine reads and how it
-    reads the same as here (on the owner's host: eero-pc's GPU, eeron-omat-taskit's
-    ``homr-eero-pc``). Only the installed homr is offered: a working copy of a branch
-    is run from this host's disk.
+    slot, as without one. Which machine reads, and how it reads the same as here, is the
+    runner's business (the one shipped is ``src/kube_runner/runner.py``). Only the
+    installed homr is offered: a working copy of a branch is run from this host's disk.
     """
-    reader = (os.getenv("HOMR_REMOTE_READER") or "").strip()
+    reader = (os.getenv("REMOTE_RUNNER") or "").strip()
     if not reader or not engine.default:
         return None
     venv = os.path.dirname(os.path.dirname(engine.command[0]))
     produced = os.path.join(out_dir, os.path.splitext(os.path.basename(image))[0]
                             + ".musicxml")
     try:
-        lines = _run(shlex.split(reader) + [venv, out_dir] + flags + [image], log,
+        lines = _run(shlex.split(reader) + ["read-band", image, out_dir, venv] + flags, log,
                      REMOTE_TIMEOUT)
     except HomrError as exc:
         why = str(exc).strip().splitlines()
-        log(f"The remote reader did not read it ({why[-1] if why else 'no reason given'}); "
+        log(f"The remote runner did not read it ({why[-1] if why else 'no reason given'}); "
             "reading it on this host")
         return None
     if not os.path.exists(produced):
-        log("The remote reader wrote no MusicXML; reading it on this host")
+        log("The remote runner wrote no MusicXML; reading it on this host")
         return None
     return lines
 
