@@ -302,4 +302,30 @@ def test_sing_venv_in_dotenv_is_the_one_looked_for(tmp_path, monkeypatch):
 
 def test_piano_only_needs_no_voice_for_the_parts(tmp_path, monkeypatch):
     run_main(monkeypatch, tmp_path, "--no-sing")
-    assert json.load(open(tmp_path / "out" / "laulu" / "manifest.json"))["parts"][0]["name"] == "Ääni 1"
+    assert json.load(open(tmp_path / "out" / "manifest.json"))["parts"][0]["name"] == "Ääni 1"
+
+
+def test_the_bundle_lands_in_out_and_an_old_run_goes_but_work_stays(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    (out / "parts").mkdir(parents=True)
+    (out / "work").mkdir()
+    (out / "parts" / "1-Old.mp3").write_text("old take")
+    (out / "work" / "p1-high.wav").write_text("for --resume")
+    (out / "notes.txt").write_text("somebody's own file")
+    run_main(monkeypatch, tmp_path, "--no-sing")
+    assert (out / "manifest.json").exists() and not (out / "laulu").exists()
+    assert not (out / "parts" / "1-Old.mp3").exists()
+    assert (out / "work" / "p1-high.wav").read_text() == "for --resume"
+    assert (out / "notes.txt").exists()
+
+
+@pytest.mark.parametrize("slug", ["/home/user/Documents", "../songs", "a/b", "..", ".trash", ""])
+def test_a_slug_that_is_a_path_is_refused_before_anything_is_touched(tmp_path, monkeypatch, slug):
+    victim = tmp_path / "Documents"
+    victim.mkdir()
+    (victim / "keep.txt").write_text("mine")
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", slug, "--no-sing", "--out", str(victim)])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("got past the slug check"))
+    with pytest.raises(SystemExit):
+        publish_song.main()
+    assert (victim / "keep.txt").read_text() == "mine"

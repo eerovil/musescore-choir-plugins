@@ -446,6 +446,28 @@ def parse_places(specs):
     return out
 
 
+BUNDLE = ("score.musicxml", "score.mid", "timing.json", "manifest.json")   # what a run writes into --out
+
+
+def clear_bundle(out):
+    """Take away what an earlier run wrote into `out` (the bundle and parts/), and nothing else:
+    work/ stays for --resume, and --out may be a folder with other things in it."""
+    for name in BUNDLE:
+        if os.path.isfile(os.path.join(out, name)):
+            os.remove(os.path.join(out, name))
+    parts = os.path.join(out, "parts")
+    if os.path.isdir(parts):
+        for name in os.listdir(parts):
+            if name.endswith(".mp3"):
+                os.remove(os.path.join(parts, name))
+
+
+def check_slug(slug):
+    """A song's folder name under songs/, not a path."""
+    if not slug or slug in (".", "..") or slug.startswith(".") or "/" in slug or "\\" in slug:
+        sys.exit(f"{slug!r} is not a song: give its folder name under songs/")
+
+
 def stop_on_term(signum, frame):
     """A cancelled run (SIGTERM, as agentdeck job cancel sends) ends like an error."""
     sys.exit(128 + signum)
@@ -478,6 +500,7 @@ def main():
                          "(after a stopped run; not after changing the singer)")
     a = ap.parse_args()
 
+    check_slug(a.slug)
     out = os.path.abspath(a.out or f"/var/tmp/practice-{a.slug}")
     places = parse_places(a.place)
     venv = sing_venv()
@@ -489,9 +512,9 @@ def main():
         if not os.path.isfile(os.path.join(ufr_dir, "core", "phonemes.json")):
             sys.exit("set UFR_DIR in .env to the UFR DiffSinger pack's folder (core/, dsdur/, tiger/); "
                      "download it from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/")
-    bundle_dir = os.path.join(out, a.slug)
-    shutil.rmtree(bundle_dir, ignore_errors=True)
-    os.makedirs(bundle_dir)
+    bundle_dir = out
+    os.makedirs(out, exist_ok=True)
+    clear_bundle(out)
     folded = os.path.join(out, f"{a.slug}_folded.mscx") if a.fold_divisi else None
     manifest, cleaned, groups = build_bundle(ROOT, a.slug, bundle_dir, folded)
     log(f"bundle: {bundle_dir} ({manifest['duration']} s, parts {[p['name'] for p in manifest['parts']]})")

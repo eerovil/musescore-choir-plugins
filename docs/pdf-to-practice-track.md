@@ -112,8 +112,9 @@ A cleaned score has no tempo of its own, so give the printed one. A printed swin
 ```
 
 It builds the score, MIDI and timing, checks every part's notes against the MIDI, sings each
-part and writes `/var/tmp/practice-<slug>/<slug>/` (`--out` moves it): `parts/<n>-<Name>.mp3`,
-`score.musicxml`, `score.mid`. A few minutes on a graphics card, much longer on the processor.
+part and writes `/var/tmp/practice-<slug>/` (`--out` moves it): `parts/<n>-<Name>.mp3`,
+`score.musicxml`, `score.mid`, and its working files in `work/`. A few minutes on a graphics
+card, much longer on the processor.
 
 - Not in Finnish: `--lang en|de|sv|la|et`. Two languages: `--lang-from fi:Word,...` names the
   first word of each stretch (it stops and lists the words it thinks you missed).
