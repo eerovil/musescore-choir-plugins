@@ -88,3 +88,9 @@ def test_a_version_the_apps_publish_wrote_is_found_and_a_piano_one_is_not():
     site = FakeSite([row("jm", "laulu", "songs/jm/laulu/1/", ["T1", "B1"], compact=False),
                      row("jm", "piano", "songs/jm/piano/1/", ["T1"], sung=False, compact=False)])
     assert [v[0] for v in add_words.sung_versions(site)] == ["songs/jm/laulu/1/"]
+
+
+def test_a_number_changed_in_the_words_since_the_singing_fails_its_part():
+    live = musicxml([("1", ["Laulu‿118"])])
+    assert add_words.verified_parts(live, live, [{"name": "T"}]) == [True]
+    assert add_words.verified_parts(live, musicxml([("1", ["Laulu‿119"])]), [{"name": "T"}]) == [False]

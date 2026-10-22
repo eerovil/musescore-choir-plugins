@@ -210,6 +210,13 @@ def test_a_sentence_spoken_on_one_chord_is_compared_whole():
     assert one[0][2] != other[0][2]
 
 
+def test_spoken_sentences_that_differ_only_in_a_number_differ():
+    one = publish_song.sung_words([line((52, 2.0, "Laulu‿118"))])
+    other = publish_song.sung_words([line((52, 2.0, "Laulu‿119"))])
+    assert one == [[0.0, 52, "laulu118"]]
+    assert one[0][2] != other[0][2]
+
+
 def test_words_json_has_each_parts_list_in_order(tmp_path):
     path = tmp_path / "words.json"
     publish_song.write_words(path, [[[0.0, 52, "kis"]], [[0.0, 52, "dum"]]])

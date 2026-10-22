@@ -29,7 +29,7 @@ from lxml import etree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-from src.sing_song.main import build_bundle, log, plain, sung_words, write_words  # noqa: E402
+from src.sing_song.main import build_bundle, log, sung_key, sung_words, write_words  # noqa: E402
 
 
 def sung_versions(cf, slugs=()):
@@ -77,7 +77,7 @@ def note_lines(musicxml):
                         pos += length
                 p = el.find("pitch")
                 pitch = None if p is None else (p.findtext("step"), p.findtext("alter") or "0", p.findtext("octave"))
-                words = tuple((ly.get("number") or "1", plain("".join(t.text or "" for t in ly.iter("text"))))
+                words = tuple((ly.get("number") or "1", sung_key("".join(t.text or "" for t in ly.iter("text"))))
                               for ly in el.iter("lyric"))
                 out.setdefault((staff, el.findtext("voice") or "1"), []).append(
                     (bar.get("number"), start, length, pitch, words))

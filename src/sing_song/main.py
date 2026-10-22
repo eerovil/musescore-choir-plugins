@@ -172,7 +172,7 @@ def sung_words(lines):
         t, last = 0.0, None
         for n in notes:
             if n.get("syl"):
-                last = plain(n["syl"])
+                last = sung_key(n["syl"])
             if n.get("pitch") is not None and last:
                 out.setdefault((round(t, 3), n["pitch"]), set()).add(last)
             t += n["sec"]
@@ -205,6 +205,12 @@ def words(notes):
     if cur:
         out.append(cur)
     return [(plain("".join(notes[k]["syl"] for k in idx)), idx) for idx in out]
+
+
+def sung_key(text):
+    """A syllable as words.json compares it: lower case, letters and digits. Digits stay: a
+    number is spoken as words before singing (spoken.py), so "Laulu‿118" and "Laulu‿119" differ."""
+    return "".join(c for c in unicodedata.normalize("NFC", text.lower()) if c.isalnum())
 
 
 def plain(text):
