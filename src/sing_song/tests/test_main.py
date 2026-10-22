@@ -271,3 +271,11 @@ def test_a_venv_with_cuda_libraries_sings_on_the_card(tmp_path):
     assert env["GPU"] == "1" and env["LD_LIBRARY_PATH"].endswith("nvidia/cudnn/lib") and env["UFR_DIR"] == "/ufr"
     assert "GPU" not in publish_song.singer_env(str(python), "/ufr", "la", gpu=False)
     assert publish_song.singer_env(str(python), "/ufr", "la", gpu=False)["SONG_LANG"] == "fi"   # g2p.py gives the sounds
+
+
+def test_a_click_staff_of_rests_is_left_out_as_publishing_leaves_it_out(tmp_path):
+    # seven songs here carry one (a recording spacer); --staff-ids used to name the others
+    from src.sing_song.tests.test_fold import chord, rest, score
+    path = score(tmp_path / "cleaned.mscx", [("T1", [chord(60) * 4]), ("Click", [rest()]),
+                                             ("B1", [chord(48) * 4])])
+    assert publish_song.sung_staves(path) == ["1", "3"]

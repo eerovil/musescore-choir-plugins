@@ -231,6 +231,17 @@ def nvidia_dir(python):
     return None
 
 
+def sung_staves(cleaned):
+    """The staves the bundle's parts come from, in order: publishing leaves out a part with
+    nothing to sing (a click staff of rests, percussion), so the same parts are left out here."""
+    from src.score_export import score
+    root = etree.parse(cleaned).getroot()
+    silent = set(score.silent_parts(root))
+    parts = root.find("Score").findall("Part")
+    return [i for k, part in enumerate(parts) if score._part_name(part, k) not in silent
+            for i in score._staff_ids(part)]
+
+
 def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu, lang_from=None,
          groups=None, resume=False):
     """parts/<n>-<Name>.mp3 for every part, sung on the bundle's clock:
@@ -247,8 +258,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
       leaves a hiss that adds up over many waiting parts);
     - with resume, a line a stopped run already sang from the same notes for the same voice is
       not sung again (sung_before())."""
-    staves = [s.get("id") for s in etree.parse(cleaned).getroot().find("Score").findall("Staff")
-              if s.find("Measure") is not None]
+    staves = sung_staves(cleaned)
     names = [p["name"] for p in manifest["parts"]]
     if groups:
         staves = [g[0] for g in groups]
