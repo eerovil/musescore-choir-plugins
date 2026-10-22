@@ -86,7 +86,9 @@ for m in staff.findall("Measure"):
         measures.append([{"pitch": None, "a": 0.0, "b": full, "verses": {}}]); continue
     voices = m.findall("voice")
     voice, borrow = voices[0], None
-    if LINE == "low" and len(voices) > 1 and any(e.tag == "Chord" for e in voices[1]) and not any(e.tag == "Rest" for e in voices[1]):
+    # the low line is voice 2 wherever it has notes, silent where it rests (Eero on #439: it
+    # used to fall back to voice 1 in any bar voice 2 rested in, so a voice2 fix was never sung)
+    if LINE == "low" and len(voices) > 1 and any(e.tag == "Chord" for e in voices[1]):
         voice, borrow = voices[1], lyric_at(voices[0])
     graces = []
     for el in voice:

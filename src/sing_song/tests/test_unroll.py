@@ -65,3 +65,15 @@ def test_voice_two_borrows_the_word_at_the_same_moved_beat(tmp_path):
     timing = {"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}
     notes = unroll(tmp_path, v1 + v2, timing, line="low")
     assert (65, "la", 2.0) in notes
+
+
+def test_a_second_voice_that_rests_and_then_sings_is_the_low_line(tmp_path):
+    # #439 review, the voice2 fix's shape: voice 2 rests a quarter, then holds its own note;
+    # the low line sings it and is silent where it rests, not voice 1 again
+    v1 = ("<voice><TimeSig><sigN>4</sigN><sigD>4</sigD></TimeSig>"
+          "<Chord><durationType>whole</durationType><Lyrics><text>la</text></Lyrics><Note><pitch>72</pitch></Note></Chord></voice>")
+    v2 = ("<voice><Rest><durationType>quarter</durationType></Rest>"
+          "<Chord><durationType>half</durationType><dots>1</dots><Lyrics><text>lu</text></Lyrics><Note><pitch>75</pitch></Note></Chord></voice>")
+    timing = {"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}
+    assert unroll(tmp_path, v1 + v2, timing, line="low") == [(None, None, 1.0), (75, "lu", 3.0)]
+    assert unroll(tmp_path, v1 + v2, timing, line="high") == [(72, "la", 4.0)]
