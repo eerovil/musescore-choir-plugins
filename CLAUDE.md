@@ -67,6 +67,7 @@ src/sing_song/           Sing a song's parts with the UFR DiffSinger voices (see
   sing_ufr.py            the singer (runs in scripts/install-singer.sh's venv)
   unroll.py, check_onsets.py, g2p.py, gate.py, spoken.py, fold.py   its steps
   tests/                 pytest
+src/kube_runner/         REMOTE_RUNNER for a GPU in a Kubernetes cluster: read a band, sing a line
 src/score_export/        The cleaned score made ready to publish (see its section below)
   score.py               the publish copy: silent parts out, marks off, tempos, fermata hold
   musescore.py           the MuseScore 3 or 4 CLI (run_musescore, part_names, CLI_TIMEOUT)
@@ -1548,15 +1549,14 @@ state model are in `DESIGN.md`.
   stops with `SlotLost`). homr's own output lines are the checkpoints `Slot.guard`
   needs, and abandoning the read loop kills homr's process group — otherwise it would
   keep running on cores that have been handed away.
-  **Another machine may read a band first** (#437): when `.env` names
-  `HOMR_REMOTE_READER`, `read_page` runs it as `<reader> <homr venv> <out dir> <homr
-  flags...> <image>` for the installed homr (never a branch engine), streams what it
+  **Another machine may read a band first** (#437, #439): when `.env` names
+  `REMOTE_RUNNER`, `read_page` runs it as `<runner> read-band <image> <out dir> <homr venv>
+  <homr flags...>` for the installed homr (never a branch engine), streams what it
   prints into the log, and uses `<out dir>/<image>.musicxml` when it exits 0 with the file
-  written; anything else reads the band here under the heavy slot, as without one. Which
-  machine and how it reads the same as here is the host's business, not this repo's: on
-  the owner's host it is eero-pc's GPU, `~/eeron-omat-taskit/homr-eero-pc/read_band.py`
-  (its README says how it pins homr to this host's install and survives eero-pc's cut
-  `kubectl exec` streams). `test_remote_reader.py` pins the contract with a stub reader.
+  written; anything else reads the band here under the heavy slot, as without one. The
+  runner shipped is `src/kube_runner/runner.py` (see "Where heavy work runs" in
+  `docs/pdf-to-practice-track.md`); on the owner's host it reads on eero-pc's GPU.
+  `test_remote_runner.py` pins the contract with a stub runner.
   **One slot per page, not one per song.** The page is the unit `read_page` owns and
   each page writes its own MusicXML, so releasing between pages lets a suite in, and an interruption costs the page in flight rather than the song — the
   pages already read are on disk. A caller that would rather hold one lease across a
@@ -2755,7 +2755,18 @@ at half volume each, and `gate.py` fades the rests where the whole part rests (t
 leaves a hiss). `--fold-divisi` folds lettered divisi parts (`S1b`) into their part as further
 voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s to
 `publish.publish` as `Bundle.sung`. It came from eeron-omat-taskit's `sing-song/` (#439),
-where its history is.
+where its history is. With `REMOTE_RUNNER` set, lines are shared with the runner as each side
+is free (`share()`, `<runner> sing-line <line.json> <out.wav> <voice>`); a line it fails is
+sung here and it gets no more.
+
+`src/kube_runner/runner.py` is that runner for a GPU node in a Kubernetes cluster (eero-pc
+here, `REMOTE_KUBE_CONTEXT=eero-pc`), moved from eeron-omat-taskit's `homr-eero-pc/` (#439).
+Stdlib only, so the app's service can run it as a file. One pod per job kind (`homr/reader`,
+`sing/singer`), its venv on the node's disk, one job on the card at a time (a lock under
+`~/.cache/musescore-choir-remote`), and a kind that failed is not asked again for five
+minutes. Every step is a short `kubectl exec`, retried, because eero-pc's long streams were
+cut (#103). The reader builds its homr venv from this host's pins and checks it file by file.
+`src/kube_runner/tests/` runs it against a fake cluster.
 
 The singer runs in its own venv (`scripts/install-singer.sh`, default
 `~/.local/share/musescore-choir-plugins/sing-venv`; CUDA 11 onnxruntime when there is an NVIDIA

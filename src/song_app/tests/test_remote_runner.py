@@ -1,9 +1,9 @@
-"""``HOMR_REMOTE_READER``: another machine reads a band first (#437).
+"""``REMOTE_RUNNER``: another machine reads a band first (#437, #439).
 
-The reader is a stub here. What it does on the owner's host (eero-pc's GPU) is
-eeron-omat-taskit's ``homr-eero-pc`` and tested there; what is pinned here is the
-contract: the arguments it gets, a written file being used as the reading, and
-every other outcome reading the band on this host under the heavy slot.
+The runner is a stub here. The one shipped (``src/kube_runner/runner.py``) is tested
+in its own package; what is pinned here is the contract: the arguments it gets, a
+written file being used as the reading, and every other outcome reading the band on
+this host under the heavy slot.
 """
 
 import stat
@@ -53,7 +53,7 @@ def _read(tmp_path, engine):
 
 def _reader(tmp_path, monkeypatch, body):
     reader = _executable(tmp_path / "reader", body)
-    monkeypatch.setenv("HOMR_REMOTE_READER", reader)
+    monkeypatch.setenv("REMOTE_RUNNER", reader)
     return reader
 
 
@@ -61,17 +61,18 @@ def test_a_band_the_reader_read_is_used_without_this_hosts_slot(tmp_path, monkey
     engine, asked, venv = here
     _reader(tmp_path, monkeypatch,
             'echo "$@" > "$(dirname "$0")/args"; echo "reading over there"\n'
-            'img="${!#}"; b=$(basename "${img%.*}")\n'
-            'echo "<score-partwise><!--there--></score-partwise>" > "$2/$b.musicxml"\n')
+            'b=$(basename "${2%.*}")\n'
+            'echo "<score-partwise><!--there--></score-partwise>" > "$3/$b.musicxml"\n')
     text, lines = _read(tmp_path, engine)
     assert "<!--there-->" in text
     assert "homr-engine" in text          # stamped here like any other parse
     assert "reading over there" in lines
     assert asked == []
     args = (tmp_path / "args").read_text().split()
-    assert args[0] == venv
-    assert args[2:5] == ["--gpu", "force", "--no-title"]
-    assert args[-1].endswith("system-01.png")
+    assert args[0] == "read-band"
+    assert args[1].endswith("system-01.png")
+    assert args[3] == venv
+    assert args[4:7] == ["--gpu", "force", "--no-title"]
 
 
 def test_a_reader_that_cannot_says_why_and_the_band_is_read_here(tmp_path, monkeypatch, here):
@@ -93,7 +94,7 @@ def test_a_reader_that_wrote_nothing_is_not_believed(tmp_path, monkeypatch, here
 
 def test_a_missing_reader_reads_here(tmp_path, monkeypatch, here):
     engine, asked, _ = here
-    monkeypatch.setenv("HOMR_REMOTE_READER", str(tmp_path / "no-such-reader"))
+    monkeypatch.setenv("REMOTE_RUNNER", str(tmp_path / "no-such-reader"))
     text, _ = _read(tmp_path, engine)
     assert "<!--here-->" in text
 
@@ -109,6 +110,6 @@ def test_a_branch_engine_is_never_sent(tmp_path, monkeypatch, here):
 
 def test_no_reader_no_change(tmp_path, monkeypatch, here):
     engine, asked, _ = here
-    monkeypatch.setenv("HOMR_REMOTE_READER", "")
+    monkeypatch.setenv("REMOTE_RUNNER", "")
     text, _ = _read(tmp_path, engine)
     assert "<!--here-->" in text and asked
