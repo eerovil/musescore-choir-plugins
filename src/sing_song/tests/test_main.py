@@ -363,3 +363,33 @@ def test_a_part_name_with_a_slash_is_sung_into_parts_itself(tmp_path):
     mp3 = os.path.join(str(tmp_path), publish_song.sung_file(1, "S/A"))
     assert os.path.dirname(mp3) == os.path.join(str(tmp_path), "parts")
     assert os.path.basename(mp3) == "1-S_A.mp3"
+
+
+def test_sing_skips_a_folded_parts_resting_staff_and_sings_its_lettered_line(tmp_path, monkeypatch):
+    # #439 review, through sing() itself: S1 rests throughout and S1b sings; the part is S1b's line
+    from src.sing_song.tests.test_fold import chord, rest, score
+    cleaned = score(tmp_path / "cleaned.mscx", [("S1", [rest()]), ("S1b", [chord(69, syl="la") * 4]),
+                                                ("A1", [chord(60, syl="lu") * 4])])
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "timing.json").write_text(json.dumps(
+        {"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}))
+    work = tmp_path / "work"
+    work.mkdir()
+    sung, real_run = [], publish_song.run
+
+    def run(cmd, **kw):
+        if str(cmd[2]).endswith("unroll.py"):
+            return real_run(cmd, **kw)
+        if "check_onsets.py" in str(cmd[2]) or "gate.py" in str(cmd[2]) or cmd[0] == "ffmpeg":
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        assert cmd[:3] == ["nice", "-n", "19"]   # the singer: nice -n 19 <python> -I sing_ufr.py <line>.json ...
+        sung.append((cmd[6], [n.get("pitch") for n in json.load(open(cmd[6])) if n.get("pitch")]))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(publish_song, "run", run)
+    manifest = {"duration": 4, "parts": [{"name": "S1"}, {"name": "A1"}]}
+    publish_song.sing(manifest, cleaned, str(bundle), str(work),
+                      ["lyse_core", "lyse_core"], "fi", sys.executable, "/ufr", False, groups=[["1", "2"], ["3"]])
+    assert [(os.path.basename(js), pitches) for js, pitches in sung] == [
+        ("p1-2high.json", [69, 69, 69, 69]), ("p2-high.json", [60, 60, 60, 60])]

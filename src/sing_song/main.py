@@ -302,11 +302,14 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                 with open(js) as f:
                     notes = json.load(f)
                 # a line that sings what another of the part's lines sings is sung once, and a
-                # divisi line that never sings (only rests) is not sung at all
-                if k and all(n.get("pitch") is None for n in notes):
+                # line that never sings (only rests) is not sung at all: a folded part's own staff
+                # may rest throughout while its lettered line sings
+                if all(n.get("pitch") is None for n in notes):
                     continue
                 if not any(not lines_differ(notes, other) for other in lines.values()):
                     lines[key] = notes
+        if not lines:
+            sys.exit(f"{name} has no notes to sing")
         two = len(lines) > 1
         for line in lines:
             notes = mark_languages(split_spoken(lines[line]), lang, switches)
