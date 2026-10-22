@@ -142,21 +142,27 @@ def test_duration_model_sees_the_ng_that_is_sung():
     assert c["co"] == ["de/ng"] and d["on"] == ["de/ng"]
 
 
-def test_one_or_two_empty_notes_hold_the_syllable_three_repeat_it(fi):
+def test_empty_notes_hold_the_syllable_however_many(fi):
     n = lambda syl=None: {"pitch": 60, "beats": 1, "syl": syl, "melisma": False}
     rest = {"pitch": None, "beats": 1, "syl": None}
-    out = fi["hold_short_runs"]([n("la"), n(), n(), rest, n("la"), n(), n(), n()])
-    assert [x.get("melisma") for x in out] == [False, True, True, None, False, False, False, False]
+    out = fi["hold_runs"]([n("la"), n(), n(), rest, n("la"), n(), n(), n(), n(), n()])
+    assert [x.get("melisma") for x in out] == [False, True, True, None, False, True, True, True, True, True]
     assert fi["repeated"](out[1], "la", None)["syl"] is None       # held
-    assert fi["repeated"](out[5], "la", None)["syl"] == "la"       # sung again
+    assert fi["repeated"](out[9], "la", None)["syl"] is None       # still held on the fifth
 
 
-def test_empty_notes_after_a_rest_sing_the_syllable_again(fi):
+def test_empty_notes_after_a_rest_sing_the_syllable_again_then_hold_it(fi):
     n = lambda syl=None: {"pitch": 60, "beats": 1, "syl": syl, "melisma": False}
     rest = {"pitch": None, "beats": 1, "syl": None}
-    out = fi["hold_short_runs"]([n("la"), rest, n(), n()])
-    assert [x.get("melisma") for x in out] == [False, None, False, False]
-    assert fi["repeated"](out[2], "la", None)["syl"] == "la"
+    out = fi["hold_runs"]([n("la"), rest, n(), n(), n()])
+    assert [x.get("melisma") for x in out] == [False, None, False, True, True]
+    assert fi["repeated"](out[2], "la", None)["syl"] == "la"       # sung again
+    assert fi["repeated"](out[3], "la", None)["syl"] is None       # then held
+
+
+def test_notes_from_older_bundles_are_left_as_they_are(fi):
+    out = fi["hold_runs"]([{"pitch": 60, "syl": "la"}, {"pitch": 62, "syl": None}])
+    assert "melisma" not in out[1]
 
 
 def chunking():

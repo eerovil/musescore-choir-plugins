@@ -61,23 +61,23 @@ def split(syl):
         if not vs or V[ch] != vs[-1]: vs.append(V[ch])
     return [C[c] for c in on], vs, [C[c] for c in co.replace("ng", "N")]
 def repeated(n, last_syl, last_ph):
-    """A note with no syllable, no slur and no extender over it: the singers repeat the last
-    syllable ("duu..." over a run of notes), also after a rest, instead of one held vowel."""
+    """The first note after a rest with no syllable, no slur and no extender over it: there is
+    no vowel to hold, so the singers sing the last syllable again ("duu"); hold_runs marks the
+    notes after it held."""
     if not n.get("syl") and "melisma" in n and not n["melisma"] and last_syl:
         return dict(n, syl=last_syl, syllabic="single", **({"ph": last_ph} if last_ph else {}))
     return n
-HOLD_RUN = int(os.environ.get("HOLD_RUN", "2"))
-def hold_short_runs(notes):
-    """One or two notes in a row with no syllable carry the last syllable on (held at the new
-    pitch, as under a slur); only a run of three or more repeats it (Eero, #45). After a rest
-    there is no vowel to hold, so the syllable is sung again there."""
+def hold_runs(notes):
+    """Notes in a row with no syllable carry the last syllable on, held at the new pitch as under
+    a slur, however many there are (stemmanauhat-cf#125; was one or two, #45). After a rest there
+    is no vowel to hold, so the first of them sings the syllable again and the rest hold it."""
     out, k = [dict(n) for n in notes], 0
     while k < len(out):
         j = k
         while j < len(out) and out[j]["pitch"] is not None and not out[j].get("syl"): j += 1
-        if j > k and j - k <= HOLD_RUN and k > 0 and out[k - 1]["pitch"] is not None:   # after a rest: sung again
-            for n in out[k:j]:
-                if "melisma" in n: n["melisma"] = True
+        after_rest = k == 0 or out[k - 1]["pitch"] is None
+        for n in out[k + after_rest:j]:
+            if "melisma" in n: n["melisma"] = True
         k = max(j, k + 1)
     return out
 def sounds(n):
@@ -228,7 +228,7 @@ def model_boundaries(notes, emb):
 emb = np.fromfile(f"{D}/tiger/{spk}.emb", dtype=np.float32)
 dur_emb_path = f"{D}/dsdur/millefeuille_v001.{spk}.emb"
 dur_emb = np.fromfile(dur_emb_path, dtype=np.float32)[None, None, :] if TIMING == "model" else None
-notes = hold_short_runs(notes)
+notes = hold_runs(notes)
 model_durs, _ = model_boundaries(notes, dur_emb)
 toks, durs, f0n = ["SP"], [int(0.4 * FPS)], []
 note_lo = 0
