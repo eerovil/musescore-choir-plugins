@@ -9,7 +9,7 @@ developers are listed under *Behind the scenes*.
 
 - A sung part holds the last syllable over any number of notes without words, instead of
   singing it again from the third note on; after a rest it is sung once again and then held.
-  (stemmanauhat-cf#125)
+  (#442)
 - A song's parts can be sung and made into a practice track from this repository:
   `sing_song.py <slug>` writes one sung MP3 per part with the score and its MIDI, and
   `--publish <choir>` puts it on the site with the sung parts. `scripts/install-singer.sh`
