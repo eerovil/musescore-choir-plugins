@@ -7,7 +7,7 @@
 # installed here too.
 #
 #   scripts/install-singer.sh                    # ~/.local/share/musescore-choir-plugins/sing-venv
-#   SING_VENV=/somewhere/else scripts/install-singer.sh
+#   SING_VENV=/somewhere/else scripts/install-singer.sh   # or SING_VENV=... in .env
 #   SING_GPU=0 scripts/install-singer.sh         # the processor even with a card (1: the card)
 #
 # The voices are not installed: download the UFR DiffSinger pack yourself
@@ -15,7 +15,13 @@
 # re-hosting it) and set UFR_DIR in .env to the folder with core/, dsdur/ and tiger/.
 set -euo pipefail
 
+# an exported SING_VENV wins, then the one in .env (sing_song.py reads the same), then the default
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "${SING_VENV:-}" ] && [ -f "$ROOT/.env" ]; then
+    SING_VENV=$(sed -n 's/^SING_VENV=//p' "$ROOT/.env" | tail -1 | sed "s/^[\"']//; s/[\"']\$//")
+fi
 SING_VENV="${SING_VENV:-$HOME/.local/share/musescore-choir-plugins/sing-venv}"
+SING_VENV="${SING_VENV/#\~/$HOME}"
 
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then

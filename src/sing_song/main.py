@@ -47,8 +47,12 @@ FINNISH_LOOK = {"la": r"[äöå]|aa|ee|oo|yy|kk", "de": r"y|aa|ii|uu|kk|å", "sv
 LEAD_IN_SAMPLES = 17408   # 34 frames x 512: the silence sing_ufr.py sings before time 0
 GPU_ENV = {"GPU": "1", "VOC_CHUNK": "1500", "AC_CHUNK": "6000"}   # chunks that fit a 4 GB card
 # scripts/install-singer.sh's venv: onnxruntime, numpy, soundfile, g2p_en, and the CUDA 11
-# libraries when the machine has an NVIDIA card
-SING_VENV = os.path.expanduser(os.environ.get("SING_VENV") or "~/.local/share/musescore-choir-plugins/sing-venv")
+# libraries when the machine has an NVIDIA card. Read after .env is loaded, so SING_VENV there counts.
+DEFAULT_SING_VENV = "~/.local/share/musescore-choir-plugins/sing-venv"
+
+
+def sing_venv():
+    return os.path.expanduser(os.environ.get("SING_VENV") or DEFAULT_SING_VENV)
 
 
 def log(msg):
@@ -476,11 +480,12 @@ def main():
 
     out = os.path.abspath(a.out or f"/var/tmp/practice-{a.slug}")
     places = parse_places(a.place)
-    python = os.path.join(SING_VENV, "bin", "python")
+    venv = sing_venv()
+    python = os.path.join(venv, "bin", "python")
     ufr_dir = os.environ.get("UFR_DIR", "")
     if not a.no_sing:
         if not os.path.exists(python):
-            sys.exit(f"no singer at {SING_VENV}: run scripts/install-singer.sh")
+            sys.exit(f"no singer at {venv}: run scripts/install-singer.sh")
         if not os.path.isfile(os.path.join(ufr_dir, "core", "phonemes.json")):
             sys.exit("set UFR_DIR in .env to the UFR DiffSinger pack's folder (core/, dsdur/, tiger/); "
                      "download it from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/")
@@ -490,8 +495,9 @@ def main():
     folded = os.path.join(out, f"{a.slug}_folded.mscx") if a.fold_divisi else None
     manifest, cleaned, groups = build_bundle(ROOT, a.slug, bundle_dir, folded)
     log(f"bundle: {bundle_dir} ({manifest['duration']} s, parts {[p['name'] for p in manifest['parts']]})")
-    sung_by = [part_voice(p["name"], a.voice) for p in manifest["parts"]]
+    sung_by = []
     if not a.no_sing:
+        sung_by = [part_voice(p["name"], a.voice) for p in manifest["parts"]]
         work = os.path.join(out, "work")
         os.makedirs(work, exist_ok=True)
         gpu = not a.cpu and nvidia_dir(python) is not None

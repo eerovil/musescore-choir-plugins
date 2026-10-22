@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import sys
@@ -279,3 +280,26 @@ def test_a_click_staff_of_rests_is_left_out_as_publishing_leaves_it_out(tmp_path
     path = score(tmp_path / "cleaned.mscx", [("T1", [chord(60) * 4]), ("Click", [rest()]),
                                              ("B1", [chord(48) * 4])])
     assert publish_song.sung_staves(path) == ["1", "3"]
+
+
+def run_main(monkeypatch, root, *args):
+    """main() with this checkout swapped for `root` and the bundle faked (parts named Ääni 1, Piano)."""
+    monkeypatch.setattr(publish_song, "ROOT", str(root))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--out", str(root / "out"), *args])
+    manifest = {"duration": 1.0, "parts": [{"name": "Ääni 1"}, {"name": "Piano"}]}
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: (manifest, "cleaned.mscx", None))
+    publish_song.main()
+
+
+def test_sing_venv_in_dotenv_is_the_one_looked_for(tmp_path, monkeypatch):
+    monkeypatch.delenv("SING_VENV", raising=False)
+    (tmp_path / ".env").write_text(f"SING_VENV={tmp_path}/my-singer\n")
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path)
+    assert f"{tmp_path}/my-singer" in str(stop.value)
+    monkeypatch.delenv("SING_VENV", raising=False)
+
+
+def test_piano_only_needs_no_voice_for_the_parts(tmp_path, monkeypatch):
+    run_main(monkeypatch, tmp_path, "--no-sing")
+    assert json.load(open(tmp_path / "out" / "laulu" / "manifest.json"))["parts"][0]["name"] == "Ääni 1"
