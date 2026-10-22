@@ -1553,7 +1553,9 @@ state model are in `DESIGN.md`.
   `REMOTE_RUNNER`, `read_page` runs it as `<runner> read-band <image> <out dir> <homr venv>
   <homr flags...>` for the installed homr (never a branch engine), streams what it
   prints into the log, and uses `<out dir>/<image>.musicxml` when it exits 0 with the file
-  written; anything else reads the band here under the heavy slot, as without one. The
+  written; anything else reads the band here under the heavy slot, as without one. A runner
+  given up on (`REMOTE_TIMEOUT`, or an error while reading) gets SIGTERM and `REMOTE_STOP_S`
+  (30 s) to end its job over there before SIGKILL (#443); a local homr is killed at once. The
   runner shipped is `src/kube_runner/runner.py` (see "Where heavy work runs" in
   `docs/pdf-to-practice-track.md`); on the owner's host it reads on eero-pc's GPU.
   `test_remote_runner.py` pins the contract with a stub runner.
