@@ -8,13 +8,14 @@ class FakeSite:
         self.rows = rows
 
     def query(self, sql):
-        assert '"sung":true' in sql
         return [{"results": self.rows}]
 
 
-def row(choir, slug, prefix, names):
+def row(choir, slug, prefix, names, sung=True, compact=True):
+    """A songs row, its parts written as the site's script does (compact) or the app's publish."""
+    parts = [{"name": n, **({"file": f"parts/{i}-{n}.mp3", "sung": True} if sung else {})} for i, n in enumerate(names, 1)]
     return {"choir": choir, "slug": slug, "prefix": prefix,
-            "parts": json.dumps([{"name": n, "file": f"parts/{i}-{n}.mp3", "sung": True} for i, n in enumerate(names, 1)])}
+            "parts": json.dumps(parts, separators=(",", ":")) if compact else json.dumps(parts, ensure_ascii=False)}
 
 
 def test_a_version_two_lists_share_is_done_once_and_slugs_narrow_it():
@@ -80,3 +81,10 @@ def test_voices_that_swapped_pitches_fail_their_parts_though_words_and_starts_st
     parts = [{"name": "T", "staff": 0, "voices": [1]}, {"name": "B", "staff": 0, "voices": [2]}]
     assert add_words.verified_parts(live, live, parts) == [True, True]
     assert add_words.verified_parts(live, now, parts) == [False, False]
+
+
+def test_a_version_the_apps_publish_wrote_is_found_and_a_piano_one_is_not():
+    # the app writes parts with json.dumps(parts, ensure_ascii=False): "sung": true, with a space
+    site = FakeSite([row("jm", "laulu", "songs/jm/laulu/1/", ["T1", "B1"], compact=False),
+                     row("jm", "piano", "songs/jm/piano/1/", ["T1"], sung=False, compact=False)])
+    assert [v[0] for v in add_words.sung_versions(site)] == ["songs/jm/laulu/1/"]

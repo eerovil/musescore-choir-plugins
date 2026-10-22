@@ -35,11 +35,13 @@ from src.sing_song.main import build_bundle, log, plain, sung_words, write_words
 def sung_versions(cf, slugs=()):
     """[(prefix, slug, parts)] of every sung version on the site, each prefix once; `parts` as
     the row lists them (name, and staff and voices where parts share a staff)."""
-    rows = cf.query("SELECT prefix, slug, parts FROM songs WHERE parts LIKE '%\"sung\":true%' ORDER BY slug, prefix")
+    # every row, read as JSON: the site's script writes "sung":true, the app's publish "sung": true
+    rows = cf.query("SELECT prefix, slug, parts FROM songs ORDER BY slug, prefix")
     out = {}
     for r in (row for part in rows for row in part.get("results") or []):   # the app client's D1 reply
-        if not slugs or r["slug"] in slugs:
-            out.setdefault(r["prefix"], (r["slug"], json.loads(r["parts"])))
+        parts = json.loads(r["parts"] or "[]")
+        if any(p.get("sung") is True for p in parts) and (not slugs or r["slug"] in slugs):
+            out.setdefault(r["prefix"], (r["slug"], parts))
     return [(prefix, slug, parts) for prefix, (slug, parts) in out.items()]
 
 
