@@ -141,6 +141,18 @@ def test_folding_leaves_out_a_click_staff_as_publishing_does(tmp_path, monkeypat
     assert sys.modules["src.song_app.publish"].CALLS[-1]["part_names"] == ["Sopraano 1", "Altto"]
 
 
+def test_a_resting_part_whose_lettered_line_sings_is_kept_when_folded(tmp_path, monkeypatch):
+    # #439 review: S1 rests throughout, S1b sings; folded, S1 sings S1b's line and publishing keeps it
+    from src.sing_song.tests.test_fold import chord, rest, score
+    app = stub_song_app(tmp_path, {}, monkeypatch)
+    score(app / "cleaned.mscx", [("S1", [rest()]), ("S1b", [chord(69) * 4]), ("Click", [rest()]),
+                                 ("A1", [chord(60) * 4])])
+    out = tmp_path / "bundle"
+    out.mkdir()
+    _, _, groups = publish_song.build_bundle(str(app), "laulu", str(out), str(tmp_path / "folded.mscx"))
+    assert groups == [["1", "2"], ["4"]]
+
+
 def test_a_names_list_of_another_length_is_left_for_song_app_to_refuse():
     assert publish_song.folded_names(["a", "b"], [["1", "2"], ["3"]]) == ["a", "b"]
     assert publish_song.folded_names(None, [["1"]]) is None
