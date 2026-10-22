@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A scan that gives up on a system sent to the remote runner now asks the runner to stop
+  and waits up to 30 s before killing it, so homr does not keep running on the other
+  machine's card. (#443)
 - A sung part holds the last syllable over any number of notes without words, instead of
   singing it again from the third note on; after a rest it is sung once again and then held.
   (#442)

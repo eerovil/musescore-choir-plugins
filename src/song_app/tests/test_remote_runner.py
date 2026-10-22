@@ -113,3 +113,40 @@ def test_no_reader_no_change(tmp_path, monkeypatch, here):
     monkeypatch.setenv("REMOTE_RUNNER", "")
     text, _ = _read(tmp_path, engine)
     assert "<!--here-->" in text and asked
+
+
+def test_a_reader_past_its_deadline_is_asked_to_stop_first(tmp_path, monkeypatch, here):
+    """#443: SIGTERM, so the runner ends its pod job; the band is then read here."""
+    engine, asked, _ = here
+    monkeypatch.setattr(omr, "REMOTE_TIMEOUT", 1)
+    monkeypatch.setattr(omr, "REMOTE_STOP_S", 10)
+    _reader(tmp_path, monkeypatch,
+            'trap \'touch "$(dirname "$0")/ended"; exit 143\' TERM\n'
+            'echo "reading over there"; sleep 60 & wait\n')
+    text, lines = _read(tmp_path, engine)
+    assert (tmp_path / "ended").exists()
+    assert "<!--here-->" in text and asked
+    assert any("did not read it" in line for line in lines)
+
+
+def test_a_reader_that_will_not_stop_is_killed(tmp_path, monkeypatch, here):
+    engine, _, _ = here
+    monkeypatch.setattr(omr, "REMOTE_TIMEOUT", 1)
+    monkeypatch.setattr(omr, "REMOTE_STOP_S", 1)
+    _reader(tmp_path, monkeypatch, "trap '' TERM\nsleep 60 & wait\n")
+    text, _ = _read(tmp_path, engine)
+    assert "<!--here-->" in text
+
+
+def test_a_local_homr_is_killed_at_once(monkeypatch):
+    """Only the remote runner gets the grace: a local homr can keep its SIGKILL."""
+    sent = []
+    monkeypatch.setattr(omr.os, "killpg", lambda pid, sig: sent.append(sig))
+
+    class Process:
+        pid = 1
+
+        def wait(self, timeout=None):
+            return 0
+    omr._kill(Process())
+    assert sent == [omr.signal.SIGKILL]

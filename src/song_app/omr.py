@@ -945,6 +945,8 @@ def _split_measure(measure: etree._Element, spare: int) -> List[MovedRest]:
 
 #: How long the remote runner may take, its own first-time setup included.
 REMOTE_TIMEOUT = 1800
+#: How long a stopped runner may take to end its job over there before it is killed.
+REMOTE_STOP_S = 30
 
 
 def _read_remotely(engine: Engine, flags: List[str], image: str, out_dir: str,
@@ -966,7 +968,7 @@ def _read_remotely(engine: Engine, flags: List[str], image: str, out_dir: str,
                             + ".musicxml")
     try:
         lines = _run(shlex.split(reader) + ["read-band", image, out_dir, venv] + flags, log,
-                     REMOTE_TIMEOUT)
+                     REMOTE_TIMEOUT, stop_grace=REMOTE_STOP_S)
     except HomrError as exc:
         why = str(exc).strip().splitlines()
         log(f"The remote runner did not read it ({why[-1] if why else 'no reason given'}); "
@@ -989,12 +991,14 @@ def _queued(label: str, log: Logger, queue: bool):
 
 
 def _run(command: List[str], log: Logger, timeout: int,
-         extra_env: Optional[Dict[str, str]] = None) -> List[str]:
+         extra_env: Optional[Dict[str, str]] = None,
+         stop_grace: Optional[float] = None) -> List[str]:
     """Run homr, streaming its output to ``log``, and return the lines.
 
     The deadline is a timer that kills the process, not ``wait(timeout=...)``:
     reading the pipe is what blocks, and a wedged homr holding it open would
-    never reach the wait at all.
+    never reach the wait at all. With ``stop_grace`` it is asked to stop first
+    (see ``_kill``).
     """
     try:
         process = subprocess.Popen(
@@ -1014,7 +1018,7 @@ def _run(command: List[str], log: Logger, timeout: int,
 
     def give_up() -> None:
         expired.set()
-        _kill(process)
+        _kill(process, stop_grace)
 
     deadline = threading.Timer(timeout, give_up)
     deadline.start()
@@ -1032,7 +1036,7 @@ def _run(command: List[str], log: Logger, timeout: int,
         # The log callback carries the heavy slot's check, so it can raise
         # here. Abandoning the loop without this would leave homr running on
         # cores that have been promised to somebody else.
-        _kill(process)
+        _kill(process, stop_grace)
         raise
     finally:
         deadline.cancel()
@@ -1046,8 +1050,23 @@ def _run(command: List[str], log: Logger, timeout: int,
     return lines
 
 
-def _kill(process: subprocess.Popen) -> None:
-    """Kill homr and anything it started (it runs in its own process group)."""
+def _kill(process: subprocess.Popen, grace: Optional[float] = None) -> None:
+    """Kill homr and anything it started (it runs in its own process group).
+
+    With ``grace``, SIGTERM first and SIGKILL only if it has not exited within that
+    many seconds. The remote runner needs that (#443): its homr runs detached in a pod,
+    so a SIGKILL here leaves homr on the card and the runner's job never ended.
+    """
+    if grace is not None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            process.terminate()
+        try:
+            process.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            pass
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
