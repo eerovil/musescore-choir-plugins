@@ -13,7 +13,8 @@ needs from here is:
 - the **credits**: composer, lyricist and arranger, when they are known.
 
 No audio is rendered here (stemmanauhat-cf#36), and nothing goes to YouTube any
-more (#400).
+more (#400). ``sing_song.py --publish`` sends each part's sung MP3 along too
+(``Bundle.sung``, #439); the app's own Publish button stays piano only.
 
 All of it is made off one prepared copy of the cleaned score
 (`score_export.score.prepare`: silent parts dropped, red marks stripped, the
@@ -71,6 +72,16 @@ UPSERT = ("INSERT INTO songs (choir, slug, title, prefix, parts, duration, publi
           "duration = excluded.duration, published_at = excluded.published_at, "
           "composer = excluded.composer, lyricist = excluded.lyricist, "
           "arranger = excluded.arranger")
+
+
+UNSAFE_IN_FILE = re.compile(r"[/\\?#%]")
+
+
+def sung_file(index: int, name: str) -> str:
+    """parts/<n>-<Name>.mp3, the sung MP3 of part `index` (from 1): a part name may hold a
+    character a file name or a URL cannot (``S/A``), which becomes ``_``. The site reads the
+    name off the manifest's ``file``, and sing_song writes its MP3 under the same one."""
+    return f"parts/{index}-{UNSAFE_IN_FILE.sub('_', name)}.mp3"
 
 
 def _noop(_msg: str) -> None:
@@ -180,6 +191,9 @@ class Bundle:
     # Where each part is drawn when some share a staff (#420): name -> {"staff":
     # 0-based MusicXML part, "voices": [MusicXML voice numbers]}. Empty: one each.
     layout: Dict[str, Dict] = field(default_factory=dict)
+    # The sung MP3 of each part, when sing_song sang them (#439): name -> {"mp3":
+    # path here, "voice": the voice credited on the site}. Empty: piano only.
+    sung: Dict[str, Dict] = field(default_factory=dict)
 
 
 def score_credits(mscx_path: str) -> Dict[str, str]:
@@ -743,6 +757,18 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     prefix = f"songs/{choir}/{slug}/{version}/"
     parts = [{"name": name, **bundle.layout.get(name, {})} for name in bundle.parts]
+    if bundle.sung and set(bundle.sung) != set(bundle.parts):
+        raise PublishError("Every part needs its sung MP3, or none: "
+                           + ", ".join(n for n in bundle.parts if n not in bundle.sung) + ".")
+    sung_files = []
+    for index, part in enumerate(parts, 1):
+        if bundle.sung:
+            # The site plays parts/<n>-<Name>.mp3 as the part's "Laulu" (stemmanauhat-cf#36).
+            name = sung_file(index, part["name"])
+            sung_files.append((name, bundle.sung[part["name"]]["mp3"]))
+            part.update(file=name, sung=True)
+            if bundle.sung[part["name"]].get("voice"):
+                part["voice"] = bundle.sung[part["name"]]["voice"]
     duration = bundle.timing.get("duration", 0.0)
     named = {name: (credits or {}).get(name, "").strip() for name in CREDITS}
     named = {name: text for name, text in named.items() if text}
@@ -765,6 +791,9 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     with open(bundle.midi, "rb") as f:
         uploads.append(("score.mid", f.read(), "audio/midi"))
     uploads.append(("timing.json", json.dumps(bundle.timing).encode(), "application/json"))
+    for name, path in sung_files:
+        with open(path, "rb") as f:
+            uploads.append((name, f.read(), "audio/mpeg"))
     uploads.append(("manifest.json", json.dumps(manifest, ensure_ascii=False).encode(),
                     "application/json"))
 

@@ -1,0 +1,387 @@
+"""Sing a part with the UFR multilingual DiffSinger model.
+
+TIMING=model uses the bank's duration model to propose consonant lengths.  The score still
+owns note boundaries: consonants are clipped and squeezed into the preceding note so every
+vowel starts on its beat.  The default TIMING=flat keeps the original hand-timed baseline.
+"""
+import json, os, re, sys
+import numpy as np, onnxruntime as ort, soundfile as sf
+D = os.environ.get("UFR_DIR", "/var/tmp/i36-ufr")
+notes = json.load(open(sys.argv[1])); out = sys.argv[2]
+bpm = float(sys.argv[3]) if len(sys.argv) > 3 else 76
+spk = sys.argv[4] if len(sys.argv) > 4 else "fresh"
+PH = json.load(open(f"{D}/core/phonemes.json")); LANG = json.load(open(f"{D}/core/languages.json"))
+FPS = 44100 / 512
+import os
+V = {"a": "it/a", "e": "nl/e",   # e: nl/e beat it/e on both voices (#45)
+     "i": "it/i", "o": "it/o", "u": "it/u",
+     "y": os.environ.get("Y", "fr/uh"), "ö": os.environ.get("OE", "fr/oe"), "ä": os.environ.get("AE", "en/ae")}   # ä, ö: Eero's picks after the benchmark (#43)
+V.update(json.loads(os.environ.get("VMAP", "{}")))
+C = {"k": "it/k", "p": "it/p", "t": "it/t", "s": "it/s", "h": "de/h", "j": "de/j", "l": "it/l",
+     "m": "it/m", "n": "it/n", "r": "it/rr", "v": "it/v", "d": "it/d", "g": "it/g", "b": "it/b",
+     "f": "it/f", "N": "de/ng"}
+# Loan letters in Finnish lyrics (names, "Venematka"'s w): read as a Finn says them.
+C.update({"w": "it/v", "c": "it/k", "z": "it/s", "q": "it/k", "ʃ": "de/sh", "ʒ": "en/zh"})
+LOAN = [("x", "ks"), ("š", "ʃ"), ("ž", "ʒ")]   # x is k + s ("Alex"), š and ž the sh and zh sounds ("šakki")
+V.update({"å": "it/o", "ü": V["y"], "é": "it/e"})
+C.update(json.loads(os.environ.get("CMAP", "{}")))
+# SONG_LANG=no: Norwegian (Grieg's Dano-Norwegian texts), read from the spelling. y and ø borrow
+# the German sounds, æ the English one; hv is v, kj is the German ich-sound, sj/skj is sh.
+SONG_LANG = os.environ.get("SONG_LANG", "fi")
+DIGRAPHS = []
+if SONG_LANG == "no":
+    V.update({"y": "de/ue", "ø": "de/oe", "æ": "en/ae", "å": "it/o", "u": "de/ue"})
+    C.update({"ç": "de/ch", "c": "it/k", "z": "it/s", "w": "it/v", "x": "it/s", "q": "it/k"})
+    LOAN = []
+    DIGRAPHS = [("skj", "ʃ"), ("sj", "ʃ"), ("kj", "ç"), ("hv", "v"), ("hj", "j")]
+VOW = "aeiouyäöæøåüé"
+def split(syl):
+    s = syl.lower()
+    for a, b in LOAN: s = s.replace(a, b)
+    s = re.sub(r"[^a-zåäöæøçʃʒüé]", "", s)
+    for a, b in DIGRAPHS: s = s.replace(a, b)
+    m = re.match(rf"^([^{VOW}]*)([{VOW}]+)([^{VOW}]*)$", s)
+    if not m:
+        # no vowel (#45): a hum ("mm", "dn") holds its last humming consonant after the ones
+        # before it, a hiss ("tsss") its last s, f or h, and a click ("k") is the consonant
+        # followed by silence. After a stop, a hum or an h starts with a short "uh" ("dn" is
+        # d-uh-nnn, "gh" g-uh-hhh): Eero's pick by ear
+        cs = [c for c in s.replace("ng", "N") if c in C]
+        if not cs: return [], ["it/s"], []
+        hold = next((i for i in reversed(range(len(cs))) if cs[i] in "mnlrN"), None)
+        if hold is None: hold = next((i for i in reversed(range(len(cs))) if cs[i] in "sfhzʃʒç"), None)
+        if hold is None: return [C[c] for c in cs], ["SP"], []
+        first = hold
+        while first > 0 and cs[first - 1] == cs[hold]: first -= 1      # "mm", "tsss": one held sound
+        schwa = cs[hold] in "mnlrNh" and any(c in "kptdgb" for c in cs[:first])
+        return [C[c] for c in cs[:first]], (["en/ax"] if schwa else []) + [C[cs[hold]]], [C[c] for c in cs[hold + 1:]]
+    on, nuc, co = m.groups()
+    vs = []
+    for ch in nuc:
+        if not vs or V[ch] != vs[-1]: vs.append(V[ch])
+    return [C[c] for c in on], vs, [C[c] for c in co.replace("ng", "N")]
+def repeated(n, last_syl, last_ph):
+    """A note with no syllable, no slur and no extender over it: the singers repeat the last
+    syllable ("duu..." over a run of notes), also after a rest, instead of one held vowel."""
+    if not n.get("syl") and "melisma" in n and not n["melisma"] and last_syl:
+        return dict(n, syl=last_syl, syllabic="single", **({"ph": last_ph} if last_ph else {}))
+    return n
+HOLD_RUN = int(os.environ.get("HOLD_RUN", "2"))
+def hold_short_runs(notes):
+    """One or two notes in a row with no syllable carry the last syllable on (held at the new
+    pitch, as under a slur); only a run of three or more repeats it (Eero, #45). After a rest
+    there is no vowel to hold, so the syllable is sung again there."""
+    out, k = [dict(n) for n in notes], 0
+    while k < len(out):
+        j = k
+        while j < len(out) and out[j]["pitch"] is not None and not out[j].get("syl"): j += 1
+        if j > k and j - k <= HOLD_RUN and k > 0 and out[k - 1]["pitch"] is not None:   # after a rest: sung again
+            for n in out[k:j]:
+                if "melisma" in n: n["melisma"] = True
+        k = max(j, k + 1)
+    return out
+def sounds(n):
+    """(onset, vowels, coda): g2p.py's sounds for other languages, else the Finnish spelling rules."""
+    return (n["ph"]["on"], n["ph"]["vs"], n["ph"]["co"]) if n.get("ph") else split(n["syl"])
+beat = 60 / bpm
+STOPS = {f"{l}/{x}" for l in ("it", "en", "de") for x in "kptd"} | set(filter(None, os.environ.get("CLOSE", "").split(",")))
+STOPS -= set(filter(None, os.environ.get("NOCLOSE", "").split(",")))   # NOCLOSE=it/d: no closure before d
+# frames of silence for a double stop ("tt"); a single one gets 5. 18 ranked first for tt and kk (#43)
+DBL_CLOSE = int(os.environ.get("DBL_CLOSE", "18"))
+LONG_SHARE = float(os.environ.get("LONG_SHARE", "0.2"))   # ... and after a long vowel ("naan"): it stays long
+DBL_SHARE = float(os.environ.get("DBL_SHARE", "0.65"))   # share of the note a double stop may take
+S_MIN = int(os.environ.get("S_MIN", "5"))   # frames an s keeps before the next vowel, however short the note (#61)
+SGL_CLOSE = int(os.environ.get("SGL_CLOSE", "3"))   # frames of silence before a single stop (#45: 5 made "o-do" pause; Eero picked 3 by ear)
+# a double n, s, m...: this many times a single one (#45: 3x, 2.5x and 4x ranked first on both
+# voices; no length tried made ll heard as double). DBL_LEN=<x> sets one length for all.
+DBL_LEN = ({} if "DBL_LEN" not in os.environ else {"*": float(os.environ["DBL_LEN"])}) or \
+    {"it/n": 3, "it/s": 2.5, "it/m": 4, "de/ng": 3, "*": 2}
+# an n, m or ng that closes a syllable before another consonant ("rin-ta", "kam-pa") is held as
+# long as a double one; "han-get" is a double ng (Eero, #45). NASAL_LONG=0: as before.
+NASAL_LONG = os.environ.get("NASAL_LONG", "1") == "1"
+NASALS = {"it/n", "it/m", "de/ng"}
+DIPH = float(os.environ.get("DIPH", "0.5"))       # share of the note the first vowel of "ai", "uo" gets (#45: 0.7 lost the second vowel)
+SCHWA = 0.3                                        # the "uh" of a scat "dn": share of the note
+HUMS = {"it/m", "it/n", "de/ng", "it/l", "it/rr", "de/h"}
+NG = os.environ.get("NG", "1") == "1"            # n before k is the ng sound, and "n-g" a long ng (Eero's pick by ear, #45); NG=0: plain n
+CLEN = {"de/q": 4, "it/s": 9, "de/h": 6, "it/rr": 6, "it/cl": 5}   # consonant lengths in frames (~11.6 ms)
+CLIP = {
+    **{f"it/{c}": (0.03, 0.065) for c in "bdg"},
+    **{f"it/{c}": (0.04, 0.13) for c in "ptk"},
+    **{f"it/{c}": (0.06, 0.15) for c in "mn"}, "de/ng": (0.07, 0.20),
+    **{f"it/{c}": (0.055, 0.18) for c in "fs"}, "de/h": (0.055, 0.18),
+    "it/v": (0.05, 0.15),
+    **{f"it/{c}": (0.04, 0.13) for c in ("l", "rr", "y")}, "de/j": (0.04, 0.13),
+    "de/q": (0.02, 0.08),
+}
+TIMING = os.environ.get("TIMING", "flat")
+# GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
+PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"] if os.environ.get("GPU") else ["CPUExecutionProvider"]
+def cons_seq(cs, proposed=None):
+    """Consonants sung between two vowels. Stops (k, p, t and d) get a closure (silence) before them, as
+    DiffSinger voices expect; a doubled stop (the "tt" in "koittaa") gets one longer closure."""
+    seq = []
+    proposed = list(proposed or [])
+    proposed += [None] * (len(cs) - len(proposed))
+    for i, (c, pred) in enumerate(zip(cs, proposed)):
+        model_d = None
+        if pred is not None:
+            lo, hi = CLIP.get(c, (0.04, 0.15))
+            model_d = max(1, int(round(np.clip(pred, lo, hi) * FPS)))
+        if c in STOPS:
+            if i + 1 < len(cs) and cs[i + 1] == c: continue        # first half of a double stop
+            dbl = i > 0 and cs[i - 1] == c
+            seq.append(("it/cl", DBL_CLOSE if dbl else SGL_CLOSE)); seq.append((c, model_d or 4))
+        elif i > 0 and cs[i - 1] == c:
+            seq[-1] = (c, seq[-1][1] + (model_d or int(round(seq[-1][1] * (DBL_LEN.get(c, DBL_LEN["*"]) - 1)))))   # double l, n, s...: longer
+        elif NASAL_LONG and c in NASALS and i + 1 < len(cs) and cs[i + 1] not in (c, "de/q") and not model_d:   # not before the break of a vowel word ("junaan | aina")
+            seq.append((c, int(round(CLEN.get(c, 5) * DBL_LEN.get(c, DBL_LEN["*"])))))
+        else:
+            seq.append((c, model_d or CLEN.get(c, 5)))
+    return seq
+def put(seq, budget=None):
+    """Place consonants just before the beat, taking their time from the note before them only
+    (its sounds from index note_lo on), so no older note is shortened. Each sound keeps 3 frames
+    when it can, else 1; on a note too short for all the consonants, those nearest the beat stay."""
+    if not seq: return
+    spare = lambda keep: sum(max(durs[i] - keep, 0) for i in range(note_lo, len(durs)))
+    keep = 3 if spare(3) >= len(seq) else 1
+    room = spare(keep)
+    if room == 0: return                 # a note with no frame to spare: no consonants fit
+    if room < len(seq): seq = seq[len(seq) - room:]
+    budget = room if budget is None else min(room, budget)
+    budget = max(len(seq), budget)      # the acoustic model needs at least one frame per token
+    if sum(d for _, d in seq) > budget:
+        scale = budget / sum(d for _, d in seq)
+        seq = [(c, max(1, int(round(d * scale)))) for c, d in seq]
+        while sum(d for _, d in seq) > budget:
+            j = max(range(len(seq)), key=lambda x: seq[x][1])
+            c, d = seq[j]; seq[j] = (c, d - 1)
+    need, i = sum(d for _, d in seq), len(durs) - 1
+    while need > 0 and i >= note_lo:     # borrow from the note's last sound, then its earlier ones
+        take = min(need, max(durs[i] - keep, 0)); durs[i] -= take; need -= take; i -= 1
+    assert need == 0, ("consonants do not fit before beat", seq, budget)
+    for c, d in seq: toks.append(c); durs.append(d)
+
+def ng(boundary):
+    """The consonants between two vowels as Finns say them: with NG, "kenkä" is keŋ-kä and
+    "kengät" keŋ-ŋät."""
+    if not NG: return boundary
+    return [("de/ng" if c == "it/n" and nxt in ("it/k", "it/g") else "de/ng" if c == "it/g" and prv in ("it/n", "de/ng") else c)
+            for prv, c, nxt in zip([None] + boundary, boundary, boundary[1:] + [None])]
+def model_phrases(notes):
+    """The sung syllables by phrase, as the rendering loop below sings them (repeated syllables,
+    g2p.py's sounds): the duration model's input."""
+    phrases, current = [], []
+    tsec = 0.0; last_syl = last_ph = None
+    for i, n in enumerate(notes):
+        nb = n["sec"] if n.get("sec") else n["beats"] * beat
+        nf = int(round((tsec + nb) * FPS)) - int(round(tsec * FPS)); tsec += nb
+        if n["pitch"] is None:
+            if current: phrases.append(current); current = []
+            continue
+        n = repeated(n, last_syl, last_ph)
+        if not n.get("syl"):
+            if current: current[-1]["frames"] += nf
+            continue
+        on, vs, co = sounds(n)
+        last_syl, last_ph = n["syl"], n.get("ph")
+        current.append({"index": i, "on": on, "vs": vs, "co": co, "midi": n["pitch"], "frames": nf})
+    if current: phrases.append(current)
+    for phrase in phrases:                # the same ng as the rendering loop sings
+        for u, v in zip(phrase, phrase[1:]):
+            b = ng(u["co"] + v["on"]); u["co"], v["on"] = b[:len(u["co"])], b[len(u["co"]):]
+    return phrases
+def model_boundaries(notes, emb):
+    """Return duration-model proposals for each note's preceding consonants and final coda."""
+    if TIMING != "model": return {}, None
+    phrases = model_phrases(notes)
+    ling = ort.InferenceSession(f"{D}/dsdur/millefeuille_v001.linguistic.onnx", providers=PROVIDERS)
+    dur = ort.InferenceSession(f"{D}/dsdur/millefeuille_v001.dur.onnx", providers=PROVIDERS)
+    out = {}
+    for phrase in phrases:
+        words = [["SP"] + phrase[0]["on"]]
+        for i, u in enumerate(phrase):
+            words.append(u["vs"] + u["co"] + (phrase[i + 1]["on"] if i + 1 < len(phrase) else []))
+        word_dur = [max(1, int(0.4 * FPS))] + [u["frames"] for u in phrase]
+        midi = [phrase[0]["midi"]] + [u["midi"] for u in phrase]
+        phs = [p for word in words for p in word]
+        lang = [LANG.get(p.split("/")[0], 0) if "/" in p else 0 for p in phs]
+        enc, mask = ling.run(None, {"tokens": np.array([[PH[p] for p in phs]], np.int64),
+            "languages": np.array([lang], np.int64),
+            "word_div": np.array([[len(w) for w in words]], np.int64),
+            "word_dur": np.array([word_dur], np.int64)})
+        pred = dur.run(None, {"encoder_out": enc, "x_masks": mask,
+            "ph_midi": np.array([[m for word, m in zip(words, midi) for _ in word]], np.int64),
+            "spk_embed": np.tile(emb, (1, len(phs), 1)).astype(np.float32)})[0][0] / FPS
+        by_word, k = [], 0
+        for word in words:
+            by_word.append(pred[k:k + len(word)].tolist()); k += len(word)
+        out[phrase[0]["index"]] = by_word[0][1:]
+        for i, u in enumerate(phrase):
+            start = len(u["vs"])
+            out[(u["index"], "coda")] = by_word[i + 1][start:start + len(u["co"])]
+            if i + 1 < len(phrase):
+                out[phrase[i + 1]["index"]] = by_word[i + 1][start + len(u["co"]):]
+    return out, phrases
+
+emb = np.fromfile(f"{D}/tiger/{spk}.emb", dtype=np.float32)
+dur_emb_path = f"{D}/dsdur/millefeuille_v001.{spk}.emb"
+dur_emb = np.fromfile(dur_emb_path, dtype=np.float32)[None, None, :] if TIMING == "model" else None
+notes = hold_short_runs(notes)
+model_durs, _ = model_boundaries(notes, dur_emb)
+toks, durs, f0n = ["SP"], [int(0.4 * FPS)], []
+note_lo = 0
+t = durs[0]; pending = []; pending_pred = []; breath = False; tsec = 0.0; prev_nf = durs[0]
+last_syl = last_ph = None; prev_long = False
+BREATH = 0.5   # beats of breath after a comma or full stop on a long note          # coda consonants of the previous syllable
+for ni, n in enumerate(notes):
+    nb = n["sec"] if n.get("sec") else n["beats"] * beat   # seconds: the score's own tempo marks when it has them
+    # frames from the running total, so rounding never piles up (it added 0.4 s over a 3-minute song)
+    nf = int(round((tsec + nb) * FPS)) - int(round(tsec * FPS)); tsec += nb
+    if n["pitch"] is None:
+        seq = cons_seq(pending, pending_pred); pending = []; pending_pred = []
+        k = sum(d for _, d in seq)
+        if TIMING != "model" and seq and nf - k >= 3:
+            # the word's last consonants ("viis") go into the rest, so the vowel keeps its whole note (#45)
+            for c, d in seq: toks.append(c); durs.append(d)
+            note_lo = len(toks); toks.append("SP"); durs.append(nf - k)
+        else:
+            put(seq, max(1, prev_nf // 2))
+            note_lo = len(toks); toks.append("SP"); durs.append(nf)
+        f0n.append((t, t + nf, None)); t += nf; prev_nf = nf; prev_long = False; continue
+    n = repeated(n, last_syl, last_ph)
+    if not n.get("syl"):
+        # melisma: a note without its own syllable keeps singing the vowel at the new pitch
+        durs[-1] += nf
+        f0n.append((t, t + nf, n.get("hz") or 440 * 2 ** ((n["pitch"] - 69) / 12))); t += nf; prev_nf += nf
+        continue
+    on, vs, co = sounds(n)
+    last_syl, last_ph = n["syl"], n.get("ph")
+    word_start = n.get("syllabic") in ("single", "begin")
+    if breath:
+        # phrase end: finish the last word, then a short breath before the next one
+        ap = int(BREATH * (n["sec"] / n["beats"] if n.get("sec") else beat) * FPS)
+        put(cons_seq(pending, pending_pred) + [("AP", ap)]); pending = []; pending_pred = []
+    if word_start and not on and not pending and toks[-1] not in ("AP", "SP"):
+        on = ["de/q"]                     # glottal stop: "koittaa | yön" stay two words
+    # coda of the previous syllable + this onset all sound just before the beat
+    boundary = pending + on
+    boundary = ng(boundary)
+    boundary_pred = pending_pred + model_durs.get(ni, [])
+    # the consonants take at most half of the note before them, a fifth after a long vowel
+    # ("ju-naan-ko": the aa stays long), so short notes keep their vowels (#45)
+    # a double stop ("pap-pap", "tyttö") may take more: its silence is what makes it heard
+    seq = cons_seq(boundary, boundary_pred)
+    share = DBL_SHARE if any(c == "it/cl" and d >= DBL_CLOSE for c, d in seq) else (LONG_SHARE if prev_long else 1 / 2)
+    budget = max(1, int(prev_nf * share))
+    # an s squeezed by that share into a frame or two is not heard at all ("tar-pees-ta" sang
+    # "pee-ta", #61): give the consonants room for S_MIN frames of s, up to half the note
+    s_d = sum(d for c, d in seq if c == "it/s")
+    if s_d and budget * s_d / sum(d for _, d in seq) < S_MIN:
+        budget = max(budget, min(prev_nf // 2, -(-S_MIN * sum(d for _, d in seq) // s_d)))
+    put(seq, budget)
+    assert sum(durs) == t, ("vowel moved off its beat", ni, sum(durs), t)
+    pending = co; pending_pred = model_durs.get((ni, "coda"), [])
+    breath = bool(re.search(r"[,.;!?]", n["syl"])) and n["beats"] >= 2
+    if len(vs) == 1: vd = [nf]
+    else:
+        share = SCHWA if vs[0] == "en/ax" and vs[1] in HUMS else DIPH
+        first = int(nf * share); rest = (nf - first) // (len(vs) - 1)
+        vd = [first] + [rest] * (len(vs) - 1); vd[-1] += nf - sum(vd)
+    note_lo = len(toks); toks += vs; durs += vd
+    hz = n.get("hz") or 440 * 2 ** ((n["pitch"] - 69) / 12)
+    f0n.append((t, t + nf, hz)); t += nf; prev_nf = nf
+    prev_long = bool(re.search(r"([aeiouyäö])\1", n["syl"].lower()))
+tail = cons_seq(pending, pending_pred)          # the song's last consonants: after its last note
+if TIMING == "model": put(tail, max(1, prev_nf // 2)); tail = []
+assert min(durs) > 0, ("a sound got no time", [(toks[i], d) for i, d in enumerate(durs) if d <= 0], toks[:12], durs[:12])
+assert sum(durs) == t, ("phoneme timing changed score length", sum(durs), t)
+for c, d in tail: toks.append(c); durs.append(d)
+toks.append("SP"); durs.append(max(8, int(0.5 * FPS) - sum(d for _, d in tail)))
+N = sum(durs); f0 = np.zeros(N)
+last = next(hz for _, _, hz in f0n if hz)       # a part may start with a rest
+f0[: f0n[0][0]] = last
+for s, e, hz in f0n:
+    hz = hz or last; f0[s:e] = hz; last = hz
+f0[f0n[-1][1]:] = last
+assert np.isfinite(f0).all() and (f0 > 0).all(), "bad pitch curve"
+lf = np.convolve(np.pad(np.log2(f0), 3, mode="edge"), np.ones(7) / 7, "valid")
+f0 = (2 ** lf).astype(np.float32)
+if os.environ.get("DUMP_TOKENS"):        # the sounds and their frames, without singing (tests, #61)
+    json.dump({"toks": toks, "durs": [int(d) for d in durs]}, open(os.environ["DUMP_TOKENS"], "w")); sys.exit(0)
+ac = ort.InferenceSession(f"{D}/core/acoustic.onnx", providers=PROVIDERS)
+def sing(toks, durs, f0):
+    n = sum(durs); lang = [LANG.get(x.split("/")[0], 0) if "/" in x else 0 for x in toks]
+    return ac.run(None, {"tokens": np.array([[PH[x] for x in toks]], np.int64),
+        "languages": np.array([lang], np.int64), "durations": np.array([durs], np.int64),
+        "f0": f0[None], "gender": np.full((1, n), float(os.environ.get("GENDER", "0")), np.float32), "velocity": np.ones((1, n), np.float32),
+        "spk_embed": np.tile(emb, (1, n, 1)).astype(np.float32),
+        "depth": np.array(0.6, np.float32), "steps": np.array(20, np.int64)})[0]
+OV = 32     # frames on each side of a cut with no rest: both pieces sing them, cross-faded
+def windows(toks, durs, limit, ov=OV):
+    """The frames [a, b) to sing at a time, at most about `limit` long, as OpenUtau sings phrase
+    by phrase: a cut halves a rest, so the pieces meet in silence (a rest longer than `limit` is
+    cut as often as it needs, still in silence). A stretch longer than `limit`
+    with no rest (a held cluster, a loop sung for minutes, #104) is cut in the middle of its
+    longest held sound instead, or failing that where the limit runs out; there the two pieces
+    overlap by 2 * ov frames, which joined() cross-fades."""
+    wins, start, t, rest, held = [], 0, 0, None, None
+    for i, (p, d) in enumerate(zip(toks, durs)):
+        if p == "SP" and 0 < i < len(toks) - 1 and d >= 8: rest = (t + d // 2, t + d)
+        elif p != "SP" and d >= 2 * ov and start + ov < t + d // 2 <= start + limit:
+            if held is None or d > held[1]: held = (t + d // 2, d)
+        t += d
+        while t - start > limit:        # a while: one held note may run past the limit twice
+            if rest and rest[1] > start:     # its middle, or the rest's end once past it
+                c = min(rest[0] if rest[0] > start else rest[1], start + limit)
+                wins.append((start, c)); start = c
+            else:
+                c = held[0] if held else start + limit
+                wins.append((start, min(c + ov, sum(durs)))); start = c - ov
+                rest = None
+            held = None
+    return wins + [(start, sum(durs))]
+def clip(toks, durs, a, b):
+    """The sounds of frames [a, b): the ones a cut runs through keep only their frames inside."""
+    ts, ds, t = [], [], 0
+    for p, d in zip(toks, durs):
+        lo, hi = max(t, a), min(t + d, b)
+        if hi > lo: ts.append(p); ds.append(hi - lo)
+        t += d
+    return ts, ds
+def joined(parts, wins):
+    """The pieces' mels in one, cross-fading where two pieces sang the same frames."""
+    mel = np.zeros(parts[0].shape[:1] + (wins[-1][1],) + parts[0].shape[2:], parts[0].dtype)
+    end = 0
+    for m, (a, b) in zip(parts, wins):
+        k = end - a
+        if k > 0:
+            fade = np.linspace(0, 1, k, dtype=mel.dtype).reshape((1, k) + (1,) * (mel.ndim - 2))
+            mel[:, a:end] = mel[:, a:end] * (1 - fade) + m[:, :k] * fade
+        mel[:, max(a, end):b] = m[:, max(k, 0):]; end = b
+    return mel
+wins = windows(toks, durs, int(os.environ.get("AC_CHUNK", "0")) or 10**9)
+mel = joined([sing(*clip(toks, durs, a, b), f0[a:b]) for a, b in wins], wins)
+assert mel.shape[1] == N, ("pieces lost frames", mel.shape, N)
+del ac
+voc = ort.InferenceSession(f"{D}/core/potluck.onnx", providers=PROVIDERS)
+def vocode(mel, f0):
+    """The vocoder on a whole song needs more than a 4 GB card has: run it in pieces of
+    VOC_CHUNK frames that overlap by 32 frames, and cross-fade the overlaps."""
+    step = int(os.environ.get("VOC_CHUNK", "0")) or mel.shape[1]
+    ov, hop = 32, 512
+    out = np.zeros(mel.shape[1] * hop, np.float32)
+    for a in range(0, mel.shape[1], step):
+        lo, hi = max(0, a - ov), min(mel.shape[1], a + step)
+        w = voc.run(None, {"mel": mel[:, lo:hi], "f0": f0[None, lo:hi]})[0][0][: (hi - lo) * hop]
+        if lo < a:
+            k = (a - lo) * hop; fade = np.linspace(0, 1, k, dtype=np.float32)
+            out[lo * hop: a * hop] = out[lo * hop: a * hop] * (1 - fade) + w[:k] * fade
+            w = w[k:]
+        out[a * hop: a * hop + len(w)] = w
+    return out
+wav = vocode(mel, f0)
+sf.write(out, wav, 44100); print(out, round(len(wav) / 44100, 1), f"s; {TIMING} timing;", " ".join(toks))
+if os.environ.get("PRINT_DURS"):
+    print(" ".join(f"{p}:{d}" for p, d in zip(toks, durs)))
