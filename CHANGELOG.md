@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A song's parts can be sung and made into a practice track from this repository:
+  `sing_song.py <slug>` writes one sung MP3 per part with the score and its MIDI, and
+  `--publish <choir>` puts it on the site with the sung parts. `scripts/install-singer.sh`
+  installs the singer (on an NVIDIA card when there is one), and `docs/pdf-to-practice-track.md`
+  walks an agent from a PDF to the finished track. (#439)
 - A scan can hand each system to another machine first (`HOMR_REMOTE_READER` in `.env`),
   so several songs scanning at once need not wait in one queue on this host; when that
   machine cannot read it, the system is read here as before. (#438)

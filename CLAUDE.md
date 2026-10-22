@@ -2,6 +2,9 @@
 
 Guidance for working in this repository.
 
+**Asked to build a practice track from a PDF?** Follow `docs/pdf-to-practice-track.md` (AGENTS.md
+says the same for other agents).
+
 This guide is about 2,900 lines. List its headings with `grep -n '^#' CLAUDE.md` and read the
 section for your task before writing steps. Live-check song-app with a desktop viewport (about
 1280 wide): below 840 px the stage bar folds into a menu (`style.css`).
@@ -39,6 +42,7 @@ song.py                  Launcher for the song web app (FastAPI; src/song_app/)
 clean_score.py           CLI wrapper → src/clean_score/main.py (split voices into staves)
 lyric_txt.py             CLI wrapper → src/clean_score/lyric_txt.py (lyrics <-> txt/json)
 rename_parts.py          Standalone CLI: rename Part/Instrument names + add click staff
+sing_song.py             CLI wrapper → src/sing_song/main.py (sing the parts; optionally publish)
 src/song_app/            Local web app tying the workflow together (see DESIGN.md)
   state.py               Song state machine (.song.json), slug, stages
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
@@ -57,6 +61,11 @@ src/clean_score/         Score-cleaning package
   lyric_txt.py           Lyric export/import (txt + json formats), slur/tie aware
   utils/                 part_types, reversed_voices, missing_ties,
                          corrupted_measures, utils, globals
+  tests/                 pytest
+src/sing_song/           Sing a song's parts with the UFR DiffSinger voices (see its section below)
+  main.py                bundle + unroll + onset check + sing + MP3s; --publish through publish.py
+  sing_ufr.py            the singer (runs in scripts/install-singer.sh's venv)
+  unroll.py, check_onsets.py, g2p.py, gate.py, spoken.py, fold.py   its steps
   tests/                 pytest
 src/score_export/        The cleaned score made ready to publish (see its section below)
   score.py               the publish copy: silent parts out, marks off, tempos, fermata hold
@@ -258,7 +267,7 @@ voice alone and would sing a note early after a gap). `from` is voice 2 as it re
 for none (`GET /bar` returns it as `voice2`); writing it again replaces the line, keeping its
 words. Its words go in through the lyric editor's voice-2 box. Health does not list such a bar
 as `extra-voices` (it reads `fixes.json` beside the score), and the publish copy keeps both lines.
-Put the upper line in voice 1: sing-song's low line reads voice 2. `tie` and `untie` take `"voice": 2`
+Put the upper line in voice 1: sing_song's low line reads voice 2. `tie` and `untie` take `"voice": 2`
 (#434), with `from` and `index` read off voice 2, so the line can hold a note into the next
 bar's voice 2 (Butterfly bar 84 into 85); the tied-into note takes no syllable. List them after
 the `voice2` entries they tie.
@@ -2715,56 +2724,44 @@ Worked through twice, with the wrong turn left in, in
 
 ## A new song from PDF to the site (agents)
 
-An errand like "new song, put it on the new stemmanauhat site" runs every stage here, then
-publishes. The playbook above is how to read the page; this is the rest, learnt on Insomnis
-(eerovil/eeron-omat-taskit#33) and Laulu reiän tarpeesta (#61). The running app is at
-`http://localhost:8123`; drive it through its API.
+The flow is `docs/pdf-to-practice-track.md`. What is particular to this host:
 
-- **Start:** `POST /api/songs` (form: `name`, `per_system=true`, `voicing=men`, `pdf=@file`),
-  `POST /find-systems` (`{}`, the quick method) and check the bands against the page, `PUT
-  /bounds` with them, `POST /scan`, then name each staff's lines (`PUT /systems`, e.g.
-  `{"1": {"1": "T1,T2", "2": "B1,B2"}}` for every system) and `POST /clean`.
+- The running app is at `http://localhost:8123` (`song-app.service`); drive it through its API.
+- Run `sing_song.py` as an `agentdeck job` (a few minutes on the GTX 970), with the desktop's
+  `DISPLAY` and `XAUTHORITY` (`systemctl --user show-environment`): MuseScore needs a screen
+  even to export.
+- Every live Finnish song has AI-sung parts (eeron-omat-taskit#36): a new song is done when it
+  is published **and** sung. Publish only when the errand asks, to the choir it names: `jm` is
+  the men's choir, `naiskuoro` the women's, `joy`, `joy-alumnit` and `yl` mixed, `laurille`
+  three treble parts (`--voice LYSE`), `testi` the test list; only public-domain songs go in
+  `public`. A part name the site's voice tree does not know: ask Eero where it goes, never guess.
+- Check the live row afterwards: `cd ~/stemmanauhat-cf && ./scripts/run.sh --cloudflare corepack
+  pnpm exec wrangler d1 execute stemmanauhat --remote --command "SELECT choir, prefix, parts,
+  duration FROM songs WHERE slug='<slug>'"`.
+- Leave the Review approval to Eero; `sing_song.py --publish` does not need it.
+- A change to how a sound is sung is Eero's call by ear: explain it, and check it with
+  `DUMP_TOKENS=<file>` (the planned sounds and their lengths, without singing) before rendering.
+  The by-ear benchmark that tunes `sing_ufr.py` lives in eeron-omat-taskit (`finnish-sing-bench`).
 
-- **Check every bar of every part** against the page with `GET /api/songs/<slug>/bar`, before
-  lyrics. On Insomnis the notes were nearly all right; the scan swapped two parts in one chord and
-  lost or merged about twenty melisma slurs.
-- **Every correction goes in `fixes.json`**, then clean again (`POST /clean`). A hand edit to the
-  cleaned score, red marks included, is gone at the next clean. An `unmark` entry, saying what
-  was checked, is how a homr `slur?`/`tie?` mark comes off. Expect triplets to be the worst
-  of it: on #61 the scan got most of them wrong, so a recurring figure needed a `bar` fix in
-  nearly every bar it appears.
-- **Fix gotchas** (#61): a bar MuseScore rejected and reset to a rest is matched against its
-  reading *before* the reset, so its `from` is the `scanned_from` of that bar's `text` entry
-  in `fixes.json`, not what `/bar` shows. A `bar` fix cuts ties coming into the bar, so add
-  the previous bar's tie again after it. A bar the scan gave the wrong length (`len` on the
-  Measure) takes three steps: `bar` every staff to the same rest (`rest_1`, ...), `barlen`
-  (it needs every staff to read the same), then `bar` each staff again with `from:
-  ["measure:R"]`. Check `len`, time signatures and voltas in the cleaned `.mscx` too; the
-  scan invented a "1." ending on #61.
-- **Lyrics:** give each part its own entry and name that part in `parts`, rather than relying
-  on the mapping: `{"staff_number": 1, "text": "...", "parts": ["T1"]}`, then `["T2"]`, `["B1"]`,
-  `["B2"]` for the others (one entry per part per printed system). Each `too_many`/`too_few`
-  left over was a slur the page prints differently (see the table above). A sentence spoken on
-  one held chord is one syllable: join its words with `‿` (a space would split it).
-- **Swing:** a printed swing marking (♫ = ♩♪ in triplets), or straight again (♫ = ♫),
-  is a `swing` fix per marked bar, `{"kind": "swing", "measure": 81, "swing": false, ...}`.
-  The scan never reads one, and without it the piano and the sung parts play straight.
-- **Tempo and credits:** save the printed tempos and who wrote the song with
-  `POST /api/songs/<slug>/publish-settings` (`bpm`, `tempo_changes`, `credits` with
-  `composer`/`lyricist`/`arranger`); the score has no tempo after a clean, and the
-  credits otherwise come from the score's metaTags.
-- **Publish and sing it with `~/eeron-omat-taskit/sing-song/`** (read its README.md):
-  `.venv/bin/python ~/eeron-omat-taskit/sing-song/publish_song.py <slug> jm`, run as an
-  `agentdeck job` (a few minutes on the GTX 970). It builds the bundle with this app's publish
-  code from the song's Publish settings, sings every part (every live Finnish song has AI-sung
-  parts, eeron-omat-taskit#36), and publishes through stemmanauhat-cf, whose token is in
-  `~/.local/share/stemmanauhat/cloudflare.env`. The app's own Publish button cannot do this
-  here: it has no Cloudflare keys in `.env`, so `GET /api/choirs` answers "Publishing is off".
-  If the site's script stops on a part name not in its voice tree, ask Eero where it goes
-  and pass his answer as `--place` (stemmanauhat-cf README, "Part names"); never guess.
-  `jm` is the men's choir; only public-domain songs go in `public`. Publishing does not need
-  the Review approval. Check the live row afterwards as the tool's AGENTS.md says.
-- Leave the Review approval to Eero.
+## Singing (`src/sing_song/`)
+
+`sing_song.py <slug>` builds the bundle with `publish.build_bundle` (the Publish settings'
+tempo, part names, credits), then for each part: `unroll.py` writes each line (top and bottom
+of the staff) on the bundle's clock, `check_onsets.py` stops the run unless every note starts
+within 50 ms of a note in `score.mid`, `spoken.py` cuts a sentence on one held chord into a
+syllable a note, `g2p.py` gives the sounds of a song not in Finnish, `sing_ufr.py` sings it
+(UFR DiffSinger: LYSE for S/A/M parts, REMY for T/B), two different lines of a part are mixed
+at half volume each, and `gate.py` fades the rests where the whole part rests (the voice
+leaves a hiss). `--fold-divisi` folds lettered divisi parts (`S1b`) into their part as further
+voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s to
+`publish.publish` as `Bundle.sung`. It came from eeron-omat-taskit's `sing-song/` (#439),
+where its history is.
+
+The singer runs in its own venv (`scripts/install-singer.sh`, default
+`~/.local/share/musescore-choir-plugins/sing-venv`; CUDA 11 onnxruntime when there is an NVIDIA
+card, because the GTX 970 is below newer builds' floor). The voices are not in the repo: their
+terms forbid re-hosting them, so `UFR_DIR` in `.env` points at a downloaded pack
+(`/var/tmp/i36-ufr` here). The singer is not deterministic: two runs are two takes.
 
 ## MuseScore plugins (`plugins/`)
 

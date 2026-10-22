@@ -84,6 +84,7 @@ jobs:
             src/clean_score/tests \
             src/song_app/tests \
             src/score_export/tests \
+            src/sing_song/tests \
             -m "not browser" \
             --strict-markers \
             --durations=10 \

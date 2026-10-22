@@ -422,6 +422,38 @@ def test_the_published_parts_say_which_staff_and_voices_each_is_drawn_on(tmp_pat
     assert record["parts"] == ["S1", "A1"]
 
 
+def test_sung_parts_go_up_with_their_mp3_and_voice(tmp_path):
+    """#439: sing_song.py --publish sends each part's sung MP3, as the site's own script did."""
+    cf = FakeCloudflare()
+    bundle = _bundle(tmp_path)
+    for name, voice in (("S1", "LYSE"), ("A1", "LYSE")):
+        (tmp_path / f"{name}.mp3").write_bytes(b"ID3-" + name.encode())
+    bundle.sung = {"S1": {"mp3": str(tmp_path / "S1.mp3"), "voice": "LYSE"},
+                   "A1": {"mp3": str(tmp_path / "A1.mp3"), "voice": "LYSE"}}
+    record = publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=bundle,
+                             client=publish.Cloudflare(CONFIG, cf))
+    [(_slug, _title, prefix, parts)] = cf.listed("jm")
+    expected = [{"name": "S1", "file": "parts/1-S1.mp3", "sung": True, "voice": "LYSE"},
+                {"name": "A1", "file": "parts/2-A1.mp3", "sung": True, "voice": "LYSE"}]
+    assert json.loads(parts) == expected
+    assert json.loads(cf.objects[prefix + "manifest.json"])["parts"] == expected
+    assert cf.objects[prefix + "parts/2-A1.mp3"] == b"ID3-A1"
+    assert cf.types[prefix + "parts/1-S1.mp3"] == "audio/mpeg"
+    # the next publish takes them away with the rest of this version
+    assert prefix + "parts/1-S1.mp3" in record["files"]
+
+
+def test_a_bundle_with_some_parts_sung_is_refused(tmp_path):
+    cf = FakeCloudflare()
+    bundle = _bundle(tmp_path)
+    (tmp_path / "S1.mp3").write_bytes(b"ID3")
+    bundle.sung = {"S1": {"mp3": str(tmp_path / "S1.mp3"), "voice": "LYSE"}}
+    with pytest.raises(publish.PublishError, match="A1"):
+        publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=bundle,
+                        client=publish.Cloudflare(CONFIG, cf))
+    assert cf.objects == {}
+
+
 def test_six_parts_are_paired_the_way_the_page_prints_them(tmp_path):
     proposal = publish.staff_group_proposal(_six_parts(tmp_path))
     assert proposal["groups"] == [["S1", "S1b"], ["S2", "S2b"], ["A1", "A2"]]
