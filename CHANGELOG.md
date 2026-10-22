@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A sung part holds the last syllable over any number of notes without words, instead of
+  singing it again from the third note on; after a rest it is sung once again and then held.
+  (#442)
 - Heavy work can run on another machine with one setting, `REMOTE_RUNNER` in `.env`, which
   replaces `HOMR_REMOTE_READER`: a scan hands it each system and `sing_song.py` shares the
   lines with it, and whatever it cannot do runs here. The runner for a GPU in a Kubernetes
