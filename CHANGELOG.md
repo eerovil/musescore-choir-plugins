@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Heavy work can run on another machine with one setting, `REMOTE_RUNNER` in `.env`, which
+  replaces `HOMR_REMOTE_READER`: a scan hands it each system and `sing_song.py` shares the
+  lines with it, and whatever it cannot do runs here. The runner for a GPU in a Kubernetes
+  cluster ships in `src/kube_runner/`. (#439)
 - A song's parts can be sung and made into a practice track from this repository:
   `sing_song.py <slug>` writes one sung MP3 per part with the score and its MIDI, and
   `--publish <choir>` puts it on the site with the sung parts. `scripts/install-singer.sh`

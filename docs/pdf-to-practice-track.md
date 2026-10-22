@@ -122,6 +122,19 @@ minutes on a graphics card, much longer on the processor.
   (low) for every part.
 - A stopped run: the same command with `--resume` sings only the lines not finished.
 
+### Where heavy work runs
+
+Reading a scan and singing run on this machine: on its graphics card when the installers found
+an NVIDIA one, else on the processor. Nothing needs setting for that.
+
+Another machine can take some of it. Set `REMOTE_RUNNER` in `.env` to a command; the app runs
+`<runner> read-band <image> <out dir> <homr venv> <homr flags...>` for each scanned system, and
+`sing_song.py` runs `<runner> sing-line <line.json> <out.wav> <voice>` for lines while this
+machine sings others. Exit 0 with the file written means done; anything else and it is done
+here. The one runner shipped is `src/kube_runner/runner.py`, for a node with an NVIDIA card in
+a Kubernetes cluster: set `REMOTE_KUBE_CONTEXT` to its kubectl context. Its first job builds the
+venv there (minutes), and the first line copies the voices from `UFR_DIR`.
+
 ## 7. Publish (optional)
 
 Ask the person which list it goes on. With the site's Cloudflare keys in `.env`
