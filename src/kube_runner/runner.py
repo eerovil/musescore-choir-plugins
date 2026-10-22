@@ -29,6 +29,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -957,6 +958,9 @@ def main(argv: List[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 64
     log = lambda line: print(line, flush=True)  # noqa: E731
+    # Stopped (sing_song.py cancelled, or a caller's deadline): end like an error, so the
+    # job's `finally` stops it in the pod, where it runs detached, before the card lock goes.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     use_kind(kind)
     try:
         if kind == "read-band":

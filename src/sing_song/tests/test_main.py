@@ -522,3 +522,45 @@ def test_sing_hands_lines_to_the_runner_when_there_is_one(tmp_path, monkeypatch)
                       sys.executable, "/ufr", False)
     there = [os.path.basename(p) for p in (tmp_path / "sung").read_text().split()]
     assert sorted(here + there) == ["p1-high.json", "p2-high.json"] and here and there
+
+
+def test_an_old_wav_does_not_pass_for_a_line_the_runner_did_not_sing(tmp_path):
+    # #439 review: --resume keeps the work folder, so last run's WAV is there
+    wav = tmp_path / "p1-high.wav"
+    wav.write_text("last run's take")
+    with pytest.raises(RuntimeError):
+        publish_song.sing_remotely(runner_script(tmp_path, "exit 0\n"), "l.json", str(wav), "remy_adult",
+                                   dict(os.environ))
+    assert not wav.exists()
+
+
+def test_a_stopped_runner_is_asked_to_end_its_job_first(tmp_path):
+    # #439 review: the job over there runs detached; SIGKILL alone would leave it singing
+    ended = tmp_path / "ended"
+    runner = runner_script(tmp_path, f"trap 'touch {ended}; exit 143' TERM\nsleep 5 & wait\n")
+
+    def here(job):
+        time.sleep(0.3)
+        raise SystemExit(143)
+
+    def there(job):
+        publish_song.sing_remotely(runner, "l.json", str(tmp_path / "o.wav"), "remy_adult", dict(os.environ))
+    with pytest.raises(SystemExit):
+        publish_song.share(["a", "b"], here, there, publish_song.stop_remote)
+    assert ended.exists()
+
+
+def test_a_runner_that_ignores_the_stop_is_killed_in_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(publish_song, "REMOTE_STOP_S", 0.5)
+    runner = runner_script(tmp_path, "trap '' TERM\nsleep 5\n")
+    started = time.monotonic()
+
+    def here(job):
+        time.sleep(0.3)
+        raise SystemExit(143)
+
+    def there(job):
+        publish_song.sing_remotely(runner, "l.json", str(tmp_path / "o.wav"), "remy_adult", dict(os.environ))
+    with pytest.raises(SystemExit):
+        publish_song.share(["a", "b"], here, there, publish_song.stop_remote)
+    assert time.monotonic() - started < 3

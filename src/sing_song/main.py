@@ -498,6 +498,7 @@ def check_slug(slug):
 # `<runner> sing-line <line.json> <out.wav> <voice>` with the singer's settings in the
 # environment; exit 0 with the WAV written means sung, anything else sings the line here.
 REMOTE_LINE_LIMIT = 1800   # a first line may wait for the runner to set itself up
+REMOTE_STOP_S = 30         # how long a stopped runner may take to end its job over there
 # what the runner is doing right now: stop_remote() kills it, so a cancelled run leaves
 # nothing running over there (#86 review of #90 in eeron-omat-taskit)
 REMOTE, REMOTE_LOCK, STOPPING = set(), threading.Lock(), threading.Event()
@@ -505,6 +506,8 @@ REMOTE, REMOTE_LOCK, STOPPING = set(), threading.Lock(), threading.Event()
 
 def sing_remotely(runner, js, wav, voice, env):
     """One line on the remote runner; raises when it did not sing it, with the reason."""
+    if os.path.exists(wav):   # a WAV an earlier run left must not pass for this line's
+        os.remove(wav)
     with REMOTE_LOCK:
         if STOPPING.is_set():
             raise RuntimeError("the run is stopping")
@@ -515,7 +518,7 @@ def sing_remotely(runner, js, wav, voice, env):
     try:
         out, _ = p.communicate(timeout=REMOTE_LINE_LIMIT)
     except subprocess.TimeoutExpired:
-        os.killpg(p.pid, signal.SIGKILL)
+        end_runner(p)
         p.communicate()
         raise RuntimeError(f"no answer in {REMOTE_LINE_LIMIT} s") from None
     finally:
@@ -526,15 +529,28 @@ def sing_remotely(runner, js, wav, voice, env):
         raise RuntimeError(last[-1] if last else f"exit {p.returncode}")
 
 
+def end_runner(p):
+    """Ask the runner to stop (SIGTERM: it ends its job over there, which runs detached, and
+    lets the card go), and kill it only if it has not within REMOTE_STOP_S."""
+    for sig, wait in ((signal.SIGTERM, REMOTE_STOP_S), (signal.SIGKILL, None)):
+        try:
+            os.killpg(p.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            p.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def stop_remote():
     """No more remote lines, and end the one running (all its processes)."""
     with REMOTE_LOCK:
         STOPPING.set()
-        for p in REMOTE:
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        running = list(REMOTE)
+    for p in running:
+        end_runner(p)
 
 
 def share(jobs, here, there=None, stop=None):
