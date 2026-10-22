@@ -93,7 +93,9 @@ def build_bundle(song_app, slug, out, folded=None):
         cleaned = os.path.abspath(cleaned)
         groups = None
         if folded:
-            groups = [ids for _, ids in fold(cleaned, folded)]
+            # a part publishing leaves out (a click staff of rests) is left out here too
+            sung = set(sung_staves(cleaned))
+            groups = [ids for _, ids in fold(cleaned, folded) if ids[0] in sung]
         settings = song.data.get("publish") or {}
         record = song.data.get("record") or {}
         bpm = None if pipeline.has_opening_tempo(cleaned) else \

@@ -127,6 +127,20 @@ def test_saved_panel_names_follow_the_folded_parts(tmp_path, monkeypatch):
     assert sys.modules["src.song_app.publish"].CALLS[-1]["part_names"] == ["Sopraano 1", "Altto"]
 
 
+def test_folding_leaves_out_a_click_staff_as_publishing_does(tmp_path, monkeypatch):
+    # #439 review: the folded score still has the click part, the bundle does not
+    from src.sing_song.tests.test_fold import chord, rest, score
+    settings = {"part_names": ["Sopraano 1", "Sopraano 1b", "Altto"]}
+    app = stub_song_app(tmp_path, settings, monkeypatch)
+    score(app / "cleaned.mscx", [("S1", [chord(72) * 4]), ("S1b", [chord(69) * 4]), ("Click", [rest()]),
+                                 ("A1", [chord(60) * 4])])
+    out = tmp_path / "bundle"
+    out.mkdir()
+    _, _, groups = publish_song.build_bundle(str(app), "laulu", str(out), str(tmp_path / "folded.mscx"))
+    assert groups == [["1", "2"], ["4"]]
+    assert sys.modules["src.song_app.publish"].CALLS[-1]["part_names"] == ["Sopraano 1", "Altto"]
+
+
 def test_a_names_list_of_another_length_is_left_for_song_app_to_refuse():
     assert publish_song.folded_names(["a", "b"], [["1", "2"], ["3"]]) == ["a", "b"]
     assert publish_song.folded_names(None, [["1"]]) is None
