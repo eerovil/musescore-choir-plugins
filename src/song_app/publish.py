@@ -194,6 +194,9 @@ class Bundle:
     # The sung MP3 of each part, when sing_song sang them (#439): name -> {"mp3":
     # path here, "voice": the voice credited on the site}. Empty: piano only.
     sung: Dict[str, Dict] = field(default_factory=dict)
+    # words.json beside the sung MP3s (sing_song, eeron-omat-taskit#110): each part's notes with
+    # the syllable sung on each, so the site sings a shared note once only on the same syllable.
+    words: str = ""
 
 
 def score_credits(mscx_path: str) -> Dict[str, str]:
@@ -794,6 +797,9 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     for name, path in sung_files:
         with open(path, "rb") as f:
             uploads.append((name, f.read(), "audio/mpeg"))
+    if bundle.sung and bundle.words:
+        with open(bundle.words, "rb") as f:
+            uploads.append(("words.json", f.read(), "application/json"))
     uploads.append(("manifest.json", json.dumps(manifest, ensure_ascii=False).encode(),
                     "application/json"))
 
