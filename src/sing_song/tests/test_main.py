@@ -1,3 +1,4 @@
+import os
 import json
 import shutil
 import subprocess
@@ -329,3 +330,10 @@ def test_a_slug_that_is_a_path_is_refused_before_anything_is_touched(tmp_path, m
     with pytest.raises(SystemExit):
         publish_song.main()
     assert (victim / "keep.txt").read_text() == "mine"
+
+
+def test_a_part_name_with_a_slash_is_sung_into_parts_itself(tmp_path):
+    # the MP3 sing() writes and the one publish_to_site hands on are the same file, in parts/
+    mp3 = os.path.join(str(tmp_path), publish_song.sung_file(1, "S/A"))
+    assert os.path.dirname(mp3) == os.path.join(str(tmp_path), "parts")
+    assert os.path.basename(mp3) == "1-S_A.mp3"

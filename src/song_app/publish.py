@@ -74,6 +74,16 @@ UPSERT = ("INSERT INTO songs (choir, slug, title, prefix, parts, duration, publi
           "arranger = excluded.arranger")
 
 
+UNSAFE_IN_FILE = re.compile(r"[/\\?#%]")
+
+
+def sung_file(index: int, name: str) -> str:
+    """parts/<n>-<Name>.mp3, the sung MP3 of part `index` (from 1): a part name may hold a
+    character a file name or a URL cannot (``S/A``), which becomes ``_``. The site reads the
+    name off the manifest's ``file``, and sing_song writes its MP3 under the same one."""
+    return f"parts/{index}-{UNSAFE_IN_FILE.sub('_', name)}.mp3"
+
+
 def _noop(_msg: str) -> None:
     pass
 
@@ -754,7 +764,7 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     for index, part in enumerate(parts, 1):
         if bundle.sung:
             # The site plays parts/<n>-<Name>.mp3 as the part's "Laulu" (stemmanauhat-cf#36).
-            name = f"parts/{index}-{part['name']}.mp3"
+            name = sung_file(index, part["name"])
             sung_files.append((name, bundle.sung[part["name"]]["mp3"]))
             part.update(file=name, sung=True)
             if bundle.sung[part["name"]].get("voice"):

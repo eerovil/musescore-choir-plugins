@@ -32,6 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # this checkout: the app whose publish code builds the bundle
 from src.sing_song.fold import fold  # noqa: E402
 from src.sing_song.spoken import split_spoken  # noqa: E402
+from src.song_app.publish import sung_file  # noqa: E402
 
 SINGER = os.path.join(HERE, "sing_ufr.py")
 # the UFR pack's two voices (https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/):
@@ -335,7 +336,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         mark_sung(work, i, line, voices[i - 1])
     for i, name in enumerate(names, 1):
         lines = [p[3] for p in plan if p[0] == i]
-        mp3 = os.path.join(bundle_dir, "parts", f"{i}-{name}.mp3")
+        mp3 = os.path.join(bundle_dir, sung_file(i, name))
         run(part_mp3_command([os.path.join(work, f"p{i}-{line}.wav") for line in lines], mp3))
         r = run([python, "-I", os.path.join(HERE, "gate.py"), mp3]
                 + [os.path.join(work, f"p{i}-{line}.json") for line in lines])
@@ -402,7 +403,7 @@ def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned)
     sung = {}
     if manifest.get("sung"):
         for i, (part, (_, credit)) in enumerate(zip(manifest["parts"], sung_by), 1):
-            sung[part["name"]] = {"mp3": os.path.join(bundle_dir, "parts", f"{i}-{part['name']}.mp3"),
+            sung[part["name"]] = {"mp3": os.path.join(bundle_dir, sung_file(i, part["name"])),
                                   "voice": credit}
     bundle = publish.Bundle(
         musicxml=os.path.join(bundle_dir, "score.musicxml"), midi=os.path.join(bundle_dir, "score.mid"),

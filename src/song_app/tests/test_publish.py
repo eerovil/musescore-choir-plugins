@@ -758,3 +758,18 @@ def test_a_publish_whose_song_was_replaced_meanwhile_touches_neither(app_song, m
     assert job_state.load(b.dir) == {}                 # no job started on B
     assert state.load(b.slug).data == b.data           # and B's state untouched
     assert "cleaned" not in seen
+
+
+def test_a_part_name_with_a_slash_goes_up_under_a_safe_file_name(tmp_path):
+    """#439 review: the Publish panel takes "S/A"; its MP3 must not become a folder."""
+    assert publish.sung_file(1, "S/A") == "parts/1-S_A.mp3"
+    assert publish.sung_file(2, "Ääni 1") == "parts/2-Ääni 1.mp3"   # names that were fine stay
+    cf = FakeCloudflare()
+    bundle = _bundle(tmp_path)
+    bundle.parts = ["S/A", "A1"]
+    (tmp_path / "x.mp3").write_bytes(b"ID3")
+    bundle.sung = {name: {"mp3": str(tmp_path / "x.mp3")} for name in bundle.parts}
+    publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=bundle, client=publish.Cloudflare(CONFIG, cf))
+    [(_slug, _title, prefix, parts)] = cf.listed("jm")
+    assert json.loads(parts)[0] == {"name": "S/A", "file": "parts/1-S_A.mp3", "sung": True}
+    assert prefix + "parts/1-S_A.mp3" in cf.objects
