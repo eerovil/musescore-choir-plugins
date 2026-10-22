@@ -158,6 +158,33 @@ def sung_events(notes):
     return out
 
 
+def sung_words(lines):
+    """[[seconds, MIDI key, syllable]] for each note the part's lines sing, the syllable as sung
+    there: its own, or the one it holds or sings again (sing_ufr.py). The site sings a note
+    several parts start together once only where these match (eeron-omat-taskit#110: the
+    tenor's "kis" on the bass's "dum" was left out). A note both lines sing is listed once; one
+    they sing on different syllables is left out, so the site never merges it: both lines are in
+    the part's one MP3. Read before split_spoken(): a sentence spoken on one held chord is one
+    note on the site, merged or not as a whole, so it is compared as the whole sentence ("Laulu‿
+    reiän" against "Laulu‿rei'än" differ), not by its first syllable alone."""
+    out = {}
+    for notes in lines:
+        t, last = 0.0, None
+        for n in notes:
+            if n.get("syl"):
+                last = sung_key(n["syl"])
+            if n.get("pitch") is not None and last:
+                out.setdefault((round(t, 3), n["pitch"]), set()).add(last)
+            t += n["sec"]
+    return [[t, key, next(iter(syls))] for (t, key), syls in sorted(out.items()) if len(syls) == 1]
+
+
+def write_words(path, parts):
+    """The bundle's words.json: sung_words() of each part, in the manifest's order."""
+    with open(path, "w") as f:
+        json.dump({"version": 1, "parts": parts}, f, ensure_ascii=False, separators=(",", ":"))
+
+
 def lines_differ(high, low):
     """Does the part split here? Two lines with the same pitches can still differ in rhythm or
     words; run2.py compared pitches only, which would leave such a lower line unsung."""
@@ -178,6 +205,12 @@ def words(notes):
     if cur:
         out.append(cur)
     return [(plain("".join(notes[k]["syl"] for k in idx)), idx) for idx in out]
+
+
+def sung_key(text):
+    """A syllable as words.json compares it: lower case, letters and digits. Digits stay: a
+    number is spoken as words before singing (spoken.py), so "Laulu‿118" and "Laulu‿119" differ."""
+    return "".join(c for c in unicodedata.normalize("NFC", text.lower()) if c.isalnum())
 
 
 def plain(text):
@@ -291,7 +324,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     switches = lang_from or {}
     if switches and lang not in G2P | {"fi"}:
         sys.exit(f"--lang-from needs --lang fi or one of {', '.join(sorted(G2P))}, not {lang}")
-    plan, unmarked = [], []
+    plan, unmarked, words = [], [], []
     for i, (group, name) in enumerate(zip(groups, names), 1):
         lines = {}
         for k, staff in enumerate(group):
@@ -313,6 +346,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                     lines[key] = notes
         if not lines:
             sys.exit(f"{name} has no notes to sing")
+        words.append(sung_words(lines.values()))
         two = len(lines) > 1
         for line in lines:
             notes = mark_languages(split_spoken(lines[line]), lang, switches)
@@ -329,6 +363,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                  f"language comes back with --lang-from {lang}:WORD. A word below that is right as it "
                  "is: name it with the language it is sung in.\n"
                  + "\n".join(f"  {name}, bar {bar}: {word}" for name, bar, word in dict.fromkeys(unmarked)))
+    write_words(os.path.join(bundle_dir, "words.json"), words)
     jobs = []
     for i, name, two, line, notes in plan:
         js = os.path.join(work, f"p{i}-{line}.json")
@@ -435,7 +470,8 @@ def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned)
         timing=json.load(open(os.path.join(bundle_dir, "timing.json"))),
         parts=[p["name"] for p in manifest["parts"]],
         layout={p["name"]: {k: p[k] for k in ("staff", "voices") if k in p} for p in manifest["parts"]
-                if "staff" in p}, sung=sung)
+                if "staff" in p}, sung=sung,
+        words=os.path.join(bundle_dir, "words.json") if sung and os.path.exists(os.path.join(bundle_dir, "words.json")) else "")
     client = publish.Cloudflare(config)
     choirs = publish.site_choirs(client)
     credits = {k: manifest[k] for k in publish.CREDITS if manifest.get(k)}

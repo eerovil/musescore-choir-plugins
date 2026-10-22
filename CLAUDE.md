@@ -2755,7 +2755,12 @@ at half volume each, and `gate.py` fades the rests where the whole part rests (t
 leaves a hiss). `--fold-divisi` folds lettered divisi parts (`S1b`) into their part as further
 voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s to
 `publish.publish` as `Bundle.sung`. It came from eeron-omat-taskit's `sing-song/` (#439),
-where its history is. With `REMOTE_RUNNER` set, lines are shared with the runner as each side
+where its history is. The bundle's `words.json` (`sung_words()`) lists each part's notes with
+the syllable sung on each; `--publish` sends it along (`Bundle.words`), and the site sings a
+note several parts start together once only where they sing the same syllable
+(eeron-omat-taskit#110: the tenor's "kis" fell on the bass's "dum"). `python -m
+src.sing_song.add_words` added it once to the songs sung before it, only for parts whose every
+note (pitch, place, words) still matches the live `score.musicxml`. With `REMOTE_RUNNER` set, lines are shared with the runner as each side
 is free (`share()`, `<runner> sing-line <line.json> <out.wav> <voice>`); a line it fails is
 sung here and it gets no more.
 

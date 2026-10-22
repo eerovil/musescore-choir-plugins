@@ -181,6 +181,48 @@ def test_other_pitches_are_two_lines():
     assert publish_song.lines_differ(line((60, 0.5, "la")), line((57, 0.5, "la")))
 
 
+def test_each_note_lists_the_syllable_sung_on_it_held_or_repeated_too():
+    # "Kis-sa," then a note with no syllable of its own (it holds "sa"), a rest, and one more
+    # that sings "sa" again (#110: the site merges a shared note only on the same syllable)
+    notes = line((52, 0.25, "Kis"), (52, 0.25, "sa,"), (50, 0.5, None), (None, 0.5, None), (52, 0.5, None))
+    assert publish_song.sung_words([notes]) == [[0.0, 52, "kis"], [0.25, 52, "sa"], [0.5, 50, "sa"], [1.5, 52, "sa"]]
+
+
+def test_a_note_both_lines_sing_is_listed_once_with_the_others_in_time_order():
+    high = line((64, 0.5, "dum"), (62, 0.5, "dum"))
+    low = line((60, 0.5, "dum"), (62, 0.5, "dum"))
+    assert publish_song.sung_words([high, low]) == [[0.0, 60, "dum"], [0.0, 64, "dum"], [0.5, 62, "dum"]]
+
+
+def test_a_note_the_lines_sing_on_different_syllables_is_left_out():
+    # both lines are in the part's one MP3: the site must never merge that note with another part
+    high = line((52, 0.5, "kis"), (55, 0.5, "sa"))
+    low = line((52, 0.5, "dum"), (50, 0.5, "dum"))
+    assert publish_song.sung_words([high, low]) == [[0.5, 50, "dum"], [0.5, 55, "sa"]]
+
+
+def test_a_sentence_spoken_on_one_chord_is_compared_whole():
+    # the site merges the chord's one MIDI note as a whole: two parts saying sentences that
+    # start alike must not match on the first syllable
+    one = publish_song.sung_words([line((52, 2.0, "Laulu‿reiän‿tarpeesta"))])
+    other = publish_song.sung_words([line((52, 2.0, "Laulu‿loppuu‿tähän"))])
+    assert one == [[0.0, 52, "laulureiäntarpeesta"]]
+    assert one[0][2] != other[0][2]
+
+
+def test_spoken_sentences_that_differ_only_in_a_number_differ():
+    one = publish_song.sung_words([line((52, 2.0, "Laulu‿118"))])
+    other = publish_song.sung_words([line((52, 2.0, "Laulu‿119"))])
+    assert one == [[0.0, 52, "laulu118"]]
+    assert one[0][2] != other[0][2]
+
+
+def test_words_json_has_each_parts_list_in_order(tmp_path):
+    path = tmp_path / "words.json"
+    publish_song.write_words(path, [[[0.0, 52, "kis"]], [[0.0, 52, "dum"]]])
+    assert json.loads(path.read_text()) == {"version": 1, "parts": [[[0.0, 52, "kis"]], [[0.0, 52, "dum"]]]}
+
+
 def sung(*words, bar=1):
     """Notes for words, syllables split on "-": one note a syllable, all in `bar`."""
     out = []

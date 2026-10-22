@@ -443,6 +443,26 @@ def test_sung_parts_go_up_with_their_mp3_and_voice(tmp_path):
     assert prefix + "parts/1-S1.mp3" in record["files"]
 
 
+def test_a_sung_bundle_sends_its_words_and_a_piano_one_does_not(tmp_path):
+    """eeron-omat-taskit#110: words.json goes up beside the sung MP3s, for the site's unisons."""
+    words = tmp_path / "words.json"
+    words.write_text('{"version":1,"parts":[[],[]]}')
+    cf = FakeCloudflare()
+    piano = _bundle(tmp_path)
+    piano.words = str(words)
+    publish.publish(slug="piano", title="Piano", choir="jm", bundle=piano, client=publish.Cloudflare(CONFIG, cf))
+    assert not [k for k in cf.objects if k.endswith("words.json")]
+    sung = _bundle(tmp_path)
+    for name in ("S1", "A1"):
+        (tmp_path / f"{name}.mp3").write_bytes(b"ID3")
+    sung.sung = {n: {"mp3": str(tmp_path / f"{n}.mp3"), "voice": "LYSE"} for n in ("S1", "A1")}
+    sung.words = str(words)
+    publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=sung, client=publish.Cloudflare(CONFIG, cf))
+    [prefix] = [row[2] for row in cf.listed("jm") if row[0] == "laulu"]
+    assert cf.objects[prefix + "words.json"] == words.read_bytes()
+    assert cf.types[prefix + "words.json"] == "application/json"
+
+
 def test_a_bundle_with_some_parts_sung_is_refused(tmp_path):
     cf = FakeCloudflare()
     bundle = _bundle(tmp_path)
