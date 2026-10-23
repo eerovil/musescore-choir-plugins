@@ -107,6 +107,7 @@ NASAL_LONG = os.environ.get("NASAL_LONG", "1") == "1"
 NASALS = {"it/n", "it/m", "de/ng"}
 DIPH = float(os.environ.get("DIPH", "0.5"))       # share of the note the first vowel of "ai", "uo" gets (#45: 0.7 lost the second vowel)
 SCHWA = 0.3                                        # the "uh" of a scat "dn": share of the note
+CLICK_UH = float(os.environ.get("CLICK_UH", "0.25"))   # seconds of the "uh" after a bare click ("kk", #449/#450: a third of an eighth was barely heard)
 HUMS = {"it/m", "it/n", "de/ng", "it/l", "it/rr", "de/h"}
 NG = os.environ.get("NG", "1") == "1"            # n before k is the ng sound, and "n-g" a long ng (Eero's pick by ear, #45); NG=0: plain n
 CLEN = {"de/q": 4, "it/s": 9, "de/h": 6, "it/rr": 6, "it/cl": 5}   # consonant lengths in frames (~11.6 ms)
@@ -121,8 +122,9 @@ CLIP = {
 }
 # a short vowel closed by a stop ("tip", "tap") on a note of at most STOP_BEATS beats is sung
 # STOP_VOWEL seconds, then the stop, then silence to the next note, rather than held to the end of
-# the note ("tiip"). Eero's pick by ear on #450; a longer note ("set," on a half) holds. 0: held.
-STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0.15"))
+# the note ("tiip"). Eero's pick by ear on #450 (0.15 s was too short for "dut", "nuk"); a longer
+# note ("set," on a half) holds. 0: held.
+STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0.25"))
 STOP_BEATS = float(os.environ.get("STOP_BEATS", "1"))
 # the same for a short vowel closed by l, m, n, r or s ("var-joon" sang "vaar-joon", "sil-lan"
 # "siil-lan"): the vowel gets CODA_VOWEL seconds (or CODA_SHARE of the note) and the consonant is
@@ -321,7 +323,9 @@ for ni, n in enumerate(notes):
     if len(vs) == 1: vd = [nf]
     else:
         share = SCHWA if vs[0] == "en/ax" and (vs[1] in HUMS or vs[1] == "SP") else DIPH
-        first = int(nf * share); rest = (nf - first) // (len(vs) - 1)
+        first = int(nf * share)
+        if vs == ["en/ax", "SP"]: first = max(first, min(nf - 1, int(round(CLICK_UH * FPS))))
+        rest = (nf - first) // (len(vs) - 1)
         vd = [first] + [rest] * (len(vs) - 1); vd[-1] += nf - sum(vd)
     note_lo = len(toks)
     closed = STOP_VOWEL and len(vs) == 1 and short_before_stop(n, co, notes[ni + 1] if ni + 1 < len(notes) else None)
