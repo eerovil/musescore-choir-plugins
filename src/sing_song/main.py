@@ -288,7 +288,7 @@ def sung_staves(cleaned):
 
 
 def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu, lang_from=None,
-         groups=None, resume=False):
+         groups=None, resume=False, allow_silent=False):
     """parts/<n>-<Name>.mp3 for every part, sung on the bundle's clock:
 
     - each line is checked against the piano before it is sung (check_onsets.py); a part whose
@@ -299,6 +299,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     - songs not in Finnish get their sounds from g2p.py, and a song in two languages changes at
       the words --lang-from names; every part is checked for Finnish-looking words left in
       another language before any part is sung;
+    - a note whose syllable would be sung as no sound at all (only stops and silence, #449) stops
+      the run before any line is sung, listing each one, unless allow_silent;
     - the rests where every line of the part rests are faded to silence (gate.py: the voice
       leaves a hiss that adds up over many waiting parts);
     - with resume, a line a stopped run already sang from the same notes for the same voice is
@@ -364,19 +366,27 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                  "is: name it with the language it is sung in.\n"
                  + "\n".join(f"  {name}, bar {bar}: {word}" for name, bar, word in dict.fromkeys(unmarked)))
     write_words(os.path.join(bundle_dir, "words.json"), words)
-    jobs = []
+    jobs, quiet = [], []
     for i, name, two, line, notes in plan:
         js = os.path.join(work, f"p{i}-{line}.json")
         with open(js, "w") as f:
             json.dump(notes, f, ensure_ascii=False)
         for code in sorted({n["lang"] for n in notes if n.get("syl")} & G2P):
             run([python, "-I", os.path.join(HERE, "g2p.py"), code, js], env=dict(os.environ, UFR_DIR=ufr_dir))
+        quiet += [(name, n["bar"], n["syl"]) for n in silent_notes(python, js, voices[i - 1], env)]
         said = f"{name}{' ' + line + ' line' if two else ''}"
         if resume and sung_before(work, i, line, voices[i - 1]):
             log(f"{said}: sung before, kept")
             continue
         forget_sung(work, i, line)
         jobs.append((i, said, line, len(notes)))
+
+    if quiet:
+        listed = "\n".join(f"  {name}, bar {bar}: {syl}" for name, bar, syl in quiet)
+        if not allow_silent:
+            sys.exit(f"{len(quiet)} notes would be sung as no sound at all (only stops and silence). "
+                     "Change their words, or sing them anyway with --allow-silent:\n" + listed)
+        log(f"{len(quiet)} notes are sung as no sound at all (--allow-silent):\n{listed}")
 
     def here(job):
         i, said, line, count = job
@@ -402,6 +412,17 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                 + [os.path.join(work, f"p{i}-{line}.json") for line in lines])
         log(r.stdout.strip())
 
+
+
+def silent_notes(python, js, voice, env):
+    """[{bar, syl}] of the line's notes the singer would sing as no sound at all: its own planned
+    sounds (SILENT in sing_ufr.py), so nothing is sung to find them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        found = os.path.join(tmp, "silent.json")
+        run([python, "-I", SINGER, js, os.path.join(tmp, "unused.wav"), "100", voice],
+            env=dict(env, SILENT=found))
+        with open(found) as f:
+            return json.load(f)
 
 
 def sung_record(work, i, line):
@@ -667,6 +688,9 @@ def main():
     ap.add_argument("--resume", action="store_true",
                     help="keep the lines an earlier run with the same --out already sang from the same notes "
                          "(after a stopped run; not after changing the singer)")
+    ap.add_argument("--allow-silent", action="store_true",
+                    help="sing notes whose syllable has no vowel and no held sound (only stops), which are "
+                         "heard as silence; without it such notes stop the run before anything is sung")
     a = ap.parse_args()
 
     check_slug(a.slug)
@@ -695,7 +719,7 @@ def main():
         gpu = not a.cpu and nvidia_dir(python) is not None
         log(f"singing on the {'graphics card' if gpu else 'processor'}")
         sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
-             parse_lang_from(a.lang_from), groups, a.resume)
+             parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent)
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit

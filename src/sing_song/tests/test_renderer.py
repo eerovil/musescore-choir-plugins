@@ -47,9 +47,19 @@ def test_syllables_without_a_vowel(fi):
     assert split("gh") == (["it/g"], ["en/ax", "de/h"], [])
     assert split("mm") == ([], ["it/m"], [])                    # a plain hum stays a hum
     assert split("hmm") == (["de/h"], ["it/m"], [])
-    assert split("k") == (["it/k"], ["SP"], [])             # a click: the consonant, then silence
+    assert split("k") == (["it/k"], ["en/ax", "SP"], [])     # a click: the consonant, a short "uh" (#449)
+    assert split("kk") == (["it/k", "it/k"], ["en/ax", "SP"], [])
     assert split("tššš") == (["it/t"], ["de/sh"], [])       # a hiss holds its last hissing sound
     assert split("tsss") == (["it/t"], ["it/s"], [])
+
+
+def test_a_syllable_of_only_stops_and_silence_is_silent(fi):
+    silent = fi["silent"]
+    assert not silent({"syl": "kk"})                      # sung k-uh now (#449)
+    assert not silent({"syl": "dn"}) and not silent({"syl": "tsss"}) and not silent({"syl": "la"})
+    assert silent({"syl": "kk", "ph": {"on": ["en/k"], "vs": ["SP"], "co": []}})
+    assert silent({"syl": "t", "ph": {"on": ["en/t"], "vs": [], "co": []}})
+    assert not silent({"syl": "the", "ph": {"on": ["en/dh"], "vs": ["en/ax"], "co": []}})
 
 
 def test_norwegian_keeps_its_own_x(fi):

@@ -7,9 +7,14 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
-- A sung short vowel closed by a stop ("tip", "tap") on a note of a beat or less is sung
-  0.15 s, then the stop, then silence, instead of being held to the end of the note
-  ("tiip"). Long notes still hold the vowel. (#451)
+- A sung short vowel closed by a consonant on a note of a beat or less is sung 0.15 s: "tip"
+  and "tap" then fall silent after the p, "var-joon" and "sil-lan" hold the r or l to the next
+  syllable, and "huk-kuu" is silent until the k. Before, the vowel was held to the end of the
+  note and sounded long ("tiip", "vaar-joon"). Long notes still hold the vowel. (#451)
+- A syllable with no vowel and nothing to hum or hiss ("kk") is sung as the consonant and a
+  short "uh" instead of the consonant and silence, and `sing_song.py` stops before singing
+  when a note would still be sung as no sound at all, listing each one by part and bar
+  (`--allow-silent` sings anyway). (#449)
 - The lyric import and the by-system editor cut the printed systems at the right bars after a
   `delbar` or `insbar` fix. Before, every system after the moved bar was counted against the
   scan's bar numbers, so its words landed on the wrong bars (#446).
