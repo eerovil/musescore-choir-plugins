@@ -119,15 +119,27 @@ CLIP = {
 # the note ("tiip"). Eero's pick by ear on #450; a longer note ("set," on a half) holds. 0: held.
 STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0.15"))
 STOP_BEATS = float(os.environ.get("STOP_BEATS", "1"))
+# the same for a short vowel closed by l, m, n, r or s ("var-joon" sang "vaar-joon", "sil-lan"
+# "siil-lan"): the vowel gets CODA_VOWEL seconds (or CODA_SHARE of the note) and the consonant is
+# held to the next syllable; CODA_HOLD=0 falls silent after it instead. CODA= turns it off.
+CODA = set(filter(None, os.environ.get("CODA", "it/rr,it/l,it/n,it/m,it/s").split(",")))
+CODA_VOWEL = float(os.environ.get("CODA_VOWEL", str(STOP_VOWEL)))
+CODA_SHARE = float(os.environ.get("CODA_SHARE", "0"))
+CODA_HOLD = os.environ.get("CODA_HOLD", "1") == "1"
 def short_before_stop(n, co, nxt):
-    """A Finnish syllable with one short vowel closed by one stop that is not doubled into the
-    next syllable ("tip-tap", "tip | tap", not "nuk-kuu"), on a short note with no slur holding it on."""
-    if n.get("beats", 0) > STOP_BEATS or n.get("ph") or len(co) != 1 or co[0] not in STOPS: return False
+    """A Finnish syllable with one short vowel closed by one stop, or by l, m, n, r or s, on a short
+    note with no slur holding it on: True, or "double" for a stop doubled into the next syllable
+    ("huk-kuu"), whose closure the next syllable sings."""
+    if n.get("beats", 0) > STOP_BEATS or n.get("ph") or len(co) != 1 or co[0] not in STOPS | CODA: return False
     if len(re.findall(rf"[{VOW}]", n["syl"].lower())) != 1: return False
     if nxt is None or nxt["pitch"] is None: return True
     if not nxt.get("syl"): return False              # held on into the next note
     on = sounds(nxt)[0]
-    return not (on and on[0] == co[0])
+    if on and on[0] == co[0]:                        # "huk-kuu" sang "huuk-kuu" (#450)
+        if co[0] in STOPS: return "double" if DOUBLE_STOP else False
+        return CODA_HOLD                             # "sil-lan": the l held, then the next l
+    return True
+DOUBLE_STOP = os.environ.get("DOUBLE_STOP", "1") == "1"   # "huk-kuu": a doubled stop keeps its vowel short too
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"] if os.environ.get("GPU") else ["CPUExecutionProvider"]
@@ -303,9 +315,18 @@ for ni, n in enumerate(notes):
         first = int(nf * share); rest = (nf - first) // (len(vs) - 1)
         vd = [first] + [rest] * (len(vs) - 1); vd[-1] += nf - sum(vd)
     note_lo = len(toks)
+    closed = STOP_VOWEL and len(vs) == 1 and short_before_stop(n, co, notes[ni + 1] if ni + 1 < len(notes) else None)
+    stop = cons_seq(co) if closed and closed != "double" else []
     vf = int(round(STOP_VOWEL * FPS))
-    stop = cons_seq(co) if STOP_VOWEL and len(vs) == 1 and short_before_stop(n, co, notes[ni + 1] if ni + 1 < len(notes) else None) else []
-    if stop and nf - vf - sum(d for _, d in stop) >= 3:
+    if stop and co[0] not in STOPS:
+        vf = int(nf * CODA_SHARE) if CODA_SHARE else int(round(CODA_VOWEL * FPS))
+    if closed == "double" and nf - vf >= 3:
+        # "huk-kuu": the vowel, then silence; the double k's closure and release come before the
+        # next beat as before, taken out of that silence
+        toks += vs + ["SP"]; durs += [vf, nf - vf]
+    elif stop and co[0] not in STOPS and CODA_HOLD and nf - vf >= 3:
+        toks += vs + [stop[0][0]]; durs += [vf, nf - vf]; co = []
+    elif stop and nf - vf - sum(d for _, d in stop) >= 3:
         # "tip": the vowel, the stop, then silence until the next syllable's consonants (#450)
         toks += vs + [c for c, _ in stop] + ["SP"]
         durs += [vf] + [d for _, d in stop] + [nf - vf - sum(d for _, d in stop)]

@@ -129,7 +129,7 @@ def test_consonants_borrow_only_from_the_note_before():
     assert ns["durs"] == [30, 1] and ns["toks"] == ["it/a", "it/e"]
 
 
-def test_a_short_vowel_closed_by_a_stop_is_found():
+def test_a_short_vowel_closed_by_a_consonant_is_found():
     import numpy as np
     ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
     exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
@@ -140,11 +140,14 @@ def test_a_short_vowel_closed_by_a_stop_is_found():
     assert short(n("tap."), ["it/p"], rest)                     # before a rest
     assert short(n("tap"), ["it/p"], None)                      # the last note
     assert not short(n("vat", beats=2), ["it/t"], rest)         # a long note holds its vowel
-    assert not short(n("nuk"), ["it/k"], n("kuu"))              # "nuk-kuu": a double k
+    assert short(n("nuk"), ["it/k"], n("kuu")) == "double"      # "huk-kuu": a double k
+    assert short(n("var"), ["it/rr"], n("joon"))                # "var-joon"
+    assert short(n("sil"), ["it/l"], n("lan"))                  # "sil-lan": the l held
+    assert not short(n("tont"), ["it/n", "it/t"], n("tu"))      # two consonants: as before
     assert not short(n("dyyk"), ["it/k"], n("dong"))            # a long vowel stays long
     assert not short(n("pait"), ["it/t"], n("si"))              # and so does "ai"
     assert not short(n("tip"), ["it/p"], {"pitch": 62, "syl": None})   # slurred on
-    assert not short(n("sam"), ["it/m"], n("muu"))              # not a stop
+    assert not short(n("kah"), ["de/h"], n("vi"))               # not a stop, l, m, n, r or s
     assert not short(n("kaik"), ["it/k"], n("ki"))
     assert not short({**n("hat"), "ph": {"on": [], "vs": [], "co": []}}, ["en/t"], None)   # g2p's sounds
 
