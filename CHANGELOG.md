@@ -12,7 +12,7 @@ developers are listed under *Behind the scenes*.
   takes it off the test list. (#451)
 - A sung short vowel closed by a consonant on a note of a beat or less is sung 0.25 s: "tip"
   and "tap" then fall silent after the p, "var-joon" and "sil-lan" hold the r or l to the next
-  syllable, "huk-kuu" is silent until the k, and a stop inside a word before another consonant
+  syllable, "huk-kuu" is silent until the k (at most 0.25 s of silence; the vowel takes the rest), and a stop inside a word before another consonant
   ("pit-kin") holds the vowel 85% of the note and sings the t with the k. Before, the vowel was held to the end of the
   note and sounded long ("tiip", "vaar-joon"). Long notes still hold the vowel. (#451)
 - A syllable with no vowel and nothing to hum or hiss ("kk") is sung as the consonant and a

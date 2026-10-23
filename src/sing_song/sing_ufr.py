@@ -155,6 +155,9 @@ def short_before_stop(n, co, nxt):
 # (Eero's pick by ear, #450). A syllable sung again ("tip-tap") keeps the short vowel. MID_STOP=0: off
 MID_STOP = os.environ.get("MID_STOP", "1") == "1"
 MID_SHARE = float(os.environ.get("MID_SHARE", "0.85"))
+# the silence of a doubled stop, its closure included, is at most DBL_GAP seconds and the vowel
+# takes the rest ("vet-ten" on a slow quarter had 0.45 s, Eero's pick by ear, #450). 0: no limit
+DBL_GAP = float(os.environ.get("DBL_GAP", "0.25"))
 DOUBLE_STOP = os.environ.get("DOUBLE_STOP", "1") == "1"   # "huk-kuu": a doubled stop keeps its vowel short too
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
@@ -345,6 +348,7 @@ for ni, n in enumerate(notes):
     else: vf = int(round(STOP_VOWEL * FPS))
     if stop and co[0] not in STOPS:
         vf = int(nf * CODA_SHARE) if CODA_SHARE else int(round(CODA_VOWEL * FPS))
+    if closed == "double" and DBL_GAP: vf = max(vf, nf - int(round(DBL_GAP * FPS)))
     if closed == "double" and nf - vf >= 3:
         # "huk-kuu": the vowel, then silence; the double k's closure and release come before the
         # next beat as before, taken out of that silence
