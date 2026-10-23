@@ -1199,14 +1199,58 @@ def _printed_systems(song_dir: str) -> Optional[List[Tuple[int, int]]]:
 
     Normal-mode cleaning strips layout breaks, so the cleaned score has no systems
     left to find and the lyric editor would offer one cell per part for the whole
-    piece. The printed systems still exist on the page; these are them.
+    piece. The printed systems still exist on the page; these are them, in the
+    cleaned score's bar numbering (#446).
+    """
+    systems = [r for _, r in _printed_system_bounds(song_dir) if r]
+    return systems or None
+
+
+def _printed_system_bounds(song_dir: str) -> List[Tuple[object, Optional[Tuple[int, int]]]]:
+    """Each labelled printed system's bounds and its bars in the cleaned numbering.
+
+    The stored labels count the bars of the scan, so a bar a ``delbar`` took out or
+    an ``insbar`` put in would cut every later system at the wrong bars (#446). The
+    range is ``None`` for a system every bar of which was taken out.
     """
     if not song_dir:
-        return None
+        return []
     bounds = [b for b in pdf_systems.load_bounds(song_dir) if b.measure_start]
     if not bounds:
+        return []
+    try:
+        moves = bar_moves(_recorded_fixes(song_dir))
+    except RuntimeError:
+        moves = []
+    return [(b, moved_system(b.measure_start, b.measure_end or b.measure_start, moves))
+            for b in bounds]
+
+
+def moved_system(start: int, end: int, moves) -> Optional[Tuple[int, int]]:
+    """Bars ``start``-``end`` of the score before ``moves``, as numbered after them.
+
+    A deleted bar at either edge is skipped, and a bar inserted after the system's
+    last bar is counted in it (the next system starts after it). ``None`` when every
+    bar of the system was taken out.
+    """
+    if not moves:
+        return start, end
+    first = None
+    for bar in range(start, end + 1):
+        first = after_moves(bar, moves)
+        if first is not None:
+            break
+    if first is None:
         return None
-    return [(b.measure_start, b.measure_end) for b in bounds]
+    # The bar after the system, wherever it lands, less one. Bars past the score are
+    # never deleted, so the search ends within as many steps as there are moves.
+    bar, after = end + 1, None
+    for _ in range(len(moves) + 1):
+        after = after_moves(bar, moves)
+        if after is not None:
+            break
+        bar += 1
+    return first, after - 1
 
 
 def lyric_grid(mscx_path: str, song_dir: str = "") -> Dict:
@@ -1218,8 +1262,7 @@ def lyric_grid(mscx_path: str, song_dir: str = "") -> Dict:
     """
     root = etree.parse(mscx_path).getroot()
     grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir)).to_dict()
-    crops = [b.index for b in pdf_systems.load_bounds(song_dir) if b.measure_start] \
-        if song_dir else []
+    crops = [b.index for b, r in _printed_system_bounds(song_dir) if r]
     for system in grid["systems"]:
         i = system["index"]
         system["crop"] = crops[i] if len(crops) == len(grid["systems"]) else None
