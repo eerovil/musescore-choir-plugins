@@ -11,6 +11,9 @@ developers are listed under *Behind the scenes*.
   short "uh" instead of the consonant and silence, and `sing_song.py` stops before singing
   when a note would still be sung as no sound at all, listing each one by part and bar
   (`--allow-silent` sings anyway). (#449)
+- The lyric import and the by-system editor cut the printed systems at the right bars after a
+  `delbar` or `insbar` fix. Before, every system after the moved bar was counted against the
+  scan's bar numbers, so its words landed on the wrong bars (#446).
 - A scan that gives up on a system sent to the remote runner now asks the runner to stop
   and waits up to 30 s before killing it, so homr does not keep running on the other
   machine's card. (#443)
