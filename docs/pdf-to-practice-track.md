@@ -22,7 +22,8 @@ yourself.
 
 A step that runs a job (scan, clean) answers `{"started": true}` at once. It is done when
 `GET $APP/api/songs/<slug>` shows `jobs.<kind>.status` as `succeeded` (or `failed`, with the
-error in its log).
+error in its log). Nothing tells you when it ends, so look once after about as long as it
+takes: a clean is seconds, a scan about 20 seconds a system on a graphics card.
 
 ## 1. Make the song and read the page
 
@@ -33,32 +34,49 @@ curl -F name="Song name" -F per_system=true -F voicing=mixed -F pdf=@song.pdf $A
 `voicing` is `men`, `women` or `mixed`; the reply names the song's `slug`. Then:
 
 1. `POST $APP/api/songs/<slug>/find-systems` with `{}`: the printed systems, as bands on the
-   pages. Look at each page (`GET .../page/<n>`) and correct a band that cuts a staff or the
-   words under it.
+   pages, each `{"index", "page", "top", "bottom"}` with `top` and `bottom` as fractions of the
+   page's height (0 is its top). Look at each page (`GET .../page/<n>`) and correct a band that
+   cuts a staff or the words under it.
 2. `PUT $APP/api/songs/<slug>/bounds` with `{"systems": [...]}` from that reply.
 3. `POST $APP/api/songs/<slug>/scan`: homr reads every system. A system that failed is listed
    in the scan log; scan again to read only the ones missing.
+4. Count each system's bars on the page against the scan's, **staff by staff**: the scan can
+   add an empty bar to one staff only and push that staff's later bars one bar late inside the
+   system. Section 3 puts it back with `bar` and `delbar` fixes.
 
 ## 2. Name the parts and clean
 
 `GET $APP/api/songs/<slug>/systems` lists, per printed system, the staves and how many lines
-each carries. Name each staff's lines, top first, for every system:
+each carries: `{"grid": [{"system", "measure_start", "measure_end", "staves": [{"staff_id",
+"lines", ...}]}]}`. Name each staff's lines, top first, keyed by that `system` (the first is
+`0`) and `staff_id` (the first is `1`):
 
 ```bash
 curl -X PUT -H 'content-type: application/json' $APP/api/songs/<slug>/systems \
-  -d '{"1": {"1": "S1,S2", "2": "A1,A2", "3": "T1,T2", "4": "B1,B2"}, "2": {...}}'
+  -d '{"0": {"1": "S1,S2", "2": "A1,A2", "3": "T1,T2", "4": "B1,B2"}, "1": {...}}'
 ```
+
+The page pictures (`GET .../system/<n>`) and the clean's log count systems from 1 instead.
 
 A blank staff takes the previous system's answer; `-` names nothing there. Name parts S/A/T/B
 plus a number (`S1`, `A2`): the singer's voice is chosen by that first letter. Then `POST
 .../clean`.
 
+- A line a page divides further for a few bars is its part's name plus a letter after the
+  number (`A1b`, not `Ab`): in bars where the staff prints one line it sings the part's notes,
+  and `--fold-divisi` (step 6) folds it into its part's track. A staff that prints two-note
+  chords most of the way is named that way (`A1,A1b`) from its first system, or the lettered
+  line copies whole chords and every note is sung twice.
+- Two parts printed in unison on one staff (an intro on an `S A` and a `T B` staff) cannot be
+  named: name the upper part, then copy its bars to the other with `bar` fixes (step 3).
+
 ## 3. Check every bar against the page
 
 The scan gets most notes right and some wrong; a practice track with a wrong note teaches it.
 
-- `GET .../bar?staff=<n>&measure=<m>` reads a bar of the cleaned score; `GET .../system/<n>`
-  is the page's picture of that system. Compare them bar by bar, part by part.
+- `GET .../bar?staff=<n>&measure=<m>` reads a bar of the cleaned score, where `staff` counts
+  the cleaned score's staves, one per part, top first (`GET .../bar` lists them); `GET
+  .../system/<n>` is the page's picture of that system. Compare them bar by bar, part by part.
 - `GET .../problems` lists the bars homr itself doubted (`⚠`), with its other readings.
 - Every correction is an entry in the song's `fixes.json`, then `POST .../clean` again. A hand
   edit to the cleaned score is lost at the next clean. CLAUDE.md, "The prototyping fixture",
@@ -68,9 +86,12 @@ The scan gets most notes right and some wrong; a practice track with a wrong not
 - A bar MuseScore refused and reset to a rest is matched against its reading *before* the
   reset: its `from` is the `scanned_from` of that bar's `text` entry in `fixes.json`, not what
   `/bar` shows. A `bar` fix cuts ties coming into the bar, so add the previous bar's tie again
-  after it. A bar the scan gave the wrong length (`len` on the Measure) takes three steps:
-  `bar` every staff to the same rest, `barlen`, then `bar` each staff again with `from:
-  ["measure:R"]`. Check lengths, time signatures and voltas in the cleaned `.mscx` too.
+  after it. A `tie`, `slur` or `unslur` after a `bar` fix in the same bar takes as `from` what
+  that fix wrote, and a `delbar` takes a `from` per staff (`[["whole:R"], ["measure:R"], ...]`)
+  when the staves read differently. A bar the scan gave the wrong length (`len` on the
+  Measure) takes three steps: `bar` every staff to the same rest, `barlen`, then `bar` each
+  staff again with `from: ["measure:R"]`. Check lengths, time signatures and voltas in the
+  cleaned `.mscx` too.
 - Triplets and slurs are what the scan gets wrong most. A slur decides which notes share a
   syllable, so a missing one shows up as a lyric that does not fit (next step).
 
@@ -92,7 +113,14 @@ and send it as a string: `POST $APP/api/songs/<slug>/lyrics` with `{"json": "<th
 Hyphens join a word's syllables; `_` is a note with no syllable. The reply's `mismatches` say
 where a line has too many or too few syllables for the notes: too many means the reading is
 wrong, one or two too few usually a slur the scan dropped (fix the score, step 3). A sentence
-spoken on one held chord is one syllable: join its words with `‿`.
+spoken on one held chord is one syllable: join its words with `‿`. A page that prints a syllable
+under each note of a slurred pair ("wa - ah") uses the slur for phrasing only: take it out with
+`unslur`, which shows up as one too many syllables.
+
+A second verse under a repeated passage is a second entry with `"verse": 2`; the singer sings it
+on the second pass. After a `delbar` or `insbar`, give every block its `"measure_end"` too:
+until musescore-choir-plugins#446 is fixed, the import otherwise counts the systems after the
+moved bars against the scan's old bar numbers.
 
 ## 5. Tempo, names, credits
 
@@ -102,8 +130,10 @@ curl -X POST -H 'content-type: application/json' $APP/api/songs/<slug>/publish-s
        "credits": {"composer": "...", "lyricist": "...", "arranger": "..."}}'
 ```
 
-A cleaned score has no tempo of its own, so give the printed one. A printed swing marking is a
-`swing` entry in `fixes.json` per marked bar.
+A cleaned score has no tempo of its own, so give the printed one. A page that prints only
+words ("Reggae", "Tempo 2, slower") leaves the number to you: pick one that suits the style, and
+say which you picked when you hand the song over. A printed swing marking is a `swing` entry in
+`fixes.json` per marked bar.
 
 ## 6. Sing it
 
@@ -114,13 +144,22 @@ A cleaned score has no tempo of its own, so give the printed one. A printed swin
 It builds the score, MIDI and timing, checks every part's notes against the MIDI, sings each
 part and writes `/var/tmp/practice-<slug>/` (`--out` moves it): `parts/<n>-<Name>.mp3` (a `/`
 in a name becomes `_`), `score.musicxml`, `score.mid`, and its working files in `work/`. A few
-minutes on a graphics card, much longer on the processor.
+minutes on a graphics card, much longer on the processor. MuseScore needs a screen even to
+export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` set.
 
 - Not in Finnish: `--lang en|de|sv|la|et`. Two languages: `--lang-from fi:Word,...` names the
   first word of each stretch (it stops and lists the words it thinks you missed).
 - A part name that does not start with S, A, M, T or B: `--voice LYSE` (high) or `--voice REMY`
   (low) for every part.
 - A stopped run: the same command with `--resume` sings only the lines not finished.
+- Lettered divisi lines (`A1b`, step 2): `--fold-divisi` sings each into its part's track
+  instead of a track of its own.
+- `--cpu` sings on the processor even when there is a graphics card.
+
+Check the result before publishing. The run stops by itself when a part's notes do not match the
+MIDI. It does not check the words: each line's syllables, in the order they are sung, are in
+`work/p<n>-*.json` (`syl`), and a second verse should come on the repeat. Every MP3 should last
+the length the `bundle:` line gives. Listening to a part is the best check of all.
 
 ### Where heavy work runs
 
@@ -143,6 +182,9 @@ Ask the person which list it goes on. With the site's Cloudflare keys in `.env`
 ```bash
 .venv/bin/python sing_song.py <slug> --publish <choir>
 ```
+
+Give it the same options as the run you checked, plus `--resume`, and it publishes those
+tracks without singing them again.
 
 A part name the site's voice tree does not know stops it; ask the person where it goes and pass
 `--place "Name=<id>"`, `--place "Name=-"` (no place) or `--place "Name=^<parent>"` (a new place
