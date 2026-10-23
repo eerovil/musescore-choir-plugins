@@ -94,13 +94,13 @@ columns song-app writes:
   PRIMARY KEY (choir, slug)
 ```
 
-Publishing upserts one row. A song can be in the `public` list and one
-choir's list at once (#384): publishing to `public` deletes nothing, and
-publishing to a choir deletes the song's row in any *other* private choir (a
-move between `jm` and `naiskuoro`) but never its `public` row — the same rule as
-the site's own hand-publish script (eerovil/stemmanauhat-cf#20). Publishing to
-the test list deletes nothing either (#422), so a fix tried out there leaves the
-song on its choir's list; publishing to a choir still takes it off the test list. song-app keeps
+Publishing upserts one row. A song can be in any number of lists at once:
+publishing to `public` or to a choir deletes no other choir's row (#450; until
+then a publish to a choir deleted the song's row in any *other* private choir,
+the rule of the site's hand-publish script, eerovil/stemmanauhat-cf#20, which
+took songs shared by `joy` and `joy-alumnit` off one of them). Publishing to the
+test list deletes nothing either (#422), so a fix tried out there leaves the song
+on its choirs' lists; publishing to a choir still takes it off the test list. song-app keeps
 one publish record per choir, so replacing a version deletes only that choir's
 old files.
 

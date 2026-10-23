@@ -195,7 +195,7 @@ def test_score_credits_reads_the_metatags_that_are_set(tmp_path):
     assert publish.score_credits(str(tmp_path / "missing.mscx")) == {}
 
 
-def test_publishing_again_replaces_the_old_version_and_a_new_choir_moves_the_song(tmp_path):
+def test_publishing_to_another_choir_keeps_the_first_choirs_listing(tmp_path):
     cf = FakeCloudflare()
     client = publish.Cloudflare(CONFIG, cf)
     first = publish.publish(slug="laulu", title="Laulu", choir="jm",
@@ -205,11 +205,28 @@ def test_publishing_again_replaces_the_old_version_and_a_new_choir_moves_the_son
                              bundle=_bundle(tmp_path, parts=("S1", "S2", "A1")),
                              client=client, published={"jm": first})
 
-    assert cf.listed("jm") == []
+    # #450: a song in two choirs' lists (joy and joy-alumnit) stays in both
+    [(_slug, _title, prefix, _parts)] = cf.listed("jm")
+    assert prefix == first["prefix"]
     [(_slug, _title, prefix, parts)] = cf.listed("naiskuoro")
     assert prefix == second["prefix"] and len(json.loads(parts)) == 3
-    assert sorted(cf.objects) == sorted(second["files"])
-    assert publish.replaced("naiskuoro", {"jm": first}) == ["jm"]
+    assert sorted(cf.objects) == sorted(first["files"] + second["files"])
+    assert publish.replaced("naiskuoro", {"jm": first}) == []
+
+
+def test_publishing_to_a_choir_again_replaces_only_that_choirs_version(tmp_path):
+    cf = FakeCloudflare()
+    client = publish.Cloudflare(CONFIG, cf)
+    jm = publish.publish(slug="laulu", title="Laulu", choir="jm",
+                         bundle=_bundle(tmp_path), client=client)
+    nais = publish.publish(slug="laulu", title="Laulu", choir="naiskuoro",
+                           bundle=_bundle(tmp_path), client=client, published={"jm": jm})
+    time.sleep(1.1)
+    jm2 = publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=_bundle(tmp_path),
+                          client=client, published={"jm": jm, "naiskuoro": nais})
+    assert cf.listed("jm")[0][2] == jm2["prefix"]
+    assert cf.listed("naiskuoro")[0][2] == nais["prefix"]
+    assert sorted(cf.objects) == sorted(jm2["files"] + nais["files"])
 
 
 def test_a_song_can_be_in_the_public_list_and_a_choirs_list_at_once(tmp_path):
@@ -236,7 +253,7 @@ def test_a_song_can_be_in_the_public_list_and_a_choirs_list_at_once(tmp_path):
     assert sorted(cf.objects) == sorted(jm2["files"] + public["files"])
 
 
-def test_a_move_between_choirs_keeps_the_public_listing_and_drops_an_unrecorded_choir(tmp_path):
+def test_another_choirs_publish_keeps_an_unrecorded_choir_and_the_public_listing(tmp_path):
     cf = FakeCloudflare()
     client = publish.Cloudflare(CONFIG, cf)
     jm = publish.publish(slug="maamme", title="Maamme", choir="jm",
@@ -248,12 +265,11 @@ def test_a_move_between_choirs_keeps_the_public_listing_and_drops_an_unrecorded_
     nais = publish.publish(slug="maamme", title="Maamme", choir="naiskuoro",
                            bundle=_bundle(tmp_path), client=client,
                            published={"public": public}, log=log.append)
-    # jm was not in the record handed in (published by hand, say): its row goes
-    # anyway, as the site's own script does, and public stays.
-    assert cf.listed("jm") == []
+    # jm was not in the record handed in (published by hand, say): it stays (#450)
+    assert [r[0] for r in cf.listed("jm")] == ["maamme"]
     assert [r[0] for r in cf.listed("naiskuoro")] == ["maamme"]
     assert [r[0] for r in cf.listed("public")] == ["maamme"]
-    assert "Removed it from the jm list." in log
+    assert not any("Removed it" in line for line in log)
     assert set(public["files"]) <= set(cf.objects) and set(nais["files"]) <= set(cf.objects)
 
 
@@ -593,12 +609,12 @@ def test_publishing_from_the_app_lists_the_song_for_its_choir(app_song, monkeypa
     assert sorted(data["publish"]["sites"]) == ["jm", "public"]
     assert cf.listed("jm") and cf.listed("public")
 
-    # ... and a move to naiskuoro drops jm and keeps public.
+    # ... and so does publishing to naiskuoro too (#450): the song is in all three.
     assert client.post(f"/api/songs/{app_song.slug}/publish",
                        json={"choir": "naiskuoro"}).status_code == 200
     data = _job_done(client, app_song.slug)
-    assert sorted(data["publish"]["sites"]) == ["naiskuoro", "public"]
-    assert cf.listed("jm") == [] and cf.listed("public")
+    assert sorted(data["publish"]["sites"]) == ["jm", "naiskuoro", "public"]
+    assert cf.listed("jm") and cf.listed("naiskuoro") and cf.listed("public")
 
 
 def test_publish_refuses_an_unapproved_score_an_unknown_choir_and_no_keys(

@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Publishing a song to one choir no longer takes it off the other choirs' lists, so a song
+  shared by `joy` and `joy-alumnit` can be published to both. Publishing to a choir still
+  takes it off the test list. (#451)
 - A sung short vowel closed by a consonant on a note of a beat or less is sung 0.25 s: "tip"
   and "tap" then fall silent after the p, "var-joon" and "sil-lan" hold the r or l to the next
   syllable, and "huk-kuu" is silent until the k. Before, the vowel was held to the end of the

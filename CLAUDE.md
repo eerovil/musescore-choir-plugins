@@ -1079,6 +1079,8 @@ state model are in `DESIGN.md`.
   from the song's voicing; `public` is the one id every site has. A choir marked
   `staging` is the site's test list (#422): publishing there removes the song from
   no other choir, while publishing to a choir still removes it from the test list.
+  Publishing to a choir leaves every other choir's listing alone (#450: the old
+  one-private-choir rule took songs shared by `joy` and `joy-alumnit` off one of them).
   **Part names** (#402) are set there too: cleaning renames every part by guessing
   from pitch unless the song has a voicing, so older songs reached the site with
   tenors in a women's choir. `publish.part_names` keeps one name per singing part,
