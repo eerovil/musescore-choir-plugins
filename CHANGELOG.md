@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The lyric import and the by-system editor cut the printed systems at the right bars after a
+  `delbar` or `insbar` fix. Before, every system after the moved bar was counted against the
+  scan's bar numbers, so its words landed on the wrong bars (#446).
 - A scan that gives up on a system sent to the remote runner now asks the runner to stop
   and waits up to 30 s before killing it, so homr does not keep running on the other
   machine's card. (#443)
