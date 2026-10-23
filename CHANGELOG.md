@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A sung short vowel closed by a stop ("tip", "tap") on a note of a beat or less is sung
+  0.15 s, then the stop, then silence, instead of being held to the end of the note
+  ("tiip"). Long notes still hold the vowel. (#451)
 - A scan that gives up on a system sent to the remote runner now asks the runner to stop
   and waits up to 30 s before killing it, so homr does not keep running on the other
   machine's card. (#443)

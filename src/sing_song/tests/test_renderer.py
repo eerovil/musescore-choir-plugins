@@ -134,11 +134,12 @@ def test_a_short_vowel_closed_by_a_stop_is_found():
     ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
     exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
     short = ns["short_before_stop"]
-    n = lambda syl, pitch=60: {"pitch": pitch, "syl": syl}
+    n = lambda syl, pitch=60, beats=1: {"pitch": pitch, "syl": syl, "beats": beats}
     rest = {"pitch": None, "syl": None}
     assert short(n("tip"), ["it/p"], n("tap"))                  # "tip-tap"
     assert short(n("tap."), ["it/p"], rest)                     # before a rest
     assert short(n("tap"), ["it/p"], None)                      # the last note
+    assert not short(n("vat", beats=2), ["it/t"], rest)         # a long note holds its vowel
     assert not short(n("nuk"), ["it/k"], n("kuu"))              # "nuk-kuu": a double k
     assert not short(n("dyyk"), ["it/k"], n("dong"))            # a long vowel stays long
     assert not short(n("pait"), ["it/t"], n("si"))              # and so does "ai"

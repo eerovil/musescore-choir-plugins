@@ -114,13 +114,15 @@ CLIP = {
     **{f"it/{c}": (0.04, 0.13) for c in ("l", "rr", "y")}, "de/j": (0.04, 0.13),
     "de/q": (0.02, 0.08),
 }
-# a short vowel closed by a stop ("tip", "tap") is sung this many seconds, then the stop, then
-# silence to the next note, rather than held to the end of the note ("tiip", #450). 0: held.
-STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0"))
+# a short vowel closed by a stop ("tip", "tap") on a note of at most STOP_BEATS beats is sung
+# STOP_VOWEL seconds, then the stop, then silence to the next note, rather than held to the end of
+# the note ("tiip"). Eero's pick by ear on #450; a longer note ("set," on a half) holds. 0: held.
+STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0.15"))
+STOP_BEATS = float(os.environ.get("STOP_BEATS", "1"))
 def short_before_stop(n, co, nxt):
     """A Finnish syllable with one short vowel closed by one stop that is not doubled into the
-    next syllable ("tip-tap", "tip | tap", not "nuk-kuu"), and no slur holding it on."""
-    if n.get("ph") or len(co) != 1 or co[0] not in STOPS: return False
+    next syllable ("tip-tap", "tip | tap", not "nuk-kuu"), on a short note with no slur holding it on."""
+    if n.get("beats", 0) > STOP_BEATS or n.get("ph") or len(co) != 1 or co[0] not in STOPS: return False
     if len(re.findall(rf"[{VOW}]", n["syl"].lower())) != 1: return False
     if nxt is None or nxt["pitch"] is None: return True
     if not nxt.get("syl"): return False              # held on into the next note
