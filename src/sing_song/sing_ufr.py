@@ -142,10 +142,19 @@ def short_before_stop(n, co, nxt):
     if nxt is None or nxt["pitch"] is None: return True
     if not nxt.get("syl"): return False              # held on into the next note
     on = sounds(nxt)[0]
+    own = sounds(n)[0]
+    if MID_STOP and co[0] in STOPS and on and on[0] != co[0] and n.get("syllabic") in ("begin", "middle") \
+            and not (own and own[0] == on[0]):      # "tip-tap", "tik-tak" stay short
+        return "late"                                # "pit-kin" sang "pittt-kin" (#450)
     if on and on[0] == co[0]:                        # "huk-kuu" sang "huuk-kuu" (#450)
         if co[0] in STOPS: return "double" if DOUBLE_STOP else False
         return CODA_HOLD                             # "sil-lan": the l held, then the next l
     return True
+# a stop inside a word before another consonant ("pit-kin") keeps the vowel MID_SHARE of the note
+# and is sung with that consonant just before the next beat: a gap after the t made it "pittt-kin"
+# (Eero's pick by ear, #450). A syllable sung again ("tip-tap") keeps the short vowel. MID_STOP=0: off
+MID_STOP = os.environ.get("MID_STOP", "1") == "1"
+MID_SHARE = float(os.environ.get("MID_SHARE", "0.85"))
 DOUBLE_STOP = os.environ.get("DOUBLE_STOP", "1") == "1"   # "huk-kuu": a doubled stop keeps its vowel short too
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
@@ -329,8 +338,11 @@ for ni, n in enumerate(notes):
         vd = [first] + [rest] * (len(vs) - 1); vd[-1] += nf - sum(vd)
     note_lo = len(toks)
     closed = STOP_VOWEL and len(vs) == 1 and short_before_stop(n, co, notes[ni + 1] if ni + 1 < len(notes) else None)
-    stop = cons_seq(co) if closed and closed != "double" else []
-    vf = int(round(STOP_VOWEL * FPS))
+    stop = cons_seq(co) if closed and closed not in ("double", "late") else []
+    if closed == "late":
+        vf = int(nf * MID_SHARE) if MID_SHARE else int(round(STOP_VOWEL * FPS))
+        closed = "double"
+    else: vf = int(round(STOP_VOWEL * FPS))
     if stop and co[0] not in STOPS:
         vf = int(nf * CODA_SHARE) if CODA_SHARE else int(round(CODA_VOWEL * FPS))
     if closed == "double" and nf - vf >= 3:

@@ -152,6 +152,9 @@ def test_a_short_vowel_closed_by_a_consonant_is_found():
     assert not short(n("vat", beats=2), ["it/t"], rest)         # a long note holds its vowel
     assert short(n("nuk"), ["it/k"], n("kuu")) == "double"      # "huk-kuu": a double k
     assert short(n("var"), ["it/rr"], n("joon"))                # "var-joon"
+    word = lambda syl: {**n(syl), "syllabic": "begin"}
+    assert short(word("pit"), ["it/t"], n("kin")) == "late"     # "pit-kin": i held, t with the k
+    assert short(word("tip"), ["it/p"], n("tap")) is True       # "tip-tap": short, as "tip tap"
     assert short(n("sil"), ["it/l"], n("lan"))                  # "sil-lan": the l held
     assert not short(n("tont"), ["it/n", "it/t"], n("tu"))      # two consonants: as before
     assert not short(n("dyyk"), ["it/k"], n("dong"))            # a long vowel stays long
