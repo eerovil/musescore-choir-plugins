@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A syllable with no vowel and nothing to hum or hiss ("kk") is sung as the consonant and a
+  short "uh" instead of the consonant and silence, and `sing_song.py` stops before singing
+  when a note would still be sung as no sound at all, listing each one by part and bar
+  (`--allow-silent` sings anyway). (#449)
 - The lyric import and the by-system editor cut the printed systems at the right bars after a
   `delbar` or `insbar` fix. Before, every system after the moved bar was counted against the
   scan's bar numbers, so its words landed on the wrong bars (#446).

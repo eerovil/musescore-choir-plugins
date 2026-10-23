@@ -153,6 +153,9 @@ export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` 
 - Lettered divisi lines (`A1b`, step 2): `--fold-divisi` sings each into its part's track
   instead of a track of its own.
 - `--cpu` sings on the processor even when there is a graphics card.
+- It stops before singing when a note's syllable would be sung as no sound at all (only stops,
+  no vowel or held sound) and lists them by part and bar: change the words, or `--allow-silent`.
+  A bare "kk" or "t" is sung as the consonant and a short "uh".
 
 Check the result before publishing. The run stops by itself when a part's notes do not match the
 MIDI. It does not check the words: each line's syllables, in the order they are sung, are in

@@ -43,14 +43,14 @@ def split(syl):
     m = re.match(rf"^([^{VOW}]*)([{VOW}]+)([^{VOW}]*)$", s)
     if not m:
         # no vowel (#45): a hum ("mm", "dn") holds its last humming consonant after the ones
-        # before it, a hiss ("tsss") its last s, f or h, and a click ("k") is the consonant
-        # followed by silence. After a stop, a hum or an h starts with a short "uh" ("dn" is
-        # d-uh-nnn, "gh" g-uh-hhh): Eero's pick by ear
+        # before it, a hiss ("tsss") its last s, f or h, and a click ("k", "kk") is the consonant,
+        # a short "uh" and silence (#449: a bare "kk" was heard as no sound at all). After a stop,
+        # a hum or an h starts with a short "uh" ("dn" is d-uh-nnn, "gh" g-uh-hhh): Eero's pick by ear
         cs = [c for c in s.replace("ng", "N") if c in C]
         if not cs: return [], ["it/s"], []
         hold = next((i for i in reversed(range(len(cs))) if cs[i] in "mnlrN"), None)
         if hold is None: hold = next((i for i in reversed(range(len(cs))) if cs[i] in "sfhzʃʒç"), None)
-        if hold is None: return [C[c] for c in cs], ["SP"], []
+        if hold is None: return [C[c] for c in cs], ["en/ax", "SP"], []
         first = hold
         while first > 0 and cs[first - 1] == cs[hold]: first -= 1      # "mm", "tsss": one held sound
         schwa = cs[hold] in "mnlrNh" and any(c in "kptdgb" for c in cs[:first])
@@ -83,6 +83,11 @@ def hold_runs(notes):
 def sounds(n):
     """(onset, vowels, coda): g2p.py's sounds for other languages, else the Finnish spelling rules."""
     return (n["ph"]["on"], n["ph"]["vs"], n["ph"]["co"]) if n.get("ph") else split(n["syl"])
+# a syllable whose held sound is only stops and silence is not heard at all (#449: a bare "kk"
+# was sung as k, then silence). SILENT=<file> below lists such notes before anything is sung
+QUIET = {"SP", "AP", "it/cl", "de/q"} | {f"{l}/{x}" for l in ("it", "en", "de") for x in "kptdbg"}
+def silent(n):
+    return all(p in QUIET for p in sounds(n)[1])
 beat = 60 / bpm
 STOPS = {f"{l}/{x}" for l in ("it", "en", "de") for x in "kptd"} | set(filter(None, os.environ.get("CLOSE", "").split(",")))
 STOPS -= set(filter(None, os.environ.get("NOCLOSE", "").split(",")))   # NOCLOSE=it/d: no closure before d
@@ -225,6 +230,10 @@ def model_boundaries(notes, emb):
                 out[phrase[i + 1]["index"]] = by_word[i + 1][start + len(u["co"]):]
     return out, phrases
 
+if os.environ.get("SILENT"):     # [{bar, syl}] of the notes silent() finds, then stop
+    json.dump([{"bar": n.get("bar"), "syl": n["syl"]} for n in notes if n.get("pitch") is not None
+               and n.get("syl") and silent(n)], open(os.environ["SILENT"], "w"), ensure_ascii=False)
+    sys.exit(0)
 emb = np.fromfile(f"{D}/tiger/{spk}.emb", dtype=np.float32)
 dur_emb_path = f"{D}/dsdur/millefeuille_v001.{spk}.emb"
 dur_emb = np.fromfile(dur_emb_path, dtype=np.float32)[None, None, :] if TIMING == "model" else None
@@ -286,7 +295,7 @@ for ni, n in enumerate(notes):
     breath = bool(re.search(r"[,.;!?]", n["syl"])) and n["beats"] >= 2
     if len(vs) == 1: vd = [nf]
     else:
-        share = SCHWA if vs[0] == "en/ax" and vs[1] in HUMS else DIPH
+        share = SCHWA if vs[0] == "en/ax" and (vs[1] in HUMS or vs[1] == "SP") else DIPH
         first = int(nf * share); rest = (nf - first) // (len(vs) - 1)
         vd = [first] + [rest] * (len(vs) - 1); vd[-1] += nf - sum(vd)
     note_lo = len(toks); toks += vs; durs += vd
