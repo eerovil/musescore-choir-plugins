@@ -129,6 +129,25 @@ def test_consonants_borrow_only_from_the_note_before():
     assert ns["durs"] == [30, 1] and ns["toks"] == ["it/a", "it/e"]
 
 
+def test_a_short_vowel_closed_by_a_stop_is_found():
+    import numpy as np
+    ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
+    exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
+    short = ns["short_before_stop"]
+    n = lambda syl, pitch=60: {"pitch": pitch, "syl": syl}
+    rest = {"pitch": None, "syl": None}
+    assert short(n("tip"), ["it/p"], n("tap"))                  # "tip-tap"
+    assert short(n("tap."), ["it/p"], rest)                     # before a rest
+    assert short(n("tap"), ["it/p"], None)                      # the last note
+    assert not short(n("nuk"), ["it/k"], n("kuu"))              # "nuk-kuu": a double k
+    assert not short(n("dyyk"), ["it/k"], n("dong"))            # a long vowel stays long
+    assert not short(n("pait"), ["it/t"], n("si"))              # and so does "ai"
+    assert not short(n("tip"), ["it/p"], {"pitch": 62, "syl": None})   # slurred on
+    assert not short(n("sam"), ["it/m"], n("muu"))              # not a stop
+    assert not short(n("kaik"), ["it/k"], n("ki"))
+    assert not short({**n("hat"), "ph": {"on": [], "vs": [], "co": []}}, ["en/t"], None)   # g2p's sounds
+
+
 def test_duration_model_sees_the_ng_that_is_sung():
     import numpy as np
     ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 60}

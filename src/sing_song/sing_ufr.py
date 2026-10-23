@@ -114,6 +114,18 @@ CLIP = {
     **{f"it/{c}": (0.04, 0.13) for c in ("l", "rr", "y")}, "de/j": (0.04, 0.13),
     "de/q": (0.02, 0.08),
 }
+# a short vowel closed by a stop ("tip", "tap") is sung this many seconds, then the stop, then
+# silence to the next note, rather than held to the end of the note ("tiip", #450). 0: held.
+STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0"))
+def short_before_stop(n, co, nxt):
+    """A Finnish syllable with one short vowel closed by one stop that is not doubled into the
+    next syllable ("tip-tap", "tip | tap", not "nuk-kuu"), and no slur holding it on."""
+    if n.get("ph") or len(co) != 1 or co[0] not in STOPS: return False
+    if len(re.findall(rf"[{VOW}]", n["syl"].lower())) != 1: return False
+    if nxt is None or nxt["pitch"] is None: return True
+    if not nxt.get("syl"): return False              # held on into the next note
+    on = sounds(nxt)[0]
+    return not (on and on[0] == co[0])
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"] if os.environ.get("GPU") else ["CPUExecutionProvider"]
@@ -282,14 +294,23 @@ for ni, n in enumerate(notes):
         budget = max(budget, min(prev_nf // 2, -(-S_MIN * sum(d for _, d in seq) // s_d)))
     put(seq, budget)
     assert sum(durs) == t, ("vowel moved off its beat", ni, sum(durs), t)
-    pending = co; pending_pred = model_durs.get((ni, "coda"), [])
     breath = bool(re.search(r"[,.;!?]", n["syl"])) and n["beats"] >= 2
     if len(vs) == 1: vd = [nf]
     else:
         share = SCHWA if vs[0] == "en/ax" and vs[1] in HUMS else DIPH
         first = int(nf * share); rest = (nf - first) // (len(vs) - 1)
         vd = [first] + [rest] * (len(vs) - 1); vd[-1] += nf - sum(vd)
-    note_lo = len(toks); toks += vs; durs += vd
+    note_lo = len(toks)
+    vf = int(round(STOP_VOWEL * FPS))
+    stop = cons_seq(co) if STOP_VOWEL and len(vs) == 1 and short_before_stop(n, co, notes[ni + 1] if ni + 1 < len(notes) else None) else []
+    if stop and nf - vf - sum(d for _, d in stop) >= 3:
+        # "tip": the vowel, the stop, then silence until the next syllable's consonants (#450)
+        toks += vs + [c for c, _ in stop] + ["SP"]
+        durs += [vf] + [d for _, d in stop] + [nf - vf - sum(d for _, d in stop)]
+        co = []
+    else:
+        toks += vs; durs += vd
+    pending = co; pending_pred = model_durs.get((ni, "coda"), []) if co else []
     hz = n.get("hz") or 440 * 2 ** ((n["pitch"] - 69) / 12)
     f0n.append((t, t + nf, hz)); t += nf; prev_nf = nf
     prev_long = bool(re.search(r"([aeiouyäö])\1", n["syl"].lower()))
