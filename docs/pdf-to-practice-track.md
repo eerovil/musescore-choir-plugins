@@ -118,9 +118,7 @@ under each note of a slurred pair ("wa - ah") uses the slur for phrasing only: t
 `unslur`, which shows up as one too many syllables.
 
 A second verse under a repeated passage is a second entry with `"verse": 2`; the singer sings it
-on the second pass. After a `delbar` or `insbar`, give every block its `"measure_end"` too:
-until musescore-choir-plugins#446 is fixed, the import otherwise counts the systems after the
-moved bars against the scan's old bar numbers.
+on the second pass.
 
 ## 5. Tempo, names, credits
 
