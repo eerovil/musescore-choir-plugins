@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A syllable with no vowel and nothing to hum or hiss ("kk") is sung as the consonant and a
+  short "uh" instead of the consonant and silence, and `sing_song.py` stops before singing
+  when a note would still be sung as no sound at all, listing each one by part and bar
+  (`--allow-silent` sings anyway). (#449)
 - A scan that gives up on a system sent to the remote runner now asks the runner to stop
   and waits up to 30 s before killing it, so homr does not keep running on the other
   machine's card. (#443)

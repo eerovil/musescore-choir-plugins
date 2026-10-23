@@ -121,6 +121,9 @@ minutes on a graphics card, much longer on the processor.
 - A part name that does not start with S, A, M, T or B: `--voice LYSE` (high) or `--voice REMY`
   (low) for every part.
 - A stopped run: the same command with `--resume` sings only the lines not finished.
+- It stops before singing when a note's syllable would be sung as no sound at all (only stops,
+  no vowel or held sound) and lists them by part and bar: change the words, or `--allow-silent`.
+  A bare "kk" or "t" is sung as the consonant and a short "uh".
 
 ### Where heavy work runs
 
