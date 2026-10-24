@@ -179,6 +179,54 @@ def test_a_doubled_l_keeps_its_short_vowel_when_the_consonant_is_not_held():
     assert ns["short_before_stop"](n("sil"), ["it/l"], n("lan"))   # short i, l, then silence
 
 
+def planned(tmp_path, notes, **env):
+    """The sounds and frames sing_ufr.py plans for `notes` (DUMP_TOKENS), without the voice
+    files or onnxruntime: a stand-in UFR folder and stand-in modules."""
+    import sys, types
+    import numpy as np
+    ufr = tmp_path / "ufr"
+    (ufr / "core").mkdir(parents=True); (ufr / "tiger").mkdir()
+    (ufr / "core" / "phonemes.json").write_text("{}")
+    (ufr / "core" / "languages.json").write_text("{}")
+    np.zeros(4, np.float32).tofile(ufr / "tiger" / "fresh.emb")
+    line = tmp_path / "line.json"
+    line.write_text(json.dumps(notes))
+    dump = tmp_path / "dump.json"
+    saved = {k: os.environ.get(k) for k in ("UFR_DIR", "DUMP_TOKENS", *env)}
+    argv, mods = sys.argv, {m: sys.modules.get(m) for m in ("onnxruntime", "soundfile")}
+    os.environ.update(UFR_DIR=str(ufr), DUMP_TOKENS=str(dump), **env)
+    sys.argv = ["sing_ufr.py", str(line), str(tmp_path / "out.wav"), "60"]
+    sys.modules.update(onnxruntime=types.ModuleType("onnxruntime"), soundfile=types.ModuleType("soundfile"))
+    try:
+        with pytest.raises(SystemExit):
+            exec(SRC, {"__name__": "__main__"})
+    finally:
+        sys.argv = argv
+        for m, v in mods.items():
+            if v is None: sys.modules.pop(m, None)
+            else: sys.modules[m] = v
+        for k, v in saved.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+    d = json.loads(dump.read_text())
+    return list(zip(d["toks"], d["durs"]))
+
+
+def test_a_held_n_before_k_is_still_an_ng(tmp_path):
+    # #451 review: "ken-kä" with its n held in the first note still sings keŋ-kä, as before
+    notes = [{"pitch": 60, "beats": 1, "syl": "ken", "syllabic": "begin"},
+             {"pitch": 62, "beats": 1, "syl": "kä", "syllabic": "end"}]
+    toks = [t for t, _ in planned(tmp_path, notes, SONG_LANG="fi")]
+    assert "de/ng" in toks and "it/n" not in toks
+    i = toks.index("nl/e")
+    assert toks[i + 1] == "de/ng"                       # held after the short e
+    notes = [{"pitch": 60, "beats": 1, "syl": "ken", "syllabic": "begin"},
+             {"pitch": 62, "beats": 1, "syl": "gät", "syllabic": "end"}]
+    (tmp_path / "2").mkdir()
+    toks = [t for t, _ in planned(tmp_path / "2", notes, SONG_LANG="fi")]
+    assert "it/g" not in toks and toks.count("de/ng") >= 2   # "ken-gät": a long ng, as before
+
+
 def test_the_short_vowel_rule_is_finnish_only():
     import numpy as np
     ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}

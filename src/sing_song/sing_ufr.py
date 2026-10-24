@@ -287,6 +287,7 @@ toks, durs, f0n = ["SP"], [int(0.4 * FPS)], []
 note_lo = 0
 t = durs[0]; pending = []; pending_pred = []; breath = False; tsec = 0.0; prev_nf = durs[0]
 last_syl = last_ph = None; prev_long = False
+held = []      # a coda already sung in its own note ("ken-kä"'s n): the next onset's ng context
 BREATH = 0.5   # beats of breath after a comma or full stop on a long note          # coda consonants of the previous syllable
 for ni, n in enumerate(notes):
     nb = n["sec"] if n.get("sec") else n["beats"] * beat   # seconds: the score's own tempo marks when it has them
@@ -302,7 +303,7 @@ for ni, n in enumerate(notes):
         else:
             put(seq, max(1, prev_nf // 2))
             note_lo = len(toks); toks.append("SP"); durs.append(nf)
-        f0n.append((t, t + nf, None)); t += nf; prev_nf = nf; prev_long = False; continue
+        f0n.append((t, t + nf, None)); t += nf; prev_nf = nf; prev_long = False; held = []; continue
     n = repeated(n, last_syl, last_ph)
     if not n.get("syl"):
         # melisma: a note without its own syllable keeps singing the vowel at the new pitch
@@ -319,8 +320,7 @@ for ni, n in enumerate(notes):
     if word_start and not on and not pending and toks[-1] not in ("AP", "SP"):
         on = ["de/q"]                     # glottal stop: "koittaa | yön" stay two words
     # coda of the previous syllable + this onset all sound just before the beat
-    boundary = pending + on
-    boundary = ng(boundary)
+    boundary = ng(held + pending + on)[len(held):]; held = []
     boundary_pred = pending_pred + model_durs.get(ni, [])
     # the consonants take at most half of the note before them, a fifth after a long vowel
     # ("ju-naan-ko": the aa stays long), so short notes keep their vowels (#45)
@@ -359,7 +359,10 @@ for ni, n in enumerate(notes):
         toks += vs + ["SP"]; durs += [vf, nf - vf]
     elif stop and co[0] not in STOPS and CODA_HOLD and nf - vf >= 3:
         if CODA_MAX: vf = max(vf, nf - int(round(CODA_MAX * FPS)))
-        toks += vs + [stop[0][0]]; durs += [vf, nf - vf]; co = []
+        nxt = notes[ni + 1] if ni + 1 < len(notes) else None
+        on_next = sounds(nxt)[0] if nxt and nxt["pitch"] is not None and nxt.get("syl") else []
+        c = ng(co + on_next)[0]           # "ken-kä": the held n is an ng
+        toks += vs + [c]; durs += [vf, nf - vf]; co = []; held = [c]
     elif stop and nf - vf - sum(d for _, d in stop) >= 3:
         # "tip": the vowel, the stop, then silence until the next syllable's consonants (#450)
         toks += vs + [c for c, _ in stop] + ["SP"]
