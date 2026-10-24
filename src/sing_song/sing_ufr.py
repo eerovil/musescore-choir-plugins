@@ -9,7 +9,7 @@ import json, os, re, sys
 # how a song sounds. A sung publish records the version it was sung with, and the song app lists a
 # song sung with an older one as waiting for a re-sing (#453). Read as text by
 # src/sing_song/progress.py, so keep it one plain line.
-SINGER_VERSION = 1
+SINGER_VERSION = 2
 import numpy as np, onnxruntime as ort, soundfile as sf
 D = os.environ.get("UFR_DIR", "/var/tmp/i36-ufr")
 notes = json.load(open(sys.argv[1])); out = sys.argv[2]
@@ -167,6 +167,10 @@ MID_SHARE = float(os.environ.get("MID_SHARE", "0.85"))
 # the silence of a doubled stop, its closure included, is at most DBL_GAP seconds and the vowel
 # takes the rest ("vet-ten" on a slow quarter had 0.45 s, Eero's pick by ear, #450). 0: no limit
 DBL_GAP = float(os.environ.get("DBL_GAP", "0.25"))
+# the silence after a short vowel's closing stop ("tip", "nyt") is at most STOP_GAP seconds and the
+# vowel takes the rest: a fermata stretched "nyt." to 2.1 s and it sang 0.25 s of vowel and 1.8 s
+# of silence (#450). 0: no limit
+STOP_GAP = float(os.environ.get("STOP_GAP", "0.3"))
 DOUBLE_STOP = os.environ.get("DOUBLE_STOP", "1") == "1"   # "huk-kuu": a doubled stop keeps its vowel short too
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
@@ -370,6 +374,7 @@ for ni, n in enumerate(notes):
         toks += vs + [c]; durs += [vf, nf - vf]; co = []; held = [c]
     elif stop and nf - vf - sum(d for _, d in stop) >= 3:
         # "tip": the vowel, the stop, then silence until the next syllable's consonants (#450)
+        if STOP_GAP: vf = max(vf, nf - sum(d for _, d in stop) - int(round(STOP_GAP * FPS)))
         toks += vs + [c for c, _ in stop] + ["SP"]
         durs += [vf] + [d for _, d in stop] + [nf - vf - sum(d for _, d in stop)]
         co = []

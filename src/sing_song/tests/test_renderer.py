@@ -227,6 +227,18 @@ def test_a_held_n_before_k_is_still_an_ng(tmp_path):
     assert "it/g" not in toks and toks.count("de/ng") >= 2   # "ken-gät": a long ng, as before
 
 
+def test_a_closing_stop_on_a_long_note_keeps_the_vowel_and_a_short_gap(tmp_path):
+    # #450: "nyt." stretched to 2.1 s by a fermata sang 0.25 s of y and 1.8 s of silence
+    notes = [{"pitch": 60, "beats": 1, "sec": 2.1, "syl": "nyt.", "syllabic": "single"},
+             {"pitch": 62, "beats": 1, "sec": 0.7, "syl": "ei", "syllabic": "single"}]
+    plan = planned(tmp_path, notes, SONG_LANG="fi")
+    toks = [t for t, _ in plan]
+    i = toks.index("fr/uh")
+    vowel, gap = plan[i][1], plan[i + 3][1]
+    assert toks[i + 1:i + 4] == ["it/cl", "it/t", "SP"]
+    assert vowel > 1.5 * 44100 / 512 and gap <= round(0.3 * 44100 / 512)
+
+
 def test_the_short_vowel_rule_is_finnish_only():
     import numpy as np
     ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
