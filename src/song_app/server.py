@@ -21,6 +21,8 @@ from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_st
                pdf_systems, pipeline, problems, publish, pwa_assets, scan,
                state, system_finder, verification)
 from . import clean_backup
+from . import resing
+from src.sing_song import progress
 from src.clean_score.utils.score_fixes import FixError
 from src.score_export.score import START as START_TEMPO
 from src.score_export import staff_groups
@@ -1984,6 +1986,17 @@ async def api_choirs() -> Dict:
     """The choirs the Publish panel offers: the site's own, read from its database (#408)."""
     return await asyncio.get_running_loop().run_in_executor(
         None, publish.choirs, publish.Config.from_env(), state.SONGS_DIR)
+
+
+@app.get("/api/resing")
+async def api_resing() -> Dict:
+    """Which songs still need a re-sing with the current singer, and how each run is going
+    (#453): the song list shows it. The site says which songs are sung (resing.py)."""
+    def answer() -> Dict:
+        version = progress.singer_version()
+        listed = resing.site(publish.Config.from_env(), state.SONGS_DIR)
+        return resing.overview(state.list_songs(), listed, version)
+    return await asyncio.get_running_loop().run_in_executor(None, answer)
 
 
 # --------------------------------------------------------------------------

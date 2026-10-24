@@ -2778,6 +2778,13 @@ minutes. Every step is a short `kubectl exec`, retried, because eero-pc's long s
 cut (#103). The reader builds its homr venv from this host's pins and checks it file by file.
 `src/kube_runner/tests/` runs it against a fake cluster.
 
+**Re-sings** (#453): `SINGER_VERSION` in `sing_ufr.py` is bumped when the singing rules change; a
+sung publish records it as `singer_version` on that choir's publish record, and a run writes its
+progress to `songs/<slug>/.sing-run.json` (`progress.py`). The song list (`GET /api/resing`,
+`song_app/resing.py`) calls a song pending in a choir where the site lists it sung (its D1 `songs`
+rows, kept in `songs/.site-songs.json`) and this app did not publish that upload with the current
+version; the test list never counts.
+
 The singer runs in its own venv (`scripts/install-singer.sh`, default
 `~/.local/share/musescore-choir-plugins/sing-venv`; CUDA 11 onnxruntime when there is an NVIDIA
 card, because the GTX 970 is below newer builds' floor). The voices are not in the repo: their

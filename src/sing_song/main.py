@@ -1,6 +1,7 @@
 """Sing a song's parts and make its practice track; optionally publish it to the site.
 
-    .venv/bin/python sing_song.py <slug> [--publish <choir>] [--out DIR] [--voice LYSE|REMY] ...
+    .venv/bin/python sing_song.py <slug> [--publish <choir> ...] [--out DIR] [--voice LYSE|REMY] ...
+    .venv/bin/python sing_song.py <slug> --waiting [--publish <choir> ...]   # before queueing a run
 
 One run:
 
@@ -11,7 +12,11 @@ One run:
    each part by the voice its name says (S/A/M: LYSE, T/B: REMY) unless --voice names one. A
    sentence spoken on one held chord is sung a syllable a note (spoken.py).
 3. The result stays in --out (default /var/tmp/practice-<slug>/): parts/<n>-<Name>.mp3, the score
-   and its MIDI. With --publish <choir>: sent to the site with the app's publish code (publish.py).
+   and its MIDI. With --publish <choir>: sent to the site with the app's publish code (publish.py),
+   once for each --publish given, recording the singer version it was sung with (SINGER_VERSION).
+
+The run says how it is going in songs/<slug>/.sing-run.json (progress.py), which the song app's
+song list shows (#453); --waiting only writes "waiting" there, for a run about to be queued.
 
 See docs/pdf-to-practice-track.md for the whole flow and what the machine needs.
 """
@@ -33,6 +38,7 @@ from lxml import etree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # this checkout: the app whose publish code builds the bundle
+from src.sing_song import progress  # noqa: E402
 from src.sing_song.fold import fold  # noqa: E402
 from src.sing_song.spoken import split_spoken  # noqa: E402
 from src.song_app.publish import sung_file  # noqa: E402
@@ -288,7 +294,7 @@ def sung_staves(cleaned):
 
 
 def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu, lang_from=None,
-         groups=None, resume=False, allow_silent=False):
+         groups=None, resume=False, allow_silent=False, on_part=None, version=None):
     """parts/<n>-<Name>.mp3 for every part, sung on the bundle's clock:
 
     - each line is checked against the piano before it is sung (check_onsets.py); a part whose
@@ -304,7 +310,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     - the rests where every line of the part rests are faded to silence (gate.py: the voice
       leaves a hiss that adds up over many waiting parts);
     - with resume, a line a stopped run already sang from the same notes for the same voice is
-      not sung again (sung_before())."""
+      not sung again (sung_before()), unless it was sung by another singer version;
+    - on_part(i, n, name) is told each part as one of its lines starts being sung (progress.py)."""
     staves = sung_staves(cleaned)
     names = [p["name"] for p in manifest["parts"]]
     if groups:
@@ -375,7 +382,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
             run([python, "-I", os.path.join(HERE, "g2p.py"), code, js], env=dict(os.environ, UFR_DIR=ufr_dir))
         quiet += [(name, n["bar"], n["syl"]) for n in silent_notes(python, js, voices[i - 1], env)]
         said = f"{name}{' ' + line + ' line' if two else ''}"
-        if resume and sung_before(work, i, line, voices[i - 1]):
+        if resume and sung_before(work, i, line, voices[i - 1], version):
             log(f"{said}: sung before, kept")
             continue
         forget_sung(work, i, line)
@@ -388,19 +395,25 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                      "Change their words, or sing them anyway with --allow-silent:\n" + listed)
         log(f"{len(quiet)} notes are sung as no sound at all (--allow-silent):\n{listed}")
 
+    def started(i):
+        if on_part:
+            on_part(i, len(names), names[i - 1])
+
     def here(job):
         i, said, line, count = job
         log(f"singing {said} ({count} notes)")
+        started(i)
         run(["nice", "-n", "19", python, "-I", SINGER, os.path.join(work, f"p{i}-{line}.json"),
              os.path.join(work, f"p{i}-{line}.wav"), "100", voices[i - 1]], env=env)
-        mark_sung(work, i, line, voices[i - 1])
+        mark_sung(work, i, line, voices[i - 1], version)
 
     def there(job):
         i, said, line, count = job
         log(f"singing {said} ({count} notes) on the remote runner")
+        started(i)
         sing_remotely(runner, os.path.join(work, f"p{i}-{line}.json"), os.path.join(work, f"p{i}-{line}.wav"),
                       voices[i - 1], env)
-        mark_sung(work, i, line, voices[i - 1])
+        mark_sung(work, i, line, voices[i - 1], version)
 
     runner = (os.environ.get("REMOTE_RUNNER") or "").strip()
     share(jobs, here, there if runner else None, stop_remote)
@@ -429,12 +442,13 @@ def sung_record(work, i, line):
     return os.path.join(work, f"p{i}-{line}.sung.json")
 
 
-def mark_sung(work, i, line, voice):
-    """Note that p<i>-<line>.wav is finished, with the notes and voice it was sung from."""
+def mark_sung(work, i, line, voice, version=None):
+    """Note that p<i>-<line>.wav is finished, with the notes, voice and singer version it was
+    sung from."""
     with open(os.path.join(work, f"p{i}-{line}.json")) as f:
         notes = json.load(f)
     with open(sung_record(work, i, line), "w") as f:
-        json.dump({"voice": voice, "notes": notes}, f, ensure_ascii=False)
+        json.dump({"voice": voice, "notes": notes, "version": version}, f, ensure_ascii=False)
 
 
 def forget_sung(work, i, line):
@@ -445,9 +459,10 @@ def forget_sung(work, i, line):
         pass
 
 
-def sung_before(work, i, line, voice):
+def sung_before(work, i, line, voice, version=None):
     """True when p<i>-<line>.wav was finished from exactly the notes p<i>-<line>.json has now, for
-    this voice. The singer itself is not compared: --resume is for picking up a stopped run."""
+    this voice, by this singer version (a line sung before the singer changed is sung again, #453).
+    Other changes to the singer are not seen: --resume is for picking up a stopped run."""
     wav = os.path.join(work, f"p{i}-{line}.wav")
     try:
         with open(sung_record(work, i, line)) as f:
@@ -456,7 +471,7 @@ def sung_before(work, i, line, voice):
             notes = json.load(f)
     except (FileNotFoundError, ValueError):
         return False
-    return os.path.exists(wav) and done == {"voice": voice, "notes": notes}
+    return os.path.exists(wav) and done == {"voice": voice, "notes": notes, "version": version}
 
 
 def part_mp3_command(wavs, mp3):
@@ -471,10 +486,11 @@ def part_mp3_command(wavs, mp3):
             "-ac", "1", "-b:a", "64k", mp3]
 
 
-def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned):
+def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None):
     """Send the bundle (with the sung MP3s when there are) to the site's `choir` list with the
     app's own publish code, and keep the record on the song as the app's Publish does, so the
-    next publish from either takes this version away. Review's approval is not needed here."""
+    next publish from either takes this version away. Review's approval is not needed here.
+    A sung publish records the singer `version` it was sung with (#453)."""
     from src.song_app import publish, state
     config = publish.Config.from_env()
     if config is None:
@@ -504,6 +520,8 @@ def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned)
         sys.exit(f"publish failed: {e}")
     record["published_against"] = state.file_fingerprint(cleaned)
     record["sung"] = bool(sung)
+    if sung:
+        record["singer_version"] = version
     with state.song_lock(slug):
         song = state.load(slug)
         pub = song.data.setdefault("publish", {})
@@ -669,8 +687,12 @@ def main():
     load_dotenv(os.path.join(ROOT, ".env"))
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("slug")
-    ap.add_argument("--publish", metavar="CHOIR", help="send it to this choir's list on the site (needs the "
-                    "Cloudflare keys in .env)")
+    ap.add_argument("--publish", metavar="CHOIR", action="append", default=[],
+                    help="send it to this choir's list on the site (needs the Cloudflare keys in .env); "
+                         "repeat it for each choir the song is on")
+    ap.add_argument("--waiting", action="store_true",
+                    help="only mark the song as waiting for a run in the song app's list, and exit: "
+                         "run it just before queueing the run")
     ap.add_argument("--no-sing", action="store_true", help="piano only")
     ap.add_argument("--out", help="where the result goes (default /var/tmp/practice-<slug>)")
     ap.add_argument("--voice", choices=sorted(VOICES), help="one voice for every part, when the part names "
@@ -687,13 +709,46 @@ def main():
                          "every line still sung")
     ap.add_argument("--resume", action="store_true",
                     help="keep the lines an earlier run with the same --out already sang from the same notes "
-                         "(after a stopped run; not after changing the singer)")
+                         "with the same singer version (after a stopped run)")
     ap.add_argument("--allow-silent", action="store_true",
                     help="sing notes whose syllable has no vowel and no held sound (only stops), which are "
                          "heard as silence; without it such notes stop the run before anything is sung")
     a = ap.parse_args()
 
     check_slug(a.slug)
+    song_dir = os.path.join(ROOT, "songs", a.slug)   # the app's songs/ (state.song_dir)
+    if a.waiting:
+        if not os.path.isdir(song_dir):
+            sys.exit(f"no song {a.slug!r} under songs/")
+        progress.mark_waiting(song_dir, a.publish)
+        log(f"{a.slug}: waiting")
+        return
+    run_record = progress.Run(song_dir, a.publish, progress.singer_version())
+    run_record.step("bundle")
+    try:
+        sing_and_publish(a, run_record)
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            run_record.finish(failure(e.code))
+        else:
+            run_record.finish()
+        raise
+    except BaseException as e:
+        run_record.finish(f"{type(e).__name__}: {e}")
+        raise
+    run_record.finish()
+
+
+def failure(code):
+    """What a run that stopped says about why: its message, or how it was stopped."""
+    if isinstance(code, int):
+        if code > 128 and code - 128 == signal.SIGTERM:
+            return "cancelled"
+        return f"stopped with exit status {code}"
+    return str(code).strip()[-500:]
+
+
+def sing_and_publish(a, run_record):
     out = os.path.abspath(a.out or f"/var/tmp/practice-{a.slug}")
     places = parse_places(a.place)
     venv = sing_venv()
@@ -719,14 +774,19 @@ def main():
         gpu = not a.cpu and nvidia_dir(python) is not None
         log(f"singing on the {'graphics card' if gpu else 'processor'}")
         sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
-             parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent)
+             parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
+             on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
+             version=run_record.record["version"])
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit
     with open(os.path.join(bundle_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, ensure_ascii=False)
-    if a.publish:
-        publish_to_site(a.slug, a.publish, bundle_dir, manifest, sung_by, places, cleaned)
+    choirs = list(dict.fromkeys(a.publish))
+    for k, choir in enumerate(choirs, 1):
+        run_record.step("publishing", choir=choir, choir_index=k, choir_count=len(choirs))
+        publish_to_site(a.slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
+                        run_record.record["version"])
     log(f"practice track: {bundle_dir}")
 
 

@@ -98,9 +98,23 @@ async function renderLibrary() {
       : s.open_issues
       ? el("span", { className: "badge warn" }, `${s.open_issues} issue(s) to fix`)
       : el("span", { className: "badge" }, STAGE_LABEL[s.stage] || s.stage);
-    return el("a", { className: "card", href: `#/song/${encodeURIComponent(s.slug)}` },
-      el("h3", {}, s.name), rail, badge);
+    const sing = el("div", { className: "sing", hidden: true });
+    const card = el("a", { className: "card", href: `#/song/${encodeURIComponent(s.slug)}`, "data-slug": s.slug },
+      el("h3", {}, s.name), rail, badge, sing);
+    card._sing = sing;
+    return card;
   });
+  const singHead = el("p", { className: "sing-head hint", hidden: true });
+  const onlyResing = el("input", { type: "checkbox", checked: localStorage.getItem("onlyResing") === "1",
+    onchange: () => { localStorage.setItem("onlyResing", onlyResing.checked ? "1" : "0"); filterResing(); } });
+  const resingFilter = el("label", { className: "sing-filter", hidden: true }, onlyResing, " Only songs to re-sing");
+  let resing = null;
+  const filterResing = () => {
+    for (const c of cards) {
+      const st = resing?.songs[c.dataset.slug];
+      c.hidden = onlyResing.checked && !!resing && !(st?.pending.length || (st?.run && st.run.state !== "done"));
+    }
+  };
   const sortSel = el("select", {
     onchange: () => { localStorage.setItem("songSort", sortSel.value); renderLibrary(); },
   }, Object.entries(SORTS).map(([k, v]) =>
@@ -119,8 +133,64 @@ async function renderLibrary() {
             catch (err) { b.disabled = false; b.textContent = "Import existing"; alert(err.message); }
           } }, "Import existing"),
           el("button", { className: "primary", onclick: newSongDialog }, "+ New song"))),
+      el("div", { className: "row sing-bar" }, singHead, resingFilter),
       cards.length ? el("div", { className: "cards" }, cards)
                    : el("p", { className: "hint" }, "No songs yet. Create one to begin.")));
+  showResing();
+
+  // Which songs need a re-sing with the current singer, and each run's progress (#453).
+  // Read again every 10 s while a run is waiting or going, as long as this list is shown.
+  async function showResing() {
+    clearTimeout(resingTimer);
+    try { resing = await getJSON("/api/resing"); }
+    catch (err) { singHead.hidden = false; singHead.textContent = `Re-sing status: ${err.message}`; return; }
+    if (!singHead.isConnected) return;   // the list was left or drawn again
+    for (const c of cards) fillSing(c._sing, resing.songs[c.dataset.slug]);
+    singHead.hidden = false;
+    resingFilter.hidden = false;
+    const site = resing.site.error
+      ? ` Site not reachable (${resing.site.error})${resing.site.at ? `; as read ${when(resing.site.at)}` : ""}.` : "";
+    singHead.textContent = `Singer v${resing.version}: ${resing.pending} song(s) to re-sing` +
+      (resing.running ? `, ${resing.running} run(s) waiting or going.` : ".") + site;
+    filterResing();
+    if (resing.running) resingTimer = setTimeout(showResing, 10000);
+  }
+}
+let resingTimer = null;
+
+// "14:32" today, "Oct 21 14:32" another day.
+function when(t) {
+  const d = new Date(t * 1000);
+  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString()
+    ? hm : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${hm}`;
+}
+
+function runText(run) {
+  const choirs = run.choirs?.length ? ` (${run.choirs.join(", ")})` : "";
+  switch (run.state) {
+    case "waiting": return ["Re-sing waiting" + choirs, ""];
+    case "bundle": return ["Re-sing: building the score", ""];
+    case "singing": return [`Singing part ${run.part} of ${run.parts}${run.part_name ? ` (${run.part_name})` : ""}`, ""];
+    case "publishing": return [`Publishing to ${run.choir}` +
+      (run.choir_count > 1 ? ` (${run.choir_index} of ${run.choir_count})` : ""), ""];
+    case "done": return [`Re-sung ${when(run.finished)}` + choirs, "good"];
+    case "failed": return [`Re-sing failed ${when(run.finished || run.updated)}: ${run.error || "no reason given"}`, "warn"];
+    default: return [run.state, ""];
+  }
+}
+
+function fillSing(box, st) {
+  box.hidden = !st;
+  if (!st) return;
+  const lines = [];
+  if (st.pending.length) lines.push(el("span", { className: "badge warn" }, `Needs re-sing: ${st.pending.join(", ")}`));
+  else if (st.current.length) lines.push(el("span", { className: "badge good" }, `✓ Sung with the current singer`));
+  if (st.run) {
+    const [text, kind] = runText(st.run);
+    lines.push(el("span", { className: `badge run ${kind}`, title: st.run.error || "" }, text));
+  }
+  box.replaceChildren(...lines);
 }
 
 // ---- installing homr ---------------------------------------------------------
