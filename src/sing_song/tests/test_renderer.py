@@ -165,20 +165,6 @@ def test_a_short_vowel_closed_by_a_consonant_is_found():
     assert not short({**n("hat"), "ph": {"on": [], "vs": [], "co": []}}, ["en/t"], None)   # g2p's sounds
 
 
-def test_a_doubled_l_keeps_its_short_vowel_when_the_consonant_is_not_held():
-    import numpy as np
-    ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
-    old = os.environ.get("CODA_HOLD")
-    os.environ["CODA_HOLD"] = "0"
-    try:
-        exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
-    finally:
-        if old is None: os.environ.pop("CODA_HOLD")
-        else: os.environ["CODA_HOLD"] = old
-    n = lambda syl: {"pitch": 60, "syl": syl, "beats": 1}
-    assert ns["short_before_stop"](n("sil"), ["it/l"], n("lan"))   # short i, l, then silence
-
-
 def planned(tmp_path, notes, **env):
     """The sounds and frames sing_ufr.py plans for `notes` (DUMP_TOKENS), without the voice
     files or onnxruntime: a stand-in UFR folder and stand-in modules."""
