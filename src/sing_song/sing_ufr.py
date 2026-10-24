@@ -152,7 +152,7 @@ def short_before_stop(n, co, nxt):
         return "late"                                # "pit-kin" sang "pittt-kin" (#450)
     if on and on[0] == co[0]:                        # "huk-kuu" sang "huuk-kuu" (#450)
         if co[0] in STOPS: return "double" if DOUBLE_STOP else False
-        return CODA_HOLD                             # "sil-lan": the l held, then the next l
+        return True                                  # "sil-lan": short i, then the l (CODA_HOLD says how)
     return True
 # a stop inside a word before another consonant ("pit-kin") keeps the vowel MID_SHARE of the note
 # and is sung with that consonant just before the next beat: a gap after the t made it "pittt-kin"
