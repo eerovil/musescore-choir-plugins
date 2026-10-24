@@ -294,7 +294,7 @@ def sung_staves(cleaned):
 
 
 def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu, lang_from=None,
-         groups=None, resume=False, allow_silent=False, on_part=None, version=None):
+         groups=None, resume=False, allow_silent=False, on_part=None, version=None, remote_only=False):
     """parts/<n>-<Name>.mp3 for every part, sung on the bundle's clock:
 
     - each line is checked against the piano before it is sung (check_onsets.py); a part whose
@@ -311,6 +311,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
       leaves a hiss that adds up over many waiting parts);
     - with resume, a line a stopped run already sang from the same notes for the same voice is
       not sung again (sung_before()), unless it was sung by another singer version;
+    - with remote_only, every line is sung on REMOTE_RUNNER and a line it fails stops the run;
     - on_part(i, n, name) is told each part as one of its lines starts being sung (progress.py)."""
     staves = sung_staves(cleaned)
     names = [p["name"] for p in manifest["parts"]]
@@ -416,7 +417,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         mark_sung(work, i, line, voices[i - 1], version)
 
     runner = (os.environ.get("REMOTE_RUNNER") or "").strip()
-    share(jobs, here, there if runner else None, stop_remote)
+    sing_lines(jobs, here, there, runner, remote_only)
     for i, name in enumerate(names, 1):
         lines = [p[3] for p in plan if p[0] == i]
         mp3 = os.path.join(bundle_dir, sung_file(i, name))
@@ -425,6 +426,22 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                 + [os.path.join(work, f"p{i}-{line}.json") for line in lines])
         log(r.stdout.strip())
 
+
+
+def sing_lines(jobs, here, there, runner, remote_only=False):
+    """Sing every job: here and on the runner at once (share()), or with remote_only on the
+    runner alone, where a line it cannot sing stops the run rather than being sung here."""
+    if not remote_only:
+        return share(jobs, here, there if runner else None, stop_remote)
+    if not runner:
+        sys.exit("--remote-only needs REMOTE_RUNNER in .env")
+
+    def only_there(job):
+        try:
+            there(job)
+        except Exception as e:
+            sys.exit(f"the remote runner did not sing {job[1]}: {e}")
+    return share(jobs, only_there, None, stop_remote)
 
 
 def silent_notes(python, js, voice, env):
@@ -698,6 +715,9 @@ def main():
     ap.add_argument("--voice", choices=sorted(VOICES), help="one voice for every part, when the part names "
                     "do not say (S/A/M: LYSE, T/B: REMY)")
     ap.add_argument("--cpu", action="store_true", help="sing on the processor even when the singer has a GPU")
+    ap.add_argument("--remote-only", action="store_true",
+                    help="sing every line on the remote runner (REMOTE_RUNNER: eero-pc's GPU on Eero's host), "
+                         "none on this machine; a line it cannot sing stops the run")
     ap.add_argument("--lang", default="fi", help="the words' language: fi, or en, de, sv, la, et (g2p.py)")
     ap.add_argument("--lang-from", action="append", metavar="LANG:WORD[,WORD...]",
                     help="a song in two languages: from each named word on, sing in LANG (repeatable)")
@@ -723,7 +743,9 @@ def main():
         progress.mark_waiting(song_dir, a.publish)
         log(f"{a.slug}: waiting")
         return
-    run_record = progress.Run(song_dir, a.publish, progress.singer_version())
+    if a.remote_only and not a.no_sing and not (os.environ.get("REMOTE_RUNNER") or "").strip():
+        sys.exit("--remote-only needs REMOTE_RUNNER in .env")
+    run_record = progress.Run(song_dir, a.publish, progress.singer_version(), remote=a.remote_only)
     run_record.step("bundle")
     try:
         sing_and_publish(a, run_record)
@@ -772,11 +794,12 @@ def sing_and_publish(a, run_record):
         work = os.path.join(out, "work")
         os.makedirs(work, exist_ok=True)
         gpu = not a.cpu and nvidia_dir(python) is not None
-        log(f"singing on the {'graphics card' if gpu else 'processor'}")
+        log("singing every line on the remote runner" if a.remote_only
+            else f"singing on the {'graphics card' if gpu else 'processor'}")
         sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
              parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
              on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
-             version=run_record.record["version"])
+             version=run_record.record["version"], remote_only=a.remote_only)
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit

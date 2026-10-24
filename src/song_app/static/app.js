@@ -171,7 +171,8 @@ function runText(run) {
   switch (run.state) {
     case "waiting": return ["Re-sing waiting" + choirs, ""];
     case "bundle": return ["Re-sing: building the score", ""];
-    case "singing": return [`Singing part ${run.part} of ${run.parts}${run.part_name ? ` (${run.part_name})` : ""}`, ""];
+    case "singing": return [`Singing part ${run.part} of ${run.parts}${run.part_name ? ` (${run.part_name})` : ""}` +
+      (run.remote ? " on the remote GPU" : ""), ""];
     case "publishing": return [`Publishing to ${run.choir}` +
       (run.choir_count > 1 ? ` (${run.choir_index} of ${run.choir_count})` : ""), ""];
     case "done": return [`Re-sung ${when(run.finished)}` + choirs, "good"];

@@ -11,7 +11,8 @@ developers are listed under *Behind the scenes*.
   choirs, and how each `sing_song.py` run is going: waiting, singing part 2 of 4, publishing,
   done (with the time) or failed (with the reason). `sing_song.py --publish` can be given once per
   choir, records the singer version it sang with, and `--waiting` marks a song before its run is
-  queued. (#453)
+  queued, and `--remote-only` sings every line on the remote runner (eero-pc's GPU) and none
+  on this machine. (#453)
 - Publishing a song to one choir no longer takes it off the other choirs' lists, so a song
   shared by `joy` and `joy-alumnit` can be published to both. Publishing to a choir still
   takes it off the test list. (#451)

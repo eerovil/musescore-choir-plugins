@@ -5,7 +5,8 @@ songs/<slug>/.sing-run.json, written whole (by rename) at every step. The song l
 
     {"state": "waiting" | "bundle" | "singing" | "publishing" | "done" | "failed",
      "started": t, "updated": t, "finished": t, "pid": n, "version": SINGER_VERSION,
-     "choirs": [...], "part": i, "parts": n, "part_name": "T2", "choir": "jm", "error": "..."}
+     "choirs": [...], "remote": true when only the remote runner sings (--remote-only),
+     "part": i, "parts": n, "part_name": "T2", "choir": "jm", "error": "..."}
 
 Stdlib only: the app imports it too.
 """
@@ -72,10 +73,10 @@ def read(song_dir):
 class Run:
     """One sing_song.py run's record, kept up to date as it goes."""
 
-    def __init__(self, song_dir, choirs=(), version=None):
+    def __init__(self, song_dir, choirs=(), version=None, remote=False):
         self.song_dir = song_dir
         self.record = {"state": "bundle", "started": time.time(), "pid": os.getpid(),
-                       "version": version, "choirs": list(choirs)}
+                       "version": version, "choirs": list(choirs), "remote": bool(remote)}
 
     def step(self, state, **fields):
         self.record = dict(self.record, state=state, **fields)

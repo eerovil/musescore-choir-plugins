@@ -743,3 +743,31 @@ def test_a_run_whose_process_is_gone_reads_as_failed(tmp_path):
     progress.write(str(tmp_path), {"state": "singing", "pid": os.getpid(), "part": 2, "parts": 4})
     assert progress.read(str(tmp_path))["state"] == "singing"
     assert progress.read(str(tmp_path / "nowhere")) is None
+
+
+def test_remote_only_sings_every_line_on_the_runner_and_none_here():
+    here, there = [], []
+    publish_song.sing_lines([(1, "T1", "high", 3), (2, "T2", "high", 3)], singer(here), singer(there),
+                            "runner", remote_only=True)
+    assert here == [] and [j[1] for j in there] == ["T1", "T2"]
+
+
+def test_remote_only_stops_on_a_line_the_runner_fails_and_needs_a_runner():
+    here = []
+
+    def broken(job):
+        raise RuntimeError("the card is not free")
+    with pytest.raises(SystemExit, match="did not sing T1: the card is not free"):
+        publish_song.sing_lines([(1, "T1", "high", 3)], singer(here), broken, "runner", remote_only=True)
+    assert here == []
+    with pytest.raises(SystemExit, match="needs REMOTE_RUNNER"):
+        publish_song.sing_lines([(1, "T1", "high", 3)], singer(here), broken, "", remote_only=True)
+
+
+def test_remote_only_without_a_runner_is_refused_before_the_bundle(tmp_path, monkeypatch):
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--remote-only"])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("built the bundle"))
+    with pytest.raises(SystemExit, match="needs REMOTE_RUNNER"):
+        publish_song.main()
