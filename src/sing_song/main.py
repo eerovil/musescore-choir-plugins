@@ -743,8 +743,6 @@ def main():
         progress.mark_waiting(song_dir, a.publish)
         log(f"{a.slug}: waiting")
         return
-    if a.remote_only and not a.no_sing and not (os.environ.get("REMOTE_RUNNER") or "").strip():
-        sys.exit("--remote-only needs REMOTE_RUNNER in .env")
     run_record = progress.Run(song_dir, a.publish, progress.singer_version(), remote=a.remote_only)
     run_record.step("bundle")
     try:
@@ -771,6 +769,9 @@ def failure(code):
 
 
 def sing_and_publish(a, run_record):
+    # inside the run, so a song marked --waiting reads as failed with the reason, not waiting
+    if a.remote_only and not a.no_sing and not (os.environ.get("REMOTE_RUNNER") or "").strip():
+        sys.exit("--remote-only needs REMOTE_RUNNER in .env")
     out = os.path.abspath(a.out or f"/var/tmp/practice-{a.slug}")
     places = parse_places(a.place)
     venv = sing_venv()

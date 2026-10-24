@@ -13,6 +13,8 @@ Stdlib only: the app imports it too.
 import json
 import os
 import re
+import tempfile
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,10 +37,17 @@ def write(song_dir, record):
     """Replace the run's record with `record` (plus the time), in one rename."""
     record = dict(record, updated=time.time())
     path = os.path.join(song_dir, RUN_FILE)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(record, f, ensure_ascii=False)
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(prefix=RUN_FILE + ".", suffix=".tmp", dir=song_dir)   # one per write
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(record, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return record
 
 
@@ -75,13 +84,15 @@ class Run:
 
     def __init__(self, song_dir, choirs=(), version=None, remote=False):
         self.song_dir = song_dir
+        self.lock = threading.Lock()   # the singers here and on the runner report from two threads
         self.record = {"state": "bundle", "started": time.time(), "pid": os.getpid(),
                        "version": version, "choirs": list(choirs), "remote": bool(remote)}
 
     def step(self, state, **fields):
-        self.record = dict(self.record, state=state, **fields)
-        if os.path.isdir(self.song_dir):
-            write(self.song_dir, self.record)
+        with self.lock:
+            self.record = dict(self.record, state=state, **fields)
+            if os.path.isdir(self.song_dir):
+                write(self.song_dir, self.record)
 
     def finish(self, error=None):
         if error is None:

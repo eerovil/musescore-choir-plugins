@@ -106,3 +106,25 @@ def test_the_route_answers_without_a_site(tmp_path, monkeypatch):
     reply = TestClient(server.app).get("/api/resing").json()
     assert reply["version"] == progress.singer_version()
     assert reply["site"]["error"] == publish.MISSING_CONFIG and reply["pending"] == 0
+
+
+def test_a_song_published_after_the_saved_read_counts_as_its_new_upload():
+    # #454 review: the saved read still has the old upload for up to MAX_AGE after a re-sing
+    rows = [row("jm"), row("public")]
+    records = {"jm": dict(record("jm", 1, prefix="songs/jm/laulu/v2/"), at=2000)}
+    assert resing.song_status(rows, records, 1, read_at=1000) == {"pending": ["public"], "current": ["jm"]}
+    assert resing.song_status(rows, records, 1, read_at=3000)["pending"] == ["jm", "public"]   # site moved on
+    new_choir = {"joy": dict(record("joy", 1), at=2000)}
+    assert resing.song_status([], new_choir, 1, read_at=1000)["current"] == ["joy"]
+
+
+def test_a_finished_re_sing_shows_up_to_date_on_the_list_before_the_site_is_read_again(tmp_path, monkeypatch):
+    song, folder = make_song(tmp_path, monkeypatch, "a", {"testi": dict(record("testi", 1, slug="a"), at=2000)})
+    listed = {"songs": [row("jm", "a")], "staging": ["testi"], "error": None, "at": 1000}
+    assert resing.overview([song], listed, 1)["songs"]["a"]["pending"] == ["jm"]   # the test list never counts
+    song.data["publish"]["sites"]["jm"] = dict(record("jm", 1, prefix="songs/jm/a/v2/", slug="a"), at=2000)
+    song.save()
+    progress.write(str(folder), {"state": "done", "finished": 2001, "pid": os.getpid()})
+    o = resing.overview([state.load("a")], listed, 1)
+    assert o["songs"]["a"]["pending"] == [] and o["songs"]["a"]["current"] == ["jm"]
+    assert o["pending"] == 0 and o["running"] == 0

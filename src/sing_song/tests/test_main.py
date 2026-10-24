@@ -771,3 +771,38 @@ def test_remote_only_without_a_runner_is_refused_before_the_bundle(tmp_path, mon
     monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("built the bundle"))
     with pytest.raises(SystemExit, match="needs REMOTE_RUNNER"):
         publish_song.main()
+
+
+def test_two_singers_reporting_at_once_both_land_and_leave_no_temp_files(tmp_path):
+    # #454 review: the singers here and on the runner both report progress, from two threads
+    import threading
+    run = progress.Run(str(tmp_path), ["jm"], 1)
+    errors = []
+
+    def report(part):
+        try:
+            for _ in range(200):
+                run.step("singing", part=part, parts=2)
+        except Exception as e:   # noqa: BLE001
+            errors.append(e)
+    threads = [threading.Thread(target=report, args=(k,)) for k in (1, 2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert progress.read(str(tmp_path))["state"] == "singing"
+    assert [p.name for p in tmp_path.iterdir()] == [progress.RUN_FILE]
+
+
+def test_remote_only_without_a_runner_turns_waiting_into_failed_with_the_reason(tmp_path, monkeypatch):
+    folder = song_folder(tmp_path)
+    progress.mark_waiting(str(folder), ["jm"])
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--remote-only", "--publish", "jm"])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("built the bundle"))
+    with pytest.raises(SystemExit):
+        publish_song.main()
+    run = progress.read(str(folder))
+    assert run["state"] == "failed" and run["error"] == "--remote-only needs REMOTE_RUNNER in .env"

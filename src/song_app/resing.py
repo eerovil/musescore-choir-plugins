@@ -92,11 +92,19 @@ def site(config: Optional["publish.Config"], songs_dir: str, client=None,
     return {"songs": [], "staging": [], "at": None, "error": error}
 
 
-def song_status(rows: List[Dict], records: Dict[str, Dict], version: int) -> Dict:
+def song_status(rows: List[Dict], records: Dict[str, Dict], version: int,
+                read_at: Optional[float] = None) -> Dict:
     """``{"pending": [choirs], "current": [choirs]}`` for one song's site rows and its publish
-    records (``publish.records``)."""
+    records (``publish.records``). A record published after the site was read (`read_at`) is
+    newer than the saved read, so it stands for that choir's row: a song just re-sung shows as
+    up to date at once rather than once the read is renewed."""
+    rows = {row["choir"]: row for row in rows}
+    if read_at is not None:
+        for choir, record in records.items():
+            if (record.get("at") or 0) > read_at:
+                rows[choir] = {"choir": choir, "prefix": record.get("prefix"), "sung": bool(record.get("sung"))}
     pending, current = [], []
-    for row in rows:
+    for row in rows.values():
         if not row.get("sung"):
             continue
         record = records.get(row["choir"]) or {}
@@ -117,8 +125,8 @@ def overview(songs: List["state.Song"], listed: Dict, version: int) -> Dict:
             by_slug.setdefault(row.get("slug"), []).append(row)
     out = {}
     for song in songs:
-        status = song_status(by_slug.get(song.slug, []),
-                             publish.records(song.data.get("publish")), version)
+        records = {c: r for c, r in publish.records(song.data.get("publish")).items() if c not in staging}
+        status = song_status(by_slug.get(song.slug, []), records, version, listed.get("at"))
         status["run"] = progress.read(state.song_dir(song.slug))
         if status["pending"] or status["current"] or status["run"]:
             out[song.slug] = status
