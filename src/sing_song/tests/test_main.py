@@ -662,3 +662,148 @@ def test_a_runner_that_ignores_the_stop_is_killed_in_time(tmp_path, monkeypatch)
     with pytest.raises(SystemExit):
         publish_song.share(["a", "b"], here, there, publish_song.stop_remote)
     assert time.monotonic() - started < 3
+
+
+# ---- #453: the singer version, and a run saying how it is going -------------------------------
+from src.sing_song import progress  # noqa: E402
+
+
+def test_the_singer_version_is_read_off_sing_ufr(tmp_path):
+    assert isinstance(progress.singer_version(), int) and progress.singer_version() >= 1
+    other = tmp_path / "sing_ufr.py"
+    other.write_text("import os\nSINGER_VERSION = 7\nx = 1\n")
+    assert progress.singer_version(str(other)) == 7
+    other.write_text("import os\n")
+    with pytest.raises(ValueError):
+        progress.singer_version(str(other))
+
+
+def test_a_line_sung_by_an_older_singer_is_sung_again_on_resume(tmp_path):
+    work = str(tmp_path)
+    (tmp_path / "p1-high.json").write_text("[]")
+    (tmp_path / "p1-high.wav").write_bytes(b"RIFF")
+    publish_song.mark_sung(work, 1, "high", "LYSE", 1)
+    assert publish_song.sung_before(work, 1, "high", "LYSE", 1)
+    assert not publish_song.sung_before(work, 1, "high", "LYSE", 2)
+
+
+def song_folder(root):
+    folder = root / "songs" / "laulu"
+    folder.mkdir(parents=True)
+    return folder
+
+
+def test_waiting_only_marks_the_song_and_runs_nothing(tmp_path, monkeypatch):
+    folder = song_folder(tmp_path)
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("ran"))
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--waiting", "--publish", "jm", "--publish", "public"])
+    publish_song.main()
+    run = progress.read(str(folder))
+    assert run["state"] == "waiting" and run["choirs"] == ["jm", "public"]
+
+
+def test_a_finished_run_says_done_with_its_time(tmp_path, monkeypatch):
+    folder = song_folder(tmp_path)
+    run_main(monkeypatch, tmp_path, "--no-sing")
+    run = progress.read(str(folder))
+    assert run["state"] == "done" and run["finished"] >= run["started"]
+    assert run["version"] == progress.singer_version() and run["pid"] == os.getpid()
+    assert run["sing"] is False   # --no-sing: the list does not call it a re-sing
+
+
+def test_a_failed_run_says_why(tmp_path, monkeypatch):
+    folder = song_folder(tmp_path)
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--no-sing", "--out", str(tmp_path / "out")])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: sys.exit("the score has 3 staves for 4 parts"))
+    with pytest.raises(SystemExit):
+        publish_song.main()
+    run = progress.read(str(folder))
+    assert run["state"] == "failed" and run["error"] == "the score has 3 staves for 4 parts"
+    assert publish_song.failure(128 + 15) == "cancelled"
+
+
+def test_each_choir_is_published_in_turn_with_the_singer_version(tmp_path, monkeypatch):
+    folder = song_folder(tmp_path)
+    seen = []
+
+    def fake_publish(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None):
+        seen.append((choir, version, progress.read(str(folder))))
+    monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
+    run_main(monkeypatch, tmp_path, "--no-sing", "--publish", "jm", "--publish", "public", "--publish", "jm")
+    assert [(c, v) for c, v, _ in seen] == [("jm", progress.singer_version()), ("public", progress.singer_version())]
+    assert [(r["state"], r["choir"], r["choir_index"], r["choir_count"]) for _, _, r in seen] == [
+        ("publishing", "jm", 1, 2), ("publishing", "public", 2, 2)]
+
+
+def test_a_run_whose_process_is_gone_reads_as_failed(tmp_path):
+    progress.write(str(tmp_path), {"state": "singing", "pid": 2 ** 22 + 12345, "part": 2, "parts": 4})
+    run = progress.read(str(tmp_path))
+    assert run["state"] == "failed" and "without finishing" in run["error"]
+    progress.write(str(tmp_path), {"state": "singing", "pid": os.getpid(), "part": 2, "parts": 4})
+    assert progress.read(str(tmp_path))["state"] == "singing"
+    assert progress.read(str(tmp_path / "nowhere")) is None
+
+
+def test_remote_only_sings_every_line_on_the_runner_and_none_here():
+    here, there = [], []
+    publish_song.sing_lines([(1, "T1", "high", 3), (2, "T2", "high", 3)], singer(here), singer(there),
+                            "runner", remote_only=True)
+    assert here == [] and [j[1] for j in there] == ["T1", "T2"]
+
+
+def test_remote_only_stops_on_a_line_the_runner_fails_and_needs_a_runner():
+    here = []
+
+    def broken(job):
+        raise RuntimeError("the card is not free")
+    with pytest.raises(SystemExit, match="did not sing T1: the card is not free"):
+        publish_song.sing_lines([(1, "T1", "high", 3)], singer(here), broken, "runner", remote_only=True)
+    assert here == []
+    with pytest.raises(SystemExit, match="needs REMOTE_RUNNER"):
+        publish_song.sing_lines([(1, "T1", "high", 3)], singer(here), broken, "", remote_only=True)
+
+
+def test_remote_only_without_a_runner_is_refused_before_the_bundle(tmp_path, monkeypatch):
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--remote-only"])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("built the bundle"))
+    with pytest.raises(SystemExit, match="needs REMOTE_RUNNER"):
+        publish_song.main()
+
+
+def test_two_singers_reporting_at_once_both_land_and_leave_no_temp_files(tmp_path):
+    # #454 review: the singers here and on the runner both report progress, from two threads
+    import threading
+    run = progress.Run(str(tmp_path), ["jm"], 1)
+    errors = []
+
+    def report(part):
+        try:
+            for _ in range(200):
+                run.step("singing", part=part, parts=2)
+        except Exception as e:   # noqa: BLE001
+            errors.append(e)
+    threads = [threading.Thread(target=report, args=(k,)) for k in (1, 2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert progress.read(str(tmp_path))["state"] == "singing"
+    assert [p.name for p in tmp_path.iterdir()] == [progress.RUN_FILE]
+
+
+def test_remote_only_without_a_runner_turns_waiting_into_failed_with_the_reason(tmp_path, monkeypatch):
+    folder = song_folder(tmp_path)
+    progress.mark_waiting(str(folder), ["jm"])
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--remote-only", "--publish", "jm"])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("built the bundle"))
+    with pytest.raises(SystemExit):
+        publish_song.main()
+    run = progress.read(str(folder))
+    assert run["state"] == "failed" and run["error"] == "--remote-only needs REMOTE_RUNNER in .env"

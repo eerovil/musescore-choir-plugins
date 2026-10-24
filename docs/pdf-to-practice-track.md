@@ -191,3 +191,22 @@ A part name the site's voice tree does not know stops it; ask the person where i
 `--place "Name=<id>"`, `--place "Name=-"` (no place) or `--place "Name=^<parent>"` (a new place
 under one). Publishing again makes a new version and takes the old one away. Never publish
 piano-only (`--no-sing`) over a sung song.
+
+## Re-singing after the singer changed (#453)
+
+`SINGER_VERSION` in `src/sing_song/sing_ufr.py` is bumped whenever the singing rules change, and
+each sung publish records the version it was sung with. The song app's song list then says, per
+song, the choirs it still needs a re-sing in (the site's sung listings not published with the
+current version), and `GET /api/resing` gives the same list. Re-sing a song with one run that
+publishes to every choir it needs:
+
+```bash
+.venv/bin/python sing_song.py <slug> --waiting --publish jm --publish public   # when queueing it
+.venv/bin/python sing_song.py <slug> --publish jm --publish public            # the job itself
+```
+
+The run writes how it is going to `songs/<slug>/.sing-run.json` (waiting, building, singing part
+i of n, publishing, done, failed with the reason), which the song list shows and re-reads every
+10 s while a run is waiting or going (every minute otherwise). `--resume` sings again any line an older singer version sang.
+`--remote-only` sings every line on the remote runner (eero-pc's GPU here) and none on this
+machine; a line the runner cannot sing stops the run instead of being sung here.

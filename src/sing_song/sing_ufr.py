@@ -5,6 +5,11 @@ owns note boundaries: consonants are clipped and squeezed into the preceding not
 vowel starts on its beat.  The default TIMING=flat keeps the original hand-timed baseline.
 """
 import json, os, re, sys
+# Bump when a change here (or in what main.py hands the singer: unroll, spoken, g2p, gate) changes
+# how a song sounds. A sung publish records the version it was sung with, and the song app lists a
+# song sung with an older one as waiting for a re-sing (#453). Read as text by
+# src/sing_song/progress.py, so keep it one plain line.
+SINGER_VERSION = 1
 import numpy as np, onnxruntime as ort, soundfile as sf
 D = os.environ.get("UFR_DIR", "/var/tmp/i36-ufr")
 notes = json.load(open(sys.argv[1])); out = sys.argv[2]
