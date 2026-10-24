@@ -133,6 +133,9 @@ CODA = set(filter(None, os.environ.get("CODA", "it/rr,it/l,it/n,it/m,it/s").spli
 CODA_VOWEL = float(os.environ.get("CODA_VOWEL", str(STOP_VOWEL)))
 CODA_SHARE = float(os.environ.get("CODA_SHARE", "0"))
 CODA_HOLD = os.environ.get("CODA_HOLD", "1") == "1"
+# ... and is held at most CODA_MAX seconds, the vowel taking the rest: on a slow beat it took the
+# whole note ("hosss-tan-sa" in Metsänneito, #450)
+CODA_MAX = float(os.environ.get("CODA_MAX", "0.25"))
 def short_before_stop(n, co, nxt):
     """A Finnish syllable with one short vowel closed by one stop, or by l, m, n, r or s, on a short
     note with no slur holding it on: True, or "double" for a stop doubled into the next syllable
@@ -354,6 +357,7 @@ for ni, n in enumerate(notes):
         # next beat as before, taken out of that silence
         toks += vs + ["SP"]; durs += [vf, nf - vf]
     elif stop and co[0] not in STOPS and CODA_HOLD and nf - vf >= 3:
+        if CODA_MAX: vf = max(vf, nf - int(round(CODA_MAX * FPS)))
         toks += vs + [stop[0][0]]; durs += [vf, nf - vf]; co = []
     elif stop and nf - vf - sum(d for _, d in stop) >= 3:
         # "tip": the vowel, the stop, then silence until the next syllable's consonants (#450)
