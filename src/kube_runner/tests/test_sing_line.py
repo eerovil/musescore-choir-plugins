@@ -5,7 +5,7 @@ import os
 import pytest
 
 from src.kube_runner import runner
-from src.kube_runner.tests.test_read_band import FakeEeroPc, _executable, eero_pc  # noqa: F401
+from src.kube_runner.tests.test_read_band import FakeEeroPc, _executable, eero_pc, pod_shell  # noqa: F401
 
 # the singer in the pod: python -I sing_ufr.py <line.json> <out.wav> 100 <voice>; it writes
 # the WAV and says what it was given
@@ -97,8 +97,9 @@ sys.exit(runner.main(["sing-line", {line!r}, {wav!r}, "remy_adult"]))
 """
 
 
-def test_a_stopped_line_ends_its_job_in_the_pod_and_the_next_one_sings(tmp_path):
+def test_a_stopped_line_ends_its_job_in_the_pod_and_the_next_one_sings(tmp_path, monkeypatch):
     # #439 review: the job runs detached in the pod; stopping the runner must end it there
+    pod_shell(tmp_path, monkeypatch)     # the runner below inherits this PATH
     import subprocess
     import sys
     import time
