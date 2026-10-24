@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A short vowel before a closing stop on a long-lasting note ("nyt." held by a fermata) is
+  held, with at most 0.3 s of silence after the stop, instead of 0.25 s of vowel and the rest
+  silent. Songs sung before this show as waiting for a re-sing (singer version 2). (#450)
 - The song list says which songs still need a re-sing with the current singer, and in which
   choirs, and how each `sing_song.py` run is going: waiting, singing part 2 of 4, publishing,
   done (with the time) or failed (with the reason). `sing_song.py --publish` can be given once per

@@ -9,7 +9,7 @@ import json, os, re, sys
 # how a song sounds. A sung publish records the version it was sung with, and the song app lists a
 # song sung with an older one as waiting for a re-sing (#453). Read as text by
 # src/sing_song/progress.py, so keep it one plain line.
-SINGER_VERSION = 1
+SINGER_VERSION = 2
 import numpy as np, onnxruntime as ort, soundfile as sf
 D = os.environ.get("UFR_DIR", "/var/tmp/i36-ufr")
 notes = json.load(open(sys.argv[1])); out = sys.argv[2]
@@ -133,11 +133,10 @@ STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0.25"))
 STOP_BEATS = float(os.environ.get("STOP_BEATS", "1"))
 # the same for a short vowel closed by l, m, n, r or s ("var-joon" sang "vaar-joon", "sil-lan"
 # "siil-lan"): the vowel gets CODA_VOWEL seconds (or CODA_SHARE of the note) and the consonant is
-# held to the next syllable; CODA_HOLD=0 falls silent after it instead. CODA= turns it off.
+# held to the next syllable (Eero's pick over falling silent after it). CODA= turns it off.
 CODA = set(filter(None, os.environ.get("CODA", "it/rr,it/l,it/n,it/m,it/s").split(",")))
 CODA_VOWEL = float(os.environ.get("CODA_VOWEL", str(STOP_VOWEL)))
 CODA_SHARE = float(os.environ.get("CODA_SHARE", "0"))
-CODA_HOLD = os.environ.get("CODA_HOLD", "1") == "1"
 # ... and is held at most CODA_MAX seconds, the vowel taking the rest: on a slow beat it took the
 # whole note ("hosss-tan-sa" in Metsänneito, #450)
 CODA_MAX = float(os.environ.get("CODA_MAX", "0.25"))
@@ -157,7 +156,7 @@ def short_before_stop(n, co, nxt):
         return "late"                                # "pit-kin" sang "pittt-kin" (#450)
     if on and on[0] == co[0]:                        # "huk-kuu" sang "huuk-kuu" (#450)
         if co[0] in STOPS: return "double" if DOUBLE_STOP else False
-        return True                                  # "sil-lan": short i, then the l (CODA_HOLD says how)
+        return True                                  # "sil-lan": short i, the l held, then the next l
     return True
 # a stop inside a word before another consonant ("pit-kin") keeps the vowel MID_SHARE of the note
 # and is sung with that consonant just before the next beat: a gap after the t made it "pittt-kin"
@@ -167,6 +166,10 @@ MID_SHARE = float(os.environ.get("MID_SHARE", "0.85"))
 # the silence of a doubled stop, its closure included, is at most DBL_GAP seconds and the vowel
 # takes the rest ("vet-ten" on a slow quarter had 0.45 s, Eero's pick by ear, #450). 0: no limit
 DBL_GAP = float(os.environ.get("DBL_GAP", "0.25"))
+# the silence after a short vowel's closing stop ("tip", "nyt") is at most STOP_GAP seconds and the
+# vowel takes the rest: a fermata stretched "nyt." to 2.1 s and it sang 0.25 s of vowel and 1.8 s
+# of silence (#450). 0: no limit
+STOP_GAP = float(os.environ.get("STOP_GAP", "0.3"))
 DOUBLE_STOP = os.environ.get("DOUBLE_STOP", "1") == "1"   # "huk-kuu": a doubled stop keeps its vowel short too
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
@@ -362,14 +365,15 @@ for ni, n in enumerate(notes):
         # "huk-kuu": the vowel, then silence; the double k's closure and release come before the
         # next beat as before, taken out of that silence
         toks += vs + ["SP"]; durs += [vf, nf - vf]
-    elif stop and co[0] not in STOPS and CODA_HOLD and nf - vf >= 3:
+    elif stop and co[0] not in STOPS and nf - vf >= 3:
         if CODA_MAX: vf = max(vf, nf - int(round(CODA_MAX * FPS)))
         nxt = notes[ni + 1] if ni + 1 < len(notes) else None
         on_next = sounds(nxt)[0] if nxt and nxt["pitch"] is not None and nxt.get("syl") else []
         c = ng(co + on_next)[0]           # "ken-kä": the held n is an ng
         toks += vs + [c]; durs += [vf, nf - vf]; co = []; held = [c]
-    elif stop and nf - vf - sum(d for _, d in stop) >= 3:
+    elif stop and co[0] in STOPS and nf - vf - sum(d for _, d in stop) >= 3:
         # "tip": the vowel, the stop, then silence until the next syllable's consonants (#450)
+        if STOP_GAP: vf = max(vf, nf - sum(d for _, d in stop) - int(round(STOP_GAP * FPS)))
         toks += vs + [c for c, _ in stop] + ["SP"]
         durs += [vf] + [d for _, d in stop] + [nf - vf - sum(d for _, d in stop)]
         co = []

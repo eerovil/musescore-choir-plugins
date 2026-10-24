@@ -165,20 +165,6 @@ def test_a_short_vowel_closed_by_a_consonant_is_found():
     assert not short({**n("hat"), "ph": {"on": [], "vs": [], "co": []}}, ["en/t"], None)   # g2p's sounds
 
 
-def test_a_doubled_l_keeps_its_short_vowel_when_the_consonant_is_not_held():
-    import numpy as np
-    ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
-    old = os.environ.get("CODA_HOLD")
-    os.environ["CODA_HOLD"] = "0"
-    try:
-        exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
-    finally:
-        if old is None: os.environ.pop("CODA_HOLD")
-        else: os.environ["CODA_HOLD"] = old
-    n = lambda syl: {"pitch": 60, "syl": syl, "beats": 1}
-    assert ns["short_before_stop"](n("sil"), ["it/l"], n("lan"))   # short i, l, then silence
-
-
 def planned(tmp_path, notes, **env):
     """The sounds and frames sing_ufr.py plans for `notes` (DUMP_TOKENS), without the voice
     files or onnxruntime: a stand-in UFR folder and stand-in modules."""
@@ -225,6 +211,18 @@ def test_a_held_n_before_k_is_still_an_ng(tmp_path):
     (tmp_path / "2").mkdir()
     toks = [t for t, _ in planned(tmp_path / "2", notes, SONG_LANG="fi")]
     assert "it/g" not in toks and toks.count("de/ng") >= 2   # "ken-gät": a long ng, as before
+
+
+def test_a_closing_stop_on_a_long_note_keeps_the_vowel_and_a_short_gap(tmp_path):
+    # #450: "nyt." stretched to 2.1 s by a fermata sang 0.25 s of y and 1.8 s of silence
+    notes = [{"pitch": 60, "beats": 1, "sec": 2.1, "syl": "nyt.", "syllabic": "single"},
+             {"pitch": 62, "beats": 1, "sec": 0.7, "syl": "ei", "syllabic": "single"}]
+    plan = planned(tmp_path, notes, SONG_LANG="fi")
+    toks = [t for t, _ in plan]
+    i = toks.index("fr/uh")
+    vowel, gap = plan[i][1], plan[i + 3][1]
+    assert toks[i + 1:i + 4] == ["it/cl", "it/t", "SP"]
+    assert vowel > 1.5 * 44100 / 512 and gap <= round(0.3 * 44100 / 512)
 
 
 def test_the_short_vowel_rule_is_finnish_only():
