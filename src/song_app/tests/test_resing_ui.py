@@ -108,3 +108,25 @@ def test_the_list_says_what_needs_a_re_sing_and_how_each_run_goes(live, page, si
     expect(card(songs["hanget"])).to_be_visible()
     _shot(page, f"resing-only-pending-{size[0]}.png")
     assert errors == []
+
+
+def test_a_run_queued_while_the_idle_list_is_open_shows_up_without_reloading(live, page):
+    # #454 review: with nothing running the list still looks again (every minute; 1 s here)
+    base, songs = live
+    for song in songs.values():
+        path = os.path.join(state.song_dir(song.slug), progress.RUN_FILE)
+        if os.path.exists(path):
+            os.remove(path)
+    page.add_init_script("window.RESING_IDLE_MS = 1000; window.RESING_BUSY_MS = 1000;")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/")
+    sing = page.locator(f'.card[data-slug="{songs["karhu"].slug}"] .sing')
+    expect(page.locator(".sing-head")).to_contain_text("3 song(s) to re-sing.")
+    expect(sing).to_have_text("Needs re-sing: jm")
+
+    progress.mark_waiting(state.song_dir(songs["karhu"].slug), ["jm"])
+    expect(sing).to_contain_text("Re-sing waiting (jm)", timeout=10000)
+    progress.write(state.song_dir(songs["karhu"].slug), {
+        "state": "singing", "pid": os.getpid(), "version": progress.singer_version(),
+        "choirs": ["jm"], "part": 1, "parts": 4, "part_name": "T1"})
+    expect(sing).to_contain_text("Singing part 1 of 4 (T1)", timeout=10000)

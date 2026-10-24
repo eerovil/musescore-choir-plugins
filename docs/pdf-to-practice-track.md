@@ -207,6 +207,6 @@ publishes to every choir it needs:
 
 The run writes how it is going to `songs/<slug>/.sing-run.json` (waiting, building, singing part
 i of n, publishing, done, failed with the reason), which the song list shows and re-reads every
-10 s while a run is going. `--resume` sings again any line an older singer version sang.
+10 s while a run is waiting or going (every minute otherwise). `--resume` sings again any line an older singer version sang.
 `--remote-only` sings every line on the remote runner (eero-pc's GPU here) and none on this
 machine; a line the runner cannot sing stops the run instead of being sung here.

@@ -139,7 +139,8 @@ async function renderLibrary() {
   showResing();
 
   // Which songs need a re-sing with the current singer, and each run's progress (#453).
-  // Read again every 10 s while a run is waiting or going, as long as this list is shown.
+  // Read again every 10 s while a run is waiting or going, and every minute otherwise, so a run
+  // an agent queues while the list is open shows up; only while this list is shown.
   async function showResing() {
     clearTimeout(resingTimer);
     try { resing = await getJSON("/api/resing"); }
@@ -153,10 +154,12 @@ async function renderLibrary() {
     singHead.textContent = `Singer v${resing.version}: ${resing.pending} song(s) to re-sing` +
       (resing.running ? `, ${resing.running} run(s) waiting or going.` : ".") + site;
     filterResing();
-    if (resing.running) resingTimer = setTimeout(showResing, 10000);
+    resingTimer = setTimeout(showResing, resing.running ? RESING_BUSY_MS : RESING_IDLE_MS);
   }
 }
 let resingTimer = null;
+const RESING_BUSY_MS = window.RESING_BUSY_MS || 10000;   // a test may set these first
+const RESING_IDLE_MS = window.RESING_IDLE_MS || 60000;
 
 // "14:32" today, "Oct 21 14:32" another day.
 function when(t) {
