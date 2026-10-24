@@ -720,16 +720,16 @@ def replaced(choir: str, published: Dict[str, Dict],
              staging: Sequence[str] = ()) -> List[str]:
     """The choirs whose listing a publish for `choir` takes away.
 
-    A song may be in the public list and one choir's list at once, so
-    publishing to ``public`` takes nothing away and publishing to a choir takes
-    away only the other private choirs: a move between two choirs stays a move.
-    Publishing to a test list (`staging`, #422) takes nothing away either, so a
-    fix tried out there leaves the song on its choir's list; publishing to a
-    choir still takes it off the test list, since it has moved.
+    A song may be in any number of lists at once (#450: Eero's mixed choirs share
+    songs, and the one-private-choir rule of #384 took a song off ``joy`` when it
+    was published to ``joy-alumnit``), so publishing takes away only the test list
+    (`staging`, #422): a fix tried out there leaves the song on its choirs' lists,
+    and publishing to a choir takes it off the test list, since it is done.
+    Taking a song off a choir is done on the site.
     """
     if choir == PUBLIC or choir in staging:
         return []
-    return [c for c in published if c not in (choir, PUBLIC)]
+    return [c for c in published if c in staging and c != choir]
 
 
 def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudflare,
@@ -743,9 +743,9 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     them last, so the site shows either the old version or the whole new one.
     `published` is the record each choir's last publish returned
     (``records``). What this choir's last publish left is taken away
-    afterwards, and so is the song in any other private choir — rows and files
-    — while its public listing stays (``replaced``); publishing to a test list
-    takes nothing away. `credits` names the composer, lyricist and arranger; an
+    afterwards, and so is the song on the test list, row and files
+    (``replaced``); every other choir's listing stays (#450), and publishing to
+    a test list takes nothing away. `credits` names the composer, lyricist and arranger; an
     empty or missing one is left out. `choirs` is the site's choirs
     (``site_choirs``) when the caller has just read them; without it they are
     read here. `places` says where each part name the site's voice tree does
@@ -824,11 +824,12 @@ def _clean_up(published: Dict[str, Dict], current: Dict, client: Cloudflare,
               log: Logger, staging: Sequence[str] = ()) -> None:
     """Take away what this publish replaces. A failure here costs storage, not the song."""
     try:
-        if current["choir"] != PUBLIC and current["choir"] not in staging:
-            # The site's own rule (stemmanauhat-cf#20): a song is in at most one
-            # private choir, and a hand-published row we hold no record of goes too.
-            gone = client.query("DELETE FROM songs WHERE slug = ? AND choir NOT IN (?, ?) "
-                                "RETURNING choir", [current["slug"], current["choir"], PUBLIC])
+        tests = [c for c in staging if c != current["choir"]]
+        if current["choir"] != PUBLIC and current["choir"] not in staging and tests:
+            # A choir's publish takes the song off the test list (#422), a row we hold
+            # no record of too; every other choir's row stays (#450).
+            gone = client.query("DELETE FROM songs WHERE slug = ? AND choir IN (%s) RETURNING choir"
+                                % ", ".join("?" * len(tests)), [current["slug"], *tests])
             for choir in sorted({row[0] if isinstance(row, (list, tuple)) else row.get("choir")
                                  for result in gone for row in result.get("results") or []}):
                 log(f"Removed it from the {choir} list.")

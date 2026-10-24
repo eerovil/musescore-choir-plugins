@@ -139,6 +139,108 @@ def test_consonants_borrow_only_from_the_note_before():
     assert ns["durs"] == [30, 1] and ns["toks"] == ["it/a", "it/e"]
 
 
+def test_a_short_vowel_closed_by_a_consonant_is_found():
+    import numpy as np
+    ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
+    exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
+    short = ns["short_before_stop"]
+    n = lambda syl, pitch=60, beats=1: {"pitch": pitch, "syl": syl, "beats": beats}
+    rest = {"pitch": None, "syl": None}
+    assert short(n("tip"), ["it/p"], n("tap"))                  # "tip-tap"
+    assert short(n("tap."), ["it/p"], rest)                     # before a rest
+    assert short(n("tap"), ["it/p"], None)                      # the last note
+    assert not short(n("vat", beats=2), ["it/t"], rest)         # a long note holds its vowel
+    assert short(n("nuk"), ["it/k"], n("kuu")) == "double"      # "huk-kuu": a double k
+    assert short(n("var"), ["it/rr"], n("joon"))                # "var-joon"
+    word = lambda syl: {**n(syl), "syllabic": "begin"}
+    assert short(word("pit"), ["it/t"], n("kin")) == "late"     # "pit-kin": i held, t with the k
+    assert short(word("tip"), ["it/p"], n("tap")) is True       # "tip-tap": short, as "tip tap"
+    assert short(n("sil"), ["it/l"], n("lan"))                  # "sil-lan": the l held
+    assert not short(n("tont"), ["it/n", "it/t"], n("tu"))      # two consonants: as before
+    assert not short(n("dyyk"), ["it/k"], n("dong"))            # a long vowel stays long
+    assert not short(n("pait"), ["it/t"], n("si"))              # and so does "ai"
+    assert not short(n("tip"), ["it/p"], {"pitch": 62, "syl": None})   # slurred on
+    assert not short(n("kah"), ["de/h"], n("vi"))               # not a stop, l, m, n, r or s
+    assert not short(n("kaik"), ["it/k"], n("ki"))
+    assert not short({**n("hat"), "ph": {"on": [], "vs": [], "co": []}}, ["en/t"], None)   # g2p's sounds
+
+
+def test_a_doubled_l_keeps_its_short_vowel_when_the_consonant_is_not_held():
+    import numpy as np
+    ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
+    old = os.environ.get("CODA_HOLD")
+    os.environ["CODA_HOLD"] = "0"
+    try:
+        exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
+    finally:
+        if old is None: os.environ.pop("CODA_HOLD")
+        else: os.environ["CODA_HOLD"] = old
+    n = lambda syl: {"pitch": 60, "syl": syl, "beats": 1}
+    assert ns["short_before_stop"](n("sil"), ["it/l"], n("lan"))   # short i, l, then silence
+
+
+def planned(tmp_path, notes, **env):
+    """The sounds and frames sing_ufr.py plans for `notes` (DUMP_TOKENS), without the voice
+    files or onnxruntime: a stand-in UFR folder and stand-in modules."""
+    import sys, types
+    import numpy as np
+    ufr = tmp_path / "ufr"
+    (ufr / "core").mkdir(parents=True); (ufr / "tiger").mkdir()
+    (ufr / "core" / "phonemes.json").write_text("{}")
+    (ufr / "core" / "languages.json").write_text("{}")
+    np.zeros(4, np.float32).tofile(ufr / "tiger" / "fresh.emb")
+    line = tmp_path / "line.json"
+    line.write_text(json.dumps(notes))
+    dump = tmp_path / "dump.json"
+    saved = {k: os.environ.get(k) for k in ("UFR_DIR", "DUMP_TOKENS", *env)}
+    argv, mods = sys.argv, {m: sys.modules.get(m) for m in ("onnxruntime", "soundfile")}
+    os.environ.update(UFR_DIR=str(ufr), DUMP_TOKENS=str(dump), **env)
+    sys.argv = ["sing_ufr.py", str(line), str(tmp_path / "out.wav"), "60"]
+    sys.modules.update(onnxruntime=types.ModuleType("onnxruntime"), soundfile=types.ModuleType("soundfile"))
+    try:
+        with pytest.raises(SystemExit):
+            exec(SRC, {"__name__": "__main__"})
+    finally:
+        sys.argv = argv
+        for m, v in mods.items():
+            if v is None: sys.modules.pop(m, None)
+            else: sys.modules[m] = v
+        for k, v in saved.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+    d = json.loads(dump.read_text())
+    return list(zip(d["toks"], d["durs"]))
+
+
+def test_a_held_n_before_k_is_still_an_ng(tmp_path):
+    # #451 review: "ken-kä" with its n held in the first note still sings keŋ-kä, as before
+    notes = [{"pitch": 60, "beats": 1, "syl": "ken", "syllabic": "begin"},
+             {"pitch": 62, "beats": 1, "syl": "kä", "syllabic": "end"}]
+    toks = [t for t, _ in planned(tmp_path, notes, SONG_LANG="fi")]
+    assert "de/ng" in toks and "it/n" not in toks
+    i = toks.index("nl/e")
+    assert toks[i + 1] == "de/ng"                       # held after the short e
+    notes = [{"pitch": 60, "beats": 1, "syl": "ken", "syllabic": "begin"},
+             {"pitch": 62, "beats": 1, "syl": "gät", "syllabic": "end"}]
+    (tmp_path / "2").mkdir()
+    toks = [t for t, _ in planned(tmp_path / "2", notes, SONG_LANG="fi")]
+    assert "it/g" not in toks and toks.count("de/ng") >= 2   # "ken-gät": a long ng, as before
+
+
+def test_the_short_vowel_rule_is_finnish_only():
+    import numpy as np
+    ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
+    old = os.environ.get("SONG_LANG")
+    os.environ["SONG_LANG"] = "no"
+    try:
+        exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
+    finally:
+        if old is None: os.environ.pop("SONG_LANG")
+        else: os.environ["SONG_LANG"] = old
+    # Norwegian "tak" has a long vowel before its single k: timed as before, not cut short
+    assert not ns["short_before_stop"]({"pitch": 60, "syl": "tak", "beats": 1}, ["it/k"], None)
+
+
 def test_duration_model_sees_the_ng_that_is_sung():
     import numpy as np
     ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 60}

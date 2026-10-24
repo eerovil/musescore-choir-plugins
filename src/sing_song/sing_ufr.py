@@ -107,6 +107,7 @@ NASAL_LONG = os.environ.get("NASAL_LONG", "1") == "1"
 NASALS = {"it/n", "it/m", "de/ng"}
 DIPH = float(os.environ.get("DIPH", "0.5"))       # share of the note the first vowel of "ai", "uo" gets (#45: 0.7 lost the second vowel)
 SCHWA = 0.3                                        # the "uh" of a scat "dn": share of the note
+CLICK_UH = float(os.environ.get("CLICK_UH", "0.25"))   # seconds of the "uh" after a bare click ("kk", #449/#450: a third of an eighth was barely heard)
 HUMS = {"it/m", "it/n", "de/ng", "it/l", "it/rr", "de/h"}
 NG = os.environ.get("NG", "1") == "1"            # n before k is the ng sound, and "n-g" a long ng (Eero's pick by ear, #45); NG=0: plain n
 CLEN = {"de/q": 4, "it/s": 9, "de/h": 6, "it/rr": 6, "it/cl": 5}   # consonant lengths in frames (~11.6 ms)
@@ -119,6 +120,49 @@ CLIP = {
     **{f"it/{c}": (0.04, 0.13) for c in ("l", "rr", "y")}, "de/j": (0.04, 0.13),
     "de/q": (0.02, 0.08),
 }
+# a short vowel closed by a stop ("tip", "tap") on a note of at most STOP_BEATS beats is sung
+# STOP_VOWEL seconds, then the stop, then silence to the next note, rather than held to the end of
+# the note ("tiip"). Eero's pick by ear on #450 (0.15 s was too short for "dut", "nuk"); a longer
+# note ("set," on a half) holds. 0: held.
+STOP_VOWEL = float(os.environ.get("STOP_VOWEL", "0.25"))
+STOP_BEATS = float(os.environ.get("STOP_BEATS", "1"))
+# the same for a short vowel closed by l, m, n, r or s ("var-joon" sang "vaar-joon", "sil-lan"
+# "siil-lan"): the vowel gets CODA_VOWEL seconds (or CODA_SHARE of the note) and the consonant is
+# held to the next syllable; CODA_HOLD=0 falls silent after it instead. CODA= turns it off.
+CODA = set(filter(None, os.environ.get("CODA", "it/rr,it/l,it/n,it/m,it/s").split(",")))
+CODA_VOWEL = float(os.environ.get("CODA_VOWEL", str(STOP_VOWEL)))
+CODA_SHARE = float(os.environ.get("CODA_SHARE", "0"))
+CODA_HOLD = os.environ.get("CODA_HOLD", "1") == "1"
+# ... and is held at most CODA_MAX seconds, the vowel taking the rest: on a slow beat it took the
+# whole note ("hosss-tan-sa" in Metsänneito, #450)
+CODA_MAX = float(os.environ.get("CODA_MAX", "0.25"))
+def short_before_stop(n, co, nxt):
+    """A Finnish syllable with one short vowel closed by one stop, or by l, m, n, r or s, on a short
+    note with no slur holding it on: True, or "double" for a stop doubled into the next syllable
+    ("huk-kuu"), whose closure the next syllable sings."""
+    if SONG_LANG != "fi": return False               # Norwegian "tak" has a long a before its k
+    if n.get("beats", 0) > STOP_BEATS or n.get("ph") or len(co) != 1 or co[0] not in STOPS | CODA: return False
+    if len(re.findall(rf"[{VOW}]", n["syl"].lower())) != 1: return False
+    if nxt is None or nxt["pitch"] is None: return True
+    if not nxt.get("syl"): return False              # held on into the next note
+    on = sounds(nxt)[0]
+    own = sounds(n)[0]
+    if MID_STOP and co[0] in STOPS and on and on[0] != co[0] and n.get("syllabic") in ("begin", "middle") \
+            and not (own and own[0] == on[0]):      # "tip-tap", "tik-tak" stay short
+        return "late"                                # "pit-kin" sang "pittt-kin" (#450)
+    if on and on[0] == co[0]:                        # "huk-kuu" sang "huuk-kuu" (#450)
+        if co[0] in STOPS: return "double" if DOUBLE_STOP else False
+        return True                                  # "sil-lan": short i, then the l (CODA_HOLD says how)
+    return True
+# a stop inside a word before another consonant ("pit-kin") keeps the vowel MID_SHARE of the note
+# and is sung with that consonant just before the next beat: a gap after the t made it "pittt-kin"
+# (Eero's pick by ear, #450). A syllable sung again ("tip-tap") keeps the short vowel. MID_STOP=0: off
+MID_STOP = os.environ.get("MID_STOP", "1") == "1"
+MID_SHARE = float(os.environ.get("MID_SHARE", "0.85"))
+# the silence of a doubled stop, its closure included, is at most DBL_GAP seconds and the vowel
+# takes the rest ("vet-ten" on a slow quarter had 0.45 s, Eero's pick by ear, #450). 0: no limit
+DBL_GAP = float(os.environ.get("DBL_GAP", "0.25"))
+DOUBLE_STOP = os.environ.get("DOUBLE_STOP", "1") == "1"   # "huk-kuu": a doubled stop keeps its vowel short too
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"] if os.environ.get("GPU") else ["CPUExecutionProvider"]
@@ -243,6 +287,7 @@ toks, durs, f0n = ["SP"], [int(0.4 * FPS)], []
 note_lo = 0
 t = durs[0]; pending = []; pending_pred = []; breath = False; tsec = 0.0; prev_nf = durs[0]
 last_syl = last_ph = None; prev_long = False
+held = []      # a coda already sung in its own note ("ken-kä"'s n): the next onset's ng context
 BREATH = 0.5   # beats of breath after a comma or full stop on a long note          # coda consonants of the previous syllable
 for ni, n in enumerate(notes):
     nb = n["sec"] if n.get("sec") else n["beats"] * beat   # seconds: the score's own tempo marks when it has them
@@ -258,7 +303,7 @@ for ni, n in enumerate(notes):
         else:
             put(seq, max(1, prev_nf // 2))
             note_lo = len(toks); toks.append("SP"); durs.append(nf)
-        f0n.append((t, t + nf, None)); t += nf; prev_nf = nf; prev_long = False; continue
+        f0n.append((t, t + nf, None)); t += nf; prev_nf = nf; prev_long = False; held = []; continue
     n = repeated(n, last_syl, last_ph)
     if not n.get("syl"):
         # melisma: a note without its own syllable keeps singing the vowel at the new pitch
@@ -275,8 +320,7 @@ for ni, n in enumerate(notes):
     if word_start and not on and not pending and toks[-1] not in ("AP", "SP"):
         on = ["de/q"]                     # glottal stop: "koittaa | yön" stay two words
     # coda of the previous syllable + this onset all sound just before the beat
-    boundary = pending + on
-    boundary = ng(boundary)
+    boundary = ng(held + pending + on)[len(held):]; held = []
     boundary_pred = pending_pred + model_durs.get(ni, [])
     # the consonants take at most half of the note before them, a fifth after a long vowel
     # ("ju-naan-ko": the aa stays long), so short notes keep their vowels (#45)
@@ -291,14 +335,42 @@ for ni, n in enumerate(notes):
         budget = max(budget, min(prev_nf // 2, -(-S_MIN * sum(d for _, d in seq) // s_d)))
     put(seq, budget)
     assert sum(durs) == t, ("vowel moved off its beat", ni, sum(durs), t)
-    pending = co; pending_pred = model_durs.get((ni, "coda"), [])
     breath = bool(re.search(r"[,.;!?]", n["syl"])) and n["beats"] >= 2
     if len(vs) == 1: vd = [nf]
     else:
         share = SCHWA if vs[0] == "en/ax" and (vs[1] in HUMS or vs[1] == "SP") else DIPH
-        first = int(nf * share); rest = (nf - first) // (len(vs) - 1)
+        first = int(nf * share)
+        if vs == ["en/ax", "SP"]: first = max(first, min(nf - 1, int(round(CLICK_UH * FPS))))
+        rest = (nf - first) // (len(vs) - 1)
         vd = [first] + [rest] * (len(vs) - 1); vd[-1] += nf - sum(vd)
-    note_lo = len(toks); toks += vs; durs += vd
+    note_lo = len(toks)
+    closed = STOP_VOWEL and len(vs) == 1 and short_before_stop(n, co, notes[ni + 1] if ni + 1 < len(notes) else None)
+    stop = cons_seq(co) if closed and closed not in ("double", "late") else []
+    if closed == "late":
+        vf = int(nf * MID_SHARE) if MID_SHARE else int(round(STOP_VOWEL * FPS))
+        closed = "double"
+    else: vf = int(round(STOP_VOWEL * FPS))
+    if stop and co[0] not in STOPS:
+        vf = int(nf * CODA_SHARE) if CODA_SHARE else int(round(CODA_VOWEL * FPS))
+    if closed == "double" and DBL_GAP: vf = max(vf, nf - int(round(DBL_GAP * FPS)))
+    if closed == "double" and nf - vf >= 3:
+        # "huk-kuu": the vowel, then silence; the double k's closure and release come before the
+        # next beat as before, taken out of that silence
+        toks += vs + ["SP"]; durs += [vf, nf - vf]
+    elif stop and co[0] not in STOPS and CODA_HOLD and nf - vf >= 3:
+        if CODA_MAX: vf = max(vf, nf - int(round(CODA_MAX * FPS)))
+        nxt = notes[ni + 1] if ni + 1 < len(notes) else None
+        on_next = sounds(nxt)[0] if nxt and nxt["pitch"] is not None and nxt.get("syl") else []
+        c = ng(co + on_next)[0]           # "ken-kä": the held n is an ng
+        toks += vs + [c]; durs += [vf, nf - vf]; co = []; held = [c]
+    elif stop and nf - vf - sum(d for _, d in stop) >= 3:
+        # "tip": the vowel, the stop, then silence until the next syllable's consonants (#450)
+        toks += vs + [c for c, _ in stop] + ["SP"]
+        durs += [vf] + [d for _, d in stop] + [nf - vf - sum(d for _, d in stop)]
+        co = []
+    else:
+        toks += vs; durs += vd
+    pending = co; pending_pred = model_durs.get((ni, "coda"), []) if co else []
     hz = n.get("hz") or 440 * 2 ** ((n["pitch"] - 69) / 12)
     f0n.append((t, t + nf, hz)); t += nf; prev_nf = nf
     prev_long = bool(re.search(r"([aeiouyäö])\1", n["syl"].lower()))
