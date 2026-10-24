@@ -10,7 +10,7 @@ developers are listed under *Behind the scenes*.
 - Publishing a song to one choir no longer takes it off the other choirs' lists, so a song
   shared by `joy` and `joy-alumnit` can be published to both. Publishing to a choir still
   takes it off the test list. (#451)
-- A sung short vowel closed by a consonant on a note of a beat or less is sung 0.25 s: "tip"
+- A sung short Finnish vowel closed by a consonant on a note of a beat or less is sung 0.25 s: "tip"
   and "tap" then fall silent after the p, "var-joon" and "sil-lan" hold the r or l to the next
   syllable (at most 0.25 s; on a slow beat the vowel takes the rest), "huk-kuu" is silent until the k (at most 0.25 s of silence; the vowel takes the rest), and a stop inside a word before another consonant
   ("pit-kin") holds the vowel 85% of the note and sings the t with the k. Before, the vowel was held to the end of the

@@ -165,6 +165,20 @@ def test_a_short_vowel_closed_by_a_consonant_is_found():
     assert not short({**n("hat"), "ph": {"on": [], "vs": [], "co": []}}, ["en/t"], None)   # g2p's sounds
 
 
+def test_the_short_vowel_rule_is_finnish_only():
+    import numpy as np
+    ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 100}
+    old = os.environ.get("SONG_LANG")
+    os.environ["SONG_LANG"] = "no"
+    try:
+        exec(SRC[SRC.index("V = {"):SRC.index("TIMING = ")], ns)
+    finally:
+        if old is None: os.environ.pop("SONG_LANG")
+        else: os.environ["SONG_LANG"] = old
+    # Norwegian "tak" has a long vowel before its single k: timed as before, not cut short
+    assert not ns["short_before_stop"]({"pitch": 60, "syl": "tak", "beats": 1}, ["it/k"], None)
+
+
 def test_duration_model_sees_the_ng_that_is_sung():
     import numpy as np
     ns = {"os": os, "re": re, "json": json, "np": np, "FPS": 44100 / 512, "bpm": 60}

@@ -140,6 +140,7 @@ def short_before_stop(n, co, nxt):
     """A Finnish syllable with one short vowel closed by one stop, or by l, m, n, r or s, on a short
     note with no slur holding it on: True, or "double" for a stop doubled into the next syllable
     ("huk-kuu"), whose closure the next syllable sings."""
+    if SONG_LANG != "fi": return False               # Norwegian "tak" has a long a before its k
     if n.get("beats", 0) > STOP_BEATS or n.get("ph") or len(co) != 1 or co[0] not in STOPS | CODA: return False
     if len(re.findall(rf"[{VOW}]", n["syl"].lower())) != 1: return False
     if nxt is None or nxt["pitch"] is None: return True
