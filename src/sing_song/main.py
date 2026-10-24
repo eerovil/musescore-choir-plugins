@@ -743,7 +743,8 @@ def main():
         progress.mark_waiting(song_dir, a.publish)
         log(f"{a.slug}: waiting")
         return
-    run_record = progress.Run(song_dir, a.publish, progress.singer_version(), remote=a.remote_only)
+    run_record = progress.Run(song_dir, a.publish, progress.singer_version(), remote=a.remote_only,
+                              sing=not a.no_sing)
     run_record.step("bundle")
     try:
         sing_and_publish(a, run_record)

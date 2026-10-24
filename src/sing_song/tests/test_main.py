@@ -709,6 +709,7 @@ def test_a_finished_run_says_done_with_its_time(tmp_path, monkeypatch):
     run = progress.read(str(folder))
     assert run["state"] == "done" and run["finished"] >= run["started"]
     assert run["version"] == progress.singer_version() and run["pid"] == os.getpid()
+    assert run["sing"] is False   # --no-sing: the list does not call it a re-sing
 
 
 def test_a_failed_run_says_why(tmp_path, monkeypatch):

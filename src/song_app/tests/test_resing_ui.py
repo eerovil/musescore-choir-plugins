@@ -130,3 +130,33 @@ def test_a_run_queued_while_the_idle_list_is_open_shows_up_without_reloading(liv
         "state": "singing", "pid": os.getpid(), "version": progress.singer_version(),
         "choirs": ["jm"], "part": 1, "parts": 4, "part_name": "T1"})
     expect(sing).to_contain_text("Singing part 1 of 4 (T1)", timeout=10000)
+
+
+def test_the_list_recovers_from_a_failed_read_and_tells_a_piano_only_run_from_a_re_sing(live, page):
+    # #454 review: one failed /api/resing must not stop the list looking again, and a
+    # --no-sing run or one that published nowhere is not shown as a re-sing
+    base, songs = live
+    failures = []
+
+    def fail_once(route):
+        if not failures:
+            failures.append(route.request.url)
+            route.fulfill(status=500, body="restarting")
+        else:
+            route.continue_()
+    page.route("**/api/resing", fail_once)
+    page.add_init_script("window.RESING_IDLE_MS = 1000; window.RESING_BUSY_MS = 1000;")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/")
+    expect(page.locator(".sing-head")).to_contain_text("song(s) to re-sing", timeout=10000)
+    assert failures
+
+    done = {"state": "done", "pid": os.getpid(), "finished": time.time(), "version": progress.singer_version()}
+    progress.write(state.song_dir(songs["karhu"].slug), dict(done, sing=False, choirs=[]))
+    progress.write(state.song_dir(songs["kesa"].slug), dict(done, sing=True, choirs=[]))
+    progress.write(state.song_dir(songs["hanget"].slug), dict(done, sing=True, choirs=["jm"]))
+    sing = lambda song: page.locator(f'.card[data-slug="{songs[song].slug}"] .sing')  # noqa: E731
+    expect(sing("karhu")).to_contain_text("Piano-only run done", timeout=10000)
+    expect(sing("karhu")).not_to_contain_text("Re-sung")
+    expect(sing("kesa")).to_contain_text("Sung, not published")
+    expect(sing("hanget")).to_contain_text("Re-sung")

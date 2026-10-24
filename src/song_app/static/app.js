@@ -144,7 +144,13 @@ async function renderLibrary() {
   async function showResing() {
     clearTimeout(resingTimer);
     try { resing = await getJSON("/api/resing"); }
-    catch (err) { singHead.hidden = false; singHead.textContent = `Re-sing status: ${err.message}`; return; }
+    catch (err) {
+      if (!singHead.isConnected) return;
+      singHead.hidden = false;
+      singHead.textContent = `Re-sing status: ${err.message}`;
+      resingTimer = setTimeout(showResing, RESING_IDLE_MS);   // try again: the app may be restarting
+      return;
+    }
     if (!singHead.isConnected) return;   // the list was left or drawn again
     for (const c of cards) fillSing(c._sing, resing.songs[c.dataset.slug]);
     singHead.hidden = false;
@@ -178,8 +184,12 @@ function runText(run) {
       (run.remote ? " on the remote GPU" : ""), ""];
     case "publishing": return [`Publishing to ${run.choir}` +
       (run.choir_count > 1 ? ` (${run.choir_index} of ${run.choir_count})` : ""), ""];
-    case "done": return [`Re-sung ${when(run.finished)}` + choirs, "good"];
-    case "failed": return [`Re-sing failed ${when(run.finished || run.updated)}: ${run.error || "no reason given"}`, "warn"];
+    case "done":
+      // a piano-only run (--no-sing) or one that published nowhere is not a re-sing
+      if (run.sing === false) return [`Piano-only run done ${when(run.finished)}` + choirs, ""];
+      if (!run.choirs?.length) return [`Sung, not published, ${when(run.finished)}`, ""];
+      return [`Re-sung ${when(run.finished)}` + choirs, "good"];
+    case "failed": return [`${run.sing === false ? "Piano-only run" : "Re-sing"} failed ${when(run.finished || run.updated)}: ${run.error || "no reason given"}`, "warn"];
     default: return [run.state, ""];
   }
 }
