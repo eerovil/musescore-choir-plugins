@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- `sing_song.py` sings every part of a men's choir song with the low voice and every part of a
+  women's with the high one, by the song's voicing. A part named "Solo" in a men's song was sung
+  with the high voice because its name starts with S. In a mixed song a part called just "Solo"
+  now stops the run and asks which voice. (#453)
 - A short vowel before a closing stop on a long-lasting note ("nyt." held by a fermata) is
   held, with at most 0.3 s of silence after the stop, instead of 0.25 s of vowel and the rest
   silent. Songs sung before this show as waiting for a re-sing (singer version 2). (#450)
