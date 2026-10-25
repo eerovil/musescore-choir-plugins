@@ -2755,7 +2755,7 @@ tempo, part names, credits), then for each part: `unroll.py` writes each line (t
 of the staff) on the bundle's clock, `check_onsets.py` stops the run unless every note starts
 within 50 ms of a note in `score.mid`, `spoken.py` cuts a sentence on one held chord into a
 syllable a note, `g2p.py` gives the sounds of a song not in Finnish, `sing_ufr.py` sings it
-(UFR DiffSinger: LYSE for S/A/M parts, REMY for T/B), two different lines of a part are mixed
+(UFR DiffSinger: every part of a men's song REMY and of a women's LYSE, by the song's voicing; in a mixed song or one with no voicing, LYSE for S/A/M parts and REMY for T/B, and a part called just "Solo" stops the run), two different lines of a part are mixed
 at half volume each, and `gate.py` fades the rests where the whole part rests (the voice
 leaves a hiss). `--fold-divisi` folds lettered divisi parts (`S1b`) into their part as further
 voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s to

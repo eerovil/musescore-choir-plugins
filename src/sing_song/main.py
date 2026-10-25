@@ -69,11 +69,21 @@ def log(msg):
     print(msg, flush=True)
 
 
-def part_voice(name, voice=None):
-    """(sing_ufr.py voice, credit) for a part: `voice` (LYSE or REMY) when given, else the one
-    its name says (Sopraano, Altto, Mezzo... -> LYSE; Tenori, Baritoni, Basso... -> REMY)."""
+def part_voice(name, voice=None, voicing=None):
+    """(sing_ufr.py voice, credit) for a part: `voice` (LYSE or REMY) when given; else the song's
+    voicing, a men's song sung by REMY and a women's by LYSE whatever a part is called (a men's
+    "Solo" was sung by LYSE, #453); else the one its name says (Sopraano, Altto, Mezzo... -> LYSE;
+    Tenori, Baritoni, Basso... -> REMY). A name that says no voice ("Solo") stops the run."""
     if voice:
         return VOICES[voice]
+    if voicing == "men":
+        return LOW
+    if voicing == "women":
+        return HIGH
+    words = unicodedata.normalize("NFKD", name.strip()).split()
+    if words and words[0].casefold() == "solo":   # "Solo" says nothing of the voice; "Sopraano solo" does
+        sys.exit(f"which voice sings the part {name!r}? Name it by its voice on the Publish panel "
+                 "(Sopraano solo, Tenori solo...), record the song's voicing, or give --voice LYSE or --voice REMY")
     first = unicodedata.normalize("NFKD", name.strip())[:1].upper()
     if first and first in "SAM":   # "" is in every string: a blank name must stop, not pick LYSE
         return HIGH
@@ -81,6 +91,15 @@ def part_voice(name, voice=None):
         return LOW
     sys.exit(f"which voice sings the part {name!r}? Name it S/A/T/B (Sopraano, Altto, Tenori, Basso) "
              "or give --voice LYSE or --voice REMY")
+
+
+def song_voicing(slug):
+    """The song's voicing ("men", "women", "mixed") as its .song.json records it, or None."""
+    try:
+        with open(os.path.join(ROOT, "songs", slug, ".song.json"), encoding="utf-8") as f:
+            return json.load(f).get("voicing")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def build_bundle(song_app, slug, out, folded=None):
@@ -792,7 +811,8 @@ def sing_and_publish(a, run_record):
     log(f"bundle: {bundle_dir} ({manifest['duration']} s, parts {[p['name'] for p in manifest['parts']]})")
     sung_by = []
     if not a.no_sing:
-        sung_by = [part_voice(p["name"], a.voice) for p in manifest["parts"]]
+        voicing = song_voicing(a.slug)
+        sung_by = [part_voice(p["name"], a.voice, voicing) for p in manifest["parts"]]
         work = os.path.join(out, "work")
         os.makedirs(work, exist_ok=True)
         gpu = not a.cpu and nvidia_dir(python) is not None

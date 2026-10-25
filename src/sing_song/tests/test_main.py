@@ -325,6 +325,27 @@ def test_each_part_is_sung_by_the_voice_its_name_says():
             publish_song.part_voice(name)
 
 
+def test_a_mens_song_is_sung_low_and_a_womens_high_whatever_a_part_is_called():
+    # #453: a men's choir "Solo" was sung by LYSE because its name starts with S
+    assert publish_song.part_voice("Solo", voicing="men") == publish_song.LOW
+    assert publish_song.part_voice("Altto", voicing="men") == publish_song.LOW
+    assert publish_song.part_voice("Tenori", voicing="women") == publish_song.HIGH
+    assert publish_song.part_voice("Solo", "LYSE", voicing="men") == publish_song.HIGH   # --voice still wins
+    assert publish_song.part_voice("Sopraano solo", voicing="mixed") == publish_song.HIGH
+    assert publish_song.part_voice("Tenori solo", voicing="mixed") == publish_song.LOW
+    for voicing in ("mixed", None):
+        with pytest.raises(SystemExit, match="which voice sings the part 'Solo'"):
+            publish_song.part_voice("Solo", voicing=voicing)
+
+
+def test_the_songs_voicing_is_read_off_its_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    (tmp_path / "songs" / "laulu").mkdir(parents=True)
+    (tmp_path / "songs" / "laulu" / ".song.json").write_text('{"voicing": "men"}')
+    assert publish_song.song_voicing("laulu") == "men"
+    assert publish_song.song_voicing("missing") is None
+
+
 def test_a_place_is_read_as_the_app_takes_it():
     assert publish_song.parse_places(["Ääni 1=-", "Ääni 2 = alto ", "Uusi=^sopranos"]) == [
         {"name": "Ääni 1", "id": "-"}, {"name": "Ääni 2", "id": "alto"}, {"name": "Uusi", "parent": "sopranos"}]
