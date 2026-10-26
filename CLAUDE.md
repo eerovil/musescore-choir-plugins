@@ -2773,7 +2773,7 @@ sung here and it gets no more.
 here, `REMOTE_KUBE_CONTEXT=eero-pc`), moved from eeron-omat-taskit's `homr-eero-pc/` (#439).
 Stdlib only, so the app's service can run it as a file. One pod per job kind (`homr/reader`,
 `sing/singer`), its venv on the node's disk, one job on the card at a time (a lock under
-`~/.cache/musescore-choir-remote`), and a kind that failed is not asked again for five
+`HOMR_EERO_PC_STATE`, default `~/.cache/homr-the GPU machine`), and a kind that failed is not asked again for five
 minutes. Every step is a short `kubectl exec`, retried, because eero-pc's long streams were
 cut (#103). The reader builds its homr venv from this host's pins and checks it file by file.
 `src/kube_runner/tests/` runs it against a fake cluster.
