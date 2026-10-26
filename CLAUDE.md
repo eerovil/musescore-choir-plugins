@@ -2232,8 +2232,10 @@ state model are in `DESIGN.md`.
   the clean made (`mark_made`), and Undo refuses (409) once the score differs from it,
   since anything done after the clean would be lost. `fixes.json` is not restored.
   A new job that writes the song shares the busy guard with every sibling job, both ways:
-  it refuses while they run, and they refuse while it runs (add its kind to `_publish_busy`'s
-  list in `server.py`). Its undo refuses once the score has changed since.
+  it refuses while they run, and they refuse while it runs. There is no single list: add its
+  kind to every `state.start_job(..., ("scan", "clean", "check", "publish"))` exclusion tuple
+  in `server.py`, to `_publish_busy` and to `/undo-clean`'s own running-job check, and test
+  both directions. Its undo refuses once the score has changed since.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
