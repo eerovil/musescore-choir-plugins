@@ -363,7 +363,8 @@ in the main checkout at `~/musescore-choir-plugins`. Interactive sessions use th
 worktree too (`git worktree add .worktrees/<topic> -b <branch> origin/main`), never that
 shared checkout: several sessions share it, and a dirty one blocks the deploy timer. Without them nothing runs: there is
 no interpreter with lxml in it, `MUSESCORE_CLI_PATH` is unset, and the app has no songs.
-Link them in before doing anything else:
+Link them in before doing anything else, and check they resolve before the first build or
+test:
 
 ```bash
 for f in .venv .env songs; do ln -sfn ~/musescore-choir-plugins/"$f" "$f"; done
@@ -1222,7 +1223,9 @@ state model are in `DESIGN.md`.
   voice-2 box exists only where that voice has notes.
   **Verse tabs** keep you on the system. The browser sends only the boxes changed,
   `{"verse": n, "boxes": {system: {key: text}}}` (`blocks_from_boxes`, addressed by
-  staff id — a part may be named "1", or two parts the same), and an emptied box
+  staff id — a part may be named "1", or two parts the same: key every new box and part
+  lookup by staff id, never part name, and run the round trip over every song in `songs/`
+  before review), and an emptied box
   takes its words out. **← Previous / Next →** import first and stay on the system if
   the import warned; pressing again moves on. **Show what landed** swaps the picture for
   `GET /landed/{n}`: MuseScore exports the score and verovio engraves only that system's
@@ -1263,8 +1266,10 @@ state model are in `DESIGN.md`.
   two-jobs-on-four-cores case the queue exists to prevent. So that stops the work
   (`SlotLost`). Stopping a call that lasts minutes needs somewhere to stop *at*:
   `Slot.guard` wraps the work's own log callbacks. (The scrolling video render was the
-  first user and is gone; publishing is a few quick MuseScore exports and takes no
-  slot.)
+  first user and is gone. Publishing takes one too, around its MuseScore exports:
+  `server.py`'s publish job runs under `heavy_slot`.) Run song_app tests that publish with
+  `env -u AGENTDECK_URL -u AGENTDECK_API_URL`: a deck chat sets `AGENTDECK_URL`, so
+  `heavy_slot` waits for a real host slot and the run hangs until its timeout.
   `src/song_app/tests/test_heavy_slot.py` pins those rules: every way the deck can fail
   to co-operate leaves the work running, a lease is renewed while the work runs and
   released when it raises, and a 404 heartbeat stops it.
@@ -2226,6 +2231,9 @@ state model are in `DESIGN.md`.
   fails); `POST /undo-clean` puts the newest back. The stash records the fingerprint
   the clean made (`mark_made`), and Undo refuses (409) once the score differs from it,
   since anything done after the clean would be lost. `fixes.json` is not restored.
+  A new job that writes the song shares the busy guard with every sibling job, both ways:
+  it refuses while they run, and they refuse while it runs (add its kind to `_publish_busy`'s
+  list in `server.py`). Its undo refuses once the score has changed since.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
