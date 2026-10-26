@@ -319,6 +319,21 @@ def test_a_rest_longer_than_the_limit_is_cut_in_silence_within_the_limit():
     assert wins[-1][1] == 12220
 
 
+def test_a_piece_cut_inside_a_sound_is_sung_with_silence_beyond_the_cut():
+    # eeron-omat-taskit#123: a held vowel cut between two pieces was sung as nothing at all
+    import numpy as np
+    ns = chunking()
+    toks, durs = ["SP", "it/k", "it/a", "SP"], [10, 5, 100, 10]
+    f0 = np.arange(125, dtype=np.float32)
+    ts, ds, f, pre = ns["piece"](toks, durs, f0, 0, 70, edge=8)
+    assert (ts, ds, pre) == (["SP", "it/k", "it/a", "SP"], [10, 5, 55, 8], 0)
+    assert len(f) == 78 and f[-8:].tolist() == [69] * 8
+    ts, ds, f, pre = ns["piece"](toks, durs, f0, 50, 125, edge=8)
+    assert (ts, ds, pre) == (["SP", "it/a", "SP"], [8, 65, 10], 8)
+    assert len(f) == 83 and f[:9].tolist() == [50] * 9
+    assert ns["piece"](toks, durs, f0, 0, 125, edge=8)[3] == 0      # whole: nothing added
+
+
 def test_overlapping_pieces_are_cross_faded_and_lose_no_frames():
     import numpy as np
     ns = chunking()
