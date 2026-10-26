@@ -451,8 +451,24 @@ def joined(parts, wins):
             mel[:, a:end] = mel[:, a:end] * (1 - fade) + m[:, :k] * fade
         mel[:, max(a, end):b] = m[:, max(k, 0):]; end = b
     return mel
+# frames of silence put around a piece cut inside a sound: the model sang a held vowel cut there
+# as nothing at all, both halves of it (Traumlicht's long melismas, eeron-omat-taskit#123)
+EDGE = 16
+def piece(toks, durs, f0, a, b, edge=EDGE):
+    """The sounds, frame lengths and pitch to sing for frames [a, b), and how many frames of
+    silence lead them: an end cut inside a sound gets `edge` frames of silence beyond it, which
+    are sung and then dropped, so the piece starts and ends as the model expects."""
+    ts, ds = clip(toks, durs, a, b)
+    pre = edge if ts[0] != "SP" else 0
+    post = edge if ts[-1] != "SP" else 0
+    f = f0[a:b]
+    f = np.concatenate([np.full(pre, f[0], f.dtype), f, np.full(post, f[-1], f.dtype)])
+    return ["SP"] * bool(pre) + ts + ["SP"] * bool(post), [pre] * bool(pre) + ds + [post] * bool(post), f, pre
+def sung(a, b):
+    ts, ds, f, pre = piece(toks, durs, f0, a, b)
+    return sing(ts, ds, f)[:, pre:pre + b - a]
 wins = windows(toks, durs, int(os.environ.get("AC_CHUNK", "0")) or 10**9)
-mel = joined([sing(*clip(toks, durs, a, b), f0[a:b]) for a, b in wins], wins)
+mel = joined([sung(a, b) for a, b in wins], wins)
 assert mel.shape[1] == N, ("pieces lost frames", mel.shape, N)
 del ac
 voc = ort.InferenceSession(f"{D}/core/potluck.onnx", providers=PROVIDERS)
