@@ -2745,7 +2745,8 @@ The flow is `docs/pdf-to-practice-track.md`. What is particular to this host:
 - Run `sing_song.py` as a background command in your own chat (a few minutes on the GTX 970),
   not as an `agentdeck job`: the job queue's one heavy slot is shared with other projects' tests,
   and singing needs the card, not the processor (eerovil/eeron-omat-taskit#123). Check the card
-  is free first, and split a long batch into runs under 2 hours, the background command's limit.
+  is free first, pause 60 s between songs (a continuous run crashed the GTX 970 and needed a
+  reboot), and split a long batch into runs under 2 hours, the background command's limit.
   Give it the desktop's `DISPLAY` and `XAUTHORITY` (`systemctl --user show-environment`):
   MuseScore needs a screen even to export.
 - Every live Finnish song has AI-sung parts (eeron-omat-taskit#36): a new song is done when it
