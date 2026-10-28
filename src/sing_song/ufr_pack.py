@@ -15,11 +15,14 @@ copies the files it reads into it:
 
 The rest (phonemizers, pitch models, other vocoders, pictures) the singer does not use.
 
-    python -I ufr_pack.py <the downloaded .zip, or the folder it unzipped to> <out folder>
+    python -I ufr_pack.py <the downloaded .zip, or the folder it unzipped to> <out folder> [<.env>]
+
+With a .env file named, UFR_DIR in it is set to the out folder.
 """
 import glob
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import zipfile
@@ -107,28 +110,61 @@ def build(src, out):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     # built beside it in a folder of its own, so a failed copy or swap leaves the old voices
     work = tempfile.mkdtemp(prefix=f".{os.path.basename(out)}-", dir=os.path.dirname(out))
-    new, old = os.path.join(work, "new"), os.path.join(work, "old")
+    new = os.path.join(work, "new")
+    keep = None   # the old voices while the new ones go in; never in `work`, which always goes
     try:
         for to, opener in sorted(picked.items()):
             os.makedirs(os.path.join(new, os.path.dirname(to)), exist_ok=True)
             with opener() as f, open(os.path.join(new, to), "wb") as w:
                 shutil.copyfileobj(f, w, 1 << 20)
         if os.path.exists(out):
-            os.replace(out, old)
+            keep = tempfile.mkdtemp(prefix=f".{os.path.basename(out)}-old-", dir=os.path.dirname(out))
+            os.replace(out, os.path.join(keep, "voices"))
         try:
             os.replace(new, out)
         except OSError:
-            if os.path.exists(old):
-                os.replace(old, out)
+            if keep and os.path.exists(os.path.join(keep, "voices")):
+                try:
+                    os.replace(os.path.join(keep, "voices"), out)
+                except OSError as e:
+                    kept, keep = os.path.join(keep, "voices"), None
+                    raise SystemExit(f"could not put the old voices back: they are in {kept}; "
+                                     f"move that folder to {out}") from e
             raise
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        if keep:   # the swap or the restore went through: nothing of value is left in it
+            shutil.rmtree(keep, ignore_errors=True)
     return sorted(picked)
 
 
+def set_env(path, key, value):
+    """Set `key` in the .env file `path` (adding the line when it has none), through a private
+    temporary file beside it that takes the old file's permissions: it holds API tokens."""
+    with open(path) as f:
+        lines = f.read().splitlines()
+    line = f'{key}="{value}"'
+    at = [i for i, l in enumerate(lines) if l.startswith(f"{key}=")]
+    for i in at:
+        lines[i] = line
+    if not at:
+        lines.append(line)
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}-", dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))
+        with os.fdopen(fd, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        sys.exit(__doc__.rsplit("\n\n", 1)[-1].strip())
+    if len(sys.argv) not in (3, 4):
+        sys.exit("python -I ufr_pack.py <the downloaded .zip or its folder> <out folder> [<.env>]")
     names = build(sys.argv[1], sys.argv[2])
+    if len(sys.argv) == 4:
+        set_env(sys.argv[3], "UFR_DIR", os.path.abspath(sys.argv[2]))
     voices = [n for n in names if n.startswith("tiger/")]
     print(f"{sys.argv[2]}: {len(names)} files, {len(voices)} voices (sing_song.py sings with lyse_core and remy_adult)")

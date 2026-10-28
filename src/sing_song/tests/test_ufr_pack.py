@@ -1,3 +1,4 @@
+import os
 import zipfile
 
 import pytest
@@ -125,3 +126,45 @@ def test_a_failed_copy_keeps_the_old_voices(tmp_path, monkeypatch):
         ufr_pack.build(str(as_zip(tmp_path, PACK)), str(out))
     assert tree(out) == {"core/phonemes.json": "old"}
     assert sorted(p.name for p in tmp_path.iterdir()) == ["UFR-V1.0.zip", "ufr"]
+
+
+def test_a_failed_restore_keeps_the_old_voices_and_says_where(tmp_path, monkeypatch):
+    out = tmp_path / "ufr"
+    (out / "core").mkdir(parents=True)
+    (out / "core" / "phonemes.json").write_text("old")
+    real = ufr_pack.os.replace
+
+    def replace(a, b):
+        if str(b) == str(out):   # neither the new voices nor the old ones go back in
+            raise OSError("disk gone")
+        real(a, b)
+    monkeypatch.setattr(ufr_pack.os, "replace", replace)
+    with pytest.raises(SystemExit) as e:
+        ufr_pack.build(str(as_zip(tmp_path, PACK)), str(out))
+    kept = [p for p in tmp_path.iterdir() if p.name.startswith(".ufr-old-")]
+    assert len(kept) == 1 and str(kept[0] / "voices") in str(e.value)
+    assert tree(kept[0] / "voices") == {"core/phonemes.json": "old"}
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".ufr-") and p not in kept]
+
+
+def test_set_env_keeps_the_files_permissions_and_leaves_its_neighbours(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text('A="1"\nUFR_DIR=""\nTOKEN="secret"\n')
+    env.chmod(0o600)
+    (tmp_path / ".env.new").write_text("mine")
+    old_mask = os.umask(0o022)
+    try:
+        ufr_pack.set_env(str(env), "UFR_DIR", "/v/ufr")
+    finally:
+        os.umask(old_mask)
+    assert env.read_text() == 'A="1"\nUFR_DIR="/v/ufr"\nTOKEN="secret"\n'
+    assert env.stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / ".env.new").read_text() == "mine"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".env", ".env.new"]
+
+
+def test_set_env_adds_the_line_when_there_is_none(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text('A="1"\n')
+    ufr_pack.set_env(str(env), "UFR_DIR", "/v/ufr")
+    assert env.read_text() == 'A="1"\nUFR_DIR="/v/ufr"\n'

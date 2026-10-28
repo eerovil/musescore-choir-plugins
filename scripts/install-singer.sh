@@ -69,13 +69,7 @@ if [ $# -gt 0 ]; then
     if [ -z "$UFR_DIR" ] || { [ -e "$UFR_DIR" ] && [ ! -f "$UFR_DIR/core/phonemes.json" ]; }; then
         UFR_DIR="$HOME/.local/share/musescore-choir-plugins/ufr"
     fi
-    "$SING_VENV/bin/python" -I "$ROOT/src/sing_song/ufr_pack.py" "$1" "$UFR_DIR"
     [ -f "$ROOT/.env" ] || cp "$ROOT/.env.default" "$ROOT/.env"
-    if grep -q '^UFR_DIR=' "$ROOT/.env"; then
-        line="UFR_DIR=\"$UFR_DIR\"" awk '/^UFR_DIR=/ { print ENVIRON["line"]; next } { print }' \
-            "$ROOT/.env" > "$ROOT/.env.new" && mv "$ROOT/.env.new" "$ROOT/.env"
-    else
-        echo "UFR_DIR=\"$UFR_DIR\"" >> "$ROOT/.env"
-    fi
+    "$SING_VENV/bin/python" -I "$ROOT/src/sing_song/ufr_pack.py" "$1" "$UFR_DIR" "$ROOT/.env"
     echo "Voices in $UFR_DIR (UFR_DIR in .env)."
 fi
