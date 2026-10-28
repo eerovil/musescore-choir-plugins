@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- An English word the dictionary reads two ways ("wind", "read", "live") is sung the way the
+  song means: the song page's Publish stage lists each place one is sung, and a reading chosen
+  there (or for the whole song) is sung by every part at that place. A choir's own way of saying
+  a word goes in `choirs/<choir>.json` as a sound-alike spelling (`"harvest": "har-vist"`). (#466)
+
 - `scripts/install-singer.sh <the UFR pack's zip>` sets up the voices from the pack as it now
   downloads (V1.0, made for OpenUtau): it copies what the singer reads into a folder of its own
   and sets `UFR_DIR`. Putting `core/`, `dsdur/` and `tiger/` together by hand is no longer

@@ -22,6 +22,7 @@ from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_st
                state, system_finder, verification)
 from . import clean_backup
 from . import resing
+from src.sing_song import places as song_places
 from src.sing_song import progress
 from src.clean_score.utils.score_fixes import FixError
 from src.score_export.score import START as START_TEMPO
@@ -1809,6 +1810,56 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
 def _publish_busy(song: state.Song) -> bool:
     return is_scanning(song) or any(job_state.is_running(song.dir, kind)
                                     for kind in ("clean", "check", "publish"))
+
+
+def _readings(words: List[str]) -> Dict:
+    """{word: readings} of the words the dictionary reads more than one way, from
+    src/sing_song/readings.py in the singer's venv (g2p_en and its dictionary live there)."""
+    from src.sing_song.main import sing_venv
+    python = os.path.join(sing_venv(), "bin", "python")
+    if not os.path.exists(python):
+        raise HTTPException(503, f"No singer at {sing_venv()}: run scripts/install-singer.sh")
+    script = os.path.join(os.path.dirname(song_places.__file__), "readings.py")
+    r = subprocess.run([python, "-I", script], input=json.dumps(words), capture_output=True,
+                       text=True, timeout=300)
+    if r.returncode:
+        raise HTTPException(500, f"readings.py failed: {(r.stderr or r.stdout).strip()[-500:]}")
+    return json.loads(r.stdout)
+
+
+@app.get("/api/songs/{slug}/pronunciation")
+def api_pronunciation(slug: str) -> Dict:
+    """The song page's Pronunciation list (eeron-omat-taskit#144): every place a part sings a
+    word the dictionary reads more than one way, its readings (the one sung by default first),
+    the readings chosen, and the chosen places the score no longer has."""
+    song = _require(slug)
+    cleaned = _cleaned_or_400(song)
+    every = song_places.places(cleaned)
+    readings = _readings(sorted({p["word"] for p in every}))
+    choices = song_places.load(song.dir)
+    chosen = {song_places.key(c): c["sounds"] for c in choices["places"]}
+    rows = [dict(p, readings=readings[p["word"]], chosen=chosen.get(song_places.key(p)))
+            for p in every if p["word"] in readings]
+    return {"places": rows, "everywhere": choices["everywhere"],
+            "stale": song_places.stale(choices, cleaned)}
+
+
+@app.post("/api/songs/{slug}/pronunciation")
+def api_pronunciation_save(slug: str, body: Dict = None) -> Dict:
+    """Save the readings chosen on the song page: {"places": [{"bar", "beat", "word", "sounds"}],
+    "everywhere": {word: sounds}}. A place left out sings the dictionary's reading."""
+    body = body or {}
+    try:
+        chosen = [{"bar": int(c["bar"]), "beat": float(c["beat"]), "word": song_places.word_key(str(c["word"])),
+                   "sounds": " ".join(str(c["sounds"]).split())} for c in body.get("places") or []]
+        everywhere = {song_places.word_key(str(w)): " ".join(str(v).split())
+                      for w, v in (body.get("everywhere") or {}).items()}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise HTTPException(400, "Give places as [{bar, beat, word, sounds}] and everywhere as {word: sounds}")
+    with state.song_lock(slug):
+        song = _require(slug)
+        song_places.save(song.dir, {"places": chosen, "everywhere": everywhere})
+    return api_pronunciation(slug)
 
 
 @app.post("/api/songs/{slug}/publish-settings")

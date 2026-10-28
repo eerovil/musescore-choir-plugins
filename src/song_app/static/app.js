@@ -3140,8 +3140,92 @@ function panelPublish(panel, song, P, refresh, actions) {
     ] : []),
     placesBox,
     el("div", { className: "row" }, saveBtn, saveNote),
+    pronunciationSection(P),
     publishSection(P, song, refresh, settings, saveNote),
     makeLog(song.jobs?.publish));
+}
+
+// The Pronunciation list (eeron-omat-taskit#144): each place a part sings an English word the
+// dictionary reads more than one way ("wind", "read"), and the reading to sing there or
+// everywhere in the song. Until one is chosen the dictionary's first is sung. Loaded when
+// opened: finding the words runs the singer's dictionary, which takes a few seconds.
+function pronunciationSection(P) {
+  const body = el("div", { className: "pronunciation-body" }, el("p", { className: "hint" }, "Reading the lyrics…"));
+  const box = el("details", { className: "pronunciation", "data-pronunciation": "" },
+    el("summary", {}, "Pronunciation (English songs)"), body);
+  let loaded = false;
+  box.addEventListener("toggle", () => {
+    if (!box.open || loaded) return;
+    loaded = true;
+    getJSON(`${P}/pronunciation`).then((reply) => draw(reply))
+      .catch((e) => { body.replaceChildren(el("p", { className: "hint err" }, e.message)); });
+  });
+  const say = (r) => `“${r.say}”${r.as_in ? `, as in ${r.as_in}` : ""}`;
+  function draw(reply) {
+    const note = el("span", { className: "hint save-note" }, "");
+    const byWord = {};
+    for (const row of reply.places) (byWord[row.word] ||= []).push(row);
+    const everywhere = {};
+    const placeSelects = [];
+    const groups = Object.entries(byWord).map(([word, rows]) => {
+      const readings = rows[0].readings;
+      const all = el("select", { "data-pron-everywhere": word },
+        el("option", { value: "" }, `the dictionary's: ${say(readings[0])}`),
+        ...readings.map((r) => el("option", { value: r.sounds }, say(r))));
+      all.value = reply.everywhere[word] || "";
+      everywhere[word] = all;
+      // a place with no reading of its own sings the word's everywhere one
+      const sameText = () => `same as everywhere: ${say(readings.find((r) => r.sounds === all.value) || readings[0])}`;
+      const sames = [];
+      all.addEventListener("input", () => { for (const o of sames) o.textContent = sameText(); });
+      const list = rows.map((row) => {
+        const same = el("option", { value: "" }, sameText());
+        sames.push(same);
+        const pick = el("select", { "data-pron-place": `${row.bar}:${row.beat}:${row.word}` },
+          same, ...readings.map((r) => el("option", { value: r.sounds }, say(r))));
+        pick.value = row.chosen || "";
+        pick.addEventListener("input", () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; });
+        placeSelects.push([row, pick]);
+        const words = row.line.split(" ");
+        const line = el("span", { className: "pron-line" },
+          ...words.flatMap((w, i) => [i === row.at ? el("strong", {}, w) : w, " "]));
+        return el("div", { className: "pron-row row" },
+          el("span", { className: "pron-place" }, `Bar ${row.bar}${row.n > 1 ? ` (${row.n}.)` : ""}`),
+          line, el("span", { className: "hint" }, row.parts.join(", ")), pick);
+      });
+      all.addEventListener("input", () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; });
+      return el("div", { className: "pron-word" },
+        el("div", { className: "row" }, el("strong", {}, word), el("span", { className: "hint" }, "everywhere in this song:"), all),
+        ...list);
+    });
+    let stale = reply.stale;
+    const staleBox = el("div", { className: "pron-stale" });
+    const drawStale = () => staleBox.replaceChildren(...(stale.length ? [
+      el("p", { className: "hint err" },
+        `${stale.length} reading(s) chosen earlier no longer match a word in the score: `
+        + stale.map((c) => `“${c.word}” at bar ${c.bar}`).join(", ") + ". They are not sung."),
+      el("button", { onclick: () => { stale = []; drawStale(); note.textContent = "Unsaved changes"; } }, "Forget them"),
+    ] : []));
+    drawStale();
+    const save = el("button", { className: "pron-save", onclick: async () => {
+      const places = placeSelects.filter(([, pick]) => pick.value)
+        .map(([row, pick]) => ({ bar: row.bar, beat: row.beat, word: row.word, sounds: pick.value }));
+      const all = Object.fromEntries(Object.entries(everywhere).filter(([, s]) => s.value).map(([w, s]) => [w, s.value]));
+      try {
+        draw(await postJSON(`${P}/pronunciation`, { places: [...places, ...stale], everywhere: all }));
+      } catch (e) { note.className = "hint save-note err"; note.textContent = e.message; }
+    } }, "Save pronunciation");
+    body.replaceChildren(
+      el("p", { className: "hint" }, groups.length
+        ? "Words the dictionary reads more than one way. Choose the reading the song means; until you do, the dictionary's is sung."
+        : "No word in the lyrics has two readings."),
+      staleBox, ...groups,
+      ...(groups.length || stale.length ? [el("div", { className: "row" }, save, note)] : []));
+    if (!groups.length && !stale.length) return;
+    note.className = "hint save-note";
+    note.textContent = "";
+  }
+  return box;
 }
 
 // Part names are the same when they differ only in letter case and spaces, as on the site.

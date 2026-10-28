@@ -40,6 +40,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # this checkout: the app whose publish code builds the bundle
 from src.sing_song import progress  # noqa: E402
 from src.sing_song.fold import fold  # noqa: E402
+from src.sing_song import places as song_places  # noqa: E402
 from src.sing_song.spoken import split_spoken  # noqa: E402
 from src.sing_song.ufr_pack import is_download, is_ours  # noqa: E402
 from src.song_app.publish import sung_file  # noqa: E402
@@ -314,7 +315,8 @@ def sung_staves(cleaned):
 
 
 def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu, lang_from=None,
-         groups=None, resume=False, allow_silent=False, on_part=None, version=None, remote_only=False):
+         groups=None, resume=False, allow_silent=False, on_part=None, version=None, remote_only=False,
+         pronounce=None):
     """parts/<n>-<Name>.mp3 for every part, sung on the bundle's clock:
 
     - each line is checked against the piano before it is sung (check_onsets.py); a part whose
@@ -322,7 +324,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     - where a part splits into two lines, both are sung and mixed at half volume each; a part
       folded from several staves (`groups`, --fold-divisi) sings each different line of each of
       them, mixed at 1/n volume each;
-    - songs not in Finnish get their sounds from g2p.py, and a song in two languages changes at
+    - songs not in Finnish get their sounds from g2p.py (an English word's reading as the song
+      page or the choir chose it, pronounce_env()), and a song in two languages changes at
       the words --lang-from names; every part is checked for Finnish-looking words left in
       another language before any part is sung;
     - a note whose syllable would be sung as no sound at all (only stops and silence, #449) stops
@@ -400,7 +403,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         with open(js, "w") as f:
             json.dump(notes, f, ensure_ascii=False)
         for code in sorted({n["lang"] for n in notes if n.get("syl")} & G2P):
-            run([python, "-I", os.path.join(HERE, "g2p.py"), code, js], env=dict(os.environ, UFR_DIR=ufr_dir))
+            run([python, "-I", os.path.join(HERE, "g2p.py"), code, js],
+                env=dict(os.environ, UFR_DIR=ufr_dir, **(pronounce or {})))
         quiet += [(name, n["bar"], n["syl"]) for n in silent_notes(python, js, voices[i - 1], env)]
         said = f"{name}{' ' + line + ' line' if two else ''}"
         if resume and sung_before(work, i, line, voices[i - 1], version):
@@ -598,6 +602,30 @@ def clear_bundle(out):
         for name in os.listdir(parts):
             if name.endswith(".mp3"):
                 os.remove(os.path.join(parts, name))
+
+
+def pronounce_env(slug, choirs):
+    """What g2p.py reads to choose English readings (eeron-omat-taskit#144): SONG_PRONOUNCE, the
+    song page's choices (songs/<slug>/pronounce.json, src/sing_song/places.py), and CHOIR_WORDS,
+    the choirs/<choir>.json of each choir the song is published to. One run sings once for all
+    its choirs, so they must give every word alike."""
+    for choir in choirs:
+        if not choir or choir in (".", "..") or choir.startswith(".") or "/" in choir or "\\" in choir:
+            sys.exit(f"{choir!r} is not a choir: give its id on the site")
+    paths = [os.path.join(ROOT, "choirs", f"{c}.json") for c in choirs]
+    maps = {c: choir_words(p) if os.path.isfile(p) else {} for c, p in zip(choirs, paths)}
+    if len({json.dumps(m, sort_keys=True) for m in maps.values()}) > 1:
+        sys.exit(f"choirs {', '.join(choirs)} spell different words in choirs/<choir>.json: "
+                 "publish to each in its own run")
+    return {"SONG_PRONOUNCE": os.path.join(ROOT, "songs", slug, song_places.FILE),
+            "CHOIR_WORDS": os.pathsep.join(p for p in paths if os.path.isfile(p))}
+
+
+def choir_words(path):
+    """A choir file's word -> sound-alike spelling map, as g2p.py reads it."""
+    with open(path) as f:
+        d = json.load(f)
+    return d["pronounce"] if isinstance(d.get("pronounce"), dict) else d
 
 
 def check_slug(slug):
@@ -807,6 +835,7 @@ def sing_and_publish(a, run_record):
         if not is_ours(ufr_dir):
             sys.exit("download the UFR DiffSinger pack from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/ "
                      "and run scripts/install-singer.sh <the .zip>; it sets UFR_DIR in .env")
+        pronounce = pronounce_env(a.slug, list(dict.fromkeys(a.publish)))
     bundle_dir = out
     os.makedirs(out, exist_ok=True)
     clear_bundle(out)
@@ -815,6 +844,10 @@ def sing_and_publish(a, run_record):
     log(f"bundle: {bundle_dir} ({manifest['duration']} s, parts {[p['name'] for p in manifest['parts']]})")
     sung_by = []
     if not a.no_sing:
+        # a reading chosen at a place a score edit took away is said, not dropped in silence
+        for c in song_places.stale(song_places.load(os.path.join(ROOT, "songs", a.slug)), cleaned):
+            log(f"pronunciation: the reading chosen for {c.get('word')!r} at bar {c.get('bar')} "
+                f"(time {c.get('n')} there) has no such word there any more; choose it again on the song page")
         voicing = song_voicing(a.slug)
         sung_by = [part_voice(p["name"], a.voice, voicing) for p in manifest["parts"]]
         work = os.path.join(out, "work")
@@ -825,7 +858,8 @@ def sing_and_publish(a, run_record):
         sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
              parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
              on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
-             version=run_record.record["version"], remote_only=a.remote_only)
+             version=run_record.record["version"], remote_only=a.remote_only,
+             pronounce=pronounce)
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit
