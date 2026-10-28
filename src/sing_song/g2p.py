@@ -10,11 +10,15 @@ vowels split between them. The others read the spelling of each syllable with th
 rules (German and Swedish with the voice's German sounds, church Latin with its Italian ones,
 Estonian like Finnish plus õ, ü, š, ž).
 
-An English word can be given its sounds by hand, for a song or for a choir (eeron-omat-taskit#143):
-a homograph the dictionary reads the other way ("wind" the breeze, W IH1 N D) or a word a choir
-says its own way. PRONOUNCE lists JSON files, os.pathsep apart, weakest first (sing_song.py passes
-the choirs' choirs/<choir>.json, then the song's songs/<slug>/pronounce.json), each
-{"pronounce": {"wind": "W IH1 N D"}} or the bare map; a later file's word wins.
+An English word's reading can be chosen (eeron-omat-taskit#143, #144), strongest first:
+- at one place in the song, on song-app's song page: SONG_PRONOUNCE names the song's
+  pronounce.json (places.py), whose "places" give a reading for the word starting at a bar
+  (the n-th time it starts there), whatever part sings it;
+- everywhere in the song, the same file's "everywhere";
+- for every song a choir publishes: CHOIR_WORDS lists choirs/<choir>.json files, os.pathsep
+  apart, each {"pronounce": {"harvest": "har-vist"}} (or the bare map): a sound-alike spelling,
+  read with g2p_en piece by piece. A spelling that gives a sound the voice lacks stops the run.
+Otherwise g2p_en's reading is sung.
 
 A note marked with another "lang" (publish_song.py --lang-from, #67) is left as it is: a note
 with no "ph" is sung with sing_ufr.py's Finnish rules, and each other language has its own run."""
@@ -29,34 +33,46 @@ def word_key(s):
     """A word as the English lookup sees it: lower case, letters and the apostrophe (#45)."""
     return re.sub(r"[^a-z']", "", unicodedata.normalize("NFC", s.lower().replace("\u2019", "'"))).strip("'")
 
-ARPA_VOWELS = {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW"}
-
 def en_sound(p):
     """An ARPAbet sound as the voice names it: AH1 en/ah, an unstressed AH0 the schwa en/ax."""
     base = p.rstrip("012").lower()
     return "en/ax" if base == "ah" and p.endswith("0") else f"en/{base}"
 
-def pronounce():
-    """The words PRONOUNCE's files set by hand: word -> ARPAbet sounds, a later file winning."""
+def check(arp, where):
+    """Stop the run when the voice lacks one of the sounds `arp`, naming `where` (the word, its file)."""
+    missing = [p for p in arp if en_sound(p) not in PH]
+    if missing:
+        sys.exit(f"{where}: the voice has no {missing}")
+    return arp
+
+def arpabet(g2p, text):
+    return [p for p in g2p(text) if re.match(r"^[A-Z]+[0-2]?$", p)]
+
+def choir_words(g2p):
+    """CHOIR_WORDS' sound-alike spellings, as sounds: word -> ARPAbet (readings.py spelled())."""
     out = {}
-    for f in filter(None, os.environ.get("PRONOUNCE", "").split(os.pathsep)):
+    for f in filter(None, os.environ.get("CHOIR_WORDS", "").split(os.pathsep)):
         d = json.load(open(f))
         d = d["pronounce"] if isinstance(d.get("pronounce"), dict) else d
-        for w, sounds in d.items():
-            arp = sounds.split() if isinstance(sounds, str) else list(sounds)
-            if not arp or not all(re.match(r"^[A-Z]+[0-2]?$", p) for p in arp):
-                sys.exit(f"{f}: {w!r}: {sounds!r} is not ARPAbet sounds, like \"W IH1 N D\"")
+        for w, spelling in d.items():
+            arp = []
+            for piece in re.split(r"[\s\-]+", str(spelling).lower()):
+                piece = re.sub(r"[^a-z']", "", piece)
+                if piece: arp += arpabet(g2p, piece)
             if not any(p[-1].isdigit() for p in arp):
-                sys.exit(f"{f}: {w!r}: {sounds!r} has no vowel: mark each vowel's stress, like IH1 or AH0")
-            # english() takes a sound with a stress mark for a vowel and one without for a consonant
-            wrong = [p for p in arp if (p.rstrip("012") in ARPA_VOWELS) != p[-1].isdigit()]
-            if wrong:
-                sys.exit(f"{f}: {w!r}: {wrong}: mark the stress of every vowel (IH1, AH0) and of no consonant")
-            missing = [p for p in arp if en_sound(p) not in PH]
-            if missing:
-                sys.exit(f"{f}: {w!r}: the voice has no {missing}")
-            out[word_key(w)] = arp
+                sys.exit(f"{f}: {w!r}: {spelling!r} gives no vowel to sing")
+            out[word_key(w)] = check(arp, f"{f}: {w!r} ({spelling!r})")
     return out
+
+def song_choices():
+    """The song page's choices (SONG_PRONOUNCE): ({(bar, word, n): sounds}, {word: sounds})."""
+    f = os.environ.get("SONG_PRONOUNCE", "")
+    if not f or not os.path.isfile(f): return {}, {}
+    d = json.load(open(f))
+    at = {(c["bar"], c["word"], c["n"]): check(c["sounds"].split(), f"{f}: {c['word']!r} at bar {c['bar']}")
+          for c in d.get("places") or []}
+    every = {w: check(v.split(), f"{f}: {w!r}") for w, v in (d.get("everywhere") or {}).items()}
+    return at, every
 
 def clean(s):
     s = unicodedata.normalize("NFC", (s or "").lower())
@@ -73,19 +89,26 @@ def cut(tokens, is_vowel):
 # ---- English: dictionary per word, dealt over the word's syllables ----
 def english():
     from g2p_en import G2p
-    g2p, own = G2p(), pronounce()
+    g2p = G2p()
+    choir = choir_words(g2p)
+    at, every = song_choices()
     words, cur = [], []
     for k, n in enumerate(notes):
         if not mine(n): continue
         cur.append(k)
         if n.get("syllabic") in (None, "single", "end"): words.append(cur); cur = []
     if cur: words.append(cur)
+    last_bar, seen = None, {}
     for idx in words:
         # keep the apostrophe: "I'm" and "don't" are dictionary words, "im" and "dont" are not (#45)
         text = word_key("".join(notes[k]["syl"] for k in idx))
         if not text: continue
+        # its place (places.py): the n-th time this word starts in this pass through the bar
+        bar = notes[idx[0]].get("bar")
+        if bar != last_bar: last_bar, seen = bar, {}
+        seen[text] = n = seen.get(text, 0) + 1
         if not re.search(r"[aeiouy]", text): continue   # scat ("dn", "mm"): no dictionary word; sing_ufr.py hums it
-        arp = own.get(text) or [p for p in g2p(text) if re.match(r"^[A-Z]+[0-2]?$", p)]
+        arp = at.get((bar, text, n)) or every.get(text) or choir.get(text) or arpabet(g2p, text)
         ph = []
         for p in arp:
             ph.append((en_sound(p), p[-1].isdigit()))

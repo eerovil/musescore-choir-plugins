@@ -538,3 +538,11 @@ table.grid .undernote:empty { display: none; }
 .liveupd { position: absolute; top: .3rem; right: .3rem; padding: .1rem .45rem; border-radius: 4px;
            background: rgba(255,255,255,.9); color: #555; font-size: .8rem; border: 1px solid #ccc; }
 .liveerr { color: #a33; font-size: .85rem; margin: .2rem 0 .35rem; }
+
+/* The Pronunciation list (eeron-omat-taskit#144) */
+.pronunciation { margin: 16px 0; }
+.pronunciation summary { font-weight: 600; cursor: pointer; }
+.pron-word { margin: 12px 0; padding-top: 8px; border-top: 1px solid var(--line, #3334); }
+.pron-row { flex-wrap: wrap; gap: 4px 8px; margin: 6px 0; }
+.pron-place { font-variant-numeric: tabular-nums; min-width: 4.5em; }
+.pron-line { flex: 1 1 14em; }

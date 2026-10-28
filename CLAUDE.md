@@ -66,6 +66,7 @@ src/sing_song/           Sing a song's parts with the UFR DiffSinger voices (see
   main.py                bundle + unroll + onset check + sing + MP3s; --publish through publish.py
   sing_ufr.py            the singer (runs in scripts/install-singer.sh's venv)
   unroll.py, check_onsets.py, g2p.py, gate.py, spoken.py, fold.py   its steps
+  places.py, readings.py the song page's Pronunciation list: where a word is sung, its readings
   tests/                 pytest
 src/kube_runner/         REMOTE_RUNNER for a GPU in a Kubernetes cluster: read a band, sing a line
 src/score_export/        The cleaned score made ready to publish (see its section below)

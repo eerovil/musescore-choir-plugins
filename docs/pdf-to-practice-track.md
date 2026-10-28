@@ -147,14 +147,19 @@ export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` 
 
 - Not in Finnish: `--lang en|de|sv|la|et`. Two languages: `--lang-from fi:Word,...` names the
   first word of each stretch (it stops and lists the words it thinks you missed).
-- An English word sung wrong (a homograph such as "wind" the breeze, which the dictionary reads
-  as the long "wind" of a watch, or a word the choir says its own way): give its sounds in
-  ARPAbet, the dictionary's alphabet, with each vowel's stress (0, 1 or 2). For one song, in
-  `songs/<slug>/pronounce.json`; for every song a choir sings, in `choirs/<choir>.json`, read for
-  each `--publish <choir>`. Both are `{"pronounce": {"wind": "W IH1 N D"}}`, and the song's
-  word wins over the choir's. Choirs whose files set different sounds need a run each: one run
-  sings once for all its `--publish` choirs. The dictionary's own reading of a word is in the singer's venv:
-  `python -c "from g2p_en import G2p; print(G2p()('wind'))"`.
+- An English word the dictionary reads two ways ("wind" the breeze or the clock's, "read",
+  "live", "tear", "bow", "lead"): the song page's Publish stage has a **Pronunciation** list
+  (open it; it takes a few seconds). It shows every place a part sings such a word, with its
+  line, and the readings spelled out ("wind", as in sit / "wynd", as in find). Choose the reading
+  at a place, or for the word everywhere in the song, and save. Until one is chosen the
+  dictionary's first is sung. The choices are kept in `songs/<slug>/pronounce.json`, by place
+  (bar, word, which time in that bar), for every part singing the word there. After a score edit
+  the list and the sing run name any choice whose word is no longer at its place.
+- A word a choir says its own way, in every song: `choirs/<choir>.json`, read for each
+  `--publish <choir>`, as a sound-alike spelling: `{"pronounce": {"harvest": "har-vist"}}`.
+  A place chosen on the song page wins over it. A spelling that gives a sound the voice lacks
+  stops the run, naming the word and the file. Choirs whose files differ need a run each: one
+  run sings once for all its `--publish` choirs.
 - A part name that does not start with S, A, M, T or B: `--voice LYSE` (high) or `--voice REMY`
   (low) for every part.
 - A stopped run: the same command with `--resume` sings only the lines not finished.

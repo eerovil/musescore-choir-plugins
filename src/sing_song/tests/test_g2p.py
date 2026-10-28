@@ -49,71 +49,85 @@ def test_notes_marked_with_another_language_are_left_to_it(tmp_path):
     assert "ph" not in out[1]
 
 
-# ---- English words given their sounds by hand (eeron-omat-taskit#143) ----
+# ---- English readings chosen on the song page or by a choir (eeron-omat-taskit#143, #144) ----
 FAKE_G2P_EN = '''
-WORDS = {"wind": "W AY1 N D", "harvest": "HH AA1 R V AH0 S T", "the": "DH AH0"}
+WORDS = {"wind": "W AY1 N D", "harvest": "HH AA1 R V AH0 S T", "the": "DH AH0", "blows": "B L OW1 Z",
+         "clock": "K L AA1 K", "har": "HH AA1 R", "vist": "V IH1 S T", "vust": "V UH1 S T"}
 class G2p:
     def __call__(self, text):
         return WORDS[text].split()
 '''
 EN = ["en/w", "en/ay", "en/ih", "en/n", "en/d", "en/hh", "en/aa", "en/r", "en/v", "en/ax", "en/s", "en/t",
-      "en/er", "en/dh"]
+      "en/er", "en/dh", "en/b", "en/l", "en/ow", "en/z", "en/k"]
 
 
-def sing_en(tmp_path, words, *maps):
-    """g2p.py en over `words` (one note each), with a stand-in g2p_en and PRONOUNCE naming `maps`."""
+def sing_en(tmp_path, words, song=None, choirs=()):
+    """g2p.py en over `words` ((bar, word) pairs, one note each), with a stand-in g2p_en, the
+    song page's choices `song` and the choir files `choirs`."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     fake = tmp_path / "fake"
     (fake / "g2p_en").mkdir(parents=True, exist_ok=True)
     (fake / "g2p_en" / "__init__.py").write_text(FAKE_G2P_EN)
+    env = dict(os.environ, PYTHONPATH=str(fake))
+    if song is not None:
+        (tmp_path / "pronounce.json").write_text(json.dumps(song))
+        env["SONG_PRONOUNCE"] = str(tmp_path / "pronounce.json")
     files = []
-    for i, m in enumerate(maps):
-        files.append(tmp_path / f"map{i}.json")
+    for i, m in enumerate(choirs):
+        files.append(tmp_path / f"choir{i}.json")
         files[-1].write_text(json.dumps(m))
+    env["CHOIR_WORDS"] = os.pathsep.join(map(str, files))
     notes = tmp_path / "notes.json"
-    notes.write_text(json.dumps([{"pitch": 60, "beats": 1, "sec": 0.5, "syl": w, "syllabic": "single"} for w in words]))
+    notes.write_text(json.dumps([{"pitch": 60, "beats": 1, "sec": 0.5, "syl": w, "syllabic": "single", "bar": b}
+                                 for b, w in words]))
+    env["UFR_DIR"] = str(pack(tmp_path, EN))
     # not -I: the stand-in g2p_en comes from PYTHONPATH
-    r = subprocess.run([sys.executable, str(G2P), "en", str(notes)], capture_output=True, text=True,
-                       env=dict(os.environ, UFR_DIR=str(pack(tmp_path, EN)), PYTHONPATH=str(fake),
-                                PRONOUNCE=os.pathsep.join(map(str, files))))
+    r = subprocess.run([sys.executable, str(G2P), "en", str(notes)], capture_output=True, text=True, env=env)
     return r, (json.loads(notes.read_text()) if r.returncode == 0 else None)
 
 
-def test_without_a_map_the_dictionary_gives_the_sounds(tmp_path):
-    r, notes = sing_en(tmp_path, ["wind"])
+WIND_SONG = [(1, "the"), (1, "wind"), (2, "blows"), (5, "wind"), (5, "the"), (6, "clock")]
+
+
+def test_without_a_choice_the_dictionary_gives_the_sounds(tmp_path):
+    r, notes = sing_en(tmp_path, WIND_SONG)
     assert r.returncode == 0, r.stderr
-    assert notes[0]["ph"] == {"on": ["en/w"], "vs": ["en/ay"], "co": ["en/n", "en/d"]}
+    assert notes[1]["ph"] == notes[3]["ph"] == {"on": ["en/w"], "vs": ["en/ay"], "co": ["en/n", "en/d"]}
 
 
-def test_the_song_map_wins_over_the_choir_map_and_the_dictionary(tmp_path):
-    choir = {"pronounce": {"wind": "W AY1 N D", "harvest": "HH AA1 R V IH0 S T"}}
-    song = {"Wind": "W IH1 N D"}   # the bare map works too, and case does not matter
-    r, notes = sing_en(tmp_path, ["wind", "harvest", "the"], choir, song)
+def test_a_reading_chosen_at_one_place_is_sung_there_only(tmp_path):
+    song = {"places": [{"bar": 1, "word": "wind", "n": 1, "sounds": "W IH1 N D"}]}
+    r, notes = sing_en(tmp_path, WIND_SONG, song)
     assert r.returncode == 0, r.stderr
-    assert notes[0]["ph"]["vs"] == ["en/ih"]                     # the song's
-    assert notes[1]["ph"]["vs"] == ["en/aa", "en/ih"]            # the choir's
-    assert notes[2]["ph"] == {"on": ["en/dh"], "vs": ["en/ax"], "co": []}   # the dictionary's
+    assert notes[1]["ph"]["vs"] == ["en/ih"]     # the wind blows
+    assert notes[3]["ph"]["vs"] == ["en/ay"]     # wind the clock
 
 
-def test_a_sound_the_voice_lacks_names_the_word_and_file(tmp_path):
-    r, _ = sing_en(tmp_path, ["wind"], {"wind": "W UH1 N D"})
-    assert r.returncode != 0 and "'wind'" in r.stderr and "map0.json" in r.stderr and "UH1" in r.stderr
-
-
-def test_sounds_without_a_stressed_vowel_are_refused(tmp_path):
-    r, _ = sing_en(tmp_path, ["wind"], {"wind": "W IH N D"})
-    assert r.returncode != 0 and "stress" in r.stderr
-
-
-def test_every_vowel_needs_its_stress_and_no_consonant_has_one(tmp_path):
-    # unmarked, IH would be dealt among the consonants and never sung
-    r, _ = sing_en(tmp_path / "a", ["harvest"], {"harvest": "HH AA1 R V IH S T"})
-    assert r.returncode != 0 and "'IH'" in r.stderr
-    r, _ = sing_en(tmp_path / "b", ["harvest"], {"harvest": "HH AA1 R1 V IH0 S T"})
-    assert r.returncode != 0 and "'R1'" in r.stderr
-
-
-def test_an_unstressed_ah_is_checked_as_the_schwa_it_is_sung_as(tmp_path):
-    # the stand-in voice has en/ax and no en/ah, as g2p.py sings AH0
-    r, notes = sing_en(tmp_path, ["the"], {"the": "DH AH0"})
+def test_the_place_counts_the_word_within_its_bar_and_each_pass_through_it(tmp_path):
+    song = {"places": [{"bar": 1, "word": "wind", "n": 2, "sounds": "W IH1 N D"}]}
+    # bar 1 sung twice (a repeat): the second "wind" of each pass is the chosen one
+    words = [(1, "wind"), (1, "wind"), (2, "the"), (1, "wind"), (1, "wind")]
+    r, notes = sing_en(tmp_path, words, song)
     assert r.returncode == 0, r.stderr
-    assert notes[0]["ph"] == {"on": ["en/dh"], "vs": ["en/ax"], "co": []}
+    assert [n["ph"]["vs"] for n in notes] == [["en/ay"], ["en/ih"], ["en/ax"], ["en/ay"], ["en/ih"]]
+
+
+def test_everywhere_in_the_song_and_a_place_wins_over_it(tmp_path):
+    song = {"everywhere": {"wind": "W IH1 N D"},
+            "places": [{"bar": 5, "word": "wind", "n": 1, "sounds": "W AY1 N D"}]}
+    r, notes = sing_en(tmp_path, WIND_SONG, song)
+    assert r.returncode == 0, r.stderr
+    assert notes[1]["ph"]["vs"] == ["en/ih"] and notes[3]["ph"]["vs"] == ["en/ay"]
+
+
+def test_a_choirs_sound_alike_spelling_and_the_song_page_wins_over_it(tmp_path):
+    song = {"places": [{"bar": 5, "word": "wind", "n": 1, "sounds": "W AY1 N D"}]}
+    r, notes = sing_en(tmp_path, [(1, "harvest"), (5, "wind")], song, [{"harvest": "har-vist"}])
+    assert r.returncode == 0, r.stderr
+    assert notes[0]["ph"]["vs"] == ["en/aa", "en/ih"]          # har-vist, not HH AA1 R V AH0 S T
+    assert notes[1]["ph"]["vs"] == ["en/ay"]
+
+
+def test_a_spelling_with_a_sound_the_voice_lacks_names_the_word_and_choir_file(tmp_path):
+    r, _ = sing_en(tmp_path, [(1, "harvest")], None, [{"pronounce": {"harvest": "har-vust"}}])
+    assert r.returncode != 0 and "'harvest'" in r.stderr and "choir0.json" in r.stderr and "UH1" in r.stderr

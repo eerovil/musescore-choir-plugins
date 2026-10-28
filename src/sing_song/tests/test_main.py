@@ -830,29 +830,29 @@ def test_remote_only_without_a_runner_turns_waiting_into_failed_with_the_reason(
     assert run["state"] == "failed" and run["error"] == "--remote-only needs REMOTE_RUNNER in .env"
 
 
-def test_pronounce_files_are_the_choirs_then_the_song(tmp_path, monkeypatch):
-    # eeron-omat-taskit#143: g2p.py lets a later file win, so the song's own map comes last
+def test_pronounce_env_names_the_songs_choices_and_the_choirs_words(tmp_path, monkeypatch):
+    # eeron-omat-taskit#144: g2p.py reads the song page's choices and each choir's words
     monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
     (tmp_path / "choirs").mkdir()
-    (tmp_path / "songs" / "hodie").mkdir(parents=True)
-    for p in ("choirs/jm.json", "choirs/pcas.json", "songs/hodie/pronounce.json"):
+    for p in ("choirs/jm.json", "choirs/pcas.json"):
         (tmp_path / p).write_text("{}")
-    assert publish_song.pronounce_files("hodie", ["pcas", "other", "jm"]) == [
-        str(tmp_path / "choirs/pcas.json"), str(tmp_path / "choirs/jm.json"), str(tmp_path / "songs/hodie/pronounce.json")]
-    assert publish_song.pronounce_files("bleak", []) == []
+    env = publish_song.pronounce_env("hodie", ["pcas", "other", "jm"])
+    assert env["SONG_PRONOUNCE"] == str(tmp_path / "songs/hodie/pronounce.json")
+    assert env["CHOIR_WORDS"].split(os.pathsep) == [str(tmp_path / "choirs/pcas.json"), str(tmp_path / "choirs/jm.json")]
+    assert publish_song.pronounce_env("bleak", [])["CHOIR_WORDS"] == ""
     for bad in ("..", "../x", "/etc/passwd", ".hidden", ""):
         with pytest.raises(SystemExit):
-            publish_song.pronounce_files("hodie", [bad])
+            publish_song.pronounce_env("hodie", [bad])
 
 
 def test_choirs_that_say_a_word_differently_are_not_sung_in_one_run(tmp_path, monkeypatch):
-    # one run sings once and publishes that take to every choir: one choir's "wind" would be the other's
+    # one run sings once and publishes that take to every choir: one choir's "harvest" would be the other's
     monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
     (tmp_path / "choirs").mkdir()
-    (tmp_path / "choirs/a.json").write_text('{"pronounce": {"wind": "W IH1 N D"}}')
-    (tmp_path / "choirs/b.json").write_text('{"wind": "W AY1 N D"}')
-    (tmp_path / "choirs/c.json").write_text('{"wind": "W IH1 N D"}')
+    (tmp_path / "choirs/a.json").write_text('{"pronounce": {"harvest": "har-vist"}}')
+    (tmp_path / "choirs/b.json").write_text('{"harvest": "har-vust"}')
+    (tmp_path / "choirs/c.json").write_text('{"harvest": "har-vist"}')
     for choirs in (["a", "b"], ["a", "nofile"]):
         with pytest.raises(SystemExit, match="its own run"):
-            publish_song.pronounce_files("hodie", choirs)
-    assert publish_song.pronounce_files("hodie", ["a", "c"]) == [str(tmp_path / "choirs/a.json"), str(tmp_path / "choirs/c.json")]
+            publish_song.pronounce_env("hodie", choirs)
+    assert publish_song.pronounce_env("hodie", ["a", "c"])["CHOIR_WORDS"].count(os.pathsep) == 1

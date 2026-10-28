@@ -7,10 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
-- An English word the singer says wrong can be given its sounds by hand: in
-  `songs/<slug>/pronounce.json` for one song, or `choirs/<choir>.json` for every song a choir
-  publishes, as ARPAbet with each vowel's stress (`{"pronounce": {"wind": "W IH1 N D"}}`); the
-  song's word wins. Choirs that set a word differently are published in a run each. (#466)
+- An English word the dictionary reads two ways ("wind", "read", "live") is sung the way the
+  song means: the song page's Publish stage lists each place one is sung, and a reading chosen
+  there (or for the whole song) is sung by every part at that place. A choir's own way of saying
+  a word goes in `choirs/<choir>.json` as a sound-alike spelling (`"harvest": "har-vist"`). (#466)
 
 - `HOMR_GPU=cuda scripts/install-homr.sh` reads scores on a card onnxruntime's own GPU build
   supports, such as bazzite's new GTX 1660 Super, and the Update button keeps it. eero-pc no
