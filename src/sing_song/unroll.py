@@ -82,6 +82,7 @@ for m in staff.findall("Measure"):
     ts = m.find(".//TimeSig")
     if ts is not None: bar = int(ts.findtext("sigN")) * 4 / int(ts.findtext("sigD")); quarter_beat = ts.findtext("sigD") == "4"
     evs, pos, tup = [], 0.0, 1.0
+    reached = 0.0                    # how far the voice's notes and rests have reached in the bar
     if m.find("voice") is None:       # an empty bar: rest through it (its own length when it has one)
         ln = m.get("len"); full = bar
         if ln and "/" in ln: full = int(ln.split("/")[0]) * 4 / int(ln.split("/")[1])
@@ -100,11 +101,13 @@ for m in staff.findall("Measure"):
             continue
         if el.tag == "Tuplet": tup = int(el.findtext("normalNotes")) / int(el.findtext("actualNotes")); continue
         if el.tag == "endTuplet": tup = 1.0; continue
-        if el.tag == "location":      # a gap it leaves is silent
-            to = pos + moved(el)
-            if to > pos + 1e-9: evs.append({"pitch": None, "a": pos, "b": to, "verses": {}, "tup": False})
-            pos = to; continue
+        if el.tag == "location":
+            # moves the beat cursor only: MuseScore also writes a pair, back and then forward again,
+            # around a text or spanner placed between two notes, and that is no rest
+            pos += moved(el); continue
         if el.tag not in ("Chord", "Rest"): continue
+        if pos > reached + 1e-9:      # a gap a location leaves before a note or rest is silent (#104)
+            evs.append({"pitch": None, "a": reached, "b": pos, "verses": {}, "tup": False})
         d = length(el)
         d *= tup
         if el.tag == "Rest": evs.append({"pitch": None, "a": pos, "b": pos + d, "verses": {}, "tup": tup != 1.0})
@@ -129,6 +132,7 @@ for m in staff.findall("Measure"):
             if lyrics: extender = any((l.findtext("ticks") or l.findtext("ticks_f") or "0") not in ("0", "0/1") for l in lyrics)
             slur = max(0, slur + starts - ends)
         pos += d
+        reached = max(reached, pos)
     if quarter_beat and len(measures) < len(swings) and swings[len(measures)]:
         swing_bar(evs)
     measures.append(evs)
