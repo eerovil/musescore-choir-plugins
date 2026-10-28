@@ -142,11 +142,26 @@ uv venv --allow-existing --python "$HOMR_PYTHON" "$HOMR_VENV"
 
 # onnxruntime and onnxruntime-gpu write the same onnxruntime/ directory, so the
 # one not wanted goes first: a switch between the CPU and the card would
-# otherwise leave both installed over each other.
+# otherwise leave both installed over each other. A GTX 970 build is an
+# onnxruntime-gpu too, and its 1.29.0 satisfies homr[cuda], so uv would keep it;
+# one installed from a file (it has a direct_url.json, the index's has none)
+# goes as well.
+dist_info() {
+    for d in "$HOMR_VENV"/lib/python3.*/site-packages/"$1"-*.dist-info; do
+        [ -d "$d" ] && echo "$d" && return
+    done
+    return 0
+}
+unwanted=()
 if [ "$HOMR_GPU" = cuda ]; then
-    VIRTUAL_ENV="$HOMR_VENV" uv pip uninstall onnxruntime >/dev/null 2>&1 || true
+    [ -n "$(dist_info onnxruntime)" ] && unwanted+=(onnxruntime)
+    gpu_info=$(dist_info onnxruntime_gpu)
+    [ -n "$gpu_info" ] && [ -f "$gpu_info/direct_url.json" ] && unwanted+=(onnxruntime-gpu)
 elif [ -z "${HOMR_ORT_WHEEL:-}" ]; then
-    VIRTUAL_ENV="$HOMR_VENV" uv pip uninstall onnxruntime-gpu >/dev/null 2>&1 || true
+    [ -n "$(dist_info onnxruntime_gpu)" ] && unwanted+=(onnxruntime-gpu)
+fi
+if [ ${#unwanted[@]} -gt 0 ]; then
+    VIRTUAL_ENV="$HOMR_VENV" uv pip uninstall "${unwanted[@]}"
 fi
 
 echo "Installing $HOMR_SOURCE"

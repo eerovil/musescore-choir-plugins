@@ -50,7 +50,7 @@ def install(tmp_path: Path):
                 "HOMR_LOG": str(homr_log),
             }
         )
-        for key in ("HOMR_SOURCE", "HOMR_VENV", "HOMR_ORT_WHEEL"):
+        for key in ("HOMR_SOURCE", "HOMR_VENV", "HOMR_ORT_WHEEL", "HOMR_GPU"):
             env.pop(key, None)
         for key, value in overrides.items():
             if value is not None:
@@ -196,3 +196,72 @@ def test_without_a_gpu_wheel_the_venv_reads_on_the_cpu(install, tmp_path: Path) 
     uv_log, _ = install(HOMR_VENV=str(venv))
     assert not any("onnxruntime" in line for line in uv_log)
     assert "gpu=" not in (venv / "homr-engine.txt").read_text(encoding="utf-8")
+
+
+CUDA_SOURCE = "homr[cuda] @ git+https://github.com/eerovil/homr.git@main"
+
+
+def _dist_info(venv: Path, name: str, from_file: bool = False) -> None:
+    info = venv / f"lib/python3.12/site-packages/{name}-1.0.dist-info"
+    info.mkdir(parents=True, exist_ok=True)
+    if from_file:
+        (info / "direct_url.json").write_text('{"url": "file:///x.whl"}')
+
+
+def test_the_stock_gpu_build_replaces_the_cpu_onnxruntime(install, tmp_path: Path) -> None:
+    """eeron-omat-taskit#138: a card the stock build supports reads with homr[cuda]."""
+    venv = tmp_path / "venv"
+    _dist_info(venv, "onnxruntime")
+    uv_log, homr_log = install(HOMR_GPU="cuda", HOMR_VENV=str(venv))
+
+    assert "pip uninstall onnxruntime" in uv_log
+    assert f"pip install {CUDA_SOURCE}" in uv_log
+    marker = (venv / "homr-engine.txt").read_text(encoding="utf-8").splitlines()
+    assert "gpu=force" in marker and "gpu_extra=cuda" in marker
+    assert not any(line.startswith("ort_wheel=") for line in marker)
+    assert homr_log == ["--init --gpu force"]
+
+
+def test_the_gtx_970_build_goes_when_switching_to_the_stock_one(install, tmp_path: Path) -> None:
+    """Its 1.29.0 satisfies homr[cuda], so uv would keep it and the new card could not read."""
+    wheel = tmp_path / "onnxruntime_gpu.whl"
+    wheel.write_bytes(b"")
+    venv = tmp_path / "venv"
+    install(HOMR_ORT_WHEEL=str(wheel), HOMR_VENV=str(venv))
+    _dist_info(venv, "onnxruntime_gpu", from_file=True)
+    uv_log, _ = install(HOMR_GPU="cuda", HOMR_VENV=str(venv))
+
+    switch = uv_log[uv_log.index(f"pip install {CUDA_SOURCE}") - 1]
+    assert switch == "pip uninstall onnxruntime-gpu"
+    marker = (venv / "homr-engine.txt").read_text(encoding="utf-8").splitlines()
+    assert "gpu_extra=cuda" in marker
+    assert not any(line.startswith("ort_wheel=") for line in marker)
+
+
+def test_the_stock_gpu_build_is_kept_by_a_plain_run(install, tmp_path: Path) -> None:
+    """The Update button runs the script bare; the stock build from the index stays."""
+    venv = tmp_path / "venv"
+    install(HOMR_GPU="cuda", HOMR_VENV=str(venv))
+    _dist_info(venv, "onnxruntime_gpu")
+    uv_log, _ = install(HOMR_VENV=str(venv))
+
+    assert uv_log.count(f"pip install {CUDA_SOURCE}") == 2
+    assert not any(line.startswith("pip uninstall") for line in uv_log)
+    assert "gpu_extra=cuda" in (venv / "homr-engine.txt").read_text(encoding="utf-8")
+
+
+def test_cpu_takes_the_venv_back_off_the_card(install, tmp_path: Path) -> None:
+    venv = tmp_path / "venv"
+    install(HOMR_GPU="cuda", HOMR_VENV=str(venv))
+    _dist_info(venv, "onnxruntime_gpu")
+    uv_log, _ = install(HOMR_GPU="cpu", HOMR_VENV=str(venv))
+
+    assert uv_log[-2:] == ["pip uninstall onnxruntime-gpu", f"pip install {DEFAULT_SOURCE}"]
+    assert "gpu=" not in (venv / "homr-engine.txt").read_text(encoding="utf-8")
+
+
+def test_both_gpu_routes_at_once_are_refused(install, tmp_path: Path) -> None:
+    wheel = tmp_path / "onnxruntime_gpu.whl"
+    wheel.write_bytes(b"")
+    with pytest.raises(subprocess.CalledProcessError):
+        install(HOMR_GPU="cuda", HOMR_ORT_WHEEL=str(wheel), HOMR_VENV=str(tmp_path / "venv"))
