@@ -22,12 +22,12 @@ Three things about homr that this module exists to absorb:
   kept.
 * ``--gpu`` defaults to ``auto``, which asks whether the CUDA provider is
   *registered* and not whether it can run. The stock onnxruntime GPU build
-  starts at compute 6.0 and this host's GTX 970 is 5.2 (issue #93), so auto
-  could pick CUDA and die on the first segnet node. So the value is never left
-  to homr: it is ``no`` unless the venv says it was installed with an
-  onnxruntime built for this card (``gpu=force`` in its marker file, written by
-  ``scripts/install-homr.sh`` with ``HOMR_ORT_WHEEL``; issue #418), and
-  ``OMR_GPU`` overrides both.
+  starts at compute 6.0 and a GTX 970 is 5.2 (issue #93), so auto could pick
+  CUDA and die on the first segnet node. So the value is never left to homr:
+  it is ``no`` unless the venv says it was installed with an onnxruntime that
+  runs on this host's card (``gpu=force`` in its marker file, written by
+  ``scripts/install-homr.sh`` with ``HOMR_GPU`` or ``HOMR_ORT_WHEEL``; issues
+  #418 and eeron-omat-taskit#138), and ``OMR_GPU`` overrides both.
 * Its **slurs used to come out unpaired**, so a dropped stop let one slur run
   away over bars nobody engraved and swallow their syllable slots. That repair
   lived here until #144 and is now homr's own (``homr/slur_resolution.py``,

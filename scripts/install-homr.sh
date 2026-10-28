@@ -14,10 +14,18 @@
 #   scripts/install-homr.sh                 # default location
 #   HOMR_VENV=/somewhere/else scripts/install-homr.sh
 #   scripts/install-homr.sh --status        # installed vs the fork's main; installs nothing
-#   HOMR_ORT_WHEEL=/path/onnxruntime_gpu-*.whl scripts/install-homr.sh   # read on the GPU
+#   HOMR_GPU=cuda scripts/install-homr.sh   # read on an NVIDIA card of compute 6.0 or newer
+#   HOMR_ORT_WHEEL=/path/onnxruntime_gpu-*.whl scripts/install-homr.sh   # read on a GTX 970
 #
-# HOMR_ORT_WHEEL swaps homr's CPU onnxruntime for a GPU one built for this
-# host's GTX 970 (scripts/onnxruntime-sm52/build.sh; issue #418). The stock GPU
+# HOMR_GPU=cuda installs homr's [cuda] extra, onnxruntime's own GPU build, for a
+# card it supports: bazzite's GTX 1660 Super (eerovil/eeron-omat-taskit#138).
+# That card gives NaN with homr's fp16 segmentation model, and homr falls back to
+# the fp32 one by itself (eerovil/homr#99). Kept in the venv's marker like the
+# wheel below, so the Update button keeps it.
+#
+# HOMR_ORT_WHEEL swaps homr's CPU onnxruntime for a GPU one built for a
+# GTX 970 (scripts/onnxruntime-sm52/build.sh; issue #418), this host's card
+# until eerovil/eeron-omat-taskit#138. The stock GPU
 # wheels start at compute 6.0 and the card is 5.2 (#93). The wheel's path is
 # kept in the venv's marker, so a later plain run (the app's Update button)
 # puts it back rather than quietly going back to the CPU.
@@ -49,17 +57,35 @@ set -euo pipefail
 # The [cpu] extra is now load-bearing and was not on 0.7.0: upstream has moved
 # onnxruntime out of the base dependencies into cpu/cuda/rocm extras, so a plain
 # install of `main` produces a homr with no inference runtime at all. It fails at
-# the first parse, not at install time. The stock GPU builds cannot run on this
-# host's GTX 970 (issue #93: sm_52, below their sm_60 floor); HOMR_ORT_WHEEL is
-# the way round that (#418).
+# the first parse, not at install time. The stock GPU builds cannot run on a
+# GTX 970 (issue #93: sm_52, below their sm_60 floor); HOMR_ORT_WHEEL is the way
+# round that (#418). HOMR_GPU=cuda picks the [cuda] extra instead.
 HOMR_REPO="${HOMR_REPO:-https://github.com/eerovil/homr.git}"
 
 DEFAULT_VENV="$HOME/.local/share/musescore-choir-plugins/homr-venv"
 
 # `main` is a label a person recognises; a hand-written HOMR_SOURCE is not one,
 # so an install made from an explicit source is labelled by that source instead.
+HOMR_VENV="${HOMR_VENV:-$DEFAULT_VENV}"
+
+# A GPU onnxruntime chosen on an earlier run stays chosen: the app's Update
+# button runs this script with no environment of its own.
+if [ -z "${HOMR_GPU:-}" ] && [ -z "${HOMR_ORT_WHEEL:-}" ] && [ -f "$HOMR_VENV/homr-engine.txt" ]; then
+    HOMR_GPU=$(sed -n 's/^gpu_extra=//p' "$HOMR_VENV/homr-engine.txt")
+    HOMR_ORT_WHEEL=$(sed -n 's/^ort_wheel=//p' "$HOMR_VENV/homr-engine.txt")
+fi
+case "${HOMR_GPU:-}" in
+    ""|cpu) HOMR_GPU="" ;;
+    cuda) ;;
+    *) echo "HOMR_GPU must be cuda or cpu, not $HOMR_GPU" >&2; exit 1 ;;
+esac
+if [ -n "$HOMR_GPU" ] && [ -n "${HOMR_ORT_WHEEL:-}" ]; then
+    echo "Set HOMR_GPU or HOMR_ORT_WHEEL, not both" >&2
+    exit 1
+fi
+
 if [ -z "${HOMR_SOURCE:-}" ]; then
-    HOMR_SOURCE="homr[cpu] @ git+$HOMR_REPO@main"
+    HOMR_SOURCE="homr[${HOMR_GPU:-cpu}] @ git+$HOMR_REPO@main"
     HOMR_LABEL="main"
 else
     HOMR_LABEL=""
@@ -68,7 +94,6 @@ fi
 # homr declares >=3.11,<3.16, but every benchmark number recorded for this
 # project came off 3.12. uv fetches the interpreter, so this costs nothing.
 HOMR_PYTHON="${HOMR_PYTHON:-3.12}"
-HOMR_VENV="${HOMR_VENV:-$DEFAULT_VENV}"
 
 if [ "${1:-}" = "--status" ]; then
     # The same two facts the app's homr box shows, for someone at a shell.
@@ -102,11 +127,6 @@ if ! command -v uv >/dev/null 2>&1; then
     fi
 fi
 
-# A GPU onnxruntime chosen on an earlier run stays chosen: the app's Update
-# button runs this script with no environment of its own.
-if [ -z "${HOMR_ORT_WHEEL:-}" ] && [ -f "$HOMR_VENV/homr-engine.txt" ]; then
-    HOMR_ORT_WHEEL=$(sed -n 's/^ort_wheel=//p' "$HOMR_VENV/homr-engine.txt")
-fi
 if [ -n "${HOMR_ORT_WHEEL:-}" ] && [ ! -f "$HOMR_ORT_WHEEL" ]; then
     echo "HOMR_ORT_WHEEL is not a file: $HOMR_ORT_WHEEL" >&2
     echo "Build it with scripts/onnxruntime-sm52/build.sh, or unset HOMR_ORT_WHEEL" >&2
@@ -119,6 +139,30 @@ mkdir -p "$(dirname "$HOMR_VENV")"
 # --allow-existing rather than --clear: re-running this after the source moved
 # must not throw away the 150 MB of weights already downloaded.
 uv venv --allow-existing --python "$HOMR_PYTHON" "$HOMR_VENV"
+
+# onnxruntime and onnxruntime-gpu write the same onnxruntime/ directory, so the
+# one not wanted goes first: a switch between the CPU and the card would
+# otherwise leave both installed over each other. A GTX 970 build is an
+# onnxruntime-gpu too, and its 1.29.0 satisfies homr[cuda], so uv would keep it;
+# one installed from a file (it has a direct_url.json, the index's has none)
+# goes as well.
+dist_info() {
+    for d in "$HOMR_VENV"/lib/python3.*/site-packages/"$1"-*.dist-info; do
+        [ -d "$d" ] && echo "$d" && return
+    done
+    return 0
+}
+unwanted=()
+if [ "$HOMR_GPU" = cuda ]; then
+    [ -n "$(dist_info onnxruntime)" ] && unwanted+=(onnxruntime)
+    gpu_info=$(dist_info onnxruntime_gpu)
+    [ -n "$gpu_info" ] && [ -f "$gpu_info/direct_url.json" ] && unwanted+=(onnxruntime-gpu)
+elif [ -z "${HOMR_ORT_WHEEL:-}" ]; then
+    [ -n "$(dist_info onnxruntime_gpu)" ] && unwanted+=(onnxruntime-gpu)
+fi
+if [ ${#unwanted[@]} -gt 0 ]; then
+    VIRTUAL_ENV="$HOMR_VENV" uv pip uninstall "${unwanted[@]}"
+fi
 
 echo "Installing $HOMR_SOURCE"
 VIRTUAL_ENV="$HOMR_VENV" uv pip install "$HOMR_SOURCE"
@@ -154,16 +198,21 @@ echo "source=$HOMR_SOURCE" > "$HOMR_VENV/homr-engine.txt"
 if [ -n "$HOMR_LABEL" ]; then
     echo "branch=$HOMR_LABEL" >> "$HOMR_VENV/homr-engine.txt"
 fi
-if [ -n "${HOMR_ORT_WHEEL:-}" ]; then
+if [ -n "$HOMR_GPU" ] || [ -n "${HOMR_ORT_WHEEL:-}" ]; then
     # src/song_app/omr.py passes --gpu force only when this line is here.
     echo "gpu=force" >> "$HOMR_VENV/homr-engine.txt"
+fi
+if [ -n "$HOMR_GPU" ]; then
+    echo "gpu_extra=$HOMR_GPU" >> "$HOMR_VENV/homr-engine.txt"
+fi
+if [ -n "${HOMR_ORT_WHEEL:-}" ]; then
     echo "ort_wheel=$HOMR_ORT_WHEEL" >> "$HOMR_VENV/homr-engine.txt"
 fi
 
 # Pull the model weights now rather than on the first parse a person is waiting
 # for. ~150 MB, into the homr package directory inside the venv.
 echo "Downloading model weights (once; ~150 MB)"
-if [ -n "${HOMR_ORT_WHEEL:-}" ]; then
+if [ -n "$HOMR_GPU" ] || [ -n "${HOMR_ORT_WHEEL:-}" ]; then
     # The GPU route reads with homr's fp16 models, a second set of weights.
     "$HOMR_VENV/bin/homr" --init --gpu force
 else
