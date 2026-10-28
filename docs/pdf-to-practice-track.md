@@ -13,10 +13,13 @@ yourself.
 - `.venv` with `pip-requirements.txt`, MuseScore 3 (`MUSESCORE_CLI_PATH`), poppler, ffmpeg:
   `scripts/setup.sh`, then `./song.py --check`.
 - homr, which reads the notes off the page: `scripts/install-homr.sh`.
-- The singer: `scripts/install-singer.sh` (uses an NVIDIA card when there is one, else the
-  processor), and the UFR DiffSinger voices downloaded by hand from
-  <https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/>, with `UFR_DIR` in `.env`
-  naming the folder that holds `core/`, `dsdur/` and `tiger/`.
+- The singer and its voices: download the UFR DiffSinger pack's zip by hand from
+  <https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/> (a Google Drive link, no
+  sign-up; its terms forbid re-hosting it), then `scripts/install-singer.sh <the .zip>`. It
+  installs the singer (on an NVIDIA card when there is one, else the processor), copies what
+  the singer reads from the pack (made for OpenUtau) into a folder of `core/`, `dsdur/` and
+  `tiger/`, and sets `UFR_DIR` in `.env` to that folder. The folder the zip unzips to works
+  as the argument too.
 - The app running: `./song.py --no-browser` prints its address. Every step below is a call to
   it; `$APP` is that address (`http://127.0.0.1:8000`, or the next free port).
 

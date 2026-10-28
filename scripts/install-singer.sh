@@ -9,16 +9,23 @@
 #   scripts/install-singer.sh                    # ~/.local/share/musescore-choir-plugins/sing-venv
 #   SING_VENV=/somewhere/else scripts/install-singer.sh   # or SING_VENV=... in .env
 #   SING_GPU=0 scripts/install-singer.sh         # the processor even with a card (1: the card)
+#   scripts/install-singer.sh ~/Downloads/UFR-V1.0.zip   # and the voices, from the pack's download
 #
-# The voices are not installed: download the UFR DiffSinger pack yourself
+# The voices are not downloaded here: get the UFR DiffSinger pack yourself
 # (https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/; its terms forbid
-# re-hosting it) and set UFR_DIR in .env to the folder with core/, dsdur/ and tiger/.
+# re-hosting it) and give its .zip, or the folder it unzipped to, as the argument. The pack
+# ships for OpenUtau; src/sing_song/ufr_pack.py copies what the singer reads into a folder
+# with core/, dsdur/ and tiger/ (UFR_DIR from .env when it is one or is not there yet, else
+# ~/.local/share/musescore-choir-plugins/ufr) and sets UFR_DIR in .env to it.
 set -euo pipefail
 
 # an exported SING_VENV wins, then the one in .env (sing_song.py reads the same), then the default
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -z "${SING_VENV:-}" ] && [ -f "$ROOT/.env" ]; then
     SING_VENV=$(sed -n 's/^SING_VENV=//p' "$ROOT/.env" | tail -1 | sed "s/^[\"']//; s/[\"']\$//")
+fi
+if [ -z "${UFR_DIR:-}" ] && [ -f "$ROOT/.env" ]; then
+    UFR_DIR=$(sed -n 's/^UFR_DIR=//p' "$ROOT/.env" | tail -1 | sed "s/^[\"']//; s/[\"']\$//")
 fi
 SING_VENV="${SING_VENV:-$HOME/.local/share/musescore-choir-plugins/sing-venv}"
 SING_VENV="${SING_VENV/#\~/$HOME}"
@@ -55,3 +62,14 @@ fi
 # g2p_en fetches its word lists (nltk data, into ~/nltk_data) the first time it is imported.
 "$SING_VENV/bin/python" -c "import g2p_en" >/dev/null
 echo "Singer installed in $SING_VENV ($([ "$SING_GPU" = 1 ] && echo 'graphics card' || echo processor))."
+
+if [ $# -gt 0 ]; then
+    # into UFR_DIR when it is the singer's layout or not made yet, not when it names the download
+    UFR_DIR="${UFR_DIR:-}"; UFR_DIR="${UFR_DIR/#\~/$HOME}"
+    if [ -z "$UFR_DIR" ] || { [ -e "$UFR_DIR" ] && [ ! -f "$UFR_DIR/core/phonemes.json" ]; }; then
+        UFR_DIR="$HOME/.local/share/musescore-choir-plugins/ufr"
+    fi
+    [ -f "$ROOT/.env" ] || cp "$ROOT/.env.default" "$ROOT/.env"
+    "$SING_VENV/bin/python" -I "$ROOT/src/sing_song/ufr_pack.py" "$1" "$UFR_DIR" "$ROOT/.env"
+    echo "Voices in $UFR_DIR (UFR_DIR in .env)."
+fi

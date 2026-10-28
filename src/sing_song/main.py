@@ -41,6 +41,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))   # this checkout: the app whose p
 from src.sing_song import progress  # noqa: E402
 from src.sing_song.fold import fold  # noqa: E402
 from src.sing_song.spoken import split_spoken  # noqa: E402
+from src.sing_song.ufr_pack import is_download, is_ours  # noqa: E402
 from src.song_app.publish import sung_file  # noqa: E402
 
 SINGER = os.path.join(HERE, "sing_ufr.py")
@@ -800,9 +801,12 @@ def sing_and_publish(a, run_record):
     if not a.no_sing:
         if not os.path.exists(python):
             sys.exit(f"no singer at {venv}: run scripts/install-singer.sh")
-        if not os.path.isfile(os.path.join(ufr_dir, "core", "phonemes.json")):
-            sys.exit("set UFR_DIR in .env to the UFR DiffSinger pack's folder (core/, dsdur/, tiger/); "
-                     "download it from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/")
+        if ufr_dir and not is_ours(ufr_dir) and is_download(ufr_dir):
+            sys.exit(f"UFR_DIR ({ufr_dir}) is the UFR pack as it downloads, for OpenUtau: run "
+                     f"scripts/install-singer.sh {shlex.quote(ufr_dir)} to build the singer's folder from it")
+        if not is_ours(ufr_dir):
+            sys.exit("download the UFR DiffSinger pack from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/ "
+                     "and run scripts/install-singer.sh <the .zip>; it sets UFR_DIR in .env")
     bundle_dir = out
     os.makedirs(out, exist_ok=True)
     clear_bundle(out)
