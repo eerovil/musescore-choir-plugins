@@ -152,7 +152,8 @@ export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` 
   ARPAbet, the dictionary's alphabet, with each vowel's stress (0, 1 or 2). For one song, in
   `songs/<slug>/pronounce.json`; for every song a choir sings, in `choirs/<choir>.json`, read for
   each `--publish <choir>`. Both are `{"pronounce": {"wind": "W IH1 N D"}}`, and the song's
-  word wins over the choir's. The dictionary's own reading of a word is in the singer's venv:
+  word wins over the choir's. Choirs whose files set different sounds need a run each: one run
+  sings once for all its `--publish` choirs. The dictionary's own reading of a word is in the singer's venv:
   `python -c "from g2p_en import G2p; print(G2p()('wind'))"`.
 - A part name that does not start with S, A, M, T or B: `--voice LYSE` (high) or `--voice REMY`
   (low) for every part.
