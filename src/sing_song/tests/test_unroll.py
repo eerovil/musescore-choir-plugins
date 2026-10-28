@@ -77,3 +77,42 @@ def test_a_second_voice_that_rests_and_then_sings_is_the_low_line(tmp_path):
     timing = {"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}
     assert unroll(tmp_path, v1 + v2, timing, line="low") == [(None, None, 1.0), (75, "lu", 3.0)]
     assert unroll(tmp_path, v1 + v2, timing, line="high") == [(72, "la", 4.0)]
+
+
+def test_a_text_placed_mid_bar_adds_no_rest(tmp_path):
+    # MuseScore 4 places a staff text between two notes with a pair of locations: back to the
+    # text's beat, then forward again. Hodie Christus Natus Est's bar 10 was sung with a rest of
+    # the forward move's length between "Chris" and "tus", and every note after it came late
+    voice = ("<voice><TimeSig><sigN>3</sigN><sigD>4</sigD></TimeSig>"
+             "<Chord><durationType>half</durationType><Lyrics><text>Chris</text></Lyrics><Note><pitch>70</pitch></Note></Chord>"
+             "<location><fractions>-3/8</fractions></location>"
+             "<StaffText><text>p</text></StaffText>"
+             "<location><fractions>3/8</fractions></location>"
+             "<Chord><durationType>quarter</durationType><Lyrics><text>tus</text></Lyrics><Note><pitch>70</pitch></Note></Chord></voice>")
+    timing = {"points": [[0, 0, 0], [3, 0, 3]], "duration": 3, "measures": 1}
+    assert unroll(tmp_path, voice, timing) == [(70, "Chris", 2.0), (70, "tus", 1.0)]
+
+
+def test_a_spanner_placed_mid_bar_adds_no_rest(tmp_path):
+    # the same pair around a spanner that starts between two notes (Hodie's bar 49)
+    voice = ("<voice><TimeSig><sigN>4</sigN><sigD>4</sigD></TimeSig>"
+             "<Chord><durationType>quarter</durationType><Lyrics><text>a</text></Lyrics><Note><pitch>72</pitch></Note></Chord>"
+             "<location><fractions>-1/8</fractions></location>"
+             "<Spanner type=\"HairPin\"><HairPin><subtype>0</subtype></HairPin>"
+             "<next><location><fractions>1/2</fractions></location></next></Spanner>"
+             "<location><fractions>1/8</fractions></location>"
+             "<Chord><durationType>half</durationType><Lyrics><text>b</text></Lyrics><Note><pitch>74</pitch></Note></Chord>"
+             "<Chord><durationType>quarter</durationType><Lyrics><text>c</text></Lyrics><Note><pitch>76</pitch></Note></Chord></voice>")
+    timing = {"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}
+    assert unroll(tmp_path, voice, timing) == [(72, "a", 1.0), (74, "b", 2.0), (76, "c", 1.0)]
+
+
+def test_a_move_back_at_the_end_of_a_bar_changes_nothing(tmp_path):
+    # a text placed back in the bar after its last note, with no move forward after it (Hodie's bar 22)
+    voice = ("<voice><TimeSig><sigN>3</sigN><sigD>4</sigD></TimeSig>"
+             "<Chord><durationType>half</durationType><Lyrics><text>a</text></Lyrics><Note><pitch>67</pitch></Note></Chord>"
+             "<Chord><durationType>quarter</durationType><Lyrics><text>b</text></Lyrics><Note><pitch>69</pitch></Note></Chord>"
+             "<location><fractions>-1/2</fractions></location>"
+             "<StaffText><text>mf</text></StaffText></voice>")
+    timing = {"points": [[0, 0, 0], [3, 0, 3]], "duration": 3, "measures": 1}
+    assert unroll(tmp_path, voice, timing) == [(67, "a", 2.0), (69, "b", 1.0)]
