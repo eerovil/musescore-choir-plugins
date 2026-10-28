@@ -89,3 +89,39 @@ def test_a_pack_without_a_voice_the_singer_needs_is_refused(tmp_path):
 def test_not_the_pack_at_all(tmp_path):
     with pytest.raises(SystemExit, match="no 0_CORE"):
         ufr_pack.build(str(as_zip(tmp_path, {"readme.txt": "x"})), str(tmp_path / "ufr"))
+
+
+def test_a_folder_beside_it_named_like_a_scratch_folder_is_left_alone(tmp_path):
+    (tmp_path / "ufr.new").mkdir()
+    (tmp_path / "ufr.new" / "mine.txt").write_text("mine")
+    ufr_pack.build(str(as_zip(tmp_path, PACK)), str(tmp_path / "ufr"))
+    assert tree(tmp_path / "ufr.new") == {"mine.txt": "mine"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["UFR-V1.0.zip", "ufr", "ufr.new"]
+
+
+def test_a_failed_swap_keeps_the_old_voices(tmp_path, monkeypatch):
+    out = tmp_path / "ufr"
+    (out / "core").mkdir(parents=True)
+    (out / "core" / "phonemes.json").write_text("old")
+    real = ufr_pack.os.replace
+
+    def replace(a, b):
+        if str(a).endswith("new"):
+            raise OSError("disk full")
+        real(a, b)
+    monkeypatch.setattr(ufr_pack.os, "replace", replace)
+    with pytest.raises(OSError):
+        ufr_pack.build(str(as_zip(tmp_path, PACK)), str(out))
+    assert tree(out) == {"core/phonemes.json": "old"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["UFR-V1.0.zip", "ufr"]
+
+
+def test_a_failed_copy_keeps_the_old_voices(tmp_path, monkeypatch):
+    out = tmp_path / "ufr"
+    (out / "core").mkdir(parents=True)
+    (out / "core" / "phonemes.json").write_text("old")
+    monkeypatch.setattr(ufr_pack.shutil, "copyfileobj", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        ufr_pack.build(str(as_zip(tmp_path, PACK)), str(out))
+    assert tree(out) == {"core/phonemes.json": "old"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["UFR-V1.0.zip", "ufr"]

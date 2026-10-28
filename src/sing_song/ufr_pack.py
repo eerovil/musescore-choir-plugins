@@ -21,6 +21,7 @@ import glob
 import os
 import shutil
 import sys
+import tempfile
 import zipfile
 
 #: the voices sing_song.py sings with (main.py's VOICES); a pack without them is no use
@@ -103,14 +104,25 @@ def build(src, out):
     out = os.path.abspath(out)
     if os.path.isdir(out) and os.listdir(out) and not is_ours(out):
         raise SystemExit(f"{out} holds something else: give an empty or new folder")
-    new = out + ".new"
-    shutil.rmtree(new, ignore_errors=True)
-    for to, opener in sorted(picked.items()):
-        os.makedirs(os.path.join(new, os.path.dirname(to)), exist_ok=True)
-        with opener() as f, open(os.path.join(new, to), "wb") as w:
-            shutil.copyfileobj(f, w, 1 << 20)
-    shutil.rmtree(out, ignore_errors=True)
-    os.replace(new, out)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    # built beside it in a folder of its own, so a failed copy or swap leaves the old voices
+    work = tempfile.mkdtemp(prefix=f".{os.path.basename(out)}-", dir=os.path.dirname(out))
+    new, old = os.path.join(work, "new"), os.path.join(work, "old")
+    try:
+        for to, opener in sorted(picked.items()):
+            os.makedirs(os.path.join(new, os.path.dirname(to)), exist_ok=True)
+            with opener() as f, open(os.path.join(new, to), "wb") as w:
+                shutil.copyfileobj(f, w, 1 << 20)
+        if os.path.exists(out):
+            os.replace(out, old)
+        try:
+            os.replace(new, out)
+        except OSError:
+            if os.path.exists(old):
+                os.replace(old, out)
+            raise
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     return sorted(picked)
 
 
