@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- An English word the singer says wrong can be given its sounds by hand: in
+  `songs/<slug>/pronounce.json` for one song, or `choirs/<choir>.json` for every song a choir
+  publishes, as ARPAbet with each vowel's stress (`{"pronounce": {"wind": "W IH1 N D"}}`); the
+  song's word wins. Choirs that set a word differently are published in a run each. (#466)
+
 - `HOMR_GPU=cuda scripts/install-homr.sh` reads scores on a card onnxruntime's own GPU build
   supports, such as bazzite's new GTX 1660 Super, and the Update button keeps it. eero-pc no
   longer reads pages for this host. (eeron-omat-taskit#138)
