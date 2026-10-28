@@ -328,6 +328,9 @@ trusting a tidy-looking diagnosis of a scanned score.
 Before writing a pitch fix from a scan, crop the bar from the PDF at 300 dpi
 (`pdftoppm -r 300`), compare the glyph with other accidentals on the same page, and
 confirm which voice it belongs to.
+Before reporting that a part sounds an octave off, check the staff's clef (treble-8 or
+plain treble) and the pitches stored in the score: a tenor line in treble-8 sounds an
+octave below what it looks like, so it is usually right.
 
 ### The OMR benchmark's public-domain slice
 
