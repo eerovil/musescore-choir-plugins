@@ -29,6 +29,13 @@ def word_key(s):
     """A word as the English lookup sees it: lower case, letters and the apostrophe (#45)."""
     return re.sub(r"[^a-z']", "", unicodedata.normalize("NFC", s.lower().replace("\u2019", "'"))).strip("'")
 
+ARPA_VOWELS = {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW"}
+
+def en_sound(p):
+    """An ARPAbet sound as the voice names it: AH1 en/ah, an unstressed AH0 the schwa en/ax."""
+    base = p.rstrip("012").lower()
+    return "en/ax" if base == "ah" and p.endswith("0") else f"en/{base}"
+
 def pronounce():
     """The words PRONOUNCE's files set by hand: word -> ARPAbet sounds, a later file winning."""
     out = {}
@@ -41,7 +48,11 @@ def pronounce():
                 sys.exit(f"{f}: {w!r}: {sounds!r} is not ARPAbet sounds, like \"W IH1 N D\"")
             if not any(p[-1].isdigit() for p in arp):
                 sys.exit(f"{f}: {w!r}: {sounds!r} has no vowel: mark each vowel's stress, like IH1 or AH0")
-            missing = [p for p in arp if f"en/{p.rstrip('012').lower()}" not in PH]
+            # english() takes a sound with a stress mark for a vowel and one without for a consonant
+            wrong = [p for p in arp if (p.rstrip("012") in ARPA_VOWELS) != p[-1].isdigit()]
+            if wrong:
+                sys.exit(f"{f}: {w!r}: {wrong}: mark the stress of every vowel (IH1, AH0) and of no consonant")
+            missing = [p for p in arp if en_sound(p) not in PH]
             if missing:
                 sys.exit(f"{f}: {w!r}: the voice has no {missing}")
             out[word_key(w)] = arp
@@ -77,9 +88,7 @@ def english():
         arp = own.get(text) or [p for p in g2p(text) if re.match(r"^[A-Z]+[0-2]?$", p)]
         ph = []
         for p in arp:
-            base = p.rstrip("012").lower()
-            if base == "ah" and p.endswith("0"): base = "ax"
-            ph.append((f"en/{base}", p[-1].isdigit()))
+            ph.append((en_sound(p), p[-1].isdigit()))
         vpos = [i for i, (_, v) in enumerate(ph) if v]
         syl = len(idx)
         if not vpos:   # a hum ("mm"): voiced consonants as the "vowel"

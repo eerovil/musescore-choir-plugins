@@ -610,7 +610,19 @@ def pronounce_files(slug, choirs):
         if not choir or choir in (".", "..") or choir.startswith(".") or "/" in choir or "\\" in choir:
             sys.exit(f"{choir!r} is not a choir: give its id on the site")
     paths = [os.path.join(ROOT, "choirs", f"{c}.json") for c in choirs]
+    # one run sings once for all its choirs, so they must say every word alike
+    maps = {c: pronounce_map(p) if os.path.isfile(p) else {} for c, p in zip(choirs, paths)}
+    if len({json.dumps(m, sort_keys=True) for m in maps.values()}) > 1:
+        sys.exit(f"choirs {', '.join(choirs)} set different words' sounds in choirs/<choir>.json: "
+                 "publish to each in its own run")
     return [p for p in paths + [os.path.join(ROOT, "songs", slug, "pronounce.json")] if os.path.isfile(p)]
+
+
+def pronounce_map(path):
+    """The word -> sounds map of a pronounce file, as g2p.py reads it."""
+    with open(path) as f:
+        d = json.load(f)
+    return d["pronounce"] if isinstance(d.get("pronounce"), dict) else d
 
 
 def check_slug(slug):
@@ -817,6 +829,7 @@ def sing_and_publish(a, run_record):
         if not os.path.isfile(os.path.join(ufr_dir, "core", "phonemes.json")):
             sys.exit("set UFR_DIR in .env to the UFR DiffSinger pack's folder (core/, dsdur/, tiger/); "
                      "download it from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/")
+        pronounce = pronounce_files(a.slug, list(dict.fromkeys(a.publish)))
     bundle_dir = out
     os.makedirs(out, exist_ok=True)
     clear_bundle(out)
@@ -836,7 +849,7 @@ def sing_and_publish(a, run_record):
              parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
              on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
              version=run_record.record["version"], remote_only=a.remote_only,
-             pronounce=pronounce_files(a.slug, list(dict.fromkeys(a.publish))))
+             pronounce=pronounce)
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit

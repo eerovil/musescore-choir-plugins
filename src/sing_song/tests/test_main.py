@@ -843,3 +843,16 @@ def test_pronounce_files_are_the_choirs_then_the_song(tmp_path, monkeypatch):
     for bad in ("..", "../x", "/etc/passwd", ".hidden", ""):
         with pytest.raises(SystemExit):
             publish_song.pronounce_files("hodie", [bad])
+
+
+def test_choirs_that_say_a_word_differently_are_not_sung_in_one_run(tmp_path, monkeypatch):
+    # one run sings once and publishes that take to every choir: one choir's "wind" would be the other's
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    (tmp_path / "choirs").mkdir()
+    (tmp_path / "choirs/a.json").write_text('{"pronounce": {"wind": "W IH1 N D"}}')
+    (tmp_path / "choirs/b.json").write_text('{"wind": "W AY1 N D"}')
+    (tmp_path / "choirs/c.json").write_text('{"wind": "W IH1 N D"}')
+    for choirs in (["a", "b"], ["a", "nofile"]):
+        with pytest.raises(SystemExit, match="its own run"):
+            publish_song.pronounce_files("hodie", choirs)
+    assert publish_song.pronounce_files("hodie", ["a", "c"]) == [str(tmp_path / "choirs/a.json"), str(tmp_path / "choirs/c.json")]

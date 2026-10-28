@@ -102,3 +102,18 @@ def test_a_sound_the_voice_lacks_names_the_word_and_file(tmp_path):
 def test_sounds_without_a_stressed_vowel_are_refused(tmp_path):
     r, _ = sing_en(tmp_path, ["wind"], {"wind": "W IH N D"})
     assert r.returncode != 0 and "stress" in r.stderr
+
+
+def test_every_vowel_needs_its_stress_and_no_consonant_has_one(tmp_path):
+    # unmarked, IH would be dealt among the consonants and never sung
+    r, _ = sing_en(tmp_path / "a", ["harvest"], {"harvest": "HH AA1 R V IH S T"})
+    assert r.returncode != 0 and "'IH'" in r.stderr
+    r, _ = sing_en(tmp_path / "b", ["harvest"], {"harvest": "HH AA1 R1 V IH0 S T"})
+    assert r.returncode != 0 and "'R1'" in r.stderr
+
+
+def test_an_unstressed_ah_is_checked_as_the_schwa_it_is_sung_as(tmp_path):
+    # the stand-in voice has en/ax and no en/ah, as g2p.py sings AH0
+    r, notes = sing_en(tmp_path, ["the"], {"the": "DH AH0"})
+    assert r.returncode == 0, r.stderr
+    assert notes[0]["ph"] == {"on": ["en/dh"], "vs": ["en/ax"], "co": []}
