@@ -313,7 +313,8 @@ def sung_staves(cleaned):
 
 
 def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu, lang_from=None,
-         groups=None, resume=False, allow_silent=False, on_part=None, version=None, remote_only=False):
+         groups=None, resume=False, allow_silent=False, on_part=None, version=None, remote_only=False,
+         pronounce=()):
     """parts/<n>-<Name>.mp3 for every part, sung on the bundle's clock:
 
     - each line is checked against the piano before it is sung (check_onsets.py); a part whose
@@ -321,7 +322,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     - where a part splits into two lines, both are sung and mixed at half volume each; a part
       folded from several staves (`groups`, --fold-divisi) sings each different line of each of
       them, mixed at 1/n volume each;
-    - songs not in Finnish get their sounds from g2p.py, and a song in two languages changes at
+    - songs not in Finnish get their sounds from g2p.py (an English word from the `pronounce`
+      files first, pronounce_files()), and a song in two languages changes at
       the words --lang-from names; every part is checked for Finnish-looking words left in
       another language before any part is sung;
     - a note whose syllable would be sung as no sound at all (only stops and silence, #449) stops
@@ -399,7 +401,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         with open(js, "w") as f:
             json.dump(notes, f, ensure_ascii=False)
         for code in sorted({n["lang"] for n in notes if n.get("syl")} & G2P):
-            run([python, "-I", os.path.join(HERE, "g2p.py"), code, js], env=dict(os.environ, UFR_DIR=ufr_dir))
+            run([python, "-I", os.path.join(HERE, "g2p.py"), code, js],
+                env=dict(os.environ, UFR_DIR=ufr_dir, PRONOUNCE=os.pathsep.join(pronounce)))
         quiet += [(name, n["bar"], n["syl"]) for n in silent_notes(python, js, voices[i - 1], env)]
         said = f"{name}{' ' + line + ' line' if two else ''}"
         if resume and sung_before(work, i, line, voices[i - 1], version):
@@ -597,6 +600,17 @@ def clear_bundle(out):
         for name in os.listdir(parts):
             if name.endswith(".mp3"):
                 os.remove(os.path.join(parts, name))
+
+
+def pronounce_files(slug, choirs):
+    """The files of English words given their sounds by hand (g2p.py, eeron-omat-taskit#143),
+    weakest first: choirs/<choir>.json for each choir the song is published to, then the song's
+    own songs/<slug>/pronounce.json, so the song wins over its choirs."""
+    for choir in choirs:
+        if not choir or choir in (".", "..") or choir.startswith(".") or "/" in choir or "\\" in choir:
+            sys.exit(f"{choir!r} is not a choir: give its id on the site")
+    paths = [os.path.join(ROOT, "choirs", f"{c}.json") for c in choirs]
+    return [p for p in paths + [os.path.join(ROOT, "songs", slug, "pronounce.json")] if os.path.isfile(p)]
 
 
 def check_slug(slug):
@@ -821,7 +835,8 @@ def sing_and_publish(a, run_record):
         sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
              parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
              on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
-             version=run_record.record["version"], remote_only=a.remote_only)
+             version=run_record.record["version"], remote_only=a.remote_only,
+             pronounce=pronounce_files(a.slug, list(dict.fromkeys(a.publish))))
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit

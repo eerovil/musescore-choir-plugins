@@ -828,3 +828,18 @@ def test_remote_only_without_a_runner_turns_waiting_into_failed_with_the_reason(
         publish_song.main()
     run = progress.read(str(folder))
     assert run["state"] == "failed" and run["error"] == "--remote-only needs REMOTE_RUNNER in .env"
+
+
+def test_pronounce_files_are_the_choirs_then_the_song(tmp_path, monkeypatch):
+    # eeron-omat-taskit#143: g2p.py lets a later file win, so the song's own map comes last
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    (tmp_path / "choirs").mkdir()
+    (tmp_path / "songs" / "hodie").mkdir(parents=True)
+    for p in ("choirs/jm.json", "choirs/pcas.json", "songs/hodie/pronounce.json"):
+        (tmp_path / p).write_text("{}")
+    assert publish_song.pronounce_files("hodie", ["pcas", "other", "jm"]) == [
+        str(tmp_path / "choirs/pcas.json"), str(tmp_path / "choirs/jm.json"), str(tmp_path / "songs/hodie/pronounce.json")]
+    assert publish_song.pronounce_files("bleak", []) == []
+    for bad in ("..", "../x", "/etc/passwd", ".hidden", ""):
+        with pytest.raises(SystemExit):
+            publish_song.pronounce_files("hodie", [bad])

@@ -10,6 +10,12 @@ vowels split between them. The others read the spelling of each syllable with th
 rules (German and Swedish with the voice's German sounds, church Latin with its Italian ones,
 Estonian like Finnish plus õ, ü, š, ž).
 
+An English word can be given its sounds by hand, for a song or for a choir (eeron-omat-taskit#143):
+a homograph the dictionary reads the other way ("wind" the breeze, W IH1 N D) or a word a choir
+says its own way. PRONOUNCE lists JSON files, os.pathsep apart, weakest first (sing_song.py passes
+the choirs' choirs/<choir>.json, then the song's songs/<slug>/pronounce.json), each
+{"pronounce": {"wind": "W IH1 N D"}} or the bare map; a later file's word wins.
+
 A note marked with another "lang" (publish_song.py --lang-from, #67) is left as it is: a note
 with no "ph" is sung with sing_ufr.py's Finnish rules, and each other language has its own run."""
 import json, os, re, sys, unicodedata
@@ -18,6 +24,28 @@ PH = set(json.load(open(os.path.join(os.environ.get("UFR_DIR", "/var/tmp/i36-ufr
 lang, path = sys.argv[1], sys.argv[2]
 notes = json.load(open(path))
 mine = lambda n: n.get("syl") and n.get("lang", lang) == lang   # this run's syllables
+
+def word_key(s):
+    """A word as the English lookup sees it: lower case, letters and the apostrophe (#45)."""
+    return re.sub(r"[^a-z']", "", unicodedata.normalize("NFC", s.lower().replace("\u2019", "'"))).strip("'")
+
+def pronounce():
+    """The words PRONOUNCE's files set by hand: word -> ARPAbet sounds, a later file winning."""
+    out = {}
+    for f in filter(None, os.environ.get("PRONOUNCE", "").split(os.pathsep)):
+        d = json.load(open(f))
+        d = d["pronounce"] if isinstance(d.get("pronounce"), dict) else d
+        for w, sounds in d.items():
+            arp = sounds.split() if isinstance(sounds, str) else list(sounds)
+            if not arp or not all(re.match(r"^[A-Z]+[0-2]?$", p) for p in arp):
+                sys.exit(f"{f}: {w!r}: {sounds!r} is not ARPAbet sounds, like \"W IH1 N D\"")
+            if not any(p[-1].isdigit() for p in arp):
+                sys.exit(f"{f}: {w!r}: {sounds!r} has no vowel: mark each vowel's stress, like IH1 or AH0")
+            missing = [p for p in arp if f"en/{p.rstrip('012').lower()}" not in PH]
+            if missing:
+                sys.exit(f"{f}: {w!r}: the voice has no {missing}")
+            out[word_key(w)] = arp
+    return out
 
 def clean(s):
     s = unicodedata.normalize("NFC", (s or "").lower())
@@ -34,7 +62,7 @@ def cut(tokens, is_vowel):
 # ---- English: dictionary per word, dealt over the word's syllables ----
 def english():
     from g2p_en import G2p
-    g2p = G2p()
+    g2p, own = G2p(), pronounce()
     words, cur = [], []
     for k, n in enumerate(notes):
         if not mine(n): continue
@@ -43,10 +71,10 @@ def english():
     if cur: words.append(cur)
     for idx in words:
         # keep the apostrophe: "I'm" and "don't" are dictionary words, "im" and "dont" are not (#45)
-        text = "".join(re.sub(r"[^a-z']", "", unicodedata.normalize("NFC", notes[k]["syl"].lower().replace("\u2019", "'"))) for k in idx).strip("'")
+        text = word_key("".join(notes[k]["syl"] for k in idx))
         if not text: continue
         if not re.search(r"[aeiouy]", text): continue   # scat ("dn", "mm"): no dictionary word; sing_ufr.py hums it
-        arp = [p for p in g2p(text) if re.match(r"^[A-Z]+[0-2]?$", p)]
+        arp = own.get(text) or [p for p in g2p(text) if re.match(r"^[A-Z]+[0-2]?$", p)]
         ph = []
         for p in arp:
             base = p.rstrip("012").lower()

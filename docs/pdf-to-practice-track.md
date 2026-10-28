@@ -147,6 +147,13 @@ export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` 
 
 - Not in Finnish: `--lang en|de|sv|la|et`. Two languages: `--lang-from fi:Word,...` names the
   first word of each stretch (it stops and lists the words it thinks you missed).
+- An English word sung wrong (a homograph such as "wind" the breeze, which the dictionary reads
+  as the long "wind" of a watch, or a word the choir says its own way): give its sounds in
+  ARPAbet, the dictionary's alphabet, with each vowel's stress (0, 1 or 2). For one song, in
+  `songs/<slug>/pronounce.json`; for every song a choir sings, in `choirs/<choir>.json`, read for
+  each `--publish <choir>`. Both are `{"pronounce": {"wind": "W IH1 N D"}}`, and the song's
+  word wins over the choir's. The dictionary's own reading of a word is in the singer's venv:
+  `python -c "from g2p_en import G2p; print(G2p()('wind'))"`.
 - A part name that does not start with S, A, M, T or B: `--voice LYSE` (high) or `--voice REMY`
   (low) for every part.
 - A stopped run: the same command with `--resume` sings only the lines not finished.
