@@ -3181,7 +3181,7 @@ function pronunciationSection(P) {
       const list = rows.map((row) => {
         const same = el("option", { value: "" }, sameText());
         sames.push(same);
-        const pick = el("select", { "data-pron-place": `${row.bar}:${row.word}:${row.n}` },
+        const pick = el("select", { "data-pron-place": `${row.bar}:${row.beat}:${row.word}` },
           same, ...readings.map((r) => el("option", { value: r.sounds }, say(r))));
         pick.value = row.chosen || "";
         pick.addEventListener("input", () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; });
@@ -3209,7 +3209,7 @@ function pronunciationSection(P) {
     drawStale();
     const save = el("button", { className: "pron-save", onclick: async () => {
       const places = placeSelects.filter(([, pick]) => pick.value)
-        .map(([row, pick]) => ({ bar: row.bar, word: row.word, n: row.n, sounds: pick.value }));
+        .map(([row, pick]) => ({ bar: row.bar, beat: row.beat, word: row.word, sounds: pick.value }));
       const all = Object.fromEntries(Object.entries(everywhere).filter(([, s]) => s.value).map(([w, s]) => [w, s.value]));
       try {
         draw(await postJSON(`${P}/pronunciation`, { places: [...places, ...stale], everywhere: all }));

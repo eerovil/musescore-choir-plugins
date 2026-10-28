@@ -12,16 +12,18 @@ HERE = Path(__file__).resolve().parents[1]
 
 
 def score(tmp_path, parts):
-    """A cleaned score stand-in: {part name: [[(syllable, syllabic, verse)...] per bar]}."""
+    """A cleaned score stand-in: {part name: [[(syllable, syllabic, verse) or None (a rest)...]
+    per bar]}, every note and rest a quarter."""
     staffs, defs = [], []
     for i, (name, bars) in enumerate(parts.items(), 1):
         defs.append(f'<Part><Staff id="{i}"/><trackName>{name}</trackName></Part>')
         ms = []
         for bar in bars:
             chords = "".join(
+                "<Rest><durationType>quarter</durationType></Rest>" if x is None else
                 f"<Chord><durationType>quarter</durationType><Lyrics>"
-                + (f"<no>{v}</no>" if v else "") + f"<syllabic>{sy}</syllabic><text>{t}</text></Lyrics>"
-                f"<Note><pitch>60</pitch></Note></Chord>" for t, sy, v in bar)
+                + (f"<no>{x[2]}</no>" if x[2] else "") + f"<syllabic>{x[1]}</syllabic><text>{x[0]}</text></Lyrics>"
+                f"<Note><pitch>60</pitch></Note></Chord>" for x in bar)
             ms.append(f"<Measure><voice>{chords}</voice></Measure>")
         staffs.append(f'<Staff id="{i}">{"".join(ms)}</Staff>')
     p = tmp_path / "song.mscx"
@@ -37,30 +39,63 @@ WIND = {"Soprano": [w("the", "wind"), w("blows"), [], [], w("wind", "the"), w("c
         "Bass": [w("the", "wind"), w("blows"), [], [], w("wind", "the"), w("clock")]}
 
 
-def test_places_are_bar_word_and_the_time_in_the_bar_for_every_part(tmp_path):
-    got = {(p["bar"], p["word"], p["n"]): p for p in places.places(score(tmp_path, WIND))}
-    assert got[(1, "wind", 1)]["parts"] == ["Soprano", "Bass"]
-    assert got[(5, "wind", 1)]["line"] == "the wind blows wind the clock"
-    assert (5, "the", 1) in got and (1, "the", 1) in got
+def test_parts_singing_a_word_together_share_its_place(tmp_path):
+    got = {(p["bar"], p["beat"], p["word"]): p for p in places.places(score(tmp_path, WIND))}
+    assert got[(1, 1.0, "wind")]["parts"] == ["Soprano", "Bass"] and got[(1, 1.0, "wind")]["n"] == 1
+    assert got[(5, 0.0, "wind")]["line"] == "the wind blows wind the clock"
+    assert (5, 1.0, "the") in got and (1, 0.0, "the") in got
+
+
+def test_a_part_entering_later_on_the_same_word_has_a_place_of_its_own(tmp_path):
+    s = score(tmp_path, {"Soprano": [w("wind", "blows", "the", "wind")], "Bass": [[None, None] + w("wind", "blows")]})
+    got = [(p["beat"], p["word"], p["n"], p["parts"]) for p in places.places(s) if p["word"] == "wind"]
+    assert got == [(0.0, "wind", 1, ["Soprano"]), (2.0, "wind", 2, ["Bass"]), (3.0, "wind", 3, ["Soprano"])]
 
 
 def test_a_word_split_over_notes_and_bars_starts_where_its_first_syllable_is(tmp_path):
     s = score(tmp_path, {"S": [[("win", "begin", 0)], [("dy", "end", 0), ("wind", "single", 0), ("wind", "single", 0)]]})
-    assert [(p["bar"], p["word"], p["n"]) for p in places.places(s)] == [(1, "windy", 1), (2, "wind", 1), (2, "wind", 2)]
+    assert [(p["bar"], p["beat"], p["word"], p["n"]) for p in places.places(s)] == [
+        (1, 0.0, "windy", 1), (2, 1.0, "wind", 1), (2, 2.0, "wind", 2)]
 
 
 def test_a_choice_whose_place_is_gone_is_reported(tmp_path):
     s = score(tmp_path, WIND)
-    choices = {"places": [{"bar": 1, "word": "wind", "n": 1, "sounds": "W IH1 N D"},
-                          {"bar": 2, "word": "wind", "n": 1, "sounds": "W IH1 N D"}]}
+    choices = {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"},
+                          {"bar": 1, "beat": 2.0, "word": "wind", "sounds": "W IH1 N D"}]}
     assert places.stale(choices, s) == [choices["places"][1]]
 
 
 def test_choices_are_kept_with_the_song(tmp_path):
     assert places.load(str(tmp_path)) == {"places": [], "everywhere": {}}
-    c = {"places": [{"bar": 1, "word": "wind", "n": 1, "sounds": "W IH1 N D"}], "everywhere": {"read": "R EH1 D"}}
+    c = {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"}], "everywhere": {"read": "R EH1 D"}}
     places.save(str(tmp_path), c)
     assert places.load(str(tmp_path)) == c and (tmp_path / "pronounce.json").exists()
+
+
+def test_the_singer_finds_the_place_the_page_chose_in_every_part_and_pass(tmp_path):
+    # score to singer: the soprano's "wind" on beat 1 and the bass's later one on beat 3 of the
+    # same bar are two places; bar 1 is played twice in a row (a one-bar repeat)
+    from src.sing_song.tests.test_g2p import EN, FAKE_G2P_EN, pack
+    s = score(tmp_path, {"Soprano": [w("wind", "the", "clock", "blows")], "Bass": [[None, None] + w("wind", "blows")]})
+    bass_wind = next(p for p in places.places(s) if p["word"] == "wind" and p["parts"] == ["Bass"])
+    (tmp_path / "pronounce.json").write_text(json.dumps(
+        {"places": [{"bar": 1, "beat": bass_wind["beat"], "word": "wind", "sounds": "W IH1 N D"}]}))
+    (tmp_path / "t.json").write_text(json.dumps(
+        {"points": [[0, 0, 0], [2, 0, 2], [4, 0, 0], [6, 0, 2]], "duration": 8, "measures": 1}))
+    fake = tmp_path / "fake" / "g2p_en"
+    fake.mkdir(parents=True)
+    (fake / "__init__.py").write_text(FAKE_G2P_EN)
+    sung = {}
+    for staff in ("1", "2"):
+        out = tmp_path / f"p{staff}.json"
+        subprocess.run([sys.executable, "-I", str(HERE / "unroll.py"), s, staff, str(tmp_path / "t.json"), str(out)],
+                       check=True, capture_output=True)
+        r = subprocess.run([sys.executable, str(HERE / "g2p.py"), "en", str(out)], capture_output=True, text=True,
+                           env=dict(os.environ, PYTHONPATH=str(tmp_path / "fake"), UFR_DIR=str(pack(tmp_path / staff, EN)),
+                                    SONG_PRONOUNCE=str(tmp_path / "pronounce.json")))
+        assert r.returncode == 0, r.stderr
+        sung[staff] = [n["ph"]["vs"] for n in json.loads(out.read_text()) if n.get("syl") == "wind"]
+    assert sung == {"1": [["en/ay"], ["en/ay"]], "2": [["en/ih"], ["en/ih"]]}
 
 
 def test_word_key_is_g2ps():

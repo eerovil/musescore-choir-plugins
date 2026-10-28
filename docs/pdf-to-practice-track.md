@@ -156,7 +156,8 @@ export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` 
   line, and the readings spelled out ("wind", as in sit / "wynd", as in find). Choose the reading
   at a place, or for the word everywhere in the song, and save. Until one is chosen the
   dictionary's first is sung. The choices are kept in `songs/<slug>/pronounce.json`, by place
-  (bar, word, which time in that bar), for every part singing the word there. After a score edit
+  (bar, the beat the word starts on, word), for every part singing the word there together and
+  on every pass through the bar; a part entering later on the same word has a place of its own. After a score edit
   the list and the sing run name any choice whose word is no longer at its place.
 - A word a choir says its own way, in every song: `choirs/<choir>.json`, read for each
   `--publish <choir>`, as a sound-alike spelling: `{"pronounce": {"harvest": "har-vist"}}`.

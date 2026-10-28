@@ -12,8 +12,8 @@ Estonian like Finnish plus õ, ü, š, ž).
 
 An English word's reading can be chosen (eeron-omat-taskit#143, #144), strongest first:
 - at one place in the song, on song-app's song page: SONG_PRONOUNCE names the song's
-  pronounce.json (places.py), whose "places" give a reading for the word starting at a bar
-  (the n-th time it starts there), whatever part sings it;
+  pronounce.json (places.py), whose "places" give a reading for the word starting at a bar and
+  beat (unroll.py's "bar" and "beat"), whatever part sings it, on every pass;
 - everywhere in the song, the same file's "everywhere";
 - for every song a choir publishes: CHOIR_WORDS lists choirs/<choir>.json files, os.pathsep
   apart, each {"pronounce": {"harvest": "har-vist"}} (or the bare map): a sound-alike spelling,
@@ -65,12 +65,12 @@ def choir_words(g2p):
     return out
 
 def song_choices():
-    """The song page's choices (SONG_PRONOUNCE): ({(bar, word, n): sounds}, {word: sounds})."""
+    """The song page's choices (SONG_PRONOUNCE): ({(bar, beat, word): sounds}, {word: sounds})."""
     f = os.environ.get("SONG_PRONOUNCE", "")
     if not f or not os.path.isfile(f): return {}, {}
     d = json.load(open(f))
-    at = {(c["bar"], c["word"], c["n"]): check(c["sounds"].split(), f"{f}: {c['word']!r} at bar {c['bar']}")
-          for c in d.get("places") or []}
+    at = {(int(c["bar"]), round(float(c["beat"]), 3), c["word"]):
+          check(c["sounds"].split(), f"{f}: {c['word']!r} at bar {c['bar']}") for c in d.get("places") or []}
     every = {w: check(v.split(), f"{f}: {w!r}") for w, v in (d.get("everywhere") or {}).items()}
     return at, every
 
@@ -98,17 +98,15 @@ def english():
         cur.append(k)
         if n.get("syllabic") in (None, "single", "end"): words.append(cur); cur = []
     if cur: words.append(cur)
-    last_bar, seen = None, {}
     for idx in words:
         # keep the apostrophe: "I'm" and "don't" are dictionary words, "im" and "dont" are not (#45)
         text = word_key("".join(notes[k]["syl"] for k in idx))
         if not text: continue
-        # its place (places.py): the n-th time this word starts in this pass through the bar
-        bar = notes[idx[0]].get("bar")
-        if bar != last_bar: last_bar, seen = bar, {}
-        seen[text] = n = seen.get(text, 0) + 1
+        # its place (places.py): the bar and beat its first syllable starts on (unroll.py)
+        first = notes[idx[0]]
+        place = (first.get("bar"), round(float(first.get("beat", -1)), 3), text)
         if not re.search(r"[aeiouy]", text): continue   # scat ("dn", "mm"): no dictionary word; sing_ufr.py hums it
-        arp = at.get((bar, text, n)) or every.get(text) or choir.get(text) or arpabet(g2p, text)
+        arp = at.get(place) or every.get(text) or choir.get(text) or arpabet(g2p, text)
         ph = []
         for p in arp:
             ph.append((en_sound(p), p[-1].isdigit()))

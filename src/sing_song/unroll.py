@@ -7,7 +7,9 @@ playback order, repeats and endings included. The part is read measure by measur
 extract.py does; each pass through a measure is timed from its own points, and the n-th pass
 sings verse n where the measure has one (else the first verse). A note with no syllable of its
 own is marked "melisma" when a slur or an extender line carries the syllable over it; otherwise
-the singer repeats the syllable (sing_ufr.py).
+the singer repeats the syllable (sing_ufr.py). Each sung note carries its "bar" (1-based) and
+"beat", where it starts in the bar in quarter notes as written (before swing): its place, as
+places.py finds it in the score.
 
 LINE=high or LINE=low picks one line where the part splits (#45): high sings the top note of
 each chord; low sings the bottom note, and voice 2 where a measure writes a full voice 2,
@@ -116,10 +118,10 @@ for m in staff.findall("Measure"):
             verses = {int(l.findtext("no") or 0): (l.findtext("text"), l.findtext("syllabic")) for l in lyrics}
             starts = len(el.findall("Spanner[@type='Slur']/next")); ends = len(el.findall("Spanner[@type='Slur']/prev"))
             for gi, g in enumerate(graces):  # the syllable on the first grace note, the rest held over
-                evs.append({"pitch": g, "a": pos, "b": pos, "verses": verses, "tie": False, "grace": True,
+                evs.append({"pitch": g, "a": pos, "b": pos, "at": pos, "verses": verses, "tie": False, "grace": True,
                             "melisma": (slur > 0 or (not lyrics and extender)) if gi == 0 else True, "tup": tup != 1.0})
                 verses = {}
-            evs.append({"pitch": int(n.findtext("pitch")), "a": pos, "b": pos + d, "verses": verses,
+            evs.append({"pitch": int(n.findtext("pitch")), "a": pos, "b": pos + d, "at": pos, "verses": verses,
                         "tie": n.find("Spanner[@type='Tie']/next") is not None,
                         "tied_back": n.find("Spanner[@type='Tie']/prev") is not None,
                         "melisma": (slur > 0 or (not lyrics and extender)) if not graces else True, "tup": tup != 1.0})
@@ -161,7 +163,8 @@ for k, (m, row) in enumerate(runs):
             notes[-1]["beats"] += e["b"] - e["a"]; notes[-1]["sec"] += sec
         else:
             notes.append({"pitch": e["pitch"], "beats": e["b"] - e["a"], "syl": syl, "syllabic": sylb, "sec": sec,
-                          "melisma": e["melisma"], "bar": m + 1, **({"grace": True} if e.get("grace") else {})})
+                          "melisma": e["melisma"], "bar": m + 1, "beat": round(e["at"], 4),
+                          **({"grace": True} if e.get("grace") else {})})
         tie_prev = e["tie"]
     gap = nxt - at(measures[m][-1]["b"] if measures[m] else 0)
     if gap > 1e-3:                          # a measure the score leaves short: rest to the next beat

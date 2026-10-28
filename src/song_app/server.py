@@ -1837,8 +1837,8 @@ def api_pronunciation(slug: str) -> Dict:
     every = song_places.places(cleaned)
     readings = _readings(sorted({p["word"] for p in every}))
     choices = song_places.load(song.dir)
-    chosen = {(c["bar"], c["word"], c["n"]): c["sounds"] for c in choices["places"]}
-    rows = [dict(p, readings=readings[p["word"]], chosen=chosen.get((p["bar"], p["word"], p["n"])))
+    chosen = {song_places.key(c): c["sounds"] for c in choices["places"]}
+    rows = [dict(p, readings=readings[p["word"]], chosen=chosen.get(song_places.key(p)))
             for p in every if p["word"] in readings]
     return {"places": rows, "everywhere": choices["everywhere"],
             "stale": song_places.stale(choices, cleaned)}
@@ -1846,16 +1846,16 @@ def api_pronunciation(slug: str) -> Dict:
 
 @app.post("/api/songs/{slug}/pronunciation")
 def api_pronunciation_save(slug: str, body: Dict = None) -> Dict:
-    """Save the readings chosen on the song page: {"places": [{"bar", "word", "n", "sounds"}],
+    """Save the readings chosen on the song page: {"places": [{"bar", "beat", "word", "sounds"}],
     "everywhere": {word: sounds}}. A place left out sings the dictionary's reading."""
     body = body or {}
     try:
-        chosen = [{"bar": int(c["bar"]), "word": song_places.word_key(str(c["word"])), "n": int(c["n"]),
+        chosen = [{"bar": int(c["bar"]), "beat": float(c["beat"]), "word": song_places.word_key(str(c["word"])),
                    "sounds": " ".join(str(c["sounds"]).split())} for c in body.get("places") or []]
         everywhere = {song_places.word_key(str(w)): " ".join(str(v).split())
                       for w, v in (body.get("everywhere") or {}).items()}
     except (KeyError, TypeError, ValueError, AttributeError):
-        raise HTTPException(400, "Give places as [{bar, word, n, sounds}] and everywhere as {word: sounds}")
+        raise HTTPException(400, "Give places as [{bar, beat, word, sounds}] and everywhere as {word: sounds}")
     with state.song_lock(slug):
         song = _require(slug)
         song_places.save(song.dir, {"places": chosen, "everywhere": everywhere})

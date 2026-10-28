@@ -16,9 +16,9 @@ FIXTURE = os.path.join(
     "fixtures", "virta-venhetta-vie",
 )
 SLUG = "virta-venhetta-vie"
-PLACES = [{"bar": 1, "word": "the", "n": 1, "parts": ["S"], "line": "the wind blows", "at": 0},
-          {"bar": 1, "word": "wind", "n": 1, "parts": ["S", "B"], "line": "the wind blows", "at": 1},
-          {"bar": 5, "word": "wind", "n": 1, "parts": ["S", "B"], "line": "blows wind the clock", "at": 1}]
+PLACES = [{"bar": 1, "beat": 0.0, "word": "the", "n": 1, "parts": ["S"], "line": "the wind blows", "at": 0},
+          {"bar": 1, "beat": 1.0, "word": "wind", "n": 1, "parts": ["S", "B"], "line": "the wind blows", "at": 1},
+          {"bar": 5, "beat": 0.0, "word": "wind", "n": 1, "parts": ["S", "B"], "line": "blows wind the clock", "at": 1}]
 WIND = [{"sounds": "W AY1 N D", "say": "wynd", "as_in": "find"}, {"sounds": "W IH1 N D", "say": "wind", "as_in": "sit"}]
 
 
@@ -50,14 +50,14 @@ def test_the_list_has_each_place_of_a_word_with_two_readings(client):
 
 
 def test_a_choice_is_kept_with_the_song_and_a_lost_place_reported(client):
-    body = {"places": [{"bar": 1, "word": "Wind", "n": 1, "sounds": "W IH1 N D"},
-                       {"bar": 9, "word": "wind", "n": 1, "sounds": "W IH1 N D"}],
+    body = {"places": [{"bar": 1, "beat": 1, "word": "Wind", "sounds": "W IH1 N D"},
+                       {"bar": 9, "beat": 0, "word": "wind", "sounds": "W IH1 N D"}],
             "everywhere": {"read": "R EH1 D"}}
     r = client.post(f"/api/songs/{SLUG}/pronunciation", json=body)
     assert r.status_code == 200, r.text
     data = r.json()
     assert [p["chosen"] for p in data["places"]] == ["W IH1 N D", None]
-    assert data["stale"] == [{"bar": 9, "word": "wind", "n": 1, "sounds": "W IH1 N D"}]
+    assert data["stale"] == [{"bar": 9, "beat": 0.0, "word": "wind", "sounds": "W IH1 N D"}]
     saved = json.loads((client.dir / "pronounce.json").read_text())
     assert saved["everywhere"] == {"read": "R EH1 D"} and len(saved["places"]) == 2
 

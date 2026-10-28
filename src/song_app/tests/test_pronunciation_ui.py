@@ -45,8 +45,8 @@ def _free_port():
         return s.getsockname()[1]
 
 
-PLACES = [{"bar": 1, "word": "wind", "n": 1, "parts": ["S1"], "line": "the wind blows be too", "at": 1},
-          {"bar": 5, "word": "wind", "n": 1, "parts": ["S1", "B"], "line": "sorrow wind the clock", "at": 1}]
+PLACES = [{"bar": 1, "beat": 1.0, "word": "wind", "n": 1, "parts": ["S1"], "line": "the wind blows be too", "at": 1},
+          {"bar": 5, "beat": 0.0, "word": "wind", "n": 1, "parts": ["S1", "B"], "line": "sorrow wind the clock", "at": 1}]
 WIND = [{"sounds": "W AY1 N D", "say": "wynd", "as_in": "find"}, {"sounds": "W IH1 N D", "say": "wind", "as_in": "sit"}]
 
 
@@ -88,7 +88,7 @@ def test_a_reading_chosen_at_one_place_is_saved_for_it(live, page):
     assert rows.count() == 2
     assert "Bar 1" in rows.nth(0).inner_text() and "the wind blows" in rows.nth(0).inner_text()
     assert page.locator(".pron-row strong").first.inner_text() == "wind"
-    pick = page.locator('[data-pron-place="1:wind:1"]')
+    pick = page.locator('[data-pron-place="1:1:wind"]')
     assert "same as everywhere" in pick.locator("option").first.inner_text()
     assert "as in sit" in pick.inner_text() and "as in find" in pick.inner_text()
     pick.select_option("W IH1 N D")
@@ -96,5 +96,5 @@ def test_a_reading_chosen_at_one_place_is_saved_for_it(live, page):
         page.locator(".pron-save").click()
     assert saved_reply.value.ok
     saved = json.loads((songs / song.slug / "pronounce.json").read_text())
-    assert saved == {"places": [{"bar": 1, "word": "wind", "n": 1, "sounds": "W IH1 N D"}], "everywhere": {}}
+    assert saved == {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"}], "everywhere": {}}
     assert not errors, errors
