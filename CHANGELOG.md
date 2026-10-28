@@ -12,6 +12,11 @@ developers are listed under *Behind the scenes*.
   there (or for the whole song) is sung by every part at that place. A choir's own way of saying
   a word goes in `choirs/<choir>.json` as a sound-alike spelling (`"harvest": "har-vist"`). (#466)
 
+- `scripts/install-singer.sh <the UFR pack's zip>` sets up the voices from the pack as it now
+  downloads (V1.0, made for OpenUtau): it copies what the singer reads into a folder of its own
+  and sets `UFR_DIR`. Putting `core/`, `dsdur/` and `tiger/` together by hand is no longer
+  needed. (#467)
+
 - `HOMR_GPU=cuda scripts/install-homr.sh` reads scores on a card onnxruntime's own GPU build
   supports, such as bazzite's new GTX 1660 Super, and the Update button keeps it. eero-pc no
   longer reads pages for this host. (eeron-omat-taskit#138)
