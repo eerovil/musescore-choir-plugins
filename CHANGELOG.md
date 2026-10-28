@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- `HOMR_GPU=cuda scripts/install-homr.sh` reads scores on a card onnxruntime's own GPU build
+  supports, such as bazzite's new GTX 1660 Super, and the Update button keeps it. eero-pc no
+  longer reads pages for this host. (eeron-omat-taskit#138)
+
 - `sing_song.py` sings every part of a men's choir song with the low voice and every part of a
   women's with the high one, by the song's voicing. A part named "Solo" in a men's song was sung
   with the high voice because its name starts with S. In a mixed song a part called just "Solo"

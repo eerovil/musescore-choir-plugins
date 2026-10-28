@@ -1547,7 +1547,17 @@ state model are in `DESIGN.md`.
   13.7 s and 38 s. The readings are not identical — cuDNN's arithmetic is not the CPU's,
   and borderline calls flip: 10 of 15 systems have the same notes, and across the other
   five the GPU loses 5 notes the CPU reads (shared unison heads) and gains 2 the CPU
-  misses, of 856. Every differing bar carries a `⚠` mark in both readings. Output is streamed line by line to a `log` callback —
+  misses, of 856. Every differing bar carries a `⚠` mark in both readings.
+  **The GTX 1660 Super reads with the stock build** (eeron-omat-taskit#138): this host's
+  card has been a Turing GTX 1660 Super (compute 7.5, 6 GB) since 2026-10-28, and the 970
+  build above has no code for it (`cudaErrorNoKernelImageForDevice`). `HOMR_GPU=cuda
+  scripts/install-homr.sh` installs homr's `[cuda]` extra instead and keeps it for the Update
+  button (`gpu_extra=cuda` in the marker; `HOMR_GPU=cpu` goes back to the CPU). The card
+  gives only NaN with homr's fp16 segmentation model, so homr falls back to the fp32 one on
+  the card (eerovil/homr#99); its fp16 encoder and decoder are fine. Page 1 of Virta at
+  200 dpi: 222 notes, every pitch and length the same as the CPU's, 10.2 s against 15.2 s.
+  eero-pc no longer reads (Eero's choice, #138): the runner copies this host's venv and needs
+  its `ort_wheel`, so it says it has none to copy and the page is read here. Output is streamed line by line to a `log` callback —
   a page is ~30s and a song 2–5 minutes, so that is the progress channel #93 asked
   for — and every failure raises `HomrError` carrying the tail of what homr said.
   Including the quiet one: homr **deletes its own MusicXML when parsing raises**, so a
@@ -2749,10 +2759,10 @@ Worked through twice, with the wrong turn left in, in
 The flow is `docs/pdf-to-practice-track.md`. What is particular to this host:
 
 - The running app is at `http://localhost:8123` (`song-app.service`); drive it through its API.
-- Run `sing_song.py` as a background command in your own chat (a few minutes on the GTX 970),
+- Run `sing_song.py` as a background command in your own chat (a few minutes on the card),
   not as an `agentdeck job`: the job queue's one heavy slot is shared with other projects' tests,
   and singing needs the card, not the processor (eerovil/eeron-omat-taskit#123). Check the card
-  is free first, pause 60 s between songs (a continuous run crashed the GTX 970 and needed a
+  is free first, pause 60 s between songs (a continuous run crashed the old GTX 970 and needed a
   reboot), and split a long batch into runs under 2 hours, the background command's limit.
   Give it the desktop's `DISPLAY` and `XAUTHORITY` (`systemctl --user show-environment`):
   MuseScore needs a screen even to export.
@@ -2808,7 +2818,8 @@ version; the test list never counts.
 
 The singer runs in its own venv (`scripts/install-singer.sh`, default
 `~/.local/share/musescore-choir-plugins/sing-venv`; CUDA 11 onnxruntime when there is an NVIDIA
-card, because the GTX 970 is below newer builds' floor). The voices are not in the repo: their
+card, because eero-pc's GTX 970 is below newer builds' floor; it runs on this host's GTX
+1660 Super as it is, eeron-omat-taskit#138). The voices are not in the repo: their
 terms forbid re-hosting them, so `UFR_DIR` in `.env` points at a downloaded pack
 (`/var/tmp/i36-ufr` here). The singer is not deterministic: two runs are two takes.
 

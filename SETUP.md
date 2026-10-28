@@ -133,8 +133,15 @@ to put it elsewhere, and then `HOMR_BIN` in `.env` so the app can find it.
 [eerovil/homr](https://github.com/eerovil/homr), so a later install may read
 scores differently. Set it to a commit to get a particular version back.
 
-homr reads on the CPU. An NVIDIA card can make it quicker and leave the CPU free;
-on a GTX 970 or another Maxwell card (compute 5.x), which onnxruntime's own GPU
+homr reads on the CPU. An NVIDIA card can make it quicker and leave the CPU free.
+On a card of compute 6.0 or newer (a GTX 10xx, 16xx or later), install onnxruntime's
+own GPU build:
+
+```bash
+HOMR_GPU=cuda scripts/install-homr.sh   # HOMR_GPU=cpu goes back to the CPU
+```
+
+On a GTX 970 or another Maxwell card (compute 5.x), which onnxruntime's own GPU
 builds do not support, build one first (about two hours, ~25 GB of disk, needs
 podman and NVIDIA driver 580):
 
