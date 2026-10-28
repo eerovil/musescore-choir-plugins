@@ -65,6 +65,7 @@ src/clean_score/         Score-cleaning package
 src/sing_song/           Sing a song's parts with the UFR DiffSinger voices (see its section below)
   main.py                bundle + unroll + onset check + sing + MP3s; --publish through publish.py
   sing_ufr.py            the singer (runs in scripts/install-singer.sh's venv)
+  ufr_pack.py            the voices' folder from the UFR pack as it downloads (install-singer.sh <zip>)
   unroll.py, check_onsets.py, g2p.py, gate.py, spoken.py, fold.py   its steps
   tests/                 pytest
 src/kube_runner/         REMOTE_RUNNER for a GPU in a Kubernetes cluster: read a band, sing a line
@@ -2821,7 +2822,10 @@ The singer runs in its own venv (`scripts/install-singer.sh`, default
 card, because eero-pc's GTX 970 is below newer builds' floor; it runs on this host's GTX
 1660 Super as it is, eeron-omat-taskit#138). The voices are not in the repo: their
 terms forbid re-hosting them, so `UFR_DIR` in `.env` points at a downloaded pack
-(`/var/tmp/i36-ufr` here). The singer is not deterministic: two runs are two takes.
+(`~/.local/share/musescore-choir-plugins/ufr` here). The pack ships for OpenUtau (V1.0: `0_CORE/`
+and a folder per voice); `scripts/install-singer.sh <the zip>` runs `src/sing_song/ufr_pack.py`,
+which copies the files `sing_ufr.py` reads into `core/`, `dsdur/` and `tiger/` and sets `UFR_DIR`.
+The singer is not deterministic: two runs are two takes.
 
 ## MuseScore plugins (`plugins/`)
 
