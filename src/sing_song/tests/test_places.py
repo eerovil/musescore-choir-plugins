@@ -148,7 +148,11 @@ def test_weak_forms_and_most_accent_variants_are_not_listed():
            "lot": [["L", "AA1", "T"], ["L", "AO1", "T"]],
            # and real ones stay, with the accents a director chooses between
            "again": [["AH0", "G", "EH1", "N"], ["AH0", "G", "EY1", "N"]],
-           "aunt": [["AE1", "N", "T"], ["AO1", "N", "T"], ["AA1", "N", "T"]],
+           "plaza": [["P", "L", "AA1", "Z", "AH0"], ["P", "L", "AE1", "Z", "AH0"]],
+           # AH sounds like AE and like AA, but AE and AA still differ whichever comes first
+           "aunt": [["AH1", "N", "T"], ["AE1", "N", "T"], ["AA1", "N", "T"]],
            "close": [["K", "L", "OW1", "S"], ["K", "L", "OW1", "Z"]], "dove": [["D", "AH1", "V"], ["D", "OW1", "V"]],
            "bass": [["B", "AE1", "S"], ["B", "EY1", "S"]], "wound": [["W", "AW1", "N", "D"], ["W", "UW1", "N", "D"]]}
-    assert sorted(readings.readings(list(cmu), cmu, lambda w: cmu[w][0])) == ["again", "aunt", "bass", "close", "dove", "wound"]
+    assert sorted(readings.readings(list(cmu), cmu, lambda w: cmu[w][0])) == ["again", "aunt", "bass", "close", "dove", "plaza", "wound"]
+    got = readings.readings(["aunt"], cmu, lambda w: cmu[w][0])["aunt"]
+    assert [r["sounds"] for r in got] == ["AE1 N T", "AA1 N T"]
