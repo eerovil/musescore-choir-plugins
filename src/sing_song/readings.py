@@ -11,7 +11,8 @@ none is chosen first:
 
 Readings that differ only in stress or in an unstressed vowel ("the": DH AH0, DH AH1, DH IY0)
 sound alike when sung, so such a word is left out; so are a quick word's weak forms ("for" F ER0)
-and the dictionary's accent variants ("where" with or without HH, "your" AO or UH). song-app's song page lists the words this
+and most of the dictionary's accent variants ("where" with or without HH, "your" AO or UH);
+"again" (a-GEN or a-GAIN) and "aunt" (ant or ahnt) are listed (ACCENT). song-app's song page lists the words this
 gives (eeron-omat-taskit#144), and g2p.py turns a choir's sound-alike spellings into sounds
 with sound_alike()."""
 import json
@@ -44,8 +45,10 @@ def stressed(p):
 
 
 # stressed vowels the dictionary gives as one word's regional variants ("your" Y AO1 R / Y UH1 R,
-# "rather" R AE1 DH ER0 / R AH1 DH ER0, "again" ... EH1 N / ... EY1 N): sung either way
-ACCENT = [{"AA", "AO", "AH"}, {"AE", "AA"}, {"AE", "AH"}, {"AO", "UH"}, {"UH", "UW"}, {"EH", "EY"}]
+# "rather" R AE1 DH ER0 / R AH1 DH ER0): sung either way. EH/EY ("again" a-GEN or a-GAIN) and
+# AE/AA ("aunt", "tomato") are left out of this, so they are listed: a choir director chooses
+# between those (eeron-omat-taskit#147)
+ACCENT = [{"AA", "AO", "AH"}, {"AE", "AH"}, {"AO", "UH"}, {"UH", "UW"}]
 
 
 def plain(pron):

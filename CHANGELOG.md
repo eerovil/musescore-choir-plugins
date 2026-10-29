@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The song page's Pronunciation list also shows "again" and "against" (a-GEN or a-GAIN), and
+  words like "plaza" or "khaki" the dictionary gives with an "a" as in cat or as in father, so a
+  choir director can choose. Other accent differences ("your", "rather", "where") stay left off.
+  (eeron-omat-taskit#147)
+
 - An English word the dictionary reads two ways ("wind", "read", "live") is sung the way the
   song means: the song page's Publish stage lists each place one is sung, and a reading chosen
   there (or for the whole song) is sung by every part at that place. A choir's own way of saying
