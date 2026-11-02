@@ -116,3 +116,17 @@ def test_a_move_back_at_the_end_of_a_bar_changes_nothing(tmp_path):
              "<StaffText><text>mf</text></StaffText></voice>")
     timing = {"points": [[0, 0, 0], [3, 0, 3]], "duration": 3, "measures": 1}
     assert unroll(tmp_path, voice, timing) == [(67, "a", 2.0), (69, "b", 1.0)]
+
+
+def test_a_text_pair_and_a_real_gap_in_one_bar(tmp_path):
+    # a text's back-and-forward pair, then a plain move forward: only the move forward is a rest
+    voice = ("<voice><TimeSig><sigN>4</sigN><sigD>4</sigD></TimeSig>"
+             "<Chord><durationType>quarter</durationType><Lyrics><text>a</text></Lyrics><Note><pitch>72</pitch></Note></Chord>"
+             "<location><fractions>-1/8</fractions></location>"
+             "<StaffText><text>p</text></StaffText>"
+             "<location><fractions>1/8</fractions></location>"
+             "<Chord><durationType>quarter</durationType><Lyrics><text>b</text></Lyrics><Note><pitch>74</pitch></Note></Chord>"
+             "<location><fractions>1/4</fractions></location>"
+             "<Chord><durationType>quarter</durationType><Lyrics><text>c</text></Lyrics><Note><pitch>76</pitch></Note></Chord></voice>")
+    timing = {"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}
+    assert unroll(tmp_path, voice, timing) == [(72, "a", 1.0), (74, "b", 1.0), (None, None, 1.0), (76, "c", 1.0)]

@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A MuseScore 4 score with a text or hairpin placed between two notes is sung in time: the
+  singer took the marks MuseScore writes around it for a rest, and every later note of the part
+  came late (Hodie Christus Natus Est). (#468)
+
 - The song page's Pronunciation list also shows "again" and "against" (a-GEN or a-GAIN), and
   words like "plaza" or "khaki" the dictionary gives with an "a" as in cat or as in father, so a
   choir director can choose. Other accent differences ("your", "rather", "where") stay left off.
