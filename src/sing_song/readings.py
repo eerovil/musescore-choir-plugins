@@ -11,12 +11,14 @@ none is chosen first:
 
 Readings that differ only in stress or in an unstressed vowel ("the": DH AH0, DH AH1, DH IY0)
 sound alike when sung, so such a word is left out; so are a quick word's weak forms ("for" F ER0)
-and the dictionary's accent variants ("where" with or without HH, "your" AO or UH). song-app's song page lists the words this
+and most of the dictionary's accent variants ("where" with or without HH, "your" AO or UH);
+"again" (a-GEN or a-GAIN) and "aunt" (ant or ahnt) are listed (ACCENT). song-app's song page lists the words this
 gives (eeron-omat-taskit#144), and g2p.py turns a choir's sound-alike spellings into sounds
 with sound_alike()."""
 import json
 import re
 import sys
+from itertools import combinations
 
 VOWELS = {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW"}
 # a plain respelling of each sound, and a common word with the vowel, so a person can tell
@@ -44,8 +46,10 @@ def stressed(p):
 
 
 # stressed vowels the dictionary gives as one word's regional variants ("your" Y AO1 R / Y UH1 R,
-# "rather" R AE1 DH ER0 / R AH1 DH ER0, "again" ... EH1 N / ... EY1 N): sung either way
-ACCENT = [{"AA", "AO", "AH"}, {"AE", "AA"}, {"AE", "AH"}, {"AO", "UH"}, {"UH", "UW"}, {"EH", "EY"}]
+# "rather" R AE1 DH ER0 / R AH1 DH ER0): sung either way. EH/EY ("again" a-GEN or a-GAIN) and
+# AE/AA ("plaza", "khaki": a as in cat or as in father) are left out of this, so they are listed:
+# a choir director chooses between those (eeron-omat-taskit#147)
+ACCENT = [{"AA", "AO", "AH"}, {"AE", "AH"}, {"AO", "UH"}, {"UH", "UW"}]
 
 
 def plain(pron):
@@ -84,14 +88,22 @@ def sound_alike(a, b):
 
 
 def distinct(prons):
-    """One reading of each group that sounds alike, in the dictionary's order. A weak form, with no
-    stressed vowel ("for" F ER0, "are" ER0), is the same word said quickly: left out."""
-    out = []
+    """The most readings no two of which sound alike, the dictionary's earliest when there is a
+    choice, in its order. Sounding alike does not chain: AH sounds like AE and like AA, but AE and
+    AA differ, so AH1/AE1/AA1 gives AE1 and AA1. A weak form, with no stressed vowel ("for" F ER0,
+    "are" ER0), is the same word said quickly: left out."""
     strong = [p for p in prons if any(stressed(x) for x in p)] or prons
-    for p in strong:
-        if not any(sound_alike(p, q) for q in out):
-            out.append(p)
-    return out
+    if len(strong) > 10:   # none in the dictionary; keep it quick anyway
+        out = []
+        for p in strong:
+            if not any(sound_alike(p, q) for q in out):
+                out.append(p)
+        return out
+    for n in range(len(strong), 0, -1):
+        for pick in combinations(strong, n):
+            if not any(sound_alike(a, b) for a, b in combinations(pick, 2)):
+                return list(pick)
+    return []
 
 
 def respell(pron):

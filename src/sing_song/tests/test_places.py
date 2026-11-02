@@ -140,13 +140,19 @@ def test_the_real_dictionary_lists_the_homographs_and_not_the_little_words():
     assert sorted(json.loads(r.stdout)) == LISTED
 
 
-def test_weak_forms_and_accent_variants_are_not_listed():
+def test_weak_forms_and_most_accent_variants_are_not_listed():
     cmu = {"for": [["F", "AO1", "R"], ["F", "ER0"], ["F", "R", "ER0"]], "are": [["AA1", "R"], ["ER0"]],
            "where": [["W", "EH1", "R"], ["HH", "W", "EH1", "R"]], "your": [["Y", "AO1", "R"], ["Y", "UH1", "R"]],
            "don't": [["D", "OW1", "N", "T"], ["D", "OW1", "N"]], "new": [["N", "UW1"], ["N", "Y", "UW1"]],
            "rather": [["R", "AE1", "DH", "ER0"], ["R", "AH1", "DH", "ER0"]],
+           "lot": [["L", "AA1", "T"], ["L", "AO1", "T"]],
+           # and real ones stay, with the accents a director chooses between
            "again": [["AH0", "G", "EH1", "N"], ["AH0", "G", "EY1", "N"]],
-           # and real ones stay
+           "plaza": [["P", "L", "AA1", "Z", "AH0"], ["P", "L", "AE1", "Z", "AH0"]],
+           # AH sounds like AE and like AA, but AE and AA still differ whichever comes first
+           "aunt": [["AH1", "N", "T"], ["AE1", "N", "T"], ["AA1", "N", "T"]],
            "close": [["K", "L", "OW1", "S"], ["K", "L", "OW1", "Z"]], "dove": [["D", "AH1", "V"], ["D", "OW1", "V"]],
            "bass": [["B", "AE1", "S"], ["B", "EY1", "S"]], "wound": [["W", "AW1", "N", "D"], ["W", "UW1", "N", "D"]]}
-    assert sorted(readings.readings(list(cmu), cmu, lambda w: cmu[w][0])) == ["bass", "close", "dove", "wound"]
+    assert sorted(readings.readings(list(cmu), cmu, lambda w: cmu[w][0])) == ["again", "aunt", "bass", "close", "dove", "plaza", "wound"]
+    got = readings.readings(["aunt"], cmu, lambda w: cmu[w][0])["aunt"]
+    assert [r["sounds"] for r in got] == ["AE1 N T", "AA1 N T"]
