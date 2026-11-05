@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The song page's Pronunciation list no longer asks about scat: "da", "di" and the like took 106
+  of the 115 rows of Butterfly. A reading that only says a word's letters ("us" as U-S, "am" as
+  A-M) is gone from it too. What is sung does not change. (#PR)
+
 - A MuseScore 4 score with a text or hairpin placed between two notes is sung in time: the
   singer took the marks MuseScore writes around it for a rest, and every later note of the part
   came late (Hodie Christus Natus Est). (#468)

@@ -12,7 +12,10 @@ none is chosen first:
 Readings that differ only in stress or in an unstressed vowel ("the": DH AH0, DH AH1, DH IY0)
 sound alike when sung, so such a word is left out; so are a quick word's weak forms ("for" F ER0)
 and most of the dictionary's accent variants ("where" with or without HH, "your" AO or UH);
-"again" (a-GEN or a-GAIN) and "aunt" (ant or ahnt) are listed (ACCENT). song-app's song page lists the words this
+"again" (a-GEN or a-GAIN) and "aunt" (ant or ahnt) are listed (ACCENT). A reading that only says
+the word's letters ("us" as U-S, spelled_out()) is no reading, and scat syllables are not listed
+at all (SCAT): a song's "da da di" would ask a question at every note, and what is sung stays
+the dictionary's. song-app's song page lists the words this
 gives (eeron-omat-taskit#144), and g2p.py turns a choir's sound-alike spellings into sounds
 with sound_alike()."""
 import json
@@ -35,6 +38,18 @@ AS_IN = {"AA": "father", "AE": "cat", "AH": "cup", "AO": "law", "AW": "cow", "AY
 
 # a vowel before R sounds like these ("tear": T EH1 R the rip, T IH1 R the drop)
 BEFORE_R = {"EH": ("ai", "hair"), "IH": ("ee", "near"), "IY": ("ee", "near"), "UH": ("oo", "poor")}
+
+
+# each letter said aloud, for readings that only spell a word out: "da" D IY1 EY1, "us" Y UW1 EH1 S
+LETTERS = {"a": "EY", "b": "B IY", "c": "S IY", "d": "D IY", "e": "IY", "f": "EH F", "g": "JH IY",
+           "h": "EY CH", "i": "AY", "j": "JH EY", "k": "K EY", "l": "EH L", "m": "EH M", "n": "EH N",
+           "o": "OW", "p": "P IY", "q": "K Y UW", "r": "AA R", "s": "EH S", "t": "T IY", "u": "Y UW",
+           "v": "V IY", "w": "D AH B AH L Y UW", "x": "EH K S", "y": "W AY", "z": "Z IY"}
+
+# syllables a song scats on whose two readings are both real entries, names and abbreviations
+# ("di" D IY1 or D AY1), so spelled_out() cannot tell. "re" and "ye" stay out of this: "do re mi"
+# and the old "ye" are readings a director may choose between
+SCAT = {"de", "di", "dong", "fi", "ga", "ne", "se", "vi", "wu"}
 
 
 def base(p):
@@ -87,6 +102,14 @@ def sound_alike(a, b):
     return True
 
 
+def spelled_out(word, pron):
+    """True when a reading only says the word's letters. A one-letter word is left alone: "a" as
+    EY1 is the word itself."""
+    if len(word) < 2 or not all(c in LETTERS for c in word):
+        return False
+    return " ".join(base(p) for p in pron) == " ".join(LETTERS[c] for c in word)
+
+
 def distinct(prons):
     """The most readings no two of which sound alike, the dictionary's earliest when there is a
     choice, in its order. Sounding alike does not chain: AH sounds like AE and like AA, but AE and
@@ -131,11 +154,13 @@ def describe(pron):
 
 
 def readings(words, cmu, sung):
-    """{word: [describe(reading)...]} for the words with two readings or more; the reading
-    `sung(word)` gives (what is sung when none is chosen) first."""
+    """{word: [describe(reading)...]} for the words with two readings or more, scat and letters
+    said aloud left out; the reading `sung(word)` gives (what is sung when none is chosen) first."""
     out = {}
     for w in words:
-        prons = distinct(cmu.get(w, []))
+        if w in SCAT:
+            continue
+        prons = distinct([p for p in cmu.get(w, []) if not spelled_out(w, p)])
         if len(prons) < 2:
             continue
         default = sung(w)
