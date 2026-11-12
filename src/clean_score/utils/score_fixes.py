@@ -103,6 +103,17 @@ already opens a repeat refuses it.
 
     {"kind": "repeat", "measure": 46, "why": "the page prints |: at bar 46"}
 
+`endrepeat` closes a repeat at the end of bar `measure`, on every staff, played
+`times` times in all (default 2). A strophic song that prints its verses under one
+pass of the notes and no repeat signs (Kesän kukkiva maa, three verses) needs it so
+the track sings verse 1, 2, 3 in turn: playback goes back to the nearest start sign
+before it, or to the first bar. A bar that already ends a repeat refuses it; take that
+one off with `unrepeat` first. Give it a `repeat` at the bar it goes back to, the first
+bar too, or the song page asks where the repeat starts.
+
+    {"kind": "repeat", "measure": 1, "why": "three verses, no repeat printed"}
+    {"kind": "endrepeat", "measure": 32, "times": 3, "why": "three verses, no repeat printed"}
+
 `volta` (#319) puts the "1." and "2." brackets over an end repeat: "1." over the
 `bars` bars ending at `measure`, which must carry the end repeat, and "2." over the
 `second` bars after it (default 1). Only the "1." length changes what is played --
@@ -1929,6 +1940,32 @@ def _start_repeat(root: etree._Element, measure_no: int) -> str:
     return f"repeat starts here on all {len(bars)} staves"
 
 
+def _end_repeat(root: etree._Element, measure_no: int, times: int) -> str:
+    """Put an end-repeat sign, played ``times`` times in all, on bar ``measure_no`` of
+    every staff."""
+    if times < 2:
+        raise FixError(f"a repeat played {times} time(s) is no repeat; say 2 or more")
+    bars = []
+    for staff in _all_staves(root):
+        measures = staff.findall("Measure")
+        if measure_no < 1 or measure_no > len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        bar = measures[measure_no - 1]
+        if bar.find("endRepeat") is not None:
+            raise FixError("a repeat already ends here")
+        bars.append(bar)
+    for bar in bars:
+        # MuseScore writes it ahead of the bar's voices, after any start sign.
+        at = 0
+        for index, child in enumerate(bar):
+            if child.tag in ("irregular", "breakMultiMeasureRest", "startRepeat"):
+                at = index + 1
+        sign = etree.Element("endRepeat")
+        sign.text = str(times)
+        bar.insert(at, sign)
+    return f"repeat ends here, played {times} times, on all {len(bars)} staves"
+
+
 def volta_spans(staff: etree._Element) -> List[Tuple[int, int]]:
     """Each volta on a staff as ``(first bar, last bar)``, bars numbered from 1."""
     spans = []
@@ -2560,6 +2597,14 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 what = _start_repeat(root, measure)
             except FixError as exc:
                 raise FixError(f"m{measure} (repeat): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind == "endrepeat":
+            measure = int(fix["measure"])
+            try:
+                what = _end_repeat(root, measure, int(fix.get("times", 2)))
+            except FixError as exc:
+                raise FixError(f"m{measure} (endrepeat): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         if kind == "insbar":
