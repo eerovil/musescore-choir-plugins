@@ -8,7 +8,7 @@ developers are listed under *Behind the scenes*.
 ## Unreleased
 
 - A `delbar` fix refused by a repeat sign in the bar now says how to take the sign off first: an
-  `unrepeat` entry before it, written out with the bar and which sign. (#PR)
+  `unrepeat` entry before it, written out with the bar and which sign. (#492)
 
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)
