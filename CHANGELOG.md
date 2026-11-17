@@ -13,6 +13,9 @@ developers are listed under *Behind the scenes*.
 - Behind the scenes: `scripts/` is a regular package, so the tests import its scripts even
   where another project's `scripts` package is on the path. (#475)
 
+- Behind the scenes: the runner tests in `src/kube_runner/tests/` pass on macOS as well as
+  Linux. (#476)
+
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
   it that many times (Kesän kukkiva maa, three verses). (#473)

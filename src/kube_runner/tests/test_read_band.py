@@ -8,6 +8,7 @@ given back to bazzite, and that the pod frees the card by itself.
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -92,10 +93,31 @@ def _executable(path, text):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
+def pod_shell(tmp_path, monkeypatch):
+    """The pod is Linux, and its scripts run here in this machine's shell. A Mac differs
+    in two commands they use: put a stand-in for each on PATH, behaving as the pod's does."""
+    shims = tmp_path / "shims"
+    if shutil.which("setsid") is None:
+        # a Mac has none: start the command in a session of its own, as setsid does,
+        # so ending a job by its process group still reaches it
+        _executable(shims / "setsid", f'#!/bin/sh\nexec "{sys.executable}" -c '
+                    '"import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])" "$@"\n')
+    real_base64 = shutil.which("base64")
+    probe = tmp_path / "base64-probe"
+    probe.write_bytes(b"x")
+    if subprocess.run([real_base64, str(probe)], capture_output=True).stdout.strip() != b"eA==":
+        # a Mac's base64 does not read a file named as its argument: hand it in on stdin
+        _executable(shims / "base64", f'#!/bin/sh\n[ $# -eq 1 ] && [ -f "$1" ] && '
+                    f'exec "{real_base64}" < "$1"\nexec "{real_base64}" "$@"\n')
+    if shims.exists():
+        monkeypatch.setenv("PATH", f"{shims}{os.pathsep}{os.environ['PATH']}")
+
+
 @pytest.fixture
 def eero_pc(tmp_path, monkeypatch):
     """eero-pc with its homr venv built and checked."""
     fake = FakeEeroPc()
+    pod_shell(tmp_path, monkeypatch)
     keep = tmp_path / "pod-keep"
     # what use_kind() sets is put back after the test, and points under tmp_path
     for name in ("KIND", "NAMESPACE", "POD", "HOST_KEEP", "SYSLIB"):
@@ -267,7 +289,11 @@ def test_the_pod_frees_the_card_when_no_band_comes(tmp_path, age, exits):
     script = json.loads(command.split("command:", 1)[1])[2]
     alive = tmp_path / "alive"
     script = script.replace(read_band.ALIVE, str(alive)).replace("sleep 30", "sleep 0.1")
-    script = script.replace(f"touch {alive};", f"touch -d '{age}' {alive};")
+    # the alive file's age set here: a Mac's touch -d takes no '5 minutes ago'
+    alive.touch()
+    then = time.time() - {"5 minutes ago": 300, "now": 0}[age]
+    os.utime(alive, (then, then))
+    script = script.replace(f"touch {alive};", "")
     p = subprocess.Popen(["sh", "-c", script])
     try:
         p.wait(timeout=2)
