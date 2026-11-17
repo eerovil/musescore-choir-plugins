@@ -8,7 +8,7 @@ developers are listed under *Behind the scenes*.
 ## Unreleased
 
 - *Find systems* now finds the systems on a scan with grey paper; before, it found none on
-  any page of such a scan. (#PR)
+  any page of such a scan. (#494)
 
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
