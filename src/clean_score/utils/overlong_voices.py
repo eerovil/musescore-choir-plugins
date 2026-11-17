@@ -34,13 +34,16 @@ def _voice_total(voice: etree._Element, bar: Fraction) -> Fraction:
     """
     total = Fraction(0)
     spans = []
-    pos, scale = Fraction(0), Fraction(1)
+    pos = Fraction(0)
+    scales = [Fraction(1)]  # a tuplet inside a tuplet scales by both
     for el in voice:
+        scale = scales[-1]
         if el.tag == "Tuplet":
             n, a = _fraction(el.findtext("normalNotes")), _fraction(el.findtext("actualNotes"))
-            scale = (n / a) if (n and a) else Fraction(1)
+            scales.append(scale * ((n / a) if (n and a) else Fraction(1)))
         elif el.tag == "endTuplet":
-            scale = Fraction(1)
+            if len(scales) > 1:
+                scales.pop()
         elif el.tag == "location":
             pos += _fraction(el.findtext("fractions")) or 0
         elif el.tag in ("Chord", "Rest"):

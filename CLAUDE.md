@@ -2221,13 +2221,20 @@ state model are in `DESIGN.md`.
 - **Every clean asks MuseScore 3 whether it would open the result** (#235). MuseScore
   checks a score as it opens it (`Score::sanityCheck`: voice 1 of each staff must fill
   the bar exactly, no other voice may run past it) and calls one that fails
-  "corrupted" -- on Sangerhilsen the app crashed instead. **MuseScore 3 only**: with
-  MuseScore 4 as `MUSESCORE_CLI_PATH` the check answers `None` and the song records
-  "not checked" (#416). Only the app runs that check;
+  "corrupted" -- on Sangerhilsen the app crashed instead. Only the app runs that check;
   a command-line export does not, which is why every render went through and nobody
-  heard of it until a person opened the file. The one export that does run it is
-  `-o x.mlog`, so `pipeline.musescore_check` asks MuseScore itself rather than keeping
-  a copy of its rule here. Note MuseScore fills *gaps* with rests while reading, so a
+  heard of it until a person opened the file. The one MuseScore 3 export that does run
+  it is `-o x.mlog`, so with MuseScore 3 `pipeline.musescore_check` asks MuseScore
+  itself. **MuseScore 4 writes no `.mlog`** and refuses such a file outright when it
+  loads it, writing the reason only to its own log file (#481). So with MuseScore 4 the
+  check is the app's copy of that rule, `clean_score/utils/overlong_voices.py` (a voice
+  running past its bar), and the record says which ran (`verification.musescore.by`).
+  The raw scan is converted and rendered with `-f` so MuseScore 4 lets it in, and the
+  conversion names those bars in the song's log; the cleaned check and publish never
+  use `-f`. When a MuseScore 4 run fails, `musescore_cli.failed_load_reason` reads the
+  reason off its log (lines stamped during the run only) and the error names the bar
+  instead of blaming `MUSESCORE_CLI_PATH`. Without any MuseScore the song records
+  "not checked". Note MuseScore fills *gaps* with rests while reading, so a
   short voice passes; what fails is a voice that runs past the bar, typically a
   misread triplet. `check_opens_in_musescore` runs after the recorded fixes: each
   staff-bar MuseScore rejects is reset to a whole-bar rest (`rejected_bars.clear_bar`,

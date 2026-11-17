@@ -5,6 +5,7 @@ own log file. These pin reading that reason, the error built from it, the staff 
 answering 422 instead of 500, and the check using the Python rule for MuseScore 4.
 """
 
+import datetime
 import os
 import time
 
@@ -13,11 +14,20 @@ import pytest
 from src import musescore_cli
 from src.song_app import pipeline
 
-LOG = """2026-11-18T10:00:00 | INFO | main_thread | something else
-2026-11-18T10:00:01 | ERROR | main_thread | NotationProject::load | failed load notation, err: [2009] <b>Voice too long</b>: Full score, measure 2, staff 1, voice 2. Found: 8/2. Expected: 6/2.
-Voice too long: Full score, measure 5, staff 3, voice 2. Found: 5/4. Expected: 4/4., path: /tmp/in.musicxml
-2026-11-18T10:00:02 | INFO | main_thread | shutting down
-"""
+
+def _at(when):
+    return datetime.datetime.fromtimestamp(when).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+
+
+def _refusal(when, bar=2):
+    """A MuseScore 4 log with one refusal written at ``when``, as 4.7.5 writes it."""
+    return (f"{_at(when - 1)} | INFO  | main_thread | something else\n"
+            f"{_at(when)} | ERROR | main_thread | ConverterController::convertFile | failed load "
+            f"notation, err: [2009] <b>Voice too long</b>: Full score, measure {bar}, staff 1, "
+            "voice 2. Found: 8/2. Expected: 6/2.\n"
+            "Voice too long: Full score, measure 5, staff 3, voice 2. Found: 5/4. Expected: 4/4., "
+            "path: /tmp/in.musicxml\n"
+            f"{_at(when + 1)} | INFO  | main_thread | shutting down\n")
 
 
 def _log(folder, name, text, age=0.0):
@@ -32,15 +42,66 @@ def _log(folder, name, text, age=0.0):
 
 def test_the_reason_is_read_off_the_log_written_during_the_run(tmp_path):
     since = time.time() - 5
-    _log(str(tmp_path / "mac"), "MuseScore_261118_100000.log", LOG)
+    _log(str(tmp_path / "mac"), "MuseScore_261118_100000.log", _refusal(time.time()))
     reason = musescore_cli.failed_load_reason(since, [str(tmp_path / "linux"), str(tmp_path / "mac")])
     assert reason == ("Voice too long: Full score, measure 2, staff 1, voice 2. Found: 8/2. Expected: 6/2.\n"
                       "Voice too long: Full score, measure 5, staff 3, voice 2. Found: 5/4. Expected: 4/4.")
 
 
 def test_a_log_older_than_the_run_is_not_this_runs_reason(tmp_path):
-    _log(str(tmp_path), "MuseScore_261117_090000.log", LOG, age=3600)
+    _log(str(tmp_path), "MuseScore_261117_090000.log", _refusal(time.time() - 3600), age=3600)
     assert musescore_cli.failed_load_reason(time.time() - 5, [str(tmp_path)]) is None
+
+
+def test_an_earlier_refusal_in_a_log_written_again_is_not_this_runs_reason(tmp_path):
+    # One log file holds an hour-old refusal, then this run's unrelated failure.
+    now = time.time()
+    text = _refusal(now - 3600) + f"{_at(now)} | ERROR | main_thread | something else broke\n"
+    _log(str(tmp_path), "MuseScore_261118_090000.log", text)
+    assert musescore_cli.failed_load_reason(now - 5, [str(tmp_path)]) is None
+
+
+def test_the_newest_refusal_in_the_run_is_the_reason(tmp_path):
+    now = time.time()
+    _log(str(tmp_path), "MuseScore_261118_090000.log", _refusal(now - 3600, bar=33) + _refusal(now, bar=7))
+    assert "measure 7," in musescore_cli.failed_load_reason(now - 5, [str(tmp_path)])
+
+
+def test_a_refusal_with_no_path_stops_at_the_next_log_line(tmp_path):
+    now = time.time()
+    text = (f"{_at(now)} | ERROR | main | x | failed load notation, err: [2009] Voice too long: measure 2\n"
+            f"{_at(now)} | INFO  | main | x | shutting down\n{_at(now)} | INFO  | main | x | bye\n")
+    _log(str(tmp_path), "MuseScore_261118_090000.log", text)
+    assert musescore_cli.failed_load_reason(now - 5, [str(tmp_path)]) == "Voice too long: measure 2"
+
+
+@pytest.mark.parametrize("said, major", [
+    ("MuseScore4 4.7.5", 4),
+    ("MuseScore3 3.6.2", 3),
+    ("Qt 6.5.3\nMuseScore Studio 4.4.4", 4),
+    ("/usr/lib64/libOpenGL.so.0\nMuseScore4 4.7.5", 4),
+    ("nothing useful", None),
+])
+def test_the_version_is_read_off_the_line_naming_musescore(said, major):
+    assert musescore_cli._version_major(said) == major
+
+
+def test_a_failed_version_ask_is_asked_again(monkeypatch, tmp_path):
+    import subprocess
+    calls = []
+
+    def fake(argv, **kw):
+        calls.append(argv)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(argv, 120)
+        return subprocess.CompletedProcess(argv, 0, "MuseScore4 4.7.5\n", "")
+
+    monkeypatch.setattr(musescore_cli.subprocess, "run", fake)
+    cli = str(tmp_path / "mscore")
+    assert musescore_cli._major(cli, 1.0) is None
+    assert musescore_cli._major(cli, 1.0) == 4
+    assert musescore_cli._major(cli, 1.0) == 4
+    assert len(calls) == 2
 
 
 def test_a_log_with_no_refusal_says_nothing(tmp_path):
@@ -94,6 +155,7 @@ def test_with_musescore_4_the_check_is_the_python_rule_and_says_so(tmp_path, mon
 
 def test_the_staff_list_answers_422_with_musescores_reason(tmp_path, monkeypatch):
     pytest.importorskip("httpx")
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     from src.song_app import server, state

@@ -72,6 +72,22 @@ def test_a_triplet_that_fills_the_bar_passes():
     assert overlong_voices(_score([_chord("half") * 1 + triplet], sig=("4", "4"))) == []
 
 
+def test_a_tuplet_inside_a_tuplet_is_measured_by_both():
+    def tup(a, n):
+        return f"<Tuplet><normalNotes>{n}</normalNotes><actualNotes>{a}</actualNotes></Tuplet>"
+    # 2/4: three quarters in the time of two, the middle one three eighths in the time of two.
+    bar = (tup(3, 2) + _chord("quarter") + tup(3, 2) + _chord("eighth") * 3 + "<endTuplet/>"
+           + _chord("quarter") + "<endTuplet/>")
+    assert overlong_voices(_score([bar], sig=("2", "4"))) == []
+    assert overlong_voices(_score([bar + _chord("eighth")], sig=("2", "4"))) != []
+
+
+def test_a_breve_counts_its_length():
+    assert [f["measure"] for f in overlong_voices(_score([_chord("breve") + _chord("quarter")],
+                                                        sig=("4", "4")))] == [1]
+    assert overlong_voices(_score([_chord("breve")], sig=("4", "2"))) == []
+
+
 def test_a_bar_with_its_own_length_is_measured_by_it():
     long_bar = FULL + _chord("whole")
     assert overlong_voices(_score([long_bar], lens={1: "8/2"})) == []
@@ -119,3 +135,17 @@ def test_after_the_reset_musescore_4_opens_it_without_force(tmp_path):
     shutil.copyfile(forced, str(tmp_path / "in.mscx"))
     subprocess.run([cli, str(tmp_path / "in.mscx"), "-o", again], capture_output=True, timeout=300)
     assert os.path.exists(again)
+
+
+def test_a_reused_conversion_still_names_the_bars(tmp_path):
+    # The staff list converts first with no log; the clean that follows reuses the file.
+    from src.song_app import pipeline
+
+    source = tmp_path / "in.musicxml"
+    source.write_text("<score-partwise/>")
+    target = tmp_path / "in.mscx"
+    target.write_bytes(etree.tostring(_score([FULL, FULL], [FULL, OVERLAPPING])))
+    os.utime(source, (1, 1))
+    said = []
+    assert pipeline.convert_to_mscx(str(source), str(tmp_path), log=said.append) == str(target)
+    assert any("measure 2, staff 1, voice 2" in line for line in said)

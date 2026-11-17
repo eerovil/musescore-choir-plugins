@@ -689,7 +689,7 @@ def _run_check(slug: str) -> None:
         log(f"Asking {name} whether it opens the score…")
         found = pipeline.musescore_check(cleaned)
         if found is None:
-            opens = {"status": "not_checked", "reset": [], "rejected": []}
+            opens = {"status": "not_checked", "reset": [], "rejected": [], "by": name}
             log("Not checked: no MuseScore answered (MUSESCORE_CLI_PATH).")
         elif found:
             opens = {"status": "rejected", "reset": [], "rejected": found, "by": name}

@@ -56,6 +56,8 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
 
     # Reuse a previous conversion if it's still newer than the source.
     if os.path.exists(target) and os.path.getmtime(target) >= os.path.getmtime(input_path):
+        if log is not _noop and not lower.endswith(".mscz"):
+            log_overlong_voices(target, log)
         return target
 
     if lower.endswith(".mscz"):
