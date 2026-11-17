@@ -88,8 +88,9 @@ def read(song_dir):
 class Run:
     """One sing_song.py run's record, kept up to date as it goes."""
 
-    def __init__(self, song_dir, choirs=(), version=None, remote=False, sing=True):
+    def __init__(self, song_dir, choirs=(), version=None, remote=False, sing=True, kept=True):
         self.song_dir = song_dir
+        self.kept = kept   # False: nothing is written (a --try phrase, #483)
         self.lock = threading.Lock()   # the singers here and on the runner report from two threads
         self.record = {"state": "bundle", "started": time.time(), "pid": os.getpid(),
                        "version": version, "choirs": list(choirs), "remote": bool(remote),
@@ -105,7 +106,7 @@ class Run:
     def step(self, state, **fields):
         with self.lock:
             self.record = dict(self.record, state=state, **fields)
-            if os.path.isdir(self.song_dir):
+            if self.kept and os.path.isdir(self.song_dir):
                 write(self.song_dir, self.record)
 
     def finish(self, error=None):

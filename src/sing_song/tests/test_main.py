@@ -1012,3 +1012,118 @@ def test_choirs_that_say_a_word_differently_are_not_sung_in_one_run(tmp_path, mo
         with pytest.raises(SystemExit, match="its own run"):
             publish_song.pronounce_env("hodie", choirs)
     assert publish_song.pronounce_env("hodie", ["a", "c"])["CHOIR_WORDS"].count(os.pathsep) == 1
+
+# --try PART:A-B: one phrase of one part, to listen to (#483)
+def note(bar, syl=None, syllabic=None, sec=1.0, pitch=60, melisma=False):
+    return {"pitch": pitch, "beats": 1, "syl": syl, "syllabic": syllabic, "sec": sec, "melisma": melisma,
+            "bar": bar, "beat": 0}
+
+
+def silence(sec=1.0):
+    return {"pitch": None, "beats": 1, "syl": None, "sec": sec}
+
+
+def test_a_trial_keeps_whole_words_over_the_bars_edges():
+    notes = [note(1, "la", "single"), note(2, "ai", "begin"), note(3, "ka", "end"), note(3, "on", "single"),
+             note(4, "lyh", "begin"), note(5, "yt", "end"), note(5, melisma=True), note(5, "ja", "single")]
+    # bar 3 to 4: back to "ai" in bar 2, on to "yt" and the note held on it in bar 5, not "ja"
+    assert publish_song.try_window([notes], 3, 4) == (1.0, 7.0)
+
+
+def test_a_trial_is_the_first_pass_through_its_bars():
+    first = [note(1, "a", "single"), note(2, "b", "single")]
+    again = [note(1, "c", "single"), note(2, "d", "single")]
+    notes = first + [silence()] + again
+    assert publish_song.try_window([notes], 2, 2) == (1.0, 2.0)
+
+
+def test_a_trial_with_no_words_in_its_bars_is_none():
+    assert publish_song.try_window([[note(1, "a", "single"), silence(), note(3)]], 2, 2) is None
+
+
+def test_every_line_of_a_part_is_cut_at_the_same_moments():
+    high = [note(1, "a", "single"), note(2, "b", "single"), note(3, "c", "single")]
+    low = [note(1, "x", "single", sec=1.5), note(2, "y", "single", sec=1.5)]
+    start, end = publish_song.try_window([high, low], 2, 2)
+    assert (start, end) == (1.0, 3.0)
+    assert [n["syl"] for n in publish_song.cut(high, start, end)] == ["b", "c"]   # the low word runs to 3.0
+    cut_low = publish_song.cut(low, start, end)
+    # the low line's first note began before the phrase: its part inside is silence
+    assert [(n["pitch"], n["sec"]) for n in cut_low] == [(None, 0.5), (60, 1.5)]
+    assert sum(n["sec"] for n in cut_low) == pytest.approx(end - start)
+
+
+@pytest.mark.parametrize("text, parsed", [("Solo:12-16", ("Solo", 12, 16)), ("2:5", ("2", 5, 5)),
+                                          ("T1 a:3-4", ("T1 a", 3, 4))])
+def test_a_trial_names_a_part_and_bars(text, parsed):
+    assert publish_song.parse_trial(text) == parsed
+
+
+@pytest.mark.parametrize("text", ["Solo", "Solo:", ":3-4", "Solo:4-3", "Solo:0-2", "Solo:x-y"])
+def test_a_trial_that_names_no_bars_is_refused(text):
+    with pytest.raises(Exception):
+        publish_song.parse_trial(text)
+
+
+def test_a_trials_part_is_found_by_name_or_number():
+    names = ["Sopraano", "Solo", "2"]
+    assert publish_song.trial_part(("solo", 1, 2), names) == (2, 1, 2)
+    assert publish_song.trial_part(("2", 1, 2), names) == (3, 1, 2)   # a part called 2 before part 2
+    assert publish_song.trial_part(("1", 1, 2), names) == (1, 1, 2)
+    with pytest.raises(SystemExit) as e:
+        publish_song.trial_part(("Basso", 1, 2), names)
+    assert "1 Sopraano, 2 Solo, 3 2" in str(e.value)
+
+
+@pytest.mark.parametrize("flag", [["--publish", "jm"], ["--resume"], ["--no-sing"]])
+def test_a_trial_publishes_nothing_and_resumes_nothing(tmp_path, monkeypatch, capsys, flag):
+    with pytest.raises(SystemExit) as e:
+        run_main(monkeypatch, tmp_path, "--try", "Solo:1-2", *flag)
+    assert e.value.code == 2 and f"does not go with {flag[0]}" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_sing_with_a_trial_sings_that_phrase_into_try_only(tmp_path, monkeypatch):
+    from src.sing_song.tests.test_fold import chord, score
+    cleaned = score(tmp_path / "cleaned.mscx",
+                    [("T1", [chord(60, syl="la") * 4, chord(62, syl="lu") * 4]),
+                     ("B1", [chord(48, syl="do") * 4, chord(50, syl="re") * 4])])
+    bundle, work = tmp_path / "bundle", tmp_path / "work"
+    bundle.mkdir()
+    work.mkdir()
+    (bundle / "timing.json").write_text(json.dumps(
+        {"points": [[0, 0, 0], [4, 1, 0], [8, 1, 4]], "duration": 8, "measures": 2}))
+    sung, real_run = [], publish_song.run
+
+    def run(cmd, **kw):
+        if str(cmd[2]).endswith("unroll.py"):
+            return real_run(cmd, **kw)
+        if no_silent(cmd, kw):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == "ffmpeg":
+            open(cmd[-1], "w").write("mp3")
+        elif cmd[:3] == ["nice", "-n", "19"]:
+            sung.append((os.path.basename(cmd[6]), [(n.get("pitch"), n.get("syl")) for n in json.load(open(cmd[6]))]))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(publish_song, "run", run)
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    mp3 = tmp_path / "try" / "2-B1-bars-2-2.mp3"
+    mp3.parent.mkdir()
+    manifest = {"duration": 8, "parts": [{"name": "T1"}, {"name": "B1"}]}
+    publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "fi",
+                      sys.executable, "/ufr", False, trial=(2, 2, 2, str(mp3)))
+    assert sung == [("p2-high.json", [(50, "re")] * 4)]
+    assert mp3.read_text() == "mp3" and os.listdir(mp3.parent) == [mp3.name]
+    assert not (bundle / "parts").exists() or not os.listdir(bundle / "parts")
+    assert not (bundle / "words.json").exists()
+
+
+def test_a_trial_run_keeps_no_record_for_the_song_list(tmp_path):
+    from src.sing_song import progress
+    run = progress.Run(str(tmp_path), (), "v1", kept=False)
+    run.step("singing", part=1)
+    run.finish()
+    assert os.listdir(tmp_path) == []
+    progress.Run(str(tmp_path), (), "v1").step("bundle")
+    assert os.listdir(tmp_path) == [progress.RUN_FILE]
