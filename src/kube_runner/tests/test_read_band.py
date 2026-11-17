@@ -95,7 +95,7 @@ def _executable(path, text):
 
 def pod_shell(tmp_path, monkeypatch):
     """The pod is Linux, and its scripts run here in this machine's shell. A Mac differs
-    in two commands they use: put a stand-in for each on PATH, behaving as the pod's does."""
+    in three commands they use: put a stand-in for each on PATH, behaving as the pod's does."""
     shims = tmp_path / "shims"
     if shutil.which("setsid") is None:
         # a Mac has none: start the command in a session of its own, as setsid does,
@@ -109,6 +109,9 @@ def pod_shell(tmp_path, monkeypatch):
         # a Mac's base64 does not read a file named as its argument: hand it in on stdin
         _executable(shims / "base64", f'#!/bin/sh\n[ $# -eq 1 ] && [ -f "$1" ] && '
                     f'exec "{real_base64}" < "$1"\nexec "{real_base64}" "$@"\n')
+    if shutil.which("sha256sum") is None and shutil.which("shasum"):
+        # a Mac without coreutils has shasum only; it prints the same "<hash>  <name>" line
+        _executable(shims / "sha256sum", '#!/bin/sh\nexec shasum -a 256 "$@"\n')
     if shims.exists():
         monkeypatch.setenv("PATH", f"{shims}{os.pathsep}{os.environ['PATH']}")
 
