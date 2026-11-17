@@ -364,6 +364,7 @@ let logBox = null;
 
 async function renderWorkspace(slug) {
   if (ws) { ws.close(); ws = null; }
+  for (const k of Object.keys(publishChoice)) delete publishChoice[k];  // a fresh visit
   const song = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
   crumb.textContent = "› " + song.name;
   let view = song.stage; // which panel is shown
@@ -3232,7 +3233,8 @@ function pronunciationSection(P) {
 const normPart = (name) => name.toLowerCase().replace(/\s+/g, "");
 
 // The choir chosen on screen, per song, so it survives the panel being drawn again
-// (a saved score sends "state" and the whole panel is rebuilt).
+// (a saved score sends "state" and the whole panel is rebuilt). Only for this visit:
+// renderWorkspace empties it, so a song opened again shows its saved choir.
 const publishChoice = {};
 
 function publishSection(P, song, refresh, settings, saveNote) {
