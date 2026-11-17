@@ -3256,7 +3256,7 @@ function publishSection(P, song, refresh, settings, saveNote) {
         const kind = c.public ? ", open to all" : c.staging ? ", test" : "";
         choir.append(el("option", { value: c.id }, `${c.name} (${c.id}${kind})`));
       }
-      choir.value = publishChoice[P] || pub.choir || "";
+      choir.value = P in publishChoice ? publishChoice[P] : (pub.choir || "");
       if (reply.error) {
         choirNote.className = "hint publish-choirs err";
         choirNote.textContent = `Could not read the site's choirs: ${reply.error}`

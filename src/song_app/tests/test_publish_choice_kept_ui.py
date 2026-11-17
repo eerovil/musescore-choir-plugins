@@ -57,3 +57,27 @@ def test_the_chosen_choir_survives_the_panel_being_drawn_again(live, page, size)
         "Published to Joensuun Mieslaulajat (jm)", timeout=15000)
     assert [row[0] for row in cf.listed("jm")] == [slug]
     assert errors == []
+
+
+def test_an_emptied_choice_stays_empty_after_a_publish(live, page):
+    # once published to jm, choosing "— choir —" again must not snap back to jm on a redraw,
+    # or the next Publish goes to a choir the person had just turned away from
+    base, slug, cf = live
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+    choir = page.locator(".publish-section select.publish-choir")
+    expect(choir.locator("option")).to_have_count(4)
+    choir.select_option("jm")
+    page.locator(".publish-section button.publish-btn").click()
+    expect(page.locator(".publish-section .publish-status")).to_contain_text(
+        "Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+
+    choir.select_option("")
+    choir.evaluate("el => { el.dataset.beforeRedraw = '1'; }")
+    _wait_for_page_connection(slug)
+    server.hub.emit(slug, {"type": "state"})
+    page.wait_for_function(
+        "() => document.querySelector('select.publish-choir')"
+        " && !document.querySelector('select.publish-choir[data-before-redraw]')",
+        timeout=10000)
+    expect(choir).to_have_value("")
