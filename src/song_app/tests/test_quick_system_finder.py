@@ -64,6 +64,17 @@ def test_one_staff_systems_stay_one_staff():
     assert len(system_finder.page_systems(draw_page([1, 1, 1, 1]))) == 4
 
 
+def test_a_grey_page_is_read_by_its_own_threshold():
+    """#480: a scan on grey paper (here 215) read as all ink under the fixed 230,
+    and no system was found on any page."""
+    import numpy as np
+    page = np.asarray(draw_page([2, 2, 2]))
+    grey = Image.fromarray(np.where(page > 127, 215, 40).astype("uint8"))
+    assert len(system_finder.page_systems(grey)) == 3
+    assert system_finder.page_systems(draw_page([2, 2, 2])) == \
+        system_finder.page_systems(grey)              # same bands as on white paper
+
+
 def test_a_page_with_no_music_has_no_systems():
     page = Image.new("L", (WIDTH, HEIGHT), 255)
     ImageDraw.Draw(page).text((400, 300), "Title page", fill=0)

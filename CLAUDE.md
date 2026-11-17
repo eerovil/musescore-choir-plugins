@@ -2164,6 +2164,13 @@ state model are in `DESIGN.md`.
   systems). `Ask homr` (`{"method": "homr"}`) is still there, shown only when homr is
   installed. `test_quick_system_finder.py` pins it: drawn pages for the rules, the fixture
   and both B1 scans for the acceptance (needs poppler, no homr).
+  **A grey page sets its own ink threshold** (#480, `_ink`): ink was anything darker than
+  230, so a scan on grey paper read as ink from edge to edge and no system was found on any
+  page. A page whose median brightness is 240 or less now takes Otsu's threshold off its
+  own histogram; a white page keeps 230, so the pages already drawn by hand read as before.
+  `scripts/finder_vs_hand.py` counts the systems found on every hand-drawn page in `songs/`
+  against the bands drawn there (run it before and after a change to the finder). `bar_box`
+  still uses 230.
 - The **Scan panel** is added by this pull request (#116), replacing the holding one that
   #115 left. Its whole job is to stop a tidy-looking parse becoming a practice track, and
   every piece of it follows from that.

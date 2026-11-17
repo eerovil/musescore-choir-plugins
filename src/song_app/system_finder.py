@@ -203,6 +203,7 @@ def find_bands(
 
 QUICK_DPI = 150          # the dpi the Systems editor shows, so the render is shared
 _INK = 230               # grey up to this is ink; scans print faint staff lines
+_GREY_PAPER = 240        # a page whose median is this dark or darker is grey paper
 _STRIPS = 24             # narrow enough that a skewed line stays in a few rows
 _LINE_FILL = 0.45        # share of a strip's width a staff line row has to cover
 _STRIP_AGREE = 0.25      # share of strips that must see a staff for it to count
@@ -268,11 +269,34 @@ def _joined(ink, upper: tuple, lower: tuple) -> bool:
     return bool(gap[:, margin:gap.shape[1] - margin].mean(axis=0).max() >= _JOIN_FILL)
 
 
+def _otsu(grey) -> int:
+    """The grey level that best splits a page into two kinds of pixel (Otsu's method)."""
+    import numpy as np
+
+    share = np.bincount(grey.ravel(), minlength=256).astype(float)
+    share /= share.sum()
+    weight = np.cumsum(share)
+    mean = np.cumsum(share * np.arange(256))
+    between = (mean[-1] * weight - mean) ** 2 / (weight * (1 - weight) + 1e-12)
+    return int(np.argmax(between))
+
+
+def _ink(grey):
+    """Which pixels are ink. White paper keeps the fixed `_INK`, which catches faint
+    staff lines; on grey paper (#480) that reads the whole page as ink, so the
+    threshold is taken from the page itself."""
+    import numpy as np
+
+    if float(np.median(grey)) > _GREY_PAPER:
+        return grey < _INK
+    return grey <= _otsu(grey)   # Otsu's class 0 is the levels up to and including it
+
+
 def page_systems(image: "Image.Image") -> List[tuple]:
     """The printed systems of one page image, as (top, bottom) fractions of height."""
     import numpy as np
 
-    ink = np.asarray(image.convert("L")) < _INK
+    ink = _ink(np.asarray(image.convert("L")))
     height = ink.shape[0]
     staves = _staves(ink)
     if not staves:
