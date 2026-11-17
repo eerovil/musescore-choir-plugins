@@ -749,13 +749,115 @@ def test_each_choir_is_published_in_turn_with_the_singer_version(tmp_path, monke
     folder = song_folder(tmp_path)
     seen = []
 
-    def fake_publish(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None):
+    def fake_publish(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None, **kw):
         seen.append((choir, version, progress.read(str(folder))))
     monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
+    no_site(monkeypatch)
     run_main(monkeypatch, tmp_path, "--no-sing", "--publish", "jm", "--publish", "public", "--publish", "jm")
     assert [(c, v) for c, v, _ in seen] == [("jm", progress.singer_version()), ("public", progress.singer_version())]
     assert [(r["state"], r["choir"], r["choir_index"], r["choir_count"]) for _, _, r in seen] == [
         ("publishing", "jm", 1, 2), ("publishing", "public", 2, 2)]
+    assert progress.read(str(folder))["choir_outcomes"] == {"jm": "published", "public": "published"}
+
+
+def no_site(monkeypatch, sung=()):
+    """No Cloudflare: the client is a stand-in, and the choirs in `sung` have a sung version."""
+    monkeypatch.setattr(publish_song, "site_client", lambda: "client")
+    asked = []
+
+    def sung_choirs(client, slug, choirs):
+        asked.append(list(choirs))
+        return [c for c in choirs if c in sung]
+    monkeypatch.setattr(publish_song, "sung_choirs", sung_choirs)
+    return asked
+
+
+def test_piano_only_over_a_sung_choir_stops_before_building(tmp_path, monkeypatch, capsys):
+    """#483: a --no-sing run does not replace a sung version on the site without asking."""
+    folder = song_folder(tmp_path)
+    no_site(monkeypatch, sung=("jm", "joy"))
+    monkeypatch.setattr(publish_song, "publish_to_site", lambda *a, **k: pytest.fail("published"))
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("built"))
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--no-sing", "--out", str(tmp_path / "out"),
+                                      "--publish", "jm", "--publish", "joy", "--publish", "yl"])
+    with pytest.raises(SystemExit) as stop:
+        publish_song.main()
+    assert stop.value.code == 3
+    message = ("jm, joy have a sung version on the site; this run would replace them with piano only. "
+               "Run again with --piano-over-sung to do that, or leave those choirs out of --publish.")
+    assert message in capsys.readouterr().err
+    run = progress.read(str(folder))
+    assert run["state"] == "failed" and run["error"] == message
+
+
+def test_piano_over_sung_skips_the_check_and_says_so_to_publish(tmp_path, monkeypatch):
+    song_folder(tmp_path)
+    asked = no_site(monkeypatch, sung=("jm",))
+    seen = []
+    monkeypatch.setattr(publish_song, "publish_to_site",
+                        lambda slug, choir, *a, **kw: seen.append((choir, kw["piano_over_sung"])))
+    run_main(monkeypatch, tmp_path, "--no-sing", "--piano-over-sung", "--publish", "jm")
+    assert seen == [("jm", True)] and asked == []
+
+
+@pytest.mark.parametrize("args", [["--piano-over-sung"], ["--piano-over-sung", "--no-sing"],
+                                  ["--piano-over-sung", "--publish", "jm"]])
+def test_piano_over_sung_needs_no_sing_and_publish(tmp_path, monkeypatch, args):
+    song_folder(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, *args)
+    assert stop.value.code == 2
+
+
+def test_a_choir_refused_mid_run_lets_the_others_go_and_exits_3(tmp_path, monkeypatch, capsys):
+    """A sung version that landed after the up-front check: that choir is refused, the rest go."""
+    from src.song_app import publish
+    folder = song_folder(tmp_path)
+    no_site(monkeypatch)
+
+    def fake_publish(slug, choir, *a, **kw):
+        if choir == "joy":
+            raise publish.SungOnSite("joy")
+    monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, "--no-sing", "--publish", "jm", "--publish", "joy", "--publish", "yl")
+    assert stop.value.code == 3
+    message = ("joy has a sung version on the site and was not replaced. jm, yl were published. To replace "
+               "it with piano only, run again with --no-sing --piano-over-sung --publish joy.")
+    assert message in capsys.readouterr().err
+    run = progress.read(str(folder))
+    assert run["state"] == "failed" and run["error"] == message
+    assert run["choir_outcomes"] == {"jm": "published", "joy": "refused-sung", "yl": "published"}
+
+
+def test_a_failed_choir_stops_the_run_and_names_the_ones_not_tried(tmp_path, monkeypatch):
+    from src.song_app import publish
+    folder = song_folder(tmp_path)
+    no_site(monkeypatch)
+
+    def fake_publish(slug, choir, *a, **kw):
+        if choir == "joy":
+            raise publish.PublishError("D1 said no")
+    monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, "--no-sing", "--publish", "jm", "--publish", "joy", "--publish", "yl")
+    assert str(stop.value) == ("publish to joy failed: D1 said no. Not tried: yl; publish them with "
+                               "--publish joy --publish yl.")
+    run = progress.read(str(folder))
+    assert run["choir_outcomes"] == {"jm": "published", "joy": "failed", "yl": "not-tried"}
+    assert run["error"] == str(stop.value)
+
+
+def test_a_choir_that_cannot_be_checked_stops_the_run(tmp_path, monkeypatch):
+    from src.song_app import publish
+
+    class Client:
+        def query(self, sql, params):
+            raise publish.PublishError("timed out")
+    with pytest.raises(SystemExit) as stop:
+        publish_song.sung_choirs(Client(), "laulu", ["jm"])
+    assert str(stop.value) == "could not check jm on the site before publishing: timed out"
 
 
 def test_a_run_whose_process_is_gone_reads_as_failed(tmp_path):

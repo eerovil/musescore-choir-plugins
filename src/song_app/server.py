@@ -1881,8 +1881,14 @@ async def api_publish_settings(slug: str, body: Dict = None) -> Dict:
     return _derived(song)
 
 
+def _publish_records_now(slug: str) -> Dict[str, Dict]:
+    """The song's publish records as saved now, not as the job found them (#483)."""
+    with state.song_lock(slug):
+        return publish.records(_require(slug).data.get("publish") or {})
+
+
 def _run_publish(slug: str, choir: str, config: "publish.Config",
-                 choirs: Optional[List[Dict]] = None) -> None:
+                 choirs: Optional[List[Dict]] = None, piano_over_sung: bool = False) -> None:
     song = _require(slug)
     log = lambda m: _job_emit(slug, "publish", m)
     try:
@@ -1907,21 +1913,38 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
                 client=publish.Cloudflare(config), credits=credits,
                 published=published, choirs=choirs,
-                places=settings.get("places") or [], log=log)
+                places=settings.get("places") or [], log=log,
+                piano_over_sung=piano_over_sung,
+                records_now=lambda: _publish_records_now(slug))
         record["published_against"] = state.file_fingerprint(cleaned)
         with state.song_lock(slug):
             song = _require(slug)
             pub = song.data.setdefault("publish", {})
             sites = publish.records(pub)
-            staging = [c["id"] for c in (choirs or []) if c.get("staging")]
-            for gone in publish.replaced(choir, sites, staging):
-                del sites[gone]
-            sites[choir] = record
+            if record.pop("live", True):
+                staging = [c["id"] for c in (choirs or []) if c.get("staging")]
+                for gone in publish.replaced(choir, sites, staging):
+                    del sites[gone]
+                sites[choir] = record
+            else:
+                # Another publish wrote the site's row after this one (#483): its
+                # record, not this one, says what the site serves.
+                log("Another publish replaced this one before it was recorded; "
+                    "its record was not saved.")
             # One record per choir (#384): a song can be in public and one choir at once.
             pub.pop("site", None)
             pub.update({"sites": sites, "choir": choir, "error": None})
             song.save()
         _job_finish(song, "publish")
+    except publish.SungOnSite as exc:
+        # Kept as a kind, not a sentence, so the panel can offer the confirm (#483).
+        error = {"kind": exc.kind, "choir": exc.choir, "message": str(exc)}
+        with state.song_lock(slug):
+            song = _require(slug)
+            song.data.setdefault("publish", {}).update({"error": error, "choir": choir})
+            song.save()
+        _job_emit(slug, "publish", str(exc), "error")
+        _job_finish(song, "publish", str(exc))
     except Exception as exc:
         traceback.print_exc()
         with state.song_lock(slug):
@@ -1965,6 +1988,16 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     # to publish against, and the upload would fail anyway.
     if not choir:
         raise HTTPException(400, "Choose a choir first.")
+    # The app publishes piano only (#483): a sung version this app recorded for the
+    # choir is not replaced unless the panel's confirm says so. The job checks the
+    # site itself too, since a sung version may have come from elsewhere.
+    piano_over_sung = bool(body.get("piano_only"))
+    if not piano_over_sung:
+        with state.song_lock(slug):
+            recorded = publish.records(_require(slug).data.get("publish") or {}).get(choir) or {}
+        if recorded.get("sung"):
+            raise HTTPException(409, {"kind": publish.SungOnSite.kind, "choir": choir,
+                                      "message": publish.sung_message(choir)})
     if _publish_busy(song):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
@@ -1991,7 +2024,7 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         song.data.setdefault("publish", {}).update(settings)
         song.save()
     asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config,
-                                               listing["choirs"])
+                                               listing["choirs"], piano_over_sung)
     return {"started": True}
 
 

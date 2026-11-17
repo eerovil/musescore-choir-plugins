@@ -527,15 +527,41 @@ def part_mp3_command(wavs, mp3):
             "-ac", "1", "-b:a", "64k", mp3]
 
 
-def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None):
-    """Send the bundle (with the sung MP3s when there are) to the site's `choir` list with the
-    app's own publish code, and keep the record on the song as the app's Publish does, so the
-    next publish from either takes this version away. Review's approval is not needed here.
-    A sung publish records the singer `version` it was sung with (#453)."""
-    from src.song_app import publish, state
+def site_client():
+    """The Cloudflare client publishing uses, made once per run; stops the run without the keys."""
+    from src.song_app import publish
     config = publish.Config.from_env()
     if config is None:
         sys.exit(publish.MISSING_CONFIG)
+    return publish.Cloudflare(config)
+
+
+def sung_choirs(client, slug, choirs):
+    """The choirs among `choirs` whose live version of the song on the site is sung (#483).
+    A choir that cannot be read stops the run: publishing blind could replace a sung version."""
+    from src.song_app import publish
+    sung = []
+    for choir in choirs:
+        try:
+            if publish.sung_on_site(client, choir, slug):
+                sung.append(choir)
+        except Exception as e:   # a D1 error, a timeout, a refused key
+            sys.exit(f"could not check {choir} on the site before publishing: {e}")
+    return sung
+
+
+def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None,
+                    client=None, piano_over_sung=False):
+    """Send the bundle (with the sung MP3s when there are) to the site's `choir` list with the
+    app's own publish code, and keep the record on the song as the app's Publish does, so the
+    next publish from either takes this version away. Review's approval is not needed here.
+    A sung publish records the singer `version` it was sung with (#453).
+
+    A piano-only bundle raises ``publish.SungOnSite`` rather than replace a sung version on
+    the site, unless `piano_over_sung` (#483); any other failure is ``publish.PublishError``."""
+    from src.song_app import publish, state
+    if client is None:
+        client = site_client()
     song = state.load(slug)
     settings = song.data.get("publish") or {}
     sung = {}
@@ -550,15 +576,20 @@ def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
         layout={p["name"]: {k: p[k] for k in ("staff", "voices") if k in p} for p in manifest["parts"]
                 if "staff" in p}, sung=sung,
         words=os.path.join(bundle_dir, "words.json") if sung and os.path.exists(os.path.join(bundle_dir, "words.json")) else "")
-    client = publish.Cloudflare(config)
     choirs = publish.site_choirs(client)
     credits = {k: manifest[k] for k in publish.CREDITS if manifest.get(k)}
-    try:
-        record = publish.publish(slug=slug, title=manifest["title"], choir=choir, bundle=bundle,
-                                 client=client, credits=credits, published=publish.records(settings),
-                                 choirs=choirs, places=(settings.get("places") or []) + places, log=log)
-    except publish.PublishError as e:
-        sys.exit(f"publish failed: {e}")
+
+    def records_now():
+        with state.song_lock(slug):
+            return publish.records(state.load(slug).data.get("publish") or {})
+
+    record = publish.publish(slug=slug, title=manifest["title"], choir=choir, bundle=bundle,
+                             client=client, credits=credits, published=publish.records(settings),
+                             choirs=choirs, places=(settings.get("places") or []) + places, log=log,
+                             piano_over_sung=piano_over_sung, records_now=records_now)
+    if not record.pop("live", True):
+        log(f"{choir}: another publish replaced this one before it was recorded; its record was not saved")
+        return
     record["published_against"] = state.file_fingerprint(cleaned)
     record["sung"] = bool(sung)
     if sung:
@@ -759,6 +790,9 @@ def main():
                     help="only mark the song as waiting for a run in the song app's list, and exit: "
                          "run it just before queueing the run")
     ap.add_argument("--no-sing", action="store_true", help="piano only")
+    ap.add_argument("--piano-over-sung", action="store_true",
+                    help="with --no-sing --publish: replace a sung version on the site with piano only; "
+                         "without it such a choir is refused")
     ap.add_argument("--out", help="where the result goes (default /var/tmp/practice-<slug>)")
     ap.add_argument("--voice", choices=sorted(VOICES), help="one voice for every part, when the part names "
                     "do not say (S/A/M: LYSE, T/B: REMY)")
@@ -782,6 +816,8 @@ def main():
                     help="sing notes whose syllable has no vowel and no held sound (only stops), which are "
                          "heard as silence; without it such notes stop the run before anything is sung")
     a = ap.parse_args()
+    if a.piano_over_sung and not (a.no_sing and a.publish):
+        ap.error("--piano-over-sung goes with --no-sing and --publish")
 
     check_slug(a.slug)
     song_dir = os.path.join(ROOT, "songs", a.slug)   # the app's songs/ (state.song_dir)
@@ -797,6 +833,8 @@ def main():
     try:
         sing_and_publish(a, run_record)
     except SystemExit as e:
+        if run_record.finished:   # it already said why (a choir refused, #483)
+            raise
         if e.code not in (None, 0):
             run_record.finish(failure(e.code))
         else:
@@ -836,6 +874,16 @@ def sing_and_publish(a, run_record):
             sys.exit("download the UFR DiffSinger pack from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/ "
                      "and run scripts/install-singer.sh <the .zip>; it sets UFR_DIR in .env")
         pronounce = pronounce_env(a.slug, list(dict.fromkeys(a.publish)))
+    choirs = list(dict.fromkeys(a.publish))
+    client = site_client() if choirs else None
+    if choirs and a.no_sing and not a.piano_over_sung:
+        # Before anything is built: a piano-only run would replace a sung version (#483).
+        sung = sung_choirs(client, a.slug, choirs)
+        if sung:
+            stop(run_record, f"{', '.join(sung)} {'has' if len(sung) == 1 else 'have'} a sung version on "
+                 f"the site; this run would replace {'it' if len(sung) == 1 else 'them'} with piano only. "
+                 "Run again with --piano-over-sung to do that, or leave "
+                 f"{'that choir' if len(sung) == 1 else 'those choirs'} out of --publish.")
     bundle_dir = out
     os.makedirs(out, exist_ok=True)
     clear_bundle(out)
@@ -865,12 +913,57 @@ def sing_and_publish(a, run_record):
             part["voice"] = credit
     with open(os.path.join(bundle_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, ensure_ascii=False)
-    choirs = list(dict.fromkeys(a.publish))
+    publish_choirs(a, run_record, choirs, client, bundle_dir, manifest, sung_by, places, cleaned)
+    log(f"practice track: {bundle_dir}")
+
+
+EXIT_REFUSED = 3   # a choir was not replaced: its sung version stays (#483)
+
+
+def stop(run_record, message, code=EXIT_REFUSED):
+    """End the run with `message` on stderr and in the run record, and exit with `code`."""
+    print(message, file=sys.stderr, flush=True)
+    run_record.finish(message)
+    raise SystemExit(code)
+
+
+def publish_choirs(a, run_record, choirs, client, bundle_dir, manifest, sung_by, places, cleaned):
+    """Publish to each choir in turn. A choir whose sung version a piano-only run would replace
+    is refused and the others still go (#483); any other failure stops here, and the run says
+    which choirs it did not try and how to try them."""
+    from src.song_app import publish
+    for choir in choirs:
+        run_record.choir_outcome(choir, "not-tried")
+    refused, done = [], []
     for k, choir in enumerate(choirs, 1):
         run_record.step("publishing", choir=choir, choir_index=k, choir_count=len(choirs))
-        publish_to_site(a.slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
-                        run_record.record["version"])
-    log(f"practice track: {bundle_dir}")
+        try:
+            publish_to_site(a.slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
+                            run_record.record["version"], client=client,
+                            piano_over_sung=a.piano_over_sung)
+        except publish.SungOnSite as e:
+            log(f"{choir}: {e}")
+            run_record.choir_outcome(choir, "refused-sung")
+            refused.append(choir)
+            continue
+        except publish.PublishError as e:
+            run_record.choir_outcome(choir, "failed")
+            rest = choirs[k:]
+            message = f"publish to {choir} failed: {e}"
+            if rest:
+                message += (f". Not tried: {', '.join(rest)}; publish them with "
+                            + " ".join(f"--publish {c}" for c in [choir] + rest) + ".")
+            sys.exit(message)
+        run_record.choir_outcome(choir, "published")
+        done.append(choir)
+    if refused:
+        message = (f"{', '.join(refused)} {'has' if len(refused) == 1 else 'have'} a sung version on the "
+                   "site and " + ("was" if len(refused) == 1 else "were") + " not replaced.")
+        if done:
+            message += f" {', '.join(done)} {'was' if len(done) == 1 else 'were'} published."
+        message += (" To replace " + ("it" if len(refused) == 1 else "them") + " with piano only, run "
+                    "again with --no-sing --piano-over-sung " + " ".join(f"--publish {c}" for c in refused) + ".")
+        stop(run_record, message)
 
 
 if __name__ == "__main__":

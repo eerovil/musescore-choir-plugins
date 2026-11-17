@@ -492,3 +492,50 @@ def test_a_slow_answer_for_older_part_names_does_not_replace_the_newer_one(live,
     held[0].continue_()
     page.wait_for_timeout(500)
     expect(asks).to_have_text(["Kertoja", "A1"])
+
+
+def _sung_on_site(tmp_path, cf, slug, choir="jm"):
+    """A singing run published `slug` to `choir`: the site's row has sung parts."""
+    from src.song_app.tests.test_publish_guard import _sung
+    from src.song_app.tests.test_publish import CONFIG
+    publish.publish(slug=slug, title="Hanget soi", choir=choir,
+                    bundle=_sung(tmp_path, _bundle(tmp_path, parts=("T1", "T2", "B1", "B2"))),
+                    client=publish.Cloudflare(CONFIG, cf))
+
+
+@pytest.mark.parametrize("recorded", [True, False], ids=["recorded", "site-only"])
+def test_publishing_over_a_sung_version_asks_first(live, page, tmp_path, recorded):
+    """#483: Publish sends piano only, so a sung version on the site is replaced only
+    from the panel's own button. With the app's record it is refused at once (409);
+    with only the site's row the job refuses and the panel reads the saved error."""
+    base, slug, cf = live
+    _sung_on_site(tmp_path, cf, slug)
+    if recorded:
+        with state.song_lock(slug):
+            song = state.load(slug)
+            song.data.setdefault("publish", {})["sites"] = {"jm": {
+                "choir": "jm", "prefix": cf.listed("jm")[0][2], "files": [], "parts": ["T1"],
+                "at": 1_800_000_000, "sung": True}}
+            song.save()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+    section = page.locator(".publish-section")
+    section.locator("select.publish-choir").select_option("jm")
+    section.locator("button.publish-btn").click()
+
+    note = page.locator(".publish-section .publish-sung")
+    expect(note).to_be_visible(timeout=15000)
+    expect(note).to_contain_text("The Joensuun Mieslaulajat (jm) list has a sung version of this song.")
+    expect(note).to_contain_text("would replace it")
+    assert all(p["sung"] for p in __import__("json").loads(cf.listed("jm")[0][3]))
+    note.scroll_into_view_if_needed()
+    _shot(page, f"publish-sung-{'recorded' if recorded else 'site'}-1280.png")
+
+    page.locator(".publish-section button.publish-piano-only").click()
+    status = page.locator(".publish-section .publish-status")
+    expect(status).to_contain_text("Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+    expect(page.locator(".publish-section .publish-sung")).to_be_hidden()
+    assert not any(p.get("sung") for p in __import__("json").loads(cf.listed("jm")[0][3]))
+    assert errors == []

@@ -15,7 +15,14 @@ const el = (tag, props = {}, ...kids) => {
 };
 async function api(path, opts) {
   const r = await fetch(path, opts);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  if (!r.ok) {
+    // A detail may be an object the panel acts on (#483: `sung_on_site`); the message
+    // is its text either way, and the object rides along as `detail`.
+    const detail = (await r.json().catch(() => ({}))).detail;
+    const err = new Error(detail?.message || (typeof detail === "string" ? detail : "") || r.statusText);
+    if (detail && typeof detail === "object") err.detail = detail;
+    throw err;
+  }
   return r.headers.get("content-type")?.includes("json") ? r.json() : r.text();
 }
 const getJSON = (p) => api(p);
@@ -3267,9 +3274,25 @@ function publishSection(P, song, refresh, settings, saveNote) {
         choirNote.textContent = "The site has no choirs yet: add one with its scripts/add-choir.sh.";
       }
       if (site && !running && !pub.error) status.textContent = publishedText();
+      if (sungNote.dataset.choir) sungText(sungNote.dataset.choir);
     }).catch((e) => { choirNote.className = "hint publish-choirs err"; choirNote.textContent = e.message; });
   }
   const status = el("p", { className: "hint publish-status" });
+  // A sung version on the site is replaced only when asked (#483): this publish sends
+  // piano only. The note says so and offers the one button that does it.
+  const sungNote = el("div", { className: "publish-sung", hidden: true });
+  const sungText = (c) => {
+    sungNote.querySelector("p").textContent = `The ${choirName(c)} list has a sung version of this song. `
+      + "Publishing from here sends piano only and would replace it.";
+  };
+  const offerPianoOnly = (detail) => {
+    sungNote.replaceChildren(el("p", { className: "hint err" }),
+      el("button", { className: "publish-piano-only", onclick: () => go(detail.choir, true) },
+        "Replace with piano only"));
+    sungNote.dataset.choir = detail.choir;
+    sungText(detail.choir);
+    sungNote.hidden = false;
+  };
   const publishedText = () => listed.map((c) => {
     const s = sites[c];
     const against = s.published_against || pub.published_against;
@@ -3282,35 +3305,51 @@ function publishSection(P, song, refresh, settings, saveNote) {
     status.textContent = "Publishing is off on this host: the Cloudflare keys are not in .env.";
   } else if (running) {
     status.textContent = "Publishing… the log below shows how far it is.";
+  } else if (pub.error?.kind === "sung_on_site") {
+    status.className = "hint publish-status err";
+    status.textContent = "Last publish was not sent.";
+    offerPianoOnly(pub.error);
   } else if (pub.error) {
     status.className = "hint publish-status err";
-    status.textContent = "Last publish failed: " + pub.error;
+    status.textContent = "Last publish failed: " + (pub.error.message || pub.error);
   } else if (site) {
     status.textContent = publishedText();
   } else {
     status.textContent = "Not published yet.";
   }
+  const go = async (to, pianoOnly) => {
+    btn.disabled = true;
+    sungNote.hidden = true;
+    appendLog(pianoOnly ? "Publishing piano only over the sung version…" : "Publishing…");
+    try {
+      // The settings on screen are saved with it, so what goes up is what is shown.
+      const body = { choir: to, settings: settings() };
+      if (pianoOnly) body.piano_only = true;
+      await postJSON(`${P}/publish`, body);
+      saveNote.textContent = "";
+      refresh();
+    } catch (e) {
+      status.className = "hint publish-status err";
+      btn.disabled = false;
+      if (e.detail?.kind === "sung_on_site") {
+        status.textContent = "Not published.";
+        offerPianoOnly(e.detail);
+      } else {
+        status.textContent = e.message;
+      }
+    }
+  };
   const btn = el("button", { className: "primary publish-btn",
     disabled: !song.publish_configured || running,
-    onclick: async () => {
+    onclick: () => {
       if (!choir.value) { status.className = "hint publish-status err"; status.textContent = "Choose a choir first."; return; }
-      btn.disabled = true;
-      appendLog("Publishing…");
-      try {
-        // The settings on screen are saved with it, so what goes up is what is shown.
-        await postJSON(`${P}/publish`, { choir: choir.value, settings: settings() });
-        saveNote.textContent = "";
-        refresh();
-      } catch (e) {
-        status.className = "hint publish-status err";
-        status.textContent = e.message;
-        btn.disabled = false;
-      }
+      go(choir.value, false);
     } }, site ? "Publish again" : "Publish");
   return el("div", { className: "publish-section" },
     el("h3", {}, "Stemmanauhat site"),
     el("label", {}, "Choir"),
     el("div", { className: "row" }, choir, btn),
     choirNote,
-    status);
+    status,
+    sungNote);
 }
