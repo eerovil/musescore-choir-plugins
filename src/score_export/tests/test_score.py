@@ -407,3 +407,24 @@ def test_renaming_to_the_same_names_changes_nothing():
 def test_renaming_with_the_wrong_count_is_refused():
     with pytest.raises(ValueError, match="1 parts; 2 names"):
         rename_parts(etree.fromstring(SINGING_ONLY), ["S1", "S2"])
+
+
+# A red stem on a black note (#478) -------------------------------------------
+
+RED_STEM_ONLY = """<museScore><Score>
+  <Part><trackName>A</trackName><Staff id="1"/></Part>
+  <Staff id="1"><Measure><voice><Chord><durationType>quarter</durationType>
+    <Stem><color r="255" g="0" b="0" a="255"/></Stem>
+    <Note><pitch>60</pitch></Note></Chord></voice></Measure></Staff>
+</Score></museScore>"""
+
+
+def test_prepare_takes_the_red_off_a_stem_whose_note_is_already_black(tmp_path):
+    # MuseScore 4 colours the stem with the head; a person turning the head back
+    # leaves the stem red, and that alone must still make a copy without it
+    original = tmp_path / "score.mscx"
+    original.write_text(RED_STEM_ONLY)
+    path, _ = prepare(str(original), str(tmp_path))
+    assert path != str(original)
+    assert etree.parse(path).getroot().find(".//Stem/color") is None
+    assert original.read_text() == RED_STEM_ONLY

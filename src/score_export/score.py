@@ -19,7 +19,7 @@ from lxml import etree
 
 from src.clean_score.utils.utils import part_staff_ids
 
-from src.clean_score.utils.problem_marks import strip_marks, strip_red_notes
+from src.clean_score.utils.problem_marks import strip_marks, strip_red_notes, strip_red_stems
 from src.clean_score.utils.staff_display import fix_staff_display
 
 
@@ -357,6 +357,8 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     # The red marks cleaning leaves for a person fixing the score (#238) are not
     # part of the music; a forgotten one must not end up in a practice track.
     changed = bool(strip_marks(root)) or changed
+    # A stem can be red with its note already black (#478): that alone needs a copy.
+    changed = bool(strip_red_stems(root)) or changed
     changed = bool(strip_red_notes(root)) or changed
     # A score cleaned before #354 still hides the rests the scan shared between
     # two voices and draws some barlines wrong; drawing them is not editing music.

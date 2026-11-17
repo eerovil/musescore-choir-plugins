@@ -8,7 +8,8 @@ developers are listed under *Behind the scenes*.
 ## Unreleased
 
 - The site no longer shows a doubtful note's stem red: publishing takes the red off stems as well
-  as notes. (#478)
+  as notes, also where the note itself is already black. MuseScore 4 colours the stem with its
+  head when it reads a scan; MuseScore 3 does not. (#478)
 
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
