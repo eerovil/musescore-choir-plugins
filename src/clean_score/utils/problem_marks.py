@@ -73,5 +73,11 @@ def strip_red_notes(root: etree._Element) -> int:
     ]
     for color in found:
         color.getparent().remove(color)
+    # MuseScore keeps the colour on the chord's stem too; a red stem left behind
+    # shows on the site. The count stays the notes turned back.
+    for stem in root.iter("Stem"):
+        for color in stem.findall("color"):
+            if color.get("r") == "255" and color.get("g") == "0" and color.get("b") == "0":
+                stem.remove(color)
     return len(found)
 
