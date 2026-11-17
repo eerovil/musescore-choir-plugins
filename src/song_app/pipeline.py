@@ -945,13 +945,27 @@ def system_bounds(song_dir: str) -> List[Dict]:
     return [b.to_dict() for b in pdf_systems.load_bounds(song_dir)]
 
 
-def save_system_bounds(song_dir: str, bands: List[Dict], mscx_path: str = "") -> List[Dict]:
+def skipped_pages(song_dir: str) -> List[int]:
+    """The pages left out of the scan (#480)."""
+    return pdf_systems.load_skipped(song_dir)
+
+
+def save_system_bounds(song_dir: str, bands: List[Dict], mscx_path: str = "",
+                       skipped: Optional[List] = None) -> List[Dict]:
     """Store boundaries, re-indexed in page order and labelled where possible.
 
     `bands` are {page, top, bottom} as fractions of page height -- whatever the
     editor currently shows. Indices and measure ranges are derived here rather
     than trusted from the browser, so a drag can never invent an alignment.
+    `skipped` is the pages left out (None keeps what is stored); a band on one is
+    refused, since the page would be both read and not read.
     """
+    if skipped is not None:
+        skipped = sorted({int(p) for p in skipped})
+        clash = sorted({int(b["page"]) for b in bands} & set(skipped))
+        if clash:
+            raise ValueError(f"page(s) {', '.join(map(str, clash))} are left out "
+                             f"but have systems drawn on them")
     ordered = sorted(bands, key=lambda b: (int(b["page"]), float(b["top"])))
     bounds = [
         pdf_systems.SystemBounds(
@@ -963,7 +977,7 @@ def save_system_bounds(song_dir: str, bands: List[Dict], mscx_path: str = "") ->
     ]
     if mscx_path:
         bounds = pdf_systems.label(bounds, mscx_path)
-    pdf_systems.save_bounds(song_dir, bounds)
+    pdf_systems.save_bounds(song_dir, bounds, skipped)
     # Crop names are system-index + DPI, so edited geometry must clear the old
     # originals. Rendered-score crops live in .pages/cleaned and are unrelated.
     cache = _page_cache(song_dir)

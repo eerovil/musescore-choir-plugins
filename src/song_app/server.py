@@ -1290,20 +1290,26 @@ def api_bounds(slug: str) -> Dict:
     return {
         "pages": pipeline.page_count(pdf),
         "systems": systems,
+        "skipped_pages": pipeline.skipped_pages(song.dir),
         "declared": declared,       # how many systems the score says there are
     }
 
 
 @app.put("/api/songs/{slug}/bounds")
 def api_save_bounds(slug: str, body: Dict = None) -> Dict:
-    """Persist edited boundaries: {"systems": [{page, top, bottom}, ...]}."""
+    """Persist edited boundaries: {"systems": [{page, top, bottom}, ...]}.
+
+    An optional `"skipped_pages": [n, ...]` says which pages hold no music to scan
+    (#480); left out of the body, the pages already left out stay so.
+    """
     song = _require(slug)
     _song_pdf(song)
     bands = (body or {}).get("systems")
     if bands is None:
         raise HTTPException(400, "No systems given")
+    skipped = (body or {}).get("skipped_pages")
     try:
-        saved = pipeline.save_system_bounds(song.dir, bands, _bounds_score(song))
+        saved = pipeline.save_system_bounds(song.dir, bands, _bounds_score(song), skipped)
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(400, f"Bad bounds: {exc}")
     # Moving a band is changing the input a fragment was read from. Both the
@@ -1311,7 +1317,11 @@ def api_save_bounds(slug: str, body: Dict = None) -> Dict:
     # silently re-points everything after it — which is why nothing here compares
     # indices; each fragment is checked against the geometry now at its own.
     song = _require(slug)
-    return {"systems": saved, "discarded": scan.reconcile(song)}
+    discarded = scan.reconcile(song)
+    # The Scan panel's button waits for every page to be marked or left out.
+    hub.emit(slug, {"type": "state"})
+    return {"systems": saved, "skipped_pages": pipeline.skipped_pages(song.dir),
+            "discarded": discarded}
 
 
 @app.post("/api/songs/{slug}/find-systems")

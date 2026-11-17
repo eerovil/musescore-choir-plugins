@@ -281,6 +281,8 @@ table.grid .undernote:empty { display: none; }
 .syspagewrap { margin-bottom: 1rem; }
 .syspage { position: relative; display: inline-block; width: 100%; }
 .syspage img { width: 100%; display: block; cursor: crosshair; }
+.syspage.skipped img { opacity: 0.35; cursor: default; }
+.syspagehead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .sysband { position: absolute; left: 0; right: 0; box-sizing: border-box;
            border: 2px solid rgba(30, 110, 200, .85);
            background: rgba(30, 110, 200, .10); }

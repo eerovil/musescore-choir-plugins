@@ -84,6 +84,26 @@ def test_bad_input_is_refused_rather_than_stored(client):
     assert client.get(f"/api/songs/{SLUG}/bounds").json()["systems"] == before
 
 
+def test_pages_left_out_round_trip_and_a_band_on_one_is_refused(client):
+    """#480: a page with no music can be left out; it cannot also have bands."""
+    bands = client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]
+    assert client.get(f"/api/songs/{SLUG}/bounds").json()["skipped_pages"] == []
+    plain = [{"page": b["page"], "top": b["top"], "bottom": b["bottom"]} for b in bands]
+
+    r = client.put(f"/api/songs/{SLUG}/bounds",
+                   json={"systems": plain, "skipped_pages": [1]})
+    assert r.status_code == 400 and "1" in r.json()["detail"]
+    assert client.get(f"/api/songs/{SLUG}/bounds").json()["skipped_pages"] == []
+
+    off_four = [b for b in plain if b["page"] != 4]
+    r = client.put(f"/api/songs/{SLUG}/bounds",
+                   json={"systems": off_four, "skipped_pages": [4]})
+    assert r.status_code == 200 and r.json()["skipped_pages"] == [4]
+    # A save that does not mention them keeps them.
+    client.put(f"/api/songs/{SLUG}/bounds", json={"systems": off_four})
+    assert client.get(f"/api/songs/{SLUG}/bounds").json()["skipped_pages"] == [4]
+
+
 def test_pages_and_system_crops_are_served_as_images(client):
     page = client.get(f"/api/songs/{SLUG}/page/1?dpi=100")
     assert page.status_code == 200 and page.headers["content-type"] == "image/png"

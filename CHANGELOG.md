@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A page with no music to sing, such as a title page, can be left out of a scan with a
+  *Leave this page out* switch in the Systems editor. Before, the Scan button stayed off until
+  every page had a system drawn on it, so the page had to be cut from the PDF first. (#480)
+
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
   it that many times (Kesän kukkiva maa, three verses). (#473)
