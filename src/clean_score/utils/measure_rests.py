@@ -11,6 +11,12 @@ the middle.
 Only the length is rewritten: a rest that is hidden or carries anything else keeps it.
 A rest that does not fill the bar exactly (a whole rest under 3/4), a dotted one, one
 in a tuplet, or one a `location` moves off the start of the bar is left alone; the bar-length passes before this one deal with those.
+
+`fit_measure_rests` gives a bar rest that is already one the length of its own bar.
+A scan can carry them at the wrong length, with no `len` on the bar for the bar-length
+passes to act on: Messiah No. 4 came back with bar rests of 4/4 in a 3/4 piece, and
+MuseScore refused the score ("Incomplete measure") when the publish step opened it.
+Silence makes no musical claim, so only the rest's `duration` is rewritten.
 """
 from lxml import etree
 
@@ -63,4 +69,26 @@ def centre_measure_rests(root: etree._Element) -> int:
                 etree.SubElement(rest, "durationType").text = "measure"
                 etree.SubElement(rest, "duration").text = spelt
                 changed += 1
+    return changed
+
+
+def fit_measure_rests(root: etree._Element) -> int:
+    """Give every bar rest the length of its own bar; return how many changed."""
+    changed = 0
+    for staff in root.iter("Staff"):
+        measures = staff.findall("Measure")
+        if not measures:
+            continue
+        for measure, (bar, spelt) in zip(measures, _bar_lengths(staff)):
+            for voice in measure.findall("voice"):
+                for rest in voice.findall("Rest"):
+                    if (rest.findtext("durationType") or "").strip() != "measure":
+                        continue
+                    duration = rest.find("duration")
+                    if duration is not None and _fraction(duration.text) == bar:
+                        continue
+                    if duration is None:
+                        duration = etree.SubElement(rest, "duration")
+                    duration.text = spelt
+                    changed += 1
     return changed

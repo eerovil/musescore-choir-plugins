@@ -407,3 +407,26 @@ def test_renaming_to_the_same_names_changes_nothing():
 def test_renaming_with_the_wrong_count_is_refused():
     with pytest.raises(ValueError, match="1 parts; 2 names"):
         rename_parts(etree.fromstring(SINGING_ONLY), ["S1", "S2"])
+
+
+# A bar rest longer than its bar (#477) ---------------------------------------
+
+_TS34 = "<TimeSig><sigN>3</sigN><sigD>4</sigD></TimeSig>"
+LONG_BAR_REST = f"""<museScore><Score>
+  <Part><trackName>A</trackName><Staff id="1"/></Part>
+  <Staff id="1">
+    <Measure><voice>{_TS34}<Chord><durationType>half</durationType><dots>1</dots>
+      <Note><pitch>60</pitch></Note></Chord></voice></Measure>
+    <Measure><voice><Rest><durationType>measure</durationType><duration>4/4</duration></Rest></voice></Measure>
+  </Staff>
+</Score></museScore>"""
+
+
+def test_prepare_fits_a_bar_rest_cleaned_before_477_only_in_its_copy(tmp_path):
+    # a song cleaned before #477 publishes under MuseScore 4 without a re-clean
+    original = tmp_path / "score.mscx"
+    original.write_text(LONG_BAR_REST)
+    path, _ = prepare(str(original), str(tmp_path))
+    assert path != str(original)
+    assert etree.parse(path).getroot().findtext(".//Rest/duration") == "3/4"
+    assert original.read_text() == LONG_BAR_REST

@@ -23,7 +23,7 @@ from .utils.overfull_measures import fix_overfull_measures
 from .utils.shared_rests import share_rests
 from .utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
 from .utils.long_bars import trim_long_bars
-from .utils.measure_rests import centre_measure_rests
+from .utils.measure_rests import centre_measure_rests, fit_measure_rests
 from .utils.staff_display import fix_staff_display
 from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.spurious_timesigs import fix_spurious_timesigs
@@ -73,6 +73,9 @@ def _centre_measure_rests(root: etree._Element) -> None:
     changed = centre_measure_rests(root)
     if changed:
         logger.info("Wrote %s whole-bar rest(s) as bar rests", changed)
+    fitted = fit_measure_rests(root)
+    if fitted:
+        logger.info("Fitted %s bar rest(s) to their bar's length", fitted)
 
 
 def _fix_staff_display(root: etree._Element) -> None:

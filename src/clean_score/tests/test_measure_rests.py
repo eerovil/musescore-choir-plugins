@@ -1,7 +1,7 @@
 """A rest that fills its bar alone is written as a bar rest, so MuseScore centres it (#298)."""
 from lxml import etree
 
-from src.clean_score.utils.measure_rests import centre_measure_rests
+from src.clean_score.utils.measure_rests import centre_measure_rests, fit_measure_rests
 
 
 def _score(*bars, sig="4/4"):
@@ -96,3 +96,71 @@ def test_a_second_run_changes_nothing_and_a_bar_rest_is_untouched():
     before = etree.tostring(root)
     assert centre_measure_rests(root) == 0
     assert etree.tostring(root) == before
+
+
+# A bar rest whose length is not its bar's: Messiah No. 4 came back with bar rests of
+# 4/4 in a 3/4 piece, and MuseScore refused the score when publishing it.
+
+def _bar_rest(length, extra=""):
+    return f"<Rest>{extra}<durationType>measure</durationType><duration>{length}</duration></Rest>"
+
+
+def test_a_four_four_bar_rest_in_three_four_is_fitted_to_the_bar():
+    root = _score((_bar_rest("4/4"), ""), sig="3/4")
+    assert fit_measure_rests(root) == 1
+    assert _is_bar_rest(_first_rest(root), "3/4")
+
+
+def test_a_bar_rest_takes_the_bars_own_length_over_the_signature():
+    root = _score((_bar_rest("3/4"), ""), (_bar_rest("4/4"), ' len="6/8"'), sig="3/4")
+    assert fit_measure_rests(root) == 1
+    assert _is_bar_rest(_first_rest(root, 2), "6/8")
+
+
+def test_a_bar_rest_of_the_right_length_is_left_alone():
+    root = _score((_bar_rest("3/4"), ""), sig="3/4")
+    before = etree.tostring(root)
+    assert fit_measure_rests(root) == 0
+    assert etree.tostring(root) == before
+
+
+def test_a_hidden_bar_rest_is_fitted_and_stays_hidden():
+    root = _score((_bar_rest("4/4", "<visible>0</visible>"), ""), sig="3/4")
+    assert fit_measure_rests(root) == 1
+    rest = _first_rest(root)
+    assert _is_bar_rest(rest, "3/4") and rest.findtext("visible") == "0"
+
+
+def test_a_bar_after_a_time_signature_change_takes_the_new_meter():
+    xml = ("<museScore><Score><Staff id=\"1\">"
+           "<Measure><voice><TimeSig><sigN>4</sigN><sigD>4</sigD></TimeSig>"
+           + _bar_rest("4/4") + "</voice></Measure>"
+           "<Measure><voice><TimeSig><sigN>3</sigN><sigD>4</sigD></TimeSig>"
+           + _bar_rest("4/4") + "</voice></Measure>"
+           "<Measure><voice>" + _bar_rest("4/4") + "</voice></Measure>"
+           "</Staff></Score></museScore>")
+    root = etree.fromstring(xml.encode())
+    assert fit_measure_rests(root) == 2
+    assert _is_bar_rest(_first_rest(root, 1), "4/4")
+    assert _is_bar_rest(_first_rest(root, 2), "3/4")
+    assert _is_bar_rest(_first_rest(root, 3), "3/4")
+
+
+def test_only_the_staff_with_the_wrong_bar_rest_changes():
+    ts = "<TimeSig><sigN>3</sigN><sigD>4</sigD></TimeSig>"
+    xml = ("<museScore><Score>"
+           f"<Staff id=\"1\"><Measure><voice>{ts}{_bar_rest('3/4')}</voice></Measure></Staff>"
+           f"<Staff id=\"2\"><Measure><voice>{ts}{_bar_rest('4/4')}</voice></Measure></Staff>"
+           "</Score></museScore>")
+    root = etree.fromstring(xml.encode())
+    assert fit_measure_rests(root) == 1
+    first, second = [s.find("Measure/voice/Rest") for s in root.findall(".//Staff")]
+    assert _is_bar_rest(first, "3/4") and _is_bar_rest(second, "3/4")
+
+
+def test_the_clean_logs_how_many_bar_rests_it_fitted(caplog):
+    from src.clean_score.main import _centre_measure_rests
+    root = _score((_bar_rest("4/4"), ""), (_bar_rest("4/4"), ""), sig="3/4")
+    with caplog.at_level("INFO"):
+        _centre_measure_rests(root)
+    assert "Fitted 2 bar rest(s) to their bar's length" in caplog.text
