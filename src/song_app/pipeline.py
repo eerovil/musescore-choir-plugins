@@ -82,7 +82,12 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
     # without it. The bars are named here; cleaning cuts or resets them.
     log(f"Converting {os.path.basename(input_path)} with MuseScore CLI")
     cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
-    result = musescore_cli.run([cli, "-f", input_path, "-o", target], target)
+    try:
+        result = musescore_cli.run([cli, "-f", input_path, "-o", target], target)
+    except OSError as exc:
+        # MuseScore did not start at all: the one case where the path is to blame.
+        raise RuntimeError(f"MuseScore could not be started ({exc}). "
+                           "Check MUSESCORE_CLI_PATH.") from exc
     if not musescore_cli.ok(result, log):
         raise RuntimeError(musescore_cli.explain(result, "conversion failed"))
     log_overlong_voices(target, log)

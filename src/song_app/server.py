@@ -531,7 +531,10 @@ def api_systems(slug: str) -> Dict:
     if not xml:
         raise HTTPException(400, "No source file")
     try:
-        mscx = pipeline.convert_to_mscx(xml, song.dir)
+        # The song's log hears which bars run past their barline, here where the
+        # raw scan is first converted, before any clean (#481).
+        mscx = pipeline.convert_to_mscx(
+            xml, song.dir, log=lambda m: hub.emit(slug, {"type": "log", "line": m}))
     except RuntimeError as exc:
         # MuseScore refused the input; say why rather than a bare 500 (#481).
         raise HTTPException(422, str(exc))

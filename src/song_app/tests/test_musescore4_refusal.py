@@ -176,3 +176,62 @@ def test_the_staff_list_answers_422_with_musescores_reason(tmp_path, monkeypatch
     reply = TestClient(server.app).get(f"/api/songs/{song.slug}/systems")
     assert reply.status_code == 422
     assert "measure 33, staff 5" in reply.json()["detail"]
+
+
+def _song_with_scan(tmp_path, monkeypatch):
+    from src.song_app import state
+
+    songs = tmp_path / "songs"
+    songs.mkdir()
+    monkeypatch.setattr(state, "SONGS_DIR", str(songs))
+    song = state.create("Talviuni", per_system=True)
+    (songs / song.slug / "in.musicxml").write_text("<score-partwise/>")
+    song.data.setdefault("sources", {})["xml"] = "in.musicxml"
+    song.save()
+    return song
+
+
+def test_the_staff_list_names_the_long_bars_in_the_song_log_every_time(tmp_path, monkeypatch):
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from lxml import etree
+
+    from src.clean_score.tests.test_overlong_voices import FULL, OVERLAPPING, _score
+    from src.song_app import server
+
+    song = _song_with_scan(tmp_path, monkeypatch)
+    runs = []
+
+    def fake_run(argv, target, timeout=None):
+        # Stands in for MuseScore 4 with -f: an .mscx whose bar 2 voice 2 runs long.
+        runs.append(argv)
+        with open(target, "wb") as out:
+            out.write(etree.tostring(_score([FULL, FULL], [FULL, OVERLAPPING])))
+        return musescore_cli.Outcome(0, "", "", target, None, time.time())
+
+    monkeypatch.setattr(musescore_cli, "run", fake_run)
+    monkeypatch.setattr(pipeline, "system_grid", lambda mscx: [])
+    said = []
+    monkeypatch.setattr(server.hub, "emit", lambda slug, msg: said.append(msg.get("line", "")))
+    client = TestClient(server.app)
+    assert client.get(f"/api/songs/{song.slug}/systems").status_code == 200
+    first = [line for line in said if "measure 2, staff 1, voice 2" in line]
+    said.clear()
+    assert client.get(f"/api/songs/{song.slug}/systems").status_code == 200  # reused
+    again = [line for line in said if "measure 2, staff 1, voice 2" in line]
+    assert len(runs) == 1 and first and again
+
+
+def test_a_musescore_that_will_not_start_points_at_the_path(tmp_path, monkeypatch):
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from src.song_app import server
+
+    song = _song_with_scan(tmp_path, monkeypatch)
+    monkeypatch.setenv("MUSESCORE_CLI_PATH", str(tmp_path / "no-such-musescore"))
+    reply = TestClient(server.app).get(f"/api/songs/{song.slug}/systems")
+    assert reply.status_code == 422
+    assert "MUSESCORE_CLI_PATH" in reply.json()["detail"]
