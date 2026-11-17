@@ -20,6 +20,7 @@ from lxml import etree
 from src.clean_score.utils.utils import part_staff_ids
 
 from src.clean_score.utils.problem_marks import strip_marks, strip_red_notes
+from src.clean_score.utils.measure_rests import fit_measure_rests
 from src.clean_score.utils.staff_display import fix_staff_display
 
 
@@ -361,6 +362,10 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     # A score cleaned before #354 still hides the rests the scan shared between
     # two voices and draws some barlines wrong; drawing them is not editing music.
     changed = any(fix_staff_display(root).values()) or changed
+    # A score cleaned before #477 may still carry a bar rest longer than its bar
+    # (4/4 in 3/4), which MuseScore 4 refuses to open; fitting it here publishes such
+    # a song without a re-clean, which would cost its lyrics.
+    changed = bool(fit_measure_rests(root)) or changed
     if initial_bpm is not None:
         changed = add_opening_tempo(root, initial_bpm) or changed
     changed = bool(add_tempo_changes(root, tempo_changes or ())) or changed

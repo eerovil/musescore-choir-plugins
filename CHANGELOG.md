@@ -9,7 +9,8 @@ developers are listed under *Behind the scenes*.
 
 - A whole-bar rest the scan stored as four beats in 3/4 is fitted to its bar when the song is
   cleaned, so MuseScore 4 no longer refuses the score ("Incomplete measure") and the song
-  publishes. (#477)
+  publishes. Publishing fits it too, so a song cleaned before this publishes without a
+  re-clean. (#477)
 
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
