@@ -179,3 +179,27 @@ def test_a_bar_fix_leaves_another_staffs_cut_mark():
     to = [_note("note_4", 59, 19), _note("note_4", 62, 16), _note("note_2", 64, 18)]
     apply_fixes(root, [_fix(to)])
     assert CUT in [el.findtext("text") for el in _measure(root, 2, 2).iter("StaffText")]
+
+
+def test_a_short_bar_keeps_its_cut_mark():
+    # Cleaning cut the bar but could not spell the rest, so the voice holds 3/4 of
+    # 4/4; a `bar` fix may keep it that short, and then the mark has to stay.
+    short = SCORE.replace(
+        '<Chord><durationType>half</durationType><Lyrics><text>li</text></Lyrics>',
+        '<Chord><durationType>quarter</durationType><Lyrics><text>li</text></Lyrics>')
+    root = _with_cut(etree.fromstring(short))
+    done = apply_fixes(root, [_fix([_note("note_4", 59, 19), _note("note_4", 62, 16),
+                                    _note("note_4", 64, 18)],
+                                   expect=["quarter:60", "quarter:62", "quarter:64"])])
+    assert CUT in _texts(root)
+    assert "cut to" not in done[0]
+
+
+def test_a_cut_in_another_voice_keeps_the_mark(root):
+    _with_cut(root)
+    second = etree.SubElement(_measure(root, 1, 2), "voice")
+    second.append(etree.fromstring(
+        "<Chord><durationType>whole</durationType><Note><pitch>52</pitch></Note></Chord>"))
+    apply_fixes(root, [_fix([_note("note_4", 59, 19), _note("note_4", 62, 16),
+                             _note("note_2", 64, 18)])])
+    assert CUT in _texts(root)

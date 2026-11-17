@@ -1206,8 +1206,8 @@ def _strike_cut(bar: etree._Element) -> List[str]:
     """Take cleaning's "was 9/8, cut to 4/4" mark off this staff's bar (#482).
 
     `long_bars` writes it on the staff whose notes it cut, and it says nothing a `?`
-    word could answer, so `_strike_words` leaves it. A `bar` fix writes the voice
-    afresh and must fill the bar, so the cut is answered by the fix itself.
+    word could answer, so `_strike_words` leaves it. A `bar` fix that writes the
+    staff's only voice so it fills the bar answers it (`_fills_alone`).
     """
     struck: List[str] = []
     for el in list(bar.iter("StaffText")):
@@ -1216,6 +1216,21 @@ def _strike_cut(bar: etree._Element) -> List[str]:
             el.getparent().remove(el)
             struck.append(text[2:].split(";")[0])
     return struck
+
+
+def _fills_alone(measure: etree._Element) -> bool:
+    """True when voice 1 now fills the bar and no other voice of it holds a note.
+
+    The only bar a `bar` fix answers the cut mark on: `_replace_bar` may keep a
+    short voice short, and `long_bars` writes one mark for a staff whatever voice
+    it cut, while a `bar` fix writes voice 1 only.
+    """
+    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+    staff = measure.getparent()
+    length = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
+    total = sum((part for _, _, part in _timeline(_voice(measure))), Fraction(0))
+    others = measure.findall("voice")[1:]
+    return total == length and not any(v.find("Chord") is not None for v in others)
 
 
 def _answered(struck: List[str]) -> str:
@@ -2739,7 +2754,7 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             raise FixError(f"staff {staff} m{measure} ({kind}): {exc}") from None
         if kind in _KIND_WORDS:
             what += _answered(_strike(root, staff, measure, _KIND_WORDS[kind]))
-        if kind == "bar":
+        if kind == "bar" and _fills_alone(_measure(root, staff, measure)):
             cut = _strike_cut(_measure(root, staff, measure))
             if cut:
                 what += f" and took the mark off ({'; '.join(cut)})"
