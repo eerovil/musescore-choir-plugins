@@ -2391,8 +2391,17 @@ def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
         if found != want:
             raise FixError(f"staff {staff.get('id')} reads {found} now, but the fix was "
                            f"recorded against {want}")
-        for tag, what in (("startRepeat", "a repeat starts"), ("endRepeat", "a repeat ends"),
-                          ("Clef", "the clef changes"), ("KeySig", "the key changes"),
+        for tag, which in (("startRepeat", "start"), ("endRepeat", "end")):
+            if bar.find(f".//{tag}") is not None:
+                # #480: a scan can read a double bar as a repeat, and the repeat is
+                # then what keeps an invented bar in. Say how to take it off, and
+                # leave that to a person: a real repeat taken off quietly is lost.
+                raise FixError(
+                    f"a repeat {which}s in this bar on staff {staff.get('id')}; if the page "
+                    f"prints none, take it off first with an `unrepeat` entry before this "
+                    f'one: {{"kind": "unrepeat", "measure": {measure_no}, '
+                    f'"which": "{which}", "why": "..."}}')
+        for tag, what in (("Clef", "the clef changes"), ("KeySig", "the key changes"),
                           ("TimeSig", "the meter changes")):
             if bar.find(f".//{tag}") is not None:
                 raise FixError(f"{what} in this bar on staff {staff.get('id')}")
