@@ -1,4 +1,5 @@
 import os
+import os
 import json
 import shutil
 import subprocess
@@ -336,6 +337,59 @@ def test_a_mens_song_is_sung_low_and_a_womens_high_whatever_a_part_is_called():
     for voicing in ("mixed", None):
         with pytest.raises(SystemExit, match="which voice sings the part 'Solo'"):
             publish_song.part_voice("Solo", voicing=voicing)
+
+
+def test_a_part_that_says_no_voice_takes_it_from_its_clef(capsys):
+    """#483: a "Solo" in a mixed song (or one with no voicing) is sung by its clef's voice."""
+    assert publish_song.part_voice("Solo", clef="G") == publish_song.HIGH
+    assert publish_song.part_voice("Solo", voicing="mixed", clef="G8vb") == publish_song.LOW
+    assert publish_song.part_voice("Solo", clef="F") == publish_song.LOW
+    assert "'Solo' says no voice; its clef (bass) gives REMY" in capsys.readouterr().out
+    # the name still wins over the clef, and the voicing over both
+    assert publish_song.part_voice("Tenori", clef="G") == publish_song.LOW
+    assert publish_song.part_voice("Solo", voicing="women", clef="F") == publish_song.HIGH
+    for clef in ("C3", "PERC", None):   # a C clef or none says nothing either
+        with pytest.raises(SystemExit, match="--voice Solo=LYSE"):
+            publish_song.part_voice("Solo", clef=clef)
+
+
+def test_the_clefs_are_read_off_the_cleaned_score_by_singing_part(tmp_path):
+    fermata = os.path.join(os.path.dirname(__file__), "..", "..", "score_export", "tests", "test_files",
+                           "fermata.mscx")
+    assert publish_song.part_clefs(fermata, 2) == ["G", "G"]
+    text = open(fermata, encoding="utf-8").read()
+    second = text.rindex("<concertClefType>G</concertClefType>")
+    bass = tmp_path / "bass.mscx"
+    bass.write_text(text[:second] + "<concertClefType>F</concertClefType>"
+                    + text[second + len("<concertClefType>G</concertClefType>"):], encoding="utf-8")
+    assert publish_song.part_clefs(str(bass), 2) == ["G", "F"]
+    # parts that cannot be paired with the bundle's say nothing, and neither does a missing file
+    assert publish_song.part_clefs(str(bass), 3) == [None, None, None]
+    assert publish_song.part_clefs(str(tmp_path / "none.mscx"), 1) == [None]
+
+
+def test_voice_names_one_part_or_every_part():
+    assert publish_song.parse_voices(None) == (None, {})
+    assert publish_song.parse_voices(["LYSE"]) == ("LYSE", {})
+    assert publish_song.parse_voices(["Solo=remy", "Ääni 2 = LYSE"]) == (None, {"Solo": "REMY", "Ääni 2": "LYSE"})
+    assert publish_song.parse_voices(["REMY", "Solo=LYSE"]) == ("REMY", {"Solo": "LYSE"})
+    for bad in (["Solo=ALTO"], ["=LYSE"], ["BASS"]):
+        with pytest.raises(publish_song.argparse.ArgumentTypeError):
+            publish_song.parse_voices(bad)
+    parts = [{"name": "Sopraano"}, {"name": "Solo"}, {"name": "Piano"}]
+    assert publish_song.voices_for(parts, (None, {"Solo": "REMY", "Piano": "LYSE"}), "mixed",
+                                   [None, "G", None]) == [publish_song.HIGH, publish_song.LOW, publish_song.HIGH]
+    assert publish_song.voices_for(parts[:2], ("REMY", {"Solo": "LYSE"}), None,
+                                   [None, None]) == [publish_song.LOW, publish_song.HIGH]
+    with pytest.raises(SystemExit, match="'Sooloo', which the song has no part called"):
+        publish_song.voices_for(parts, (None, {"Sooloo": "REMY"}), None, ["G", "G", "G"])
+
+
+def test_a_wrong_voice_is_a_usage_error(tmp_path, monkeypatch):
+    song_folder(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, "--voice", "Solo=ALTO")
+    assert stop.value.code == 2
 
 
 def test_the_songs_voicing_is_read_off_its_state(tmp_path, monkeypatch):

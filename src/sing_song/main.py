@@ -71,11 +71,13 @@ def log(msg):
     print(msg, flush=True)
 
 
-def part_voice(name, voice=None, voicing=None):
+def part_voice(name, voice=None, voicing=None, clef=None):
     """(sing_ufr.py voice, credit) for a part: `voice` (LYSE or REMY) when given; else the song's
     voicing, a men's song sung by REMY and a women's by LYSE whatever a part is called (a men's
     "Solo" was sung by LYSE, #453); else the one its name says (Sopraano, Altto, Mezzo... -> LYSE;
-    Tenori, Baritoni, Basso... -> REMY). A name that says no voice ("Solo") stops the run."""
+    Tenori, Baritoni, Basso... -> REMY); else, for a name that says no voice ("Solo"), the one its
+    `clef` says (#483: treble LYSE, treble-8 or bass REMY), said in the log. With none of these the
+    run stops."""
     if voice:
         return VOICES[voice]
     if voicing == "men":
@@ -83,16 +85,89 @@ def part_voice(name, voice=None, voicing=None):
     if voicing == "women":
         return HIGH
     words = unicodedata.normalize("NFKD", name.strip()).split()
-    if words and words[0].casefold() == "solo":   # "Solo" says nothing of the voice; "Sopraano solo" does
-        sys.exit(f"which voice sings the part {name!r}? Name it by its voice on the Publish panel "
-                 "(Sopraano solo, Tenori solo...), record the song's voicing, or give --voice LYSE or --voice REMY")
     first = unicodedata.normalize("NFKD", name.strip())[:1].upper()
-    if first and first in "SAM":   # "" is in every string: a blank name must stop, not pick LYSE
+    # "Solo" says nothing of the voice ("Sopraano solo" does); "" is in every string, so a blank
+    # name must not pick LYSE
+    says = bool(first) and first in "SATBM" and not (words and words[0].casefold() == "solo")
+    if says and first in "SAM":
         return HIGH
-    if first and first in "TB":
+    if says:
         return LOW
-    sys.exit(f"which voice sings the part {name!r}? Name it S/A/T/B (Sopraano, Altto, Tenori, Basso) "
-             "or give --voice LYSE or --voice REMY")
+    by_clef = CLEF_VOICES.get(clef or "")
+    if by_clef:
+        log(f"voice: {name!r} says no voice; its clef ({CLEF_NAMES.get(clef, clef)}) gives {by_clef[1]}"
+            f" (--voice {shlex.quote(name + '=...')} to change it)")
+        return by_clef
+    sys.exit(f"which voice sings the part {name!r}? Name it by its voice on the Publish panel "
+             "(Sopraano, Altto, Tenori, Basso, Tenori solo...), record the song's voicing, or give "
+             f"--voice {shlex.quote(name + '=LYSE')} (or REMY)")
+
+
+# A clef as MuseScore names it (concertClefType) -> the voice that sings it (#483). A C clef or
+# percussion says nothing and is not here.
+CLEF_VOICES = {"G": HIGH, "G8vb": LOW, "F": LOW, "F8vb": LOW, "F15mb": LOW}
+CLEF_NAMES = {"G": "treble", "G8vb": "treble-8", "F": "bass", "F8vb": "bass-8", "F15mb": "bass-15"}
+
+
+def part_clefs(cleaned, count):
+    """The clef each singing part of the cleaned score opens with, top first, as MuseScore names
+    it ("G", "G8vb", "F"...): its first staff's first clef, else the staff's or instrument's
+    default, else "G" (MuseScore's own default). A list of `count` Nones when the score's singing
+    parts are not `count`, since then they cannot be paired with the bundle's."""
+    try:
+        from src.score_export.score import _part_name, silent_parts
+        root = etree.parse(cleaned).getroot()
+    except (OSError, etree.XMLSyntaxError, ImportError):
+        return [None] * count
+    score = root.find("Score")
+    if score is None:
+        return [None] * count
+    silent = set(silent_parts(root))
+    clefs = []
+    for index, part in enumerate(score.findall("Part")):
+        if _part_name(part, index) in silent:
+            continue
+        clef = None
+        own = part.find("Staff")
+        staff = score.find(f"Staff[@id='{own.get('id')}']") if own is not None else None
+        if staff is not None:
+            clef = staff.findtext(".//Clef/concertClefType")
+        if not clef and own is not None:
+            clef = own.findtext("defaultClef")
+        clefs.append(clef or part.findtext("Instrument/clef") or "G")
+    return clefs if len(clefs) == count else [None] * count
+
+
+def parse_voices(given):
+    """`--voice` values -> (one voice for every part or None, {part name: voice}). `LYSE` is
+    every part; `Solo=REMY` one part (#483). A name may hold '='; the last one splits."""
+    every, named = None, {}
+    for value in given or []:
+        name, eq, voice = value.rpartition("=")
+        if not eq:
+            name, voice = None, value
+        voice = voice.strip().upper()
+        if voice not in VOICES:
+            raise argparse.ArgumentTypeError(f"--voice {value!r}: the voice is LYSE or REMY")
+        if name is None:
+            every = voice
+        elif not name.strip():
+            raise argparse.ArgumentTypeError(f"--voice {value!r}: give the part's name before '='")
+        else:
+            named[name.strip()] = voice
+    return every, named
+
+
+def voices_for(parts, given, voicing, clefs):
+    """The (voice, credit) of each manifest part: a `--voice NAME=` for that part first, then
+    part_voice's own order. A NAME no part has stops the run, so a typo is not sung past."""
+    every, named = given
+    names = [p["name"] for p in parts]
+    unknown = [n for n in named if n not in names]
+    if unknown:
+        sys.exit(f"--voice names {', '.join(map(repr, unknown))}, which the song has no part called; "
+                 f"its parts are {', '.join(map(repr, names))}")
+    return [part_voice(n, named.get(n) or every, voicing, clef) for n, clef in zip(names, clefs)]
 
 
 def song_voicing(slug):
@@ -794,8 +869,10 @@ def main():
                     help="with --no-sing --publish: replace a sung version on the site with piano only; "
                          "without it such a choir is refused")
     ap.add_argument("--out", help="where the result goes (default /var/tmp/practice-<slug>)")
-    ap.add_argument("--voice", choices=sorted(VOICES), help="one voice for every part, when the part names "
-                    "do not say (S/A/M: LYSE, T/B: REMY)")
+    ap.add_argument("--voice", action="append", metavar="[PART=]LYSE|REMY",
+                    help="the voice for one part (Solo=REMY, repeatable), or for every part (LYSE), when "
+                         "the part names do not say (S/A/M: LYSE, T/B: REMY); a part that says no voice "
+                         "otherwise takes it from its clef (treble LYSE, treble-8 or bass REMY)")
     ap.add_argument("--cpu", action="store_true", help="sing on the processor even when the singer has a GPU")
     ap.add_argument("--remote-only", action="store_true",
                     help="sing every line on the remote runner (REMOTE_RUNNER: eero-pc's GPU on Eero's host), "
@@ -818,6 +895,10 @@ def main():
     a = ap.parse_args()
     if a.piano_over_sung and not (a.no_sing and a.publish):
         ap.error("--piano-over-sung goes with --no-sing and --publish")
+    try:
+        a.voices = parse_voices(a.voice)
+    except argparse.ArgumentTypeError as e:
+        ap.error(str(e))
 
     check_slug(a.slug)
     song_dir = os.path.join(ROOT, "songs", a.slug)   # the app's songs/ (state.song_dir)
@@ -897,7 +978,8 @@ def sing_and_publish(a, run_record):
             log(f"pronunciation: the reading chosen for {c.get('word')!r} at bar {c.get('bar')} "
                 f"(time {c.get('n')} there) has no such word there any more; choose it again on the song page")
         voicing = song_voicing(a.slug)
-        sung_by = [part_voice(p["name"], a.voice, voicing) for p in manifest["parts"]]
+        sung_by = voices_for(manifest["parts"], a.voices, voicing,
+                             part_clefs(cleaned, len(manifest["parts"])))
         work = os.path.join(out, "work")
         os.makedirs(work, exist_ok=True)
         gpu = not a.cpu and nvidia_dir(python) is not None
