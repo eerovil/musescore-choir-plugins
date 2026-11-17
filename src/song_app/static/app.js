@@ -364,6 +364,7 @@ let logBox = null;
 
 async function renderWorkspace(slug) {
   if (ws) { ws.close(); ws = null; }
+  for (const k of Object.keys(publishChoice)) delete publishChoice[k];  // a fresh visit
   const song = await getJSON(`/api/songs/${encodeURIComponent(slug)}`);
   crumb.textContent = "› " + song.name;
   let view = song.stage; // which panel is shown
@@ -3259,6 +3260,11 @@ function pronunciationSection(P) {
 // Part names are the same when they differ only in letter case and spaces, as on the site.
 const normPart = (name) => name.toLowerCase().replace(/\s+/g, "");
 
+// The choir chosen on screen, per song, so it survives the panel being drawn again
+// (a saved score sends "state" and the whole panel is rebuilt). Only for this visit:
+// renderWorkspace empties it, so a song opened again shows its saved choir.
+const publishChoice = {};
+
 function publishSection(P, song, refresh, settings, saveNote) {
   const pub = song.publish || {};
   // One record per choir (#384); a song published before that kept one, as `site`.
@@ -3271,6 +3277,7 @@ function publishSection(P, song, refresh, settings, saveNote) {
   const choirName = (c) => names[c] ? `${names[c]} (${c})` : c;
   const choir = el("select", { className: "publish-choir" },
     el("option", { value: "" }, "— choir —"));
+  choir.addEventListener("change", () => { publishChoice[P] = choir.value; });
   const choirNote = el("p", { className: "hint publish-choirs" });
   if (song.publish_configured) {
     getJSON("/api/choirs").then((reply) => {
@@ -3279,7 +3286,7 @@ function publishSection(P, song, refresh, settings, saveNote) {
         const kind = c.public ? ", open to all" : c.staging ? ", test" : "";
         choir.append(el("option", { value: c.id }, `${c.name} (${c.id}${kind})`));
       }
-      choir.value = pub.choir || "";
+      choir.value = P in publishChoice ? publishChoice[P] : (pub.choir || "");
       if (reply.error) {
         choirNote.className = "hint publish-choirs err";
         choirNote.textContent = `Could not read the site's choirs: ${reply.error}`
