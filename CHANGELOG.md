@@ -8,7 +8,7 @@ developers are listed under *Behind the scenes*.
 ## Unreleased
 
 - A new fix kind, `rehearsal`, puts a rehearsal mark the scan could not read on a bar, and
-  it reaches the published score. (#PR)
+  it reaches the published score. (#493)
 
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)
