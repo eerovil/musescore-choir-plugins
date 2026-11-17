@@ -14,7 +14,7 @@ in a tuplet, or one a `location` moves off the start of the bar is left alone; t
 
 `fit_measure_rests` gives a bar rest that is already one the length of its own bar.
 A scan can carry them at the wrong length, with no `len` on the bar for the bar-length
-passes to act on: Messiah No. 4 came back with bar rests of 4/4 in a 3/4 piece, and
+passes to act on: a scanned song came back with bar rests of 4/4 in a 3/4 piece, and
 MuseScore refused the score ("Incomplete measure") when the publish step opened it.
 Silence makes no musical claim, so only the rest's `duration` is rewritten.
 """
@@ -80,6 +80,8 @@ def fit_measure_rests(root: etree._Element) -> int:
         if not measures:
             continue
         for measure, (bar, spelt) in zip(measures, _bar_lengths(staff)):
+            if bar is None:  # a length nobody can read (`4/0`): leave the bar as it is
+                continue
             for voice in measure.findall("voice"):
                 for rest in voice.findall("Rest"):
                     if (rest.findtext("durationType") or "").strip() != "measure":

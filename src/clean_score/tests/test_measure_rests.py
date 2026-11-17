@@ -98,7 +98,7 @@ def test_a_second_run_changes_nothing_and_a_bar_rest_is_untouched():
     assert etree.tostring(root) == before
 
 
-# A bar rest whose length is not its bar's: Messiah No. 4 came back with bar rests of
+# A bar rest whose length is not its bar's: a scanned song came back with bar rests of
 # 4/4 in a 3/4 piece, and MuseScore refused the score when publishing it.
 
 def _bar_rest(length, extra=""):
@@ -119,6 +119,13 @@ def test_a_bar_rest_takes_the_bars_own_length_over_the_signature():
 
 def test_a_bar_rest_of_the_right_length_is_left_alone():
     root = _score((_bar_rest("3/4"), ""), sig="3/4")
+    before = etree.tostring(root)
+    assert fit_measure_rests(root) == 0
+    assert etree.tostring(root) == before
+
+
+def test_a_bar_whose_length_cannot_be_read_is_left_alone():
+    root = _score((_bar_rest("4/4"), ""), sig="4/0")
     before = etree.tostring(root)
     assert fit_measure_rests(root) == 0
     assert etree.tostring(root) == before
