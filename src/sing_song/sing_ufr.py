@@ -9,7 +9,12 @@ import json, os, re, sys
 # how a song sounds. A sung publish records the version it was sung with, and the song app lists a
 # song sung with an older one as waiting for a re-sing (#453). Read as text by
 # src/sing_song/progress.py, so keep it one plain line.
-SINGER_VERSION = 2
+SINGER_VERSION = 3
+# What each version changed: "*" for every song, or a language code (or a list of them) for the
+# songs sung in that language only (#484). A song sung with an older version is re-sung only when
+# a later version changed its language. Read as text too (progress.singer_changes): one line, a
+# plain dict. 3: English two-part vowels (AY, AW, OY) are sung as two vowels.
+SINGER_CHANGES = {1: "*", 2: "*", 3: "en"}
 import numpy as np, onnxruntime as ort, soundfile as sf
 D = os.environ.get("UFR_DIR", "/var/tmp/i36-ufr")
 notes = json.load(open(sys.argv[1])); out = sys.argv[2]

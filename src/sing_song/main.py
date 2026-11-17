@@ -38,6 +38,7 @@ from lxml import etree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # this checkout: the app whose publish code builds the bundle
+from src.sing_song import language_check  # noqa: E402
 from src.sing_song import progress  # noqa: E402
 from src.sing_song.fold import fold  # noqa: E402
 from src.sing_song import places as song_places  # noqa: E402
@@ -102,6 +103,35 @@ def song_voicing(slug):
             return json.load(f).get("voicing")
     except (OSError, ValueError, AttributeError):
         return None
+
+
+def song_language(song_dir, lang=None, change=None, words=()):
+    """The language the song is sung in (#484). Its saved language (language_check, set on the
+    song page or by an earlier run) decides; --lang only confirms it, and --change-lang changes
+    it. A song with none saved takes --lang and keeps it, and with no --lang either is sung in
+    Finnish only when its words look Finnish."""
+    describe = language_check.describe
+    if change:
+        if lang and lang != change:
+            sys.exit(f"refused: --lang {lang} and --change-lang {change} disagree")
+        language_check.save(song_dir, change, "sing_song.py")
+        log(f"saved the song's language as {describe(change)}")
+        return change
+    saved = language_check.saved(song_dir)
+    if saved:
+        if lang and lang != saved:
+            sys.exit(f"refused: this song is saved as {describe(saved)}; --lang {lang} disagrees. "
+                     f"Use --change-lang {lang} to change it.")
+        return saved
+    if lang:
+        language_check.save(song_dir, lang, "sing_song.py")
+        log(f"saved the song's language as {describe(lang)}")
+        return lang
+    foreign, _ = language_check.foreign_words(words)
+    if language_check.looks_foreign(words):
+        sys.exit("refused: no language saved and the words do not look Finnish (e.g. "
+                 f"{', '.join(foreign[:6])}). Set the language on the Start panel or run with --lang.")
+    return "fi"
 
 
 def build_bundle(song_app, slug, out, folded=None):
@@ -527,11 +557,12 @@ def part_mp3_command(wavs, mp3):
             "-ac", "1", "-b:a", "64k", mp3]
 
 
-def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None):
+def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None,
+                    language=None):
     """Send the bundle (with the sung MP3s when there are) to the site's `choir` list with the
     app's own publish code, and keep the record on the song as the app's Publish does, so the
     next publish from either takes this version away. Review's approval is not needed here.
-    A sung publish records the singer `version` it was sung with (#453)."""
+    A sung publish records the singer `version` it was sung with (#453) and the `language` (#484)."""
     from src.song_app import publish, state
     config = publish.Config.from_env()
     if config is None:
@@ -563,6 +594,7 @@ def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
     record["sung"] = bool(sung)
     if sung:
         record["singer_version"] = version
+        record["language"] = language
     with state.song_lock(slug):
         song = state.load(slug)
         pub = song.data.setdefault("publish", {})
@@ -766,7 +798,11 @@ def main():
     ap.add_argument("--remote-only", action="store_true",
                     help="sing every line on the remote runner (REMOTE_RUNNER: eero-pc's GPU on Eero's host), "
                          "none on this machine; a line it cannot sing stops the run")
-    ap.add_argument("--lang", default="fi", help="the words' language: fi, or en, de, sv, la, et (g2p.py)")
+    ap.add_argument("--lang", choices=sorted(language_check.LANGUAGES),
+                    help="the words' language. A song keeps its language (the song page's Start panel, "
+                         "or the first run's --lang): a --lang that disagrees with it is refused")
+    ap.add_argument("--change-lang", choices=sorted(language_check.LANGUAGES), metavar="LANG",
+                    help="change the song's saved language to LANG and sing in it")
     ap.add_argument("--lang-from", action="append", metavar="LANG:WORD[,WORD...]",
                     help="a song in two languages: from each named word on, sing in LANG (repeatable)")
     ap.add_argument("--place", action="append", default=[], metavar="NAME=ID",
@@ -848,6 +884,9 @@ def sing_and_publish(a, run_record):
         for c in song_places.stale(song_places.load(os.path.join(ROOT, "songs", a.slug)), cleaned):
             log(f"pronunciation: the reading chosen for {c.get('word')!r} at bar {c.get('bar')} "
                 f"(time {c.get('n')} there) has no such word there any more; choose it again on the song page")
+        lang = song_language(os.path.join(ROOT, "songs", a.slug), a.lang, a.change_lang,
+                             language_check.score_words(cleaned))
+        run_record.step("bundle", language=lang)
         voicing = song_voicing(a.slug)
         sung_by = [part_voice(p["name"], a.voice, voicing) for p in manifest["parts"]]
         work = os.path.join(out, "work")
@@ -855,7 +894,7 @@ def sing_and_publish(a, run_record):
         gpu = not a.cpu and nvidia_dir(python) is not None
         log("singing every line on the remote runner" if a.remote_only
             else f"singing on the {'graphics card' if gpu else 'processor'}")
-        sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
+        sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], lang, python, ufr_dir, gpu,
              parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
              on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
              version=run_record.record["version"], remote_only=a.remote_only,
@@ -869,7 +908,7 @@ def sing_and_publish(a, run_record):
     for k, choir in enumerate(choirs, 1):
         run_record.step("publishing", choir=choir, choir_index=k, choir_count=len(choirs))
         publish_to_site(a.slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
-                        run_record.record["version"])
+                        run_record.record["version"], run_record.record.get("language"))
     log(f"practice track: {bundle_dir}")
 
 

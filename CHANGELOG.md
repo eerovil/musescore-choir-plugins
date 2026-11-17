@@ -7,6 +7,12 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A song's language is saved with it: choose it on the New song form or the song's Start panel,
+  or with the first `sing_song.py --lang`. A song with no language whose words do not look
+  Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"
+  sounds (child, now, boy) are sung as two vowels, and only songs sung in English wait for a
+  re-sing because of it. (#484)
+
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
   it that many times (Kesän kukkiva maa, three verses). (#473)

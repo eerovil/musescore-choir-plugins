@@ -282,16 +282,32 @@ function homrBox() {
   return box;
 }
 
+// The languages a song can be sung in (#484), as a select. `blank` is the text of the
+// "nothing saved" choice; without it the list holds only the languages. Filled from
+// /api/languages so the list lives in one place (language_check.LANGUAGES).
+function languageSelect(current, blank, id) {
+  const sel = el("select", id ? { id } : {});
+  if (blank) sel.append(el("option", { value: "" }, blank));
+  getJSON("/api/languages").then(({ languages }) => {
+    for (const l of languages) sel.append(el("option", { value: l.code }, `${l.name} (${l.code})`));
+    sel.value = current || "";
+  }).catch(() => {});
+  return sel;
+}
+
 function newSongDialog() {
   const name = el("input", { placeholder: "Song name, e.g. Laulun aika" });
   // Which voices sing it. Asked here because nothing in the file can settle it:
   // a male-choir score is written in treble sounding an octave down and editions
   // routinely leave the 8 off the clef, so its tenor line reads as a soprano one.
-  const voicing = el("select", {},
+  const voicing = el("select", { id: "f-voicing" },
     el("option", { value: "" }, "Choose…"),
     el("option", { value: "men" }, "Men (TTBB)"),
     el("option", { value: "women" }, "Women (SSAA)"),
     el("option", { value: "mixed" }, "Mixed (SATB)"));
+  // The language the words are sung in (#484). Optional: a song with none is sung in
+  // Finnish only when its words look Finnish, and otherwise refused until one is set.
+  const language = languageSelect("", "Not set — Finnish if the words look Finnish", "f-language");
   // The PDF leads and the score file is the fallback, because that is now the
   // ordinary way in: a PDF on its own is a song and the app reads the score off
   // the page (#127). Handing in a score instead is the manual import (#86).
@@ -336,6 +352,7 @@ function newSongDialog() {
     const fd = new FormData();
     fd.append("name", name.value.trim() || fileName());
     fd.append("voicing", voicing.value);
+    if (language.value) fd.append("language", language.value);
     if (xml.files[0]) fd.append("xml", xml.files[0]);
     if (pdf.files[0]) fd.append("pdf", pdf.files[0]);
     status.textContent = "Creating…";
@@ -354,6 +371,8 @@ function newSongDialog() {
     el("p", { className: "hint" }, "Optional — a score you already have. Hand one in and the page is not scanned."),
     routeHint,
     el("label", {}, "Who sings it"), voicing,
+    el("label", {}, "Language of the words"), language,
+    el("p", { className: "hint" }, "What the parts are sung in. Can be changed later on the Start panel."),
     el("div", { className: "row" }, create, el("button", { onclick: renderLibrary }, "Cancel")),
     status));
 }
@@ -1784,6 +1803,7 @@ function panelRegister(panel, song, P, refresh) {
       el("span", { className: "hint" }, song.published?.length
         ? "The folder name stays the same. Publish again to show the new name on the site."
         : "The folder name stays the same.")),
+    languageBox(song, P),
     el("p", { className: "sub", style: "margin-top:16px" }, "Sources for this song."),
     el("p", {}, `Score: ${song.sources?.xml || "—"}`),
     el("p", {}, `PDF: ${song.sources?.pdf || "— (none)"}`),
@@ -1791,6 +1811,30 @@ function panelRegister(panel, song, P, refresh) {
     el("p", { className: "hint" }, "Go to the Clean step to build the score."),
     deleteSongBox(song, P),
     makeLog());
+}
+
+// The language the song is sung in (#484). Saved at once on change; its own file, so no
+// job running on the song holds it back. A run already singing keeps its language, and
+// the reply names it.
+function languageBox(song, P) {
+  const sel = languageSelect(song.language, song.language ? "" : "Not set", "start-language");
+  const said = el("span", { className: "hint startlanguage" }, song.language ? ""
+    : "Not set: sung in Finnish only if the words look Finnish, otherwise singing is refused.");
+  sel.onchange = async () => {
+    if (!sel.value) return;
+    sel.disabled = true;
+    try {
+      const r = await postJSON(`${P}/language`, { language: sel.value });
+      song.language = r.language;
+      said.textContent = "Saved." + (r.note ? " Note: " + r.note + "." : "")
+        + (r.previous && r.previous !== r.language ? " Songs already sung in the old language show as needing a re-sing." : "");
+      const blank = sel.querySelector('option[value=""]');
+      if (blank) blank.remove();
+    } catch (e) { appendLog(e.message, true); sel.value = song.language || ""; }
+    sel.disabled = false;
+  };
+  return el("div", { className: "languagebox", style: "margin-top:16px" },
+    el("label", {}, "Language of the words"), sel, el("div", {}, said));
 }
 
 // Delete the song from the app (#428). The folder goes to songs/.trash/, so moving it

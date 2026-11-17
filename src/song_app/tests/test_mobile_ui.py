@@ -108,7 +108,7 @@ def _new_song(page, base, name):
     page.get_by_role("button", name="+ New song").click()
     page.get_by_placeholder("Song name").fill(name)
     page.locator("#f-xml").set_input_files(FIXTURE)
-    page.locator("select").select_option("men")
+    page.locator("#f-voicing").select_option("men")
     page.get_by_role("button", name="Create").click()
     expect(page.locator(".ws")).to_be_visible()
     _use_per_system(page, base)                       # per-system, like the fixture
