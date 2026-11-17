@@ -1202,6 +1202,22 @@ def _strike(root: etree._Element, staff: int, measure: int, words) -> List[str]:
     return struck
 
 
+def _strike_cut(bar: etree._Element) -> List[str]:
+    """Take cleaning's "was 9/8, cut to 4/4" mark off this staff's bar (#482).
+
+    `long_bars` writes it on the staff whose notes it cut, and it says nothing a `?`
+    word could answer, so `_strike_words` leaves it. A `bar` fix writes the voice
+    afresh and must fill the bar, so the cut is answered by the fix itself.
+    """
+    struck: List[str] = []
+    for el in list(bar.iter("StaffText")):
+        text = el.findtext("text") or ""
+        if text.startswith("⚠ was ") and ", cut to " in text:
+            el.getparent().remove(el)
+            struck.append(text[2:].split(";")[0])
+    return struck
+
+
 def _answered(struck: List[str]) -> str:
     return f" and took {' '.join(struck)} off the red mark" if struck else ""
 
@@ -2723,6 +2739,10 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             raise FixError(f"staff {staff} m{measure} ({kind}): {exc}") from None
         if kind in _KIND_WORDS:
             what += _answered(_strike(root, staff, measure, _KIND_WORDS[kind]))
+        if kind == "bar":
+            cut = _strike_cut(_measure(root, staff, measure))
+            if cut:
+                what += f" and took the mark off ({'; '.join(cut)})"
         if _settle(root, staff, measure):
             what += " and turned its red notes black"
         line = f"staff {staff} m{measure}: {what} — {fix.get('why', 'no reason recorded')}"

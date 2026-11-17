@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A `bar` fix now also takes off cleaning's "was 9/8, cut to 4/4" red mark on the part it
+  rewrites, so the bar stops showing red; before, only an `unmark` took it off. (#482)
+
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
   it that many times (Kesän kukkiva maa, three verses). (#473)
