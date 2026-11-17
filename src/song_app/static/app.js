@@ -2991,6 +2991,36 @@ function panelPublish(panel, song, P, refresh, actions) {
   const addTempo = el("button", { onclick: () => { addTempoRow().querySelector("input").focus(); } },
     "+ Add tempo change");
 
+  // The score's printed rit. and accel. marks (#483): each eases the speed beat by
+  // beat to three quarters (rit.) or five quarters (accel.) unless a target BPM is
+  // given here, or it is switched off and played as written.
+  const savedGradual = Object.fromEntries((pub.gradual || []).map((g) => [g.measure, g]));
+  const marks = song.gradual_marks || [];
+  const markBars = new Set(marks.map((m) => m.measure));
+  const gradualRows = el("div", { className: "gradual-marks", "data-gradual": "" },
+    ...(marks.length ? marks.map((mark) => {
+      const saved = savedGradual[mark.measure] || {};
+      const speed = el("input", { type: "number", min: 20, max: 300, step: 1, value: saved.bpm ?? "",
+        placeholder: mark.kind === "rit" ? "¾ speed" : "1¼ speed", style: "width:96px",
+        "data-gradual-bpm": mark.measure, disabled: !!saved.off });
+      const off = el("input", { type: "checkbox", checked: !!saved.off, "data-gradual-off": mark.measure });
+      off.addEventListener("input", () => { speed.disabled = off.checked; });
+      for (const control of [speed, off]) control.addEventListener("input", changed);
+      return el("div", { className: "row gradual-row" },
+        el("span", {}, `Bar ${mark.measure}: “${mark.text}”, ease to`), speed,
+        el("span", { className: "hint" }, "BPM"),
+        el("label", {}, off, " play as written"));
+    }) : [el("span", { className: "hint" }, "No rit. or accel. in the score.")]),
+    ...(pub.gradual || []).filter((g) => !markBars.has(g.measure)).map((g) =>
+      el("div", { className: "hint", "data-gradual-stale": g.measure },
+        `Bar ${g.measure}: the setting saved here has no rit. or accel. in the score any more, and is dropped on save.`)));
+  const gradual = () => marks.map((mark) => ({
+    measure: mark.measure,
+    bpm: gradualRows.querySelector(`[data-gradual-bpm="${mark.measure}"]`).value
+      ? Number(gradualRows.querySelector(`[data-gradual-bpm="${mark.measure}"]`).value) : null,
+    off: gradualRows.querySelector(`[data-gradual-off="${mark.measure}"]`).checked,
+  }));
+
   // Who wrote it, as the site shows it. Until someone saves their own, the names
   // the score itself carries are offered.
   const credited = pub.credits || song.score_credits || {};
@@ -3103,6 +3133,7 @@ function panelPublish(panel, song, P, refresh, actions) {
 
   const settings = () => ({
     tempo_changes: tempoChanges(),
+    gradual: gradual(),
     ...(tree.available ? { places: places() } : {}),
     ...(partNames.length ? { part_names: partNames.map((input) => input.value.trim()) } : {}),
     ...(shared.shown ? { staff_groups: sharedAuto ? null : sharedInput.value.trim() } : {}),
@@ -3131,6 +3162,8 @@ function panelPublish(panel, song, P, refresh, actions) {
     tempoRows,
     el("div", { className: "row" }, addTempo,
       el("span", { className: "hint" }, "where the page changes speed; bars counted from 1")),
+    el("label", {}, "rit. and accel."),
+    gradualRows,
     el("div", { className: "credits" },
       ...CREDITS.flatMap(([key, label]) => [el("label", {}, label), credits[key]])),
     ...(partNames.length ? [

@@ -1443,6 +1443,13 @@ def bar_count(mscx_path: str) -> int:
     return len(staff.findall("Measure")) if staff is not None else 0
 
 
+def gradual_marks(mscx_path: str) -> List[Dict]:
+    """The score's printed rit. and accel. marks, a bar each (#483)."""
+    from src.score_export.score import gradual_marks as score_gradual_marks
+    from lxml import etree
+    return score_gradual_marks(etree.parse(mscx_path).getroot())
+
+
 def has_opening_tempo(mscx_path: str) -> bool:
     """Whether the score supplies its own tempo at the opening."""
     from src.score_export.score import has_opening_tempo as score_has_opening_tempo

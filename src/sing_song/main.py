@@ -213,7 +213,8 @@ def build_bundle(song_app, slug, out, folded=None):
             # panel gave (#402) and the staff pairing it saved
             bundle = publish.build_bundle(folded or cleaned, tmp, initial_bpm=bpm, tempo_changes=tempo_changes,
                                           part_names=folded_names(settings.get("part_names"), groups),
-                                          staff_groups=None if folded else settings.get("staff_groups"), log=log)
+                                          staff_groups=None if folded else settings.get("staff_groups"),
+                                          gradual=settings.get("gradual"), log=log)
             shutil.copy(bundle.musicxml, os.path.join(out, "score.musicxml"))
             shutil.copy(os.path.join(tmp, "score.mid"), os.path.join(out, "score.mid"))
             with open(os.path.join(out, "timing.json"), "w") as f:

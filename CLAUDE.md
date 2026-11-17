@@ -2660,6 +2660,21 @@ timing are the same parts on the same clock.
   The copy rewrites every fermata's stretch so it adds one beat (a dotted quarter in
   6/8), worked out from the span MuseScore stretches: from the fermata's beat to the
   next note or rest on *any* staff. A fermata marked not to play is left alone.
+- **A printed rit. or accel. is played** (#483, `score.gradual_marks`, `add_gradual`).
+  MuseScore plays such a text at the speed before it, so a song slowing into its end
+  played straight through, and so did the voices sung off its clock. The copy writes
+  hidden tempo marks beat by beat, easing in a straight line to 75% of the speed
+  (accel.: 125%) on the last beat before the ramp ends: at an "a tempo" or "Tempo I"
+  text (back to the speed before the mark, or the opening one), a tempo mark (which
+  keeps its own speed), a fermata (the speed before the mark comes back after it), the
+  next rit./accel. (which starts from where this one left off) or the end. A beat where
+  nothing starts is counted but gets no mark; a mark with no beat left is logged and
+  played as written. The spellings are in `_GRADUAL` (rit., ritard., riten., rall.,
+  accel. and their long forms, also inside "dim. e rit."); "ritmico" is not one. The
+  Publish panel lists the marks and saves `publish.gradual`
+  (`[{"measure", "bpm", "off"}]`, matched to the first mark in that bar): a target BPM
+  in place of 75%, or off. A saved setting whose bar has lost its mark is shown, dropped
+  on save, and ignored by a publish.
 
 `musescore.py` is the MuseScore 3 or 4 command line (`run_musescore`, bounded by
 `CLI_TIMEOUT` because a wedged MuseScore otherwise hangs the publish) and the part
@@ -2788,11 +2803,17 @@ tempo, part names, credits), then for each part: `unroll.py` writes each line (t
 of the staff) on the bundle's clock, `check_onsets.py` stops the run unless every note starts
 within 50 ms of a note in `score.mid`, `spoken.py` cuts a sentence on one held chord into a
 syllable a note, `g2p.py` gives the sounds of a song not in Finnish, `sing_ufr.py` sings it
-(UFR DiffSinger: every part of a men's song REMY and of a women's LYSE, by the song's voicing; in a mixed song or one with no voicing, LYSE for S/A/M parts and REMY for T/B, and a part called just "Solo" stops the run), two different lines of a part are mixed
+(UFR DiffSinger: every part of a men's song REMY and of a women's LYSE, by the song's voicing; in a mixed song or one with no voicing, LYSE for S/A/M parts and REMY for T/B, and a part whose name says no voice, like "Solo", by its clef: treble LYSE, bass or treble-8
+REMY, said in the log; `--voice NAME=VOICE` overrides one part), two different lines of a part are mixed
 at half volume each, and `gate.py` fades the rests where the whole part rests (the voice
 leaves a hiss). `--fold-divisi` folds lettered divisi parts (`S1b`) into their part as further
 voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s to
-`publish.publish` as `Bundle.sung`. It came from eeron-omat-taskit's `sing-song/` (#439),
+`publish.publish` as `Bundle.sung`. A publish that sends piano only (`--no-sing --publish`, or the app's
+Publish) is refused, exit 3, when the site already has a sung version for that choir, checked
+against the site's own row right before writing it; `--piano-over-sung` (the panel's "Publish
+piano only" after it asks) replaces it (#483). `--try PART:A-B` sings bars A to B of one part
+and stops, to listen to a phrase before a whole run: it writes `try/<n>-<Name>-bars-A-B.mp3`
+under `--out`, keeps a word that starts in range whole, and publishes nothing. It came from eeron-omat-taskit's `sing-song/` (#439),
 where its history is. The bundle's `words.json` (`sung_words()`) lists each part's notes with
 the syllable sung on each; `--publish` sends it along (`Bundle.words`), and the site sings a
 note several parts start together once only where they sing the same syllable

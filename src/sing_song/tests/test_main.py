@@ -58,7 +58,7 @@ class Bundle:
         open(os.path.join(out, "score.mid"), "wb").write(b"MThd")
         self.timing = {"duration": 12.5, "measures": 3}; self.parts = parts
 DEFAULT_BPM = 80
-def build_bundle(cleaned, out, *, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, log=None):
+def build_bundle(cleaned, out, *, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, gradual=None, log=None):
     CALLS.append(dict(initial_bpm=initial_bpm, tempo_changes=tempo_changes, part_names=part_names, staff_groups=staff_groups))
     return Bundle(out, part_names or ["Track 1", "Track 2"])
 def score_credits(path):

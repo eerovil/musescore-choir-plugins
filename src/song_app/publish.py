@@ -294,6 +294,7 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
                  tempo_changes: Optional[List[Dict]] = None,
                  part_names: Optional[List[str]] = None,
                  staff_groups: Optional[Sequence[Sequence[str]]] = None,
+                 gradual: Optional[List[Dict]] = None,
                  log: Logger = _noop) -> Bundle:
     """MusicXML, MIDI, the timing and the part names, made off one prepared score.
 
@@ -305,6 +306,10 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
     works them out from the page when there are more than five singing parts, and
     an empty list shares none. Only the picture changes: the MIDI and the timing
     come off the unmerged copy, so the site still mixes one track per part.
+
+    `gradual` is the Publish panel's say on the score's printed rit. and accel.
+    marks (#483), `[{"measure", "bpm", "off"}]`; a mark it does not name eases
+    to three quarters (or five quarters) of its speed.
     """
     from src.score_export import musescore, score
 
@@ -313,7 +318,8 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
         if count != len(part_names):
             raise PublishError(part_count_message(count))
     source, dropped = score.prepare(cleaned_path, out_dir, initial_bpm=initial_bpm,
-                                    tempo_changes=tempo_changes, part_names=part_names)
+                                    tempo_changes=tempo_changes, part_names=part_names,
+                                    gradual=gradual, log=log)
     if dropped:
         log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
     names = musescore.part_names(etree.parse(source).getroot())

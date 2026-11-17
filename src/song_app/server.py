@@ -169,6 +169,8 @@ def _derived(song: state.Song) -> Dict:
         "has_pdf": bool(pdf and os.path.exists(pdf)),
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
         "needs_initial_bpm": needs_initial_bpm,
+        # the score's printed rit./accel. marks, for the Publish panel (#483)
+        "gradual_marks": pipeline.gradual_marks(cleaned) if cleaned and os.path.exists(cleaned) else [],
         # Printed-system bounds, labelled with the measures they cover: what lets
         # the viewer show one system and the lyric editor ask per system.
         "systems": systems,
@@ -1762,6 +1764,38 @@ def _places(value) -> List[Dict]:
     return out
 
 
+def _gradual(cleaned: str, value) -> List[Dict]:
+    """The Publish panel's say on the score's printed rit./accel. marks (#483):
+    `[{"measure": 30, "bpm": 50, "off": false}]`. `bpm` null eases to the default
+    (three quarters for a rit., five quarters for an accel.). A bar with no mark
+    in the score is a 400, so a setting cannot quietly point at nothing."""
+    if not isinstance(value, list):
+        raise HTTPException(400, "Gradual changes must be a list")
+    marks = {m["measure"] for m in pipeline.gradual_marks(cleaned)}
+    out: Dict[int, Dict] = {}
+    for item in value:
+        try:
+            measure = _whole_number(item.get("measure"))
+        except (AttributeError, TypeError, ValueError):
+            raise HTTPException(400, "Each rit./accel. setting needs a whole bar number") from None
+        if measure not in marks:
+            raise HTTPException(400, f"Bar {measure} has no rit. or accel. in the score")
+        bpm = item.get("bpm")
+        if bpm is not None and bpm != "":
+            try:
+                bpm = _whole_number(bpm)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"rit./accel. at bar {measure}: BPM must be "
+                                         "a whole number") from None
+            if not 20 <= bpm <= 300:
+                raise HTTPException(400, f"rit./accel. at bar {measure}: BPM must be "
+                                         "between 20 and 300")
+        else:
+            bpm = None
+        out[measure] = {"measure": measure, "bpm": bpm, "off": bool(item.get("off"))}
+    return [out[m] for m in sorted(out)]
+
+
 def _publish_settings(song: state.Song, opts: Dict) -> Dict:
     """What the site plays and shows a song with, out of a request (#400).
 
@@ -1777,6 +1811,10 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
         raise HTTPException(400, "Clean the score first")
     out: Dict = {"tempo_changes": _tempo_changes(
         cleaned, opts.get("tempo_changes", saved.get("tempo_changes", [])))}
+    if "gradual" in opts:
+        out["gradual"] = _gradual(cleaned, opts["gradual"])
+    elif "gradual" in saved:
+        out["gradual"] = saved["gradual"]
     if not pipeline.has_opening_tempo(cleaned):
         try:
             bpm = _whole_number(opts.get("bpm", saved.get("bpm", publish.DEFAULT_BPM)))
@@ -1907,6 +1945,7 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
                     tempo_changes=settings.get("tempo_changes"),
                     part_names=settings.get("part_names"),
                     staff_groups=settings.get("staff_groups"),
+                    gradual=settings.get("gradual"),
                     log=slot.guard(log))
                 slot.check()
             record = publish.publish(

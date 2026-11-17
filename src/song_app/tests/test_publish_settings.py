@@ -151,12 +151,14 @@ def _publish(client, song, monkeypatch, tmp_path, body):
     seen = {}
 
     def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None,
-                    part_names=None, staff_groups=None, log=None):
+                    part_names=None, staff_groups=None, gradual=None, log=None):
         seen.update(initial_bpm=initial_bpm, tempo_changes=tempo_changes)
         if staff_groups is not None or "staff_groups" in seen:
             seen["staff_groups"] = staff_groups
         if part_names is not None:
             seen["part_names"] = part_names
+        if gradual is not None:
+            seen["gradual"] = gradual
         return _bundle(tmp_path)
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)
     assert client.post(f"/api/songs/{song.slug}/publish", json=body).status_code == 200
@@ -373,3 +375,58 @@ def test_a_publish_is_handed_the_saved_pairing_or_none_for_the_automatic_one(
     _cf, seen, _data = _publish(client, six, monkeypatch, tmp_path, {
         "choir": "naiskuoro", "settings": {"staff_groups": "S1+S1b"}})
     assert seen["staff_groups"] == [["S1", "S1b"]]
+
+
+# ---------------------------------------------------------------------------
+# The score's printed rit. and accel. marks (#483)
+# ---------------------------------------------------------------------------
+def _mark(song, measure, text):
+    cleaned = song.cleaned_path()
+    with open(cleaned) as fh:
+        xml = fh.read()
+    bars = xml.split("<Measure><voice>")
+    bars[measure] = f"<StaffText><text>{text}</text></StaffText>" + bars[measure]
+    with open(cleaned, "w") as fh:
+        fh.write("<Measure><voice>".join(bars))
+    with state.song_lock(song.slug):
+        again = state.load(song.slug)
+        again.data["review"] = {"approved_against": state.file_fingerprint(cleaned)}
+        again.save()
+
+
+def test_the_panel_is_offered_the_scores_rit_and_accel_marks(client, song):
+    assert client.get(f"/api/songs/{song.slug}").json()["gradual_marks"] == []
+    _mark(song, 30, "poco rit.")
+    _mark(song, 12, "accel.")
+    assert client.get(f"/api/songs/{song.slug}").json()["gradual_marks"] == [
+        {"measure": 12, "kind": "accel", "text": "accel."},
+        {"measure": 30, "kind": "rit", "text": "poco rit."}]
+
+
+def test_a_rit_setting_is_kept_and_handed_to_the_publish(client, song, monkeypatch, tmp_path):
+    _mark(song, 30, "rit.")
+    _mark(song, 12, "accel.")
+    reply = client.post(f"/api/songs/{song.slug}/publish-settings", json={"gradual": [
+        {"measure": 30, "bpm": "50", "off": False}, {"measure": 12, "bpm": None, "off": True}]})
+    assert reply.status_code == 200, reply.text
+    kept = [{"measure": 12, "bpm": None, "off": True}, {"measure": 30, "bpm": 50, "off": False}]
+    assert _saved(song)["gradual"] == kept
+    # saving something else keeps it
+    client.post(f"/api/songs/{song.slug}/publish-settings", json={"tempo_changes": []})
+    assert _saved(song)["gradual"] == kept
+    _cf, seen, _data = _publish(client, song, monkeypatch, tmp_path, {"choir": "jm"})
+    assert seen["gradual"] == kept
+
+
+@pytest.mark.parametrize("bad, message", [
+    ([{"measure": 5, "bpm": 50}], "Bar 5 has no rit. or accel."),
+    ([{"measure": 30, "bpm": 400}], "between 20 and 300"),
+    ([{"measure": 30, "bpm": "slow"}], "whole number"),
+    ([{"bpm": 50}], "whole bar number"),
+    ({"measure": 30}, "must be a list"),
+])
+def test_a_rit_setting_that_points_at_nothing_or_cannot_play_is_refused(client, song, bad, message):
+    _mark(song, 30, "rit.")
+    reply = client.post(f"/api/songs/{song.slug}/publish-settings", json={"gradual": bad})
+    assert reply.status_code == 400 and message in reply.json()["detail"]
+    assert "gradual" not in _saved(song)
