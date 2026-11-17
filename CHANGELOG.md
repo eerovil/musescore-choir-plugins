@@ -12,7 +12,7 @@ developers are listed under *Behind the scenes*.
   is now converted with `-f`, each over-long bar is named in the song's log, and a cleaned score
   is checked by the same rule when the MuseScore is 4, so the bar is reset and listed in Fix. A
   MuseScore error now gives the reason from MuseScore's own log, and the staff list answers with
-  it instead of a server error. (#481)
+  it instead of a server error. (#491)
 
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)
