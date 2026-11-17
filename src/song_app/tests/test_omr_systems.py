@@ -802,6 +802,39 @@ def test_a_one_bar_change_the_page_prints_is_kept(tmp_path):
     assert declared_meters(score.findall("part")[0]) == [("1", "2/4"), ("3", "5/4")]
 
 
+def test_a_signature_one_staff_of_five_reads_is_dropped(tmp_path):
+    """#480: homr wrote a 1/1 on one staff of five over a bar three quarters
+    long, the last bar of a 3/4 system. A one-bar change can never gather two
+    bars of evidence, so it used to go onto every part. A change the page prints
+    is printed on every staff, and the bar measures the meter already in force."""
+    stray = a_staff([3] * 5, time=(3, 4), changes={4: (1, 1)})
+    staves = [a_staff([3] * 5, time=(3, 4))] * 4 + [stray]
+    heard = []
+    score = read(omr_systems.assemble([a_scan(1, staves)],
+                                      str(tmp_path / "s.musicxml"), heard.append))
+    for part in score.findall("part"):
+        assert declared_meters(part) == [("1", "3/4")]
+    assert any("Bar 5" in line and "1/1" in line and "1 of 5" in line
+               for line in heard)
+
+
+def test_a_minority_signature_over_a_bar_that_changed_length_is_kept(tmp_path):
+    """The rule drops only a label the bar contradicts. A bar that really is
+    the new length keeps the signature, read on however few staves."""
+    odd = a_staff([3, 3, 2], time=(3, 4), changes={2: (2, 4)})
+    staves = [a_staff([3, 3, 2], time=(3, 4))] * 2 + [odd]
+    score = assembled(tmp_path, a_scan(1, staves))
+    assert declared_meters(score.findall("part")[0]) == [("1", "3/4"), ("3", "2/4")]
+
+
+def test_a_signature_half_the_staves_read_is_kept(tmp_path):
+    """Half is not fewer than half: two of four staves is not a stray."""
+    changed = a_staff([3, 3], time=(3, 4), changes={1: (4, 4)})
+    staves = [a_staff([3, 3], time=(3, 4))] * 2 + [changed] * 2
+    score = assembled(tmp_path, a_scan(1, staves))
+    assert declared_meters(score.findall("part")[0]) == [("1", "3/4"), ("2", "4/4")]
+
+
 def test_a_bar_whose_staves_disagree_is_not_an_observation(tmp_path):
     """Two staves, two answers, and nothing to choose between them: that bar says
     nothing about the meter, so a span made of such bars keeps what it was given.

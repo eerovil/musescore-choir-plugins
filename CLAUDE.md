@@ -279,9 +279,13 @@ the `voice2` entries they tie.
 `timesig` (#353, `measure`, `from`, `to`) takes a time signature the scan invented off
 every staff (`"to": null`) or writes another in its place (`"to": "6/8"`). Kesäaamu is
 printed in 6/8 and homr read a 3/4 at bar 22; the notes fit both, so `spurious_timesigs`
-cannot see it. Only a change that keeps the bar's length is allowed (3/4 and 6/8, or a
-removal where the meter in force is that length), bar 1 refuses, and it counts bars in
-file order like `delbar`.
+cannot see it. A change that keeps the bar's length only relabels (3/4 and 6/8, or a
+removal where the meter in force is that length). A change of length is allowed only where
+every bar the signature governs, up to the next one, already has the new length on every
+staff (a `len` override), and those overrides then come off (#480: homr put a 1/1 over a
+bar three quarters long); otherwise it refuses naming the first bar that does not fit.
+Bar 1's signature may be replaced, never removed. It counts bars in file order like
+`delbar`.
 
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — turning a bar-length rest into a whole-bar
@@ -1964,6 +1968,14 @@ state model are in `DESIGN.md`.
   a whole note long whatever the meter, so counting it would drag every span with a
   resting staff towards 4/4), and a length no whole numerator fits is left with the
   signature it was given.
+  **A signature only a minority of the staves read is dropped** (#480), before any of
+  the above: one that fewer than half of the staves having the bar carry, that differs
+  from the meter in force, over a bar whose staves agree it is as long as that meter.
+  homr wrote a 1/1 on one of six staves of a 3/4 bar, and since a one-bar change needs
+  only that bar as evidence, the assembled score carried 1/1 on every part there. The
+  drop is logged (`Bar 5: dropped a 1/1 time signature only 1 of 6 staves read`). A
+  minority signature over a bar that really changed length, or one half the staves
+  read, is left to the rules below.
   **One bar is enough against a signature that only restates the meter already in force**,
   and that exception is what keeps the correction working at all. homr writes a signature
   at the head of every crop and again wherever its own decoding wobbled, and "the same as
