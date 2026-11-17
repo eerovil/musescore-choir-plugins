@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
+  the choir box empty, and Publish said "Choose a choir first." (#474)
+
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
   it that many times (Kesän kukkiva maa, three verses). (#473)
