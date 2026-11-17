@@ -7,6 +7,24 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
+  the choir box empty, and Publish said "Choose a choir first." (#474)
+
+- Behind the scenes: `scripts/` is a regular package, so the tests import its scripts even
+  where another project's `scripts` package is on the path. (#475)
+
+- Behind the scenes: the runner tests in `src/kube_runner/tests/` pass on macOS as well as
+  Linux. (#476)
+
+- A whole-bar rest the scan stored as four beats in 3/4 is fitted to its bar when the song is
+  cleaned, so MuseScore 4 no longer refuses the score ("Incomplete measure") and the song
+  publishes. Publishing fits it too, so a song cleaned before this publishes without a
+  re-clean. (#477)
+
+- The site no longer shows a doubtful note's stem red: publishing takes the red off stems as well
+  as notes, also where the note itself is already black. MuseScore 4 colours the stem with its
+  head when it reads a scan; MuseScore 3 does not. (#478)
+
 - A song that prints its verses under one pass of the notes, with no repeat signs, can now sing
   every verse: a new `endrepeat` fix (`measure`, `times`) closes a repeat on every staff and plays
   it that many times (Kesän kukkiva maa, three verses). (#473)
