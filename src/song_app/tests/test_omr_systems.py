@@ -818,6 +818,24 @@ def test_a_signature_one_staff_of_five_reads_is_dropped(tmp_path):
                for line in heard)
 
 
+def test_a_stray_on_the_top_staff_does_not_outvote_the_others(tmp_path):
+    """The stray read first, and the other five staves restating 3/4 at that bar:
+    the bar declares what most staves read, not what the top one does."""
+    stray = a_staff([3, 3, 2], time=(3, 4), changes={1: (1, 1), 2: (2, 4)})
+    restating = a_staff([3, 3, 2], time=(3, 4), changes={1: (3, 4), 2: (2, 4)})
+    score = assembled(tmp_path, a_scan(1, [stray] + [restating] * 5))
+    for part in score.findall("part"):
+        assert declared_meters(part) == [("1", "3/4"), ("3", "2/4")]
+
+
+def test_a_stray_on_the_opening_bar_does_not_outvote_the_others(tmp_path):
+    stray = a_staff([3, 3], time=(1, 1), changes={1: (3, 4)})
+    others = a_staff([3, 3], time=(3, 4), changes={1: (3, 4)})
+    score = assembled(tmp_path, a_scan(1, [stray] + [others] * 5))
+    for part in score.findall("part"):
+        assert declared_meters(part) == [("1", "3/4")]
+
+
 def test_a_minority_signature_over_a_bar_that_changed_length_is_kept(tmp_path):
     """The rule drops only a label the bar contradicts. A bar that really is
     the new length keeps the signature, read on however few staves."""

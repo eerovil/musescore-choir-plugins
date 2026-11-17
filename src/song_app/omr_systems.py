@@ -1367,7 +1367,8 @@ def _meter_plan(
                 else scans[system].bars)
         lengths = [_bar_length_agreed(scans[system], over, divisions)
                    for over in range(bar, stop)]
-        carried = _staves_declaring_time(scans[system], bar)
+        carried = (_staves_declaring_time(scans[system], bar, declared)
+                   if declared is not None else (0, 0))
         if (running is not None and declared is not None and declared != running
                 and carried[0] * 2 < carried[1]
                 and lengths[0] == running.ticks(divisions)):
@@ -1466,7 +1467,21 @@ def _time_is_guessed(scan: SystemScan, bar: int) -> bool:
 
 
 def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:
-    """The signature this system's bar declares, if any staff declares one."""
+    """The signature this system's bar declares: the one most of its staves read.
+
+    Staves that disagree are settled by count, the first read winning a tie, so
+    a stray on the top staff does not outvote the staves restating the meter
+    (#480).
+    """
+    read = _times_read(scan, bar)
+    if not read:
+        return None
+    return max(dict.fromkeys(read), key=read.count)
+
+
+def _times_read(scan: SystemScan, bar: int) -> List[_Meter]:
+    """The signature each staff declares in this bar, top staff first."""
+    read = []
     for staff in scan.staves:
         if bar >= staff.bars:
             continue
@@ -1477,18 +1492,15 @@ def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:
             beats = _int(time.findtext("beats"))
             beat_type = _int(time.findtext("beat-type"))
             if beats and beat_type:
-                return _Meter(beats, beat_type)
-    return None
+                read.append(_Meter(beats, beat_type))
+                break
+    return read
 
 
-def _staves_declaring_time(scan: SystemScan, bar: int) -> Tuple[int, int]:
-    """How many of the staves that have this bar declare a signature in it, of how many."""
-    having = [staff for staff in scan.staves if bar < staff.bars]
-    declaring = sum(
-        1 for staff in having
-        if any(attributes.find("time") is not None
-               for attributes in staff.measures[bar].findall("attributes")))
-    return declaring, len(having)
+def _staves_declaring_time(scan: SystemScan, bar: int, meter: _Meter) -> Tuple[int, int]:
+    """How many of the staves that have this bar read ``meter`` in it, of how many."""
+    having = sum(1 for staff in scan.staves if bar < staff.bars)
+    return _times_read(scan, bar).count(meter), having
 
 
 def _bar_length_agreed(scan: SystemScan, bar: int, divisions: int) -> Optional[int]:
