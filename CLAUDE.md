@@ -283,6 +283,12 @@ cannot see it. Only a change that keeps the bar's length is allowed (3/4 and 6/8
 removal where the meter in force is that length), bar 1 refuses, and it counts bars in
 file order like `delbar`.
 
+`rehearsal` (#480, `measure`, `text`) puts a rehearsal mark on a bar: homr reads none at all,
+so a scanned score reached the site without the letters or numbers singers count bars from. The
+mark goes on the top staff, in the first voice ahead of the bar's first note, where MuseScore keeps
+it, and the publish copy carries it into the MusicXML. A bar that already has one, on any staff,
+refuses. There is no Fix panel button for it (nor for most kinds): it is written into `fixes.json`.
+
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — turning a bar-length rest into a whole-bar
 rest came up on one song in one sitting and could not be written down at all. Nothing interprets it: `apply_fixes` steps over
