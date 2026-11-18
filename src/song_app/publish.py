@@ -1001,21 +1001,29 @@ def _move_records(songs_dir: str, change: Dict, log: Logger) -> None:
 
     Only those records change; the rest of each ``.song.json`` is written back
     as it was read."""
+    from . import state  # noqa: PLC0415 - state imports publish too
     for entry in sorted(os.listdir(songs_dir)):
-        path = os.path.join(songs_dir, entry, ".song.json")
-        if not os.path.isfile(path):
-            continue
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        pub = data.get("publish") or {}
-        found = [r for r in list((pub.get("sites") or {}).values()) + [pub.get("site")]
-                 if isinstance(r, dict) and r.get("prefix") == change["old"]]
-        for record in found:
-            record.update(prefix=change["new"], version=change["version"],
-                          files=list(change["files"]))
-        if found:
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, path)
-            log(f"Moved {entry}'s publish record to {change['version']}")
+        # Under the song's lock, which every save in every process takes, so a
+        # clean finishing meanwhile is neither lost nor loses this change (#498).
+        with state.song_lock(entry, songs_dir=songs_dir):
+            _move_record(songs_dir, entry, change, log)
+
+
+def _move_record(songs_dir: str, entry: str, change: Dict, log: Logger) -> None:
+    path = os.path.join(songs_dir, entry, ".song.json")
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    pub = data.get("publish") or {}
+    found = [r for r in list((pub.get("sites") or {}).values()) + [pub.get("site")]
+             if isinstance(r, dict) and r.get("prefix") == change["old"]]
+    for record in found:
+        record.update(prefix=change["new"], version=change["version"],
+                      files=list(change["files"]))
+    if found:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+        log(f"Moved {entry}'s publish record to {change['version']}")

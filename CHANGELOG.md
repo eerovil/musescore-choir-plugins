@@ -12,6 +12,12 @@ developers are listed under *Behind the scenes*.
   voice's own sounds for a word in any language the singer reads (Latin, German, Swedish,
   Estonian, English), with the language it is sung in; the sing run says which saved readings
   it did not use. English and Latin songs sing exactly as before. (#484)
+- A clean, scan or other long job no longer erases what was saved to the song while it ran,
+  such as the publish record `sing_song.py --publish` writes: a save now writes only what that
+  job changed, and the app and the command-line tools take turns with the song's file. Reading
+  a system again now drops that system's Clean-grid answers, not the next system's, and
+  removing several systems at once drops each one's. The Clean grid refuses answers for a
+  system read again until a Scan puts the score together again. (#498)
 - *Find systems* splits a page into the systems it prints more often: a page cropped
   tight to the music no longer comes back as one system per staff, and a scan with a
   printed frame or a grey shadow down its side no longer comes back as one system for the

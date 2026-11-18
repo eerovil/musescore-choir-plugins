@@ -1940,7 +1940,7 @@ async function panelClean(panel, song, slug, P, refresh) {
     const holder = el("div", {}, el("p", { className: "hint" }, "Loading systems…"));
     panel.append(holder);
     try {
-      const { grid, overlong = [] } = await getJSON(`${P}/systems`);
+      const { grid, overlong = [], stamps = {} } = await getJSON(`${P}/systems`);
       holder.replaceChildren(
         ...(overlong.length ? [overlongList(overlong, song.has_cleaned)] : []),
         el("p", { className: "hint fallbackhint" },
@@ -2046,7 +2046,9 @@ async function panelClean(panel, song, slug, P, refresh) {
       };
       const save = () => api(`${P}/systems`, {
         method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify(collect()),
+        // The readings this grid shows: the server refuses answers about a
+        // system read again since it was loaded (#498).
+        body: JSON.stringify({ answers: collect(), stamps }),
       });
 
       const saveBtn = el("button", { onclick: async () => {

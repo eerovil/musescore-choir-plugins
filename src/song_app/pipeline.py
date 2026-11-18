@@ -212,8 +212,12 @@ def system_grid(mscx_path: str) -> List[Dict]:
 
 
 def save_system_answers(mscx_path: str, answers: Dict[int, Dict[int, str]]) -> None:
-    """Record the grid answers for this score so cleaning can run headless."""
-    per_system.save_answers(mscx_path, answers)
+    """Record the grid answers for this score so cleaning can run headless.
+
+    Raises when they could not be written (`OSError`, `per_system.AnswerFileError`),
+    leaving the answer file as it was, so the grid's save says so.
+    """
+    per_system.update_answers(mscx_path, lambda _old: answers)
 
 
 def has_system_answers(input_path: str) -> bool:

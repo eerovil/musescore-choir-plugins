@@ -652,7 +652,7 @@ def record_pick(song: state.Song, oid: str, choice: str) -> Dict:
                 {"offer": oid, "staff": offer["staff"], "part": offer["part"],
                  "measure": offer["measure"]})
             fresh.save()
-        song.data = fresh.data
+        song.adopt(fresh)
         return {"offer": oid, "applied": "kept homr's reading; fix the bar in MuseScore"}
     option = next((o for o in offer["options"] if o["letter"] == choice), None)
     if option is None or option["to"] is None:
