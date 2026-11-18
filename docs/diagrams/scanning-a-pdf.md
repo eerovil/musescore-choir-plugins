@@ -48,7 +48,7 @@ flowchart TD
 ## Boxes
 
 - **Find systems: propose bands per page**: `src/song_app/system_finder.py`, `page_systems` and `_joined`; joins two staves when one column of ink fills the gap between them.
-- **Ink is what is clearly darker than the page's own paper**: #494, `system_finder._ink`. On a page whose median grey is 240 or darker, ink is below the paper's median by at least 10 levels or four times the paper's grain (never lighter than 230); a white page keeps the fixed 230. The spec named Otsu's method here; #494 uses this rule instead because Otsu lost faint staff lines, and the choice is with the owner.
+- **Ink is what is clearly darker than the page's own paper**: #494, `system_finder._ink`. On a page whose median grey is 240 or darker, ink is below the paper's median by at least 10 levels or four times the paper's grain (never lighter than 230); a white page keeps the fixed 230. The spec named Otsu's method here; the owner chose this rule instead, because Otsu lost faint staff lines.
 - **Later, gated: narrower edge margin; ignore page-border lines**: a separate pull request that ships only once no hand-drawn page gets worse. The edge margin drops from 3% to 1% of the width, a join must also run through both staves, and a column inked through the page's top or bottom margin (a page border) is not a barline.
 - **Leave this page out**: planned. `.systems.json` gains `skipped_pages`; `scan.pages_without_bands` stops counting those pages.
 - **Every page marked or left out?**: `src/song_app/scan.py`, `pages_without_bands`; the Scan button stays off until it is empty.
