@@ -58,8 +58,8 @@ TOO_FEW = "too_few"            # fewer syllables than eligible chords
 NO_SYSTEMS = "no_systems"      # null measure_start, but the score has no system breaks
 NO_SYSTEM_FOR_LINE = "no_system_for_line"   # more null lines than printed systems
 BLOCK_COUNT = "block_count"    # lines vs systems disagree, so the fill may be off
-PART_RESTS = "part_rests"
-UNKNOWN_PART = "unknown_part"  # "parts" names no part of the song, or two of them      # a line names a part with no notes in its system (#482)
+PART_RESTS = "part_rests"     # a line names a part with no notes in its system (#482)
+UNKNOWN_PART = "unknown_part"  # "parts" names no part of the song, or two of them (#482)
 
 
 @dataclass(frozen=True)
