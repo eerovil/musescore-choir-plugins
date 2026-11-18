@@ -187,9 +187,12 @@ def providers(ort, env=os.environ, log=lambda m: print(m, file=sys.stderr)):
     elif want != "cpu":
         log(f"SING_PROVIDER={want} is not one of cpu, cuda, coreml; singing on the processor")
     return ["CPUExecutionProvider"]
-PROVIDERS = providers(ort)
+PROVIDERS = None   # chosen when the first model opens, so parts of this file run without onnxruntime
 def session(path):
-    """An onnxruntime session on PROVIDERS, saying which provider it really got."""
+    """An onnxruntime session on the chosen providers, saying which provider it really got."""
+    global PROVIDERS
+    if PROVIDERS is None:
+        PROVIDERS = providers(ort)
     s = ort.InferenceSession(path, providers=PROVIDERS)
     print(f"{os.path.basename(path)}: {', '.join(s.get_providers())}", file=sys.stderr)
     return s
