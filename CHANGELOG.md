@@ -11,8 +11,8 @@ developers are listed under *Behind the scenes*.
   every line, so words go to the right part even where a resting part changes the printed
   staff numbers. A line naming a part that has no notes there is not placed and is shown
   as a warning, and so is a name the song has no part for (that line goes by its staff
-  number, or is not placed if it has none). Such a warning stays until that line is pasted
-  again. The Clean grid shows a system where every staff rests as one line. (#482)
+  number, or is not placed if that number is no staff of the song). Each such warning
+  stays until its own line is pasted again. The Clean grid shows a system where every staff rests as one line. (#482)
 - Words typed for a part now land on the right bars after bars were added to a cleaned
   score in MuseScore: the systems are counted again from the score's own line breaks. When
   they cannot be, the Fix panel says the words map is out of date and asks for a clean. (#482)

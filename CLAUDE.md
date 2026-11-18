@@ -1286,12 +1286,14 @@ state model are in `DESIGN.md`.
   named part has **no notes** in its system (a note held over by a tie counts as a note) is
   not placed and not run on into the next one, and a named line never runs on through a
   system its part rests in: it comes back as a `part_rests` mismatch naming the part and
-  bars, since the name or the system is wrong. Without printed systems the check reads the
-  score's own line breaks. A name no part carries, or one two parts share, is an
-  `unknown_part` mismatch and the line falls back to `staff_number`, or is not placed (and
-  says so) when it has none; names are read like `lyric_parts` reads them (the instrument's
+  bars, since the name or the system is wrong. Without printed systems a named line ends,
+  and runs on, at the score's own line breaks. A name no part carries, or one two parts
+  share, is an `unknown_part` mismatch and the line falls back to `staff_number`, or is not
+  placed (and says so) when it has none that is a staff of the score; a staff id in
+  `"parts"` the score has not is unknown too (not checked under `--split`); names are read like `lyric_parts` reads them (the instrument's
   name when the part has none). Both warnings are about a source line, named in their
-  `lines` (`lyric_txt._line_id`: the bar, verse, voice and printed staff and position, or
+  `lines` (one warning per source line, even where two lines name the same part;
+  `lyric_txt._line_id`: the bar, verse, voice and printed staff and position, or
   the parts for a line with no `staff_number`), and every import lists the lines it read
   (`LyricImport.lines`); a later import drops such a warning only when it sends that line
   again, its name corrected or not (`server._kept_warnings`), so pasting another part into

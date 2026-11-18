@@ -107,6 +107,20 @@ def test_a_part_rests_warning_stays_until_its_own_line_is_sent_again():
     assert [m.kind for m in again.mismatches] == ["part_rests"]
 
 
+def test_correcting_one_of_two_lines_keeps_the_others_warning():
+    root = _two_tenors_t2_resting_in_bar_2()
+    first = _paste(root,
+                   {"staff_number": 1, "position": "below", "text": "yk-si", "parts": ["T2"]},
+                   {"staff_number": 2, "position": "below", "text": "kak-si", "parts": ["T2"]})
+    old = [m.to_dict() for m in first.mismatches]
+    assert [w["kind"] for w in old] == ["part_rests", "part_rests"]
+    fixed = _paste(root, {"staff_number": 2, "position": "below", "text": "kak-si",
+                          "parts": ["T1"]})
+    kept = server._kept_warnings(old, fixed)
+    assert [w["lines"] for w in kept] == [w["lines"] for w in old
+                                          if "staff 1" in w["lines"][0]]
+
+
 def test_an_unknown_part_warning_stays_until_its_own_line_is_sent_again():
     root = _two_tenors_t2_resting_in_bar_2()
     first = _paste(root, {"text": "yk-si", "parts": ["Typo"]})

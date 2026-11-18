@@ -166,3 +166,49 @@ def test_a_follower_of_a_named_line_is_checked_as_named():
     lines = _block_lines({"lyrics": [{"text": "la", "parts": ["T1"]}]}, 1, 3, {},
                          system_map, {"T1": 1})
     assert {(ln.staff, ln.named) for ln in lines} == {(1, True), (2, True)}
+
+
+def test_without_systems_a_long_named_line_does_not_skip_a_resting_system():
+    """No printed systems given and one line sent: the score's own breaks still end
+    each system, so T2's words do not jump over bar 2 into bar 3 (#482)."""
+    root = _score()
+    place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d", "parts": ["T2"]}]}], replace=True)
+    from src.clean_score.lyric_txt import export_lyrics
+    bars, measure = {}, None
+    for line in export_lyrics(root).splitlines():
+        if line.startswith("# Measure"):
+            measure = int(line.split()[-1])
+        elif line.strip().startswith("2"):
+            bars[measure] = line.split(":", 1)[1].split()
+    assert all(t == "_" for t in bars.get(3, []))
+
+
+def test_two_lines_naming_a_resting_part_warn_one_each():
+    """Each source line has its own warning, so correcting one keeps the other's."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 1, "position": "below", "text": "yk-si", "parts": ["T2"]},
+        {"staff_number": 2, "position": "below", "text": "kak-si", "parts": ["T2"]}]}],
+        replace=True, systems=SYSTEMS)
+    rests = [m for m in result.mismatches if m.kind == PART_RESTS]
+    assert len(rests) == 2
+    assert len({m.lines for m in rests}) == 2 and all(len(m.lines) == 1 for m in rests)
+
+
+def test_a_bad_name_whose_staff_number_is_no_staff_says_the_line_was_not_placed():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"staff_number": 99, "text": "la", "parts": ["Typo"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
+    message = result.mismatches[0].message
+    assert "not placed" in message and "placed by staff_number" not in message
+    assert placed_lyrics(root) == {}
+
+
+def test_a_staff_id_the_score_has_not_is_said_as_unknown():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"text": "la", "parts": [99]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
+    assert '"99"' in result.mismatches[0].message
