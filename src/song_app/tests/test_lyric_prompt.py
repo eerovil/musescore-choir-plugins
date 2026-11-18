@@ -168,9 +168,12 @@ def test_the_id_differs_by_kind_and_names_the_part_as_written():
     c = lyric_txt._line_warning_id("part_rests", ("m2 verse 1 voice 1 parts T1",), 2, 2)
     assert len({a, b, c}) == 3
     assert lyric_txt._line_ids(2, 1, 1, {"staff_number": 2, "parts": ["T2"]}, ["T2"]) == (
-        "m2 verse 1 voice 1 parts T2",)
+        '{"m":2,"parts":["T2"],"verse":1,"voice":1}',)
     assert lyric_txt._line_ids(2, 1, 1, {"staff_number": 2, "position": "below"}, []) == (
-        "m2 verse 1 voice 1 staff 2 below",)
+        '{"m":2,"position":"below","staff":2,"verse":1,"voice":1}',)
+    # Types and list items are kept: a part name "2" is not staff 2 (review of #505).
+    assert len({lyric_txt._line_ids(2, 1, 1, {}, p)
+                for p in (["2"], [2], ["a,b"], ["a", "b"])}) == 4
 
 
 def test_warning_id_keeps_a_stored_id_and_is_stable_for_an_old_warning():

@@ -1303,8 +1303,9 @@ state model are in `DESIGN.md`.
   `lines` (`lyric_txt._line_ids`), and every import lists the lines it read
   (`LyricImport.lines`); a later import drops such a warning only when it sends that line again
   (`server._kept_warnings`), so pasting another part into the same system keeps it.
-  **A line is the line as written** (#482, design v11): `m{start} verse {v} voice {vo}`
-  plus `parts a,b` for a named line or `staff {n}[ {pos}]` for a numbered one, so two
+  **A line is the line as written** (#482, design v12): canonical JSON of its bar, verse,
+  voice and `parts` exactly as given (types and list items kept, so `["2"]`, a part named
+  "2", is not `[2]`, staff 2), or `staff`/`position` for a numbered one, so two
   entries naming one part in one block are one line and one warning, and a `two_lines`
   warning names the line set aside and the named one. A warning is answered by itself
   only when (a) that same line is sent again, or (b), for `part_rests` and `two_lines`,

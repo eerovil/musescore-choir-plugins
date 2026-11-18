@@ -194,7 +194,7 @@ def test_two_lines_naming_one_resting_part_are_one_line_and_one_warning():
         {"staff_number": 2, "position": "below", "text": "kak-si", "parts": ["T2"]}]}],
         replace=True, systems=SYSTEMS)
     rests = [m for m in result.mismatches if m.kind == PART_RESTS]
-    assert [m.lines for m in rests] == [("m2 verse 1 voice 1 parts T2",)]
+    assert [m.lines for m in rests] == [('{"m":2,"parts":["T2"],"verse":1,"voice":1}',)]
 
 
 def test_a_bad_name_whose_staff_number_is_no_staff_says_the_line_was_not_placed():
@@ -226,7 +226,8 @@ def test_a_named_line_wins_over_a_staff_number_line_for_the_same_resting_part():
     assert kinds == sorted([PART_RESTS, TWO_LINES])
     two = next(m for m in result.mismatches if m.kind == TWO_LINES)
     # Either line sent again answers it: the set-aside one, or the named one alone.
-    assert two.lines == ("m2 verse 1 voice 1 staff 2", "m2 verse 1 voice 1 parts T2")
+    assert two.lines == ('{"m":2,"position":null,"staff":2,"verse":1,"voice":1}',
+                         '{"m":2,"parts":["T2"],"verse":1,"voice":1}')
     assert placed_lyrics(root) == {}
 
 
@@ -333,6 +334,30 @@ def test_a_bare_number_is_a_staff_id_and_a_quoted_unique_number_name_is_the_part
     result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
         {"parts": ["7"], "text": "la la"}]}], replace=True)
     assert result.mismatches == [] and placed_lyrics(root) == {1: "la la"}
+
+
+def test_a_quoted_number_and_a_bare_number_are_two_lines():
+    """Review of #505: "2" in quotes is read as a part's name and 2 bare as a staff id,
+    so a paste of [2] is another line and does not answer the warning ["2"] raised."""
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    quoted = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    [warned] = [m for m in quoted.mismatches if m.kind == UNKNOWN_PART]
+    bare = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": [2], "text": "la la"}]}], replace=True)
+    assert not set(warned.lines) & set(bare.lines)
+    again = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    assert set(warned.lines) <= set(again.lines)
+
+
+def test_one_name_with_a_comma_and_two_names_are_two_lines():
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names=NAMES)
+    one = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["T1,T2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    two = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["T1", "T2"], "text": "la la"}]}], replace=True)
+    assert one.lines and two.lines and not set(one.lines) & set(two.lines)
 
 
 def test_the_older_cells_editor_still_runs_a_long_line_into_an_empty_next_system():

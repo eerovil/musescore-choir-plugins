@@ -734,17 +734,25 @@ def _line_ids(measure_start: int, verse: int, voice: int, lyric: Dict[str, Any],
     """Which source line this is: the line as written (#482).
 
     Its block's bar (as filled in when the source gave none), its verse and voice,
-    and its part as given: the "parts" text, or its staff_number and position when
-    it has none. A corrected name is therefore another line, so its old warning is
-    not taken as answered; the person dismisses it. Implicit identities that tried
-    to follow a correction (the printed place, the places nobody reached) could not
-    also keep two different lines apart, and were taken out.
+    and its parts exactly as given; for a line with no parts, its staff_number and
+    position as given. Written as canonical JSON, so each value keeps its type and
+    each list item stays one item: `["2"]` (a part named "2") and `[2]` (staff 2)
+    are two lines, and so are `["a,b"]` and `["a", "b"]`. A line naming parts is
+    known by its parts alone, also when a bad name sends it to its staff_number:
+    sending it again raises the same warning under the same id, so nothing is hidden.
+
+    Two lines are one line only when written the same way. A difference the import
+    ignores ("2" or 2 as a staff_number, the order of the parts) makes two lines;
+    that costs a Dismiss and never answers a warning that was not answered. A
+    corrected name is another line, so its old warning stays until dismissed.
     """
-    head = f"m{measure_start} verse {verse} voice {voice}"
+    ident: Dict[str, Any] = {"m": measure_start, "verse": verse, "voice": voice}
     if parts:
-        return (f"{head} parts " + ",".join(str(p) for p in parts),)
-    sn, pos = lyric.get("staff_number"), lyric.get("position")
-    return (f"{head} staff {sn}" + (f" {pos}" if pos else ""),)
+        ident["parts"] = list(parts)
+    else:
+        ident["staff"] = lyric.get("staff_number")
+        ident["position"] = lyric.get("position") or None
+    return (json.dumps(ident, sort_keys=True, separators=(",", ":"), ensure_ascii=False),)
 
 
 def _block_lines(
