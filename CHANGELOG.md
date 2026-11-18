@@ -10,6 +10,10 @@ developers are listed under *Behind the scenes*.
 - *Find systems* (the quick finder, not *Ask homr*) now finds the systems on a scan with grey
   paper; before, it found none on any page of such a scan. The lyric editor's staff pictures
   and the Fix panel's bar box read such a scan too. (#494)
+- A time signature homr reads on only a few staves of a system, over a bar that is as long as
+  the meter before it, is no longer written onto every part (a stray 1/1 in a 3/4 song). And the
+  `timesig` fix can now change a bar's length, bar 1 included, where every bar the signature
+  covers is already that long; it takes their length overrides off. (#487)
 - A printed rit. or accel. now slows down or speeds up the practice track and the sung voices,
   beat by beat, to three quarters (or five quarters) of the speed by the next "a tempo", tempo
   change, fermata or the end. The Publish panel lists each one, with a target BPM or "play as
