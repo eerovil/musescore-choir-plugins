@@ -413,4 +413,8 @@ def load_bounds(song_dir: str) -> List[SystemBounds]:
 
 def load_skipped(song_dir: str) -> List[int]:
     """Pages a person said hold no music to scan (a title page, a piano-only page)."""
-    return sorted({int(p) for p in _bounds_data(song_dir).get("skipped_pages", [])})
+    stored = _bounds_data(song_dir).get("skipped_pages") or []
+    if not isinstance(stored, list):
+        return []
+    return sorted({int(p) for p in stored
+                   if isinstance(p, (int, float)) and not isinstance(p, bool)})

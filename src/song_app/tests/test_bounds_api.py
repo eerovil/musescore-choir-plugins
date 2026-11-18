@@ -104,6 +104,55 @@ def test_pages_left_out_round_trip_and_a_band_on_one_is_refused(client):
     assert client.get(f"/api/songs/{SLUG}/bounds").json()["skipped_pages"] == [4]
 
 
+def test_a_stored_page_left_out_still_refuses_a_band_on_it(client):
+    """A save that does not mention the pages left out still may not draw on one."""
+    plain = [{"page": b["page"], "top": b["top"], "bottom": b["bottom"]}
+             for b in client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]]
+    off_four = [b for b in plain if b["page"] != 4]
+    client.put(f"/api/songs/{SLUG}/bounds", json={"systems": off_four, "skipped_pages": [4]})
+    r = client.put(f"/api/songs/{SLUG}/bounds", json={"systems": plain})
+    assert r.status_code == 400 and "4" in r.json()["detail"]
+    assert len(client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]) == len(off_four)
+
+
+@pytest.mark.parametrize("bad", [[0], [-1], [99], [4.7], ["4"], [True], 4])
+def test_a_page_left_out_must_be_a_page_of_the_pdf(client, bad):
+    plain = [{"page": b["page"], "top": b["top"], "bottom": b["bottom"]}
+             for b in client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]
+             if b["page"] != 4]
+    r = client.put(f"/api/songs/{SLUG}/bounds", json={"systems": plain, "skipped_pages": bad})
+    assert r.status_code == 400
+    assert client.get(f"/api/songs/{SLUG}/bounds").json()["skipped_pages"] == []
+
+
+def test_a_null_list_of_pages_left_out_on_disk_reads_as_none(client):
+    import json
+    path = os.path.join(state.SONGS_DIR, SLUG, pdf_systems.BOUNDS_FILE)
+    with open(path) as f:
+        data = json.load(f)
+    data = {"systems": data} if isinstance(data, list) else data
+    data["skipped_pages"] = None
+    with open(path, "w") as f:
+        json.dump(data, f)
+    assert client.get(f"/api/songs/{SLUG}/bounds").json()["skipped_pages"] == []
+
+
+def test_find_systems_proposes_nothing_on_a_page_left_out(client, monkeypatch):
+    from src.song_app import system_finder
+
+    proposal = [pdf_systems.SystemBounds(index=1, page=3, top=0.1, bottom=0.5),
+                pdf_systems.SystemBounds(index=2, page=4, top=0.1, bottom=0.5)]
+    monkeypatch.setattr(system_finder, "quick_bands", lambda *a, **k: proposal)
+    monkeypatch.setattr(system_finder, "find_bands", lambda *a, **k: proposal)
+    plain = [{"page": b["page"], "top": b["top"], "bottom": b["bottom"]}
+             for b in client.get(f"/api/songs/{SLUG}/bounds").json()["systems"]
+             if b["page"] != 4]
+    client.put(f"/api/songs/{SLUG}/bounds", json={"systems": plain, "skipped_pages": [4]})
+    for body in ({}, {"method": "homr"}):
+        found = client.post(f"/api/songs/{SLUG}/find-systems", json=body).json()["systems"]
+        assert [b["page"] for b in found] == [3]
+
+
 def test_pages_and_system_crops_are_served_as_images(client):
     page = client.get(f"/api/songs/{SLUG}/page/1?dpi=100")
     assert page.status_code == 200 and page.headers["content-type"] == "image/png"
