@@ -1183,6 +1183,11 @@ def _strike_words(bar: etree._Element, words) -> List[str]:
             el.getparent().remove(el)
             struck.append(text[2:])
             continue
+        if text[2:] in words:
+            # A mark that is one phrase (`dashed tie?`, #482) is answered whole.
+            el.getparent().remove(el)
+            struck.append(text[2:])
+            continue
         said = text[2:].split(" ")
         if not all(w.endswith("?") for w in said):
             continue
@@ -1198,9 +1203,10 @@ def _strike_words(bar: etree._Element, words) -> List[str]:
 
 
 #: The words of homr's mark the other kinds answer: a tie written or taken out has
-#: been read against the page, and so has a slur, and a length (#347).
-_KIND_WORDS = {"tie": ("tie?",), "untie": ("tie?",), "slur": ("slur?",),
-               "unslur": ("slur?",), "duration": ("rhythm?",)}
+#: been read against the page, and so has a slur, and a length (#347). Taking out a
+#: tie or slur cleaning marked as printed dashed answers that mark whole (#482).
+_KIND_WORDS = {"tie": ("tie?",), "untie": ("tie?", "dashed tie?"), "slur": ("slur?",),
+               "unslur": ("slur?", "dashed slur?"), "duration": ("rhythm?",)}
 
 
 def _strike(root: etree._Element, staff: int, measure: int, words) -> List[str]:

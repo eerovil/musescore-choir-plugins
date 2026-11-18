@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- **Clean** marks a bar whose tie or slur the page prints **dashed** (`⚠ dashed tie?`,
+  `⚠ dashed slur?`): such an arc usually belongs to a later verse only, so check whether
+  verse 1 sings it and take it out with an `untie` or `unslur` fix if not. Needs a homr
+  that reads dashes (eerovil/homr#100); short dashed ties can still be missed. (#482)
 - **Publish**: a big song handed over with one part to a staff now gets its shared staves
   guessed from the part names (and says so) instead of being told the page prints every
   part on its own staff; a b-part that only borrows its main part's notes now shares that

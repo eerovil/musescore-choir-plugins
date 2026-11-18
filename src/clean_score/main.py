@@ -23,6 +23,7 @@ from .utils.overfull_measures import fix_overfull_measures
 from .utils.shared_rests import share_rests
 from .utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
 from .utils.long_bars import trim_long_bars
+from .utils.dashed_arcs import mark_dashed_arcs
 from .utils.measure_rests import centre_measure_rests, fit_measure_rests
 from .utils.staff_display import fix_staff_display
 from .utils.voice_instruments import set_voice_instruments
@@ -55,7 +56,8 @@ logger = logging.getLogger(__name__)
 def mark_scan_damage(root: etree._Element) -> None:
     """Take out what the scan got wrong in a way no score-side pass can repair (#238).
 
-    A slur joining two singers and a bar longer than its time signature. Both run on
+    A slur joining two singers and a bar longer than its time signature. A dashed tie
+    or slur (a later verse's, #482) is kept and only marked. Both run on
     the finished parts -- the part names go into the red marks they leave on each bar
     they change, and a slur only joins two singers once the voices are apart. The marks
     are for a person; the published copy strips them.
@@ -67,6 +69,9 @@ def mark_scan_damage(root: etree._Element) -> None:
                        slur["part"], slur["measure"], slur["end_part"], slur["end_measure"])
     for bar in trim_long_bars(root):
         logger.warning("Cut bar %s from %s to %s (marked)", bar["measure"], bar["was"], bar["meter"])
+    for arc in mark_dashed_arcs(root):
+        logger.warning("%s bar %s: the page prints this %s dashed (marked; kept)",
+                       arc["part"], arc["measure"], arc["kind"])
 
 
 def _centre_measure_rests(root: etree._Element) -> None:

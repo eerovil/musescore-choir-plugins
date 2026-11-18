@@ -215,6 +215,12 @@ that note, both halves, in this bar or across the barline, so playback sings the
 again. Strophic songs print **dashed** ties that belong to a later verse only, and homr
 reads them as real ties, so verse 1 loses a syllable (Gaudeamus igitur bars 6 and 8).
 Strict about `from` like the others, and replayed on every clean.
+A homr that reads the dash (eerovil/homr#100) writes `line-type="dashed"` on the tie or
+slur, MuseScore keeps it as `<lineType>2</lineType>`, and cleaning marks the bar `⚠ dashed
+tie?` or `⚠ dashed slur?` on a sung part (`utils/dashed_arcs.py`, #482) and leaves the arc:
+whether verse 1 sings it is the person's call. `untie` and `unslur` answer the mark; an
+assembled tie or slur over a line break is dashed when either half was. homr finds a dash
+chain of four or more, so a short dashed tie can still come through solid and unmarked.
 
 `delete` (#352, `index`, `what`, optional `subtype`, `from`) takes a mark the scan invented
 off one chord — a fermata (Mieslaulu bar 13 has two where the page prints staccato
@@ -690,6 +696,9 @@ Key test modules:
   and (with MuseScore) the bar it had refused opens once the dot is back. `untie`
   (#342) takes both halves out across or inside a bar, gives the syllable back,
   leaves other ties alone, and replays on a rebuild.
+- `test_dashed_arcs.py` — added for #482: a dashed tie or slur in a sung part is marked
+  and kept, a solid or dotted one and an instrument part are not, a second clean marks
+  once, and `untie` / `unslur` answer the mark while a new `tie` does not.
 - `test_delete_mark.py` — added for #352, on the shapes of Mieslaulu bar 13 and Annin
   laulu bar 19: the named fermata goes and the chord, its words and the bar's other
   fermata stay; every listed kind and `subtype`; each refused kind names its tool; a
@@ -2506,7 +2515,8 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    out. The app's clean also marks each bar the MuseScore check resets. Deleting a mark
    in MuseScore is how a person says the bar is fixed: until then health lists it
    (`marked-problem`) and the Fix panel reads it off the score (until #347 a copy went
-   into `fixes.json` as a `clean-marker` text entry). The publish copy strips marks
+   into `fixes.json` as a `clean-marker` text entry). A **dashed** tie or slur on a sung
+   part (`utils/dashed_arcs.py`) is marked `⚠ dashed tie?` / `⚠ dashed slur?` and kept. The publish copy strips marks
    (`score_export/score.prepare`), so a forgotten one never reaches the site.
 9. `centre_measure_rests` (`utils/measure_rests.py`, #298) runs last in both modes: a
    rest that alone fills its bar becomes a bar rest (`durationType` `measure`).

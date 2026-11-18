@@ -948,13 +948,18 @@ def _join_column(part, scans, column, starts_at) -> None:
         for start, stop in pairs:
             if (ends_system(start.note) and _on_edge(stop.note, last=False)
                     and _written_pitch(start.note) == _written_pitch(stop.note)):
+                # A dashed half (a later verse's arc, #482) makes the tie dashed.
+                dashed = "dashed" in (start.slur.get("line-type"), stop.slur.get("line-type"))
                 _remove_slur(start)
                 _remove_slur(stop)
-                _tie(start.note, "start")
-                _tie(stop.note, "stop")
+                _tie(start.note, "start", dashed)
+                _tie(stop.note, "stop", dashed)
                 tied_over.append((start, stop))
                 continue
             _number_pair(start.slur, stop.slur)
+            if "dashed" in (start.slur.get("line-type"), stop.slur.get("line-type")):
+                start.slur.set("line-type", "dashed")
+                stop.slur.set("line-type", "dashed")
         for end in starts:
             if id(end) in paired:
                 continue
@@ -1034,7 +1039,7 @@ def _on_edge(note: etree._Element, last: bool) -> bool:
 _BEFORE_TIE = {"grace", "cue", "chord", "pitch", "unpitched", "rest", "duration"}
 
 
-def _tie(note: etree._Element, kind: str) -> None:
+def _tie(note: etree._Element, kind: str, dashed: bool = False) -> None:
     index = 0
     for i, child in enumerate(note):
         if isinstance(child.tag, str) and child.tag in _BEFORE_TIE:
@@ -1043,7 +1048,9 @@ def _tie(note: etree._Element, kind: str) -> None:
     notations = note.find("notations")
     if notations is None:
         notations = etree.SubElement(note, "notations")
-    etree.SubElement(notations, "tied", type=kind)
+    tied = etree.SubElement(notations, "tied", type=kind)
+    if dashed:
+        tied.set("line-type", "dashed")
 
 
 def _remove_slur(end: _LooseEnd) -> None:
