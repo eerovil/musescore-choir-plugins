@@ -12,7 +12,9 @@ developers are listed under *Behind the scenes*.
   Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"
   sounds (child, now, boy) are sung as two vowels, and only songs sung in English wait for a
   re-sing because of it. (#484)
-
+- Cleaning's "was 9/8, cut to 4/4" red mark now says which voice lost notes, and a `bar` fix
+  that rewrites that voice (voice 1) takes the mark off, so the bar stops showing red; before,
+  only an `unmark` took it off. A cut in voice 2 still needs an `unmark`. (#488)
 - A time signature homr reads on only a few staves of a system, over a bar that is as long as
   the meter before it, is no longer written onto every part (a stray 1/1 in a 3/4 song). And the
   `timesig` fix can now change a bar's length, bar 1 included, where every bar the signature
