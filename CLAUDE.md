@@ -1293,11 +1293,17 @@ state model are in `DESIGN.md`.
   `"parts"` the score has not is unknown too (not checked under `--split`); names are read like `lyric_parts` reads them (the instrument's
   name when the part has none). Both warnings are about a source line, named in their
   `lines` (one warning per source line, even where two lines name the same part;
-  `lyric_txt._line_id`: the bar, verse, voice and printed staff and position, or
-  the parts for a line with no `staff_number`), and every import lists the lines it read
-  (`LyricImport.lines`); a later import drops such a warning only when it sends that line
-  again, its name corrected or not (`server._kept_warnings`), so pasting another part into
-  the same system keeps it. A line placed by `staff_number` behaves as before.
+  `lyric_txt._line_ids`: the bar, verse, voice and the **printed place**, a staff and its
+  side only where two parts share it; a line with only `"parts"` is where those parts are
+  printed in that system, and only a line whose parts are printed nowhere is its parts),
+  and every import lists the lines it read (`LyricImport.lines`); a later import drops such
+  a warning only when it sends that line again, its name corrected or not
+  (`server._kept_warnings`), so pasting another part into the same system keeps it. Since
+  the place is the line, typing that staff's box in **Type by system** answers a pasted
+  line's warning too, and the song can move on to Review. A named entry and a
+  `staff_number`-only entry for one part in one block stay two lines until placement:
+  only the named one is checked for a resting part, and the other is placed (running on)
+  as before.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are

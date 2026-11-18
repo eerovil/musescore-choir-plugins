@@ -75,7 +75,7 @@ class Mismatch:
     slots: int = 0
     verse: int = 1
     voice: int = 1
-    # The source lines a warning is about (`_line_id`), for a caller deciding which
+    # The source lines a warning is about (`_line_ids`), for a caller deciding which
     # earlier warnings a later import answered (#482); empty when it is about bars.
     lines: Tuple[str, ...] = ()
 
@@ -120,7 +120,7 @@ class LyricImport:
     mismatches: List[Mismatch] = field(default_factory=list)
     filled_measure_starts: List[int] = field(default_factory=list)
     written: List[Written] = field(default_factory=list)
-    lines: List[str] = field(default_factory=list)   # every source line read (`_line_id`)
+    lines: List[str] = field(default_factory=list)   # every source line read (`_line_ids`)
 
     @property
     def ok(self) -> bool:
@@ -661,7 +661,8 @@ class _Line:
     verse: int
     text: str
     named: bool = False     # the part came from the line's own "parts", not a staff number
-    sources: Tuple[str, ...] = ()   # the source lines it came from (`_line_id`)
+    # The source lines it came from, each by its ids (`_line_ids`).
+    sources: Tuple[Tuple[str, ...], ...] = ()
 
     @property
     def key(self) -> Tuple[int, int, int]:
@@ -677,20 +678,42 @@ def _int_or(value: Any, default: Any) -> Any:
         return default
 
 
-def _line_id(measure_start: int, verse: int, voice: int, lyric: Dict[str, Any],
-             parts: List[Any]) -> str:
+def _place(target: int, block_map: Dict[int, List[int]]) -> Optional[str]:
+    """The printed staff (and side, on a staff two parts share) an output staff is."""
+    if not block_map:
+        return f"staff {target}"
+    for printed, outs in block_map.items():
+        if target in outs:
+            side = f" {('above', 'below')[outs.index(target)]}" if len(outs) >= 2 and \
+                outs.index(target) < 2 else ""
+            return f"staff {printed}{side}"
+    return None
+
+
+def _line_ids(measure_start: int, verse: int, voice: int, lyric: Dict[str, Any],
+              parts: List[Any], targets: List[int], block_map: Dict[int, List[int]],
+              block_positions: set) -> Tuple[str, ...]:
     """Which source line this is, the same from one import to the next (#482).
 
-    A line with a staff_number is that printed staff and position, so correcting the
-    name in its "parts" keeps it the same line; one with only "parts" (the by-system
-    editor's) is the parts it names.
+    A line is the printed place it stands on: a staff, and its side where two parts
+    share the staff. One with a staff_number is that staff, so correcting the name in
+    its "parts" keeps it the same line; one with only "parts" (the by-system editor's)
+    is where its parts are printed, so the editor's box for a staff answers the pasted
+    line on that staff. A line that covers both sides of a shared staff is both.
+    Only a line whose parts are printed nowhere is said by its parts.
     """
+    head = f"m{measure_start} verse {verse} voice {voice}"
     sn = lyric.get("staff_number")
     if isinstance(sn, int) and not isinstance(sn, bool):
-        where = f"staff {sn} {lyric.get('position') or ''}".strip()
-    else:
-        where = "parts " + ",".join(str(p) for p in parts)
-    return f"m{measure_start} verse {verse} voice {voice} {where}"
+        outs = block_map.get(sn) or []
+        if len(outs) < 2:
+            return (f"{head} staff {sn}",)
+        derived = _derive_target_staves(sn, lyric.get("position"), block_map, block_positions)
+        return tuple(dict.fromkeys(f"{head} {_place(t, {sn: outs})}" for t in derived))
+    places = [_place(t, block_map) for t in targets]
+    if targets and all(places):
+        return tuple(dict.fromkeys(f"{head} {pl}" for pl in places))
+    return (f"{head} parts " + ",".join(str(p) for p in parts),)
 
 
 def _block_lines(
@@ -734,9 +757,8 @@ def _block_lines(
         if isinstance(sn, int):
             positions.setdefault((sn, _int_or(lyric.get("verse"), 1)), set()).add(
                 lyric.get("position"))
-    texts: Dict[Tuple[int, int, int], List[str]] = {}
-    named: set = set()
-    sources: Dict[Tuple[int, int, int], List[str]] = {}
+    texts: Dict[Tuple[int, int, int, bool], List[str]] = {}
+    sources: Dict[Tuple[int, int, int, bool], List[Tuple[str, ...]]] = {}
     for lyric in block_lyrics:
         verse = _int_or(lyric.get("verse"), 1)
         voice = _int_or(lyric.get("voice"), 1)
@@ -749,9 +771,6 @@ def _block_lines(
             parts = lyric.get("part")
         if not isinstance(parts, list):
             parts = [parts] if parts is not None else []
-        line_id = _line_id(measure_start, verse, voice, lyric, parts)
-        if seen is not None:
-            seen.append(line_id)
         targets = []
         unresolved: List[str] = []
         if parts:
@@ -763,8 +782,13 @@ def _block_lines(
                 sn, lyric.get("position"), block_map,
                 positions.get((sn, verse), set()) if isinstance(sn, int) else set(),
             )
-            if valid is not None:
-                targets = [t for t in targets if t in valid]
+        sn = lyric.get("staff_number")
+        line_id = _line_ids(measure_start, verse, voice, lyric, parts, targets, block_map,
+                            positions.get((sn, verse), set()) if isinstance(sn, int) else set())
+        if seen is not None:
+            seen.extend(line_id)
+        if not by_name and valid is not None:
+            targets = [t for t in targets if t in valid]
         if unresolved and notes is not None:
             # A name no part carries, or two parts share (#482): said, and the line
             # falls back to its staff_number, or is not placed when it has none.
@@ -784,25 +808,29 @@ def _block_lines(
                          f"which is not one part of this song; {outcome}"),
                 measure_start=measure_start,
                 measure_end=measure_end or measure_start,
-                verse=verse, voice=voice, lines=(line_id,)))
+                verse=verse, voice=voice, lines=line_id))
+        # A named entry and a staff_number one stay two lines until placement: only
+        # the named one is checked against a part that rests (#482).
         for staff in targets:
-            texts.setdefault((staff, voice, verse), []).append(text)
-            sources.setdefault((staff, voice, verse), []).append(line_id)
-            if by_name:
-                named.add((staff, voice, verse))
+            k = (staff, voice, verse, by_name)
+            texts.setdefault(k, []).append(text)
+            sources.setdefault(k, []).append(line_id)
+    own = {(staff, voice, verse) for staff, voice, verse, _ in texts}
     for base, followers in _follow_for_measure(system_map, measure_start).items():
-        for (staff, voice, verse), words in list(texts.items()):
+        for (staff, voice, verse, by_name), words in list(texts.items()):
             if staff != base:
                 continue
             for child in followers:
-                texts.setdefault((child, voice, verse), list(words))
-                sources.setdefault((child, voice, verse), list(sources.get((base, voice, verse), [])))
-                if (base, voice, verse) in named:
-                    named.add((child, voice, verse))
+                if (child, voice, verse) in own:
+                    continue  # the block gives the follower words of its own
+                texts.setdefault((child, voice, verse, by_name), list(words))
+                sources.setdefault((child, voice, verse, by_name),
+                                   list(sources.get((base, voice, verse, by_name), [])))
+    # In the order the block first named each, so lines joined later keep it.
     return [_Line(measure_start, measure_end, staff, voice, verse,
-                  " ".join(t for t in words if t), (staff, voice, verse) in named,
-                  tuple(sources.get((staff, voice, verse), ())))
-            for (staff, voice, verse), words in sorted(texts.items())]
+                  " ".join(t for t in words if t), by_name,
+                  tuple(sources.get((staff, voice, verse, by_name), ())))
+            for (staff, voice, verse, by_name), words in texts.items()]
 
 
 def _lines_from_blocks(
@@ -940,9 +968,6 @@ def _lines_to_by_measure(
             counts_by_voice[voice] = _get_chord_counts_per_measure(score, voice)
         counts = counts_by_voice[voice].get(staff, {})
         key_lines.sort(key=lambda ln: ln.start)
-        tokens_of = {id(ln): _tokenize_line(ln.text) for ln in key_lines}
-        has_words = lambda ln: any(t != "_" for t in tokens_of[id(ln)])
-        sent = {ln.start: ln for ln in key_lines}
         words_now: Optional[set] = None
 
         def own_end(ln: _Line) -> int:
@@ -954,6 +979,46 @@ def _lines_to_by_measure(
             # A line with no system known to it (a TXT-like JSON naming one bar to
             # start from) rewrites only the bars its words reach.
             return bool(ln.end) or any(c > ln.start for c in cuts)
+
+        # A part named for a system it rests through: the name or the system is wrong,
+        # and running the words on into the next system would hide it. Checked before
+        # a staff_number line for the same part joins it, so that line is still placed.
+        kept_lines: List[_Line] = []
+        for ln in key_lines:
+            tokens = _tokenize_line(ln.text)
+            end = rest_end(ln, own_end(ln))
+            if not (ln.named and any(t != "_" for t in tokens)) or any(
+                    m in sung(staff, voice) for m in range(ln.start, end + 1)):
+                kept_lines.append(ln)
+                continue
+            if names is None:
+                names = {p.id: p.name for p in lyric_parts(score)}
+            where = f", verse {verse}" if verse > 1 else ""
+            where += f", voice {voice}" if voice > 1 else ""
+            # One warning per source line, so sending one of them again
+            # answers only its own.
+            for src in dict.fromkeys(ln.sources) or ((),):
+                resting.append(Mismatch(
+                    kind=PART_RESTS,
+                    message=(f"Measures {ln.start}-{end}: "
+                             f"{names.get(staff, f'staff {staff}')}"
+                             f"{where} has no notes here, so its words were not "
+                             f"placed; check the part named in \"parts\"."),
+                    measure_start=ln.start, measure_end=end, staff_ids=(staff,),
+                    syllables=len(_tokens_to_syllables(tokens)), slots=0,
+                    verse=verse, voice=voice, lines=src))
+        # What is left from one bar on is one line, in the order the block named it.
+        joined: Dict[int, _Line] = {}
+        for ln in kept_lines:
+            first = joined.get(ln.start)
+            joined[ln.start] = ln if first is None else _Line(
+                first.start, first.end or ln.end, staff, voice, verse,
+                " ".join(t for t in (first.text, ln.text) if t),
+                first.named or ln.named, first.sources + ln.sources)
+        key_lines = sorted(joined.values(), key=lambda ln: ln.start)
+        tokens_of = {id(ln): _tokenize_line(ln.text) for ln in key_lines}
+        has_words = lambda ln: any(t != "_" for t in tokens_of[id(ln)])
+        sent = {ln.start: ln for ln in key_lines}
 
         # Emptied boxes first, so a line running long can still flow into one.
         for ln in key_lines:
@@ -969,29 +1034,6 @@ def _lines_to_by_measure(
             if not has_words(ln):
                 continue
             tokens = tokens_of[id(ln)]
-            if ln.named and not any(m in sung(staff, voice)
-                                    for m in range(ln.start, rest_end(ln, own_end(ln)) + 1)):
-                # A part named for a system it rests through: the name or the system is
-                # wrong, and running the words on into the next system would hide it.
-                if names is None:
-                    names = {p.id: p.name for p in lyric_parts(score)}
-                end = rest_end(ln, own_end(ln))
-                where = f", verse {verse}" if verse > 1 else ""
-                where += f", voice {voice}" if voice > 1 else ""
-                # One warning per source line, so sending one of them again
-                # answers only its own.
-                for src in dict.fromkeys(ln.sources) or (None,):
-                    resting.append(Mismatch(
-                        kind=PART_RESTS,
-                        message=(f"Measures {ln.start}-{end}: "
-                                 f"{names.get(staff, f'staff {staff}')}"
-                                 f"{where} has no notes here, so its words were not "
-                                 f"placed; check the part named in \"parts\"."),
-                        measure_start=ln.start, measure_end=end, staff_ids=(staff,),
-                        syllables=len(_tokens_to_syllables(tokens)), slots=0,
-                        verse=verse, voice=voice,
-                        lines=(src,) if src is not None else ()))
-                continue
             syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
             prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
             # The systems this line may fill: its own, then each next one whose box is empty.

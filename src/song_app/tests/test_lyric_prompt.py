@@ -131,3 +131,47 @@ def test_an_unknown_part_warning_stays_until_its_own_line_is_sent_again():
     again = _paste(root, {"text": "yk-si", "parts": ["Typo"]})
     assert server._kept_warnings(old, again) == []
 
+
+
+def test_a_pasted_lines_warning_is_answered_by_typing_that_staff_in_the_editor(song):
+    """The paste named a part that rests; typing the words into the box of the part
+    printed on that staff answers it, and the song moves on to Review (#482)."""
+    api, slug, dest = song
+    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
+    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
+    for name in os.listdir(dest):
+        if name.endswith(".systems.json"):
+            os.remove(dest / name)
+    pasted = api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
+        {"measure_start": 1, "lyrics": [{"staff_number": 1, "text": "ou-ou", "parts": ["T1"]},
+                                        {"staff_number": 2, "text": "ii-ii", "parts": ["T2"]}]},
+        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]},
+        {"measure_start": 3, "lyrics": [{"staff_number": 1, "text": "aa-aa", "parts": ["T1"]},
+                                        {"staff_number": 2, "text": "ee-ee", "parts": ["T2"]}]},
+    ])})
+    assert pasted.status_code == 200, pasted.text
+    assert [w["kind"] for w in pasted.json()["mismatches"]] == ["part_rests"]
+    assert json.loads((dest / ".song.json").read_text())["stage"] == "lyrics"
+    grid = api.get(f"/api/songs/{slug}/lyric-grid").json()
+    keys = [b["key"] for b in grid["boxes"]["1"]]
+    assert keys == ["1"]                                 # T2 rests: no box of its own
+    typed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {
+        "1": "yk-si"}}})
+    assert typed.status_code == 200, typed.text
+    assert typed.json()["mismatches"] == []
+    assert json.loads((dest / ".song.json").read_text())["stage"] == "review"
+
+
+def test_typing_another_staff_keeps_the_pasted_lines_warning(song):
+    api, slug, dest = song
+    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
+    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
+    for name in os.listdir(dest):
+        if name.endswith(".systems.json"):
+            os.remove(dest / name)
+    api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
+        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]},
+    ])})
+    typed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"2": {
+        "2": "ee-ee"}}})
+    assert [w["kind"] for w in typed.json()["mismatches"]] == ["part_rests"]

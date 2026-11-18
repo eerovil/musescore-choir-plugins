@@ -212,3 +212,27 @@ def test_a_staff_id_the_score_has_not_is_said_as_unknown():
         {"text": "la", "parts": [99]}]}], replace=True, systems=SYSTEMS)
     assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
     assert '"99"' in result.mismatches[0].message
+
+
+def test_a_staff_number_line_for_a_resting_part_is_placed_beside_a_named_one():
+    """A named entry and a staff_number entry for one resting part stay two lines: the
+    named one warns and is left out, the other runs on as it always did."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 2, "text": "nel-jä"},
+        {"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    warnings = [m for m in result.mismatches if m.kind == PART_RESTS]
+    assert len(warnings) == 1
+    assert warnings[0].lines == ("m2 verse 1 voice 1 staff 1",)
+    assert placed_lyrics(root) == {2: "nel-jä"}
+
+
+def test_a_line_is_named_by_the_printed_staff_it_stands_on():
+    """The by-system editor names a part by staff id and a paste by staff_number; both
+    are the same printed staff, so one answers the other's warning (#482)."""
+    root = _score()
+    pasted = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]}], systems=SYSTEMS)
+    typed = place_lyrics(root, [{"measure_start": 2, "measure_end": 2, "lyrics": [
+        {"parts": [1], "text": "yk-si"}]}], systems=SYSTEMS)
+    assert set(pasted.mismatches[0].lines) & set(typed.lines)
