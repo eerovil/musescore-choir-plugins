@@ -390,7 +390,8 @@ def checker() -> str:
 def musescore_check(mscx_path: str) -> Optional[List[Dict]]:
     """What MuseScore objects to when it opens this score. Empty list: nothing.
 
-    Each objection is `{measure, staff, voice, message}`, 1-based the way MuseScore
+    Each objection is `{measure, staff, voice, message}` (the app's own rule adds
+    `found` and `expected`, the voice's length and the bar's), 1-based the way MuseScore
     counts (staff = position in the score, measure = every bar from the top). None
     when no MuseScore answered -- which is "not checked", never "fine".
 

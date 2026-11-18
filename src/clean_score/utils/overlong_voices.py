@@ -84,7 +84,7 @@ def overlong_voices(root: etree._Element) -> List[Dict]:
     The bar's length is its `len`, else the time signature in force; a voice's is
     `_voice_total`'s. Grace notes take no time.
 
-    Each finding is `{measure, staff, voice, message}`, 1-based the way MuseScore
+    Each finding is `{measure, staff, voice, found, expected, message}`, 1-based the way MuseScore
     counts (staff = position in the score, measure = every bar from the top), the
     shape `song_app.pipeline.musescore_check` returns.
     """
@@ -98,6 +98,7 @@ def overlong_voices(root: etree._Element) -> List[Dict]:
                 if end > bar:
                     found.append({
                         "measure": measure_no, "staff": staff_no, "voice": voice_no,
+                        "found": _say(end), "expected": _say(bar),
                         "message": (f"Voice too long: measure {measure_no}, staff "
                                     f"{staff_no}, voice {voice_no}. Found: {_say(end)}. "
                                     f"Expected: {_say(bar)}."),
