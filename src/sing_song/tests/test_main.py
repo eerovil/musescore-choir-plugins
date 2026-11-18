@@ -1474,3 +1474,40 @@ def test_the_language_list_is_languages_pys():
 def language_check_languages():
     from src.sing_song import language_check
     return language_check.LANGUAGES
+
+
+def test_waiting_holds_the_run_lock_while_it_writes(tmp_path, monkeypatch):
+    """#510 review: a run must not start between the check and the write and have its record
+    hidden; --waiting writes under the run lock itself, and is refused while a run holds it."""
+    folder = song_folder(tmp_path)
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    seen = []
+    real = progress.mark_waiting
+
+    def marking(*a, **k):
+        seen.append(progress.run_locked("laulu"))   # True: someone (this process) holds it
+        return real(*a, **k)
+    monkeypatch.setattr(progress, "mark_waiting", marking)
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--waiting", "--publish", "jm"])
+    publish_song.main()
+    assert seen == [True] and not progress.run_locked("laulu")   # released afterwards
+
+    held = progress.run_lock("laulu")
+    try:
+        progress.write(str(folder), {"state": "singing", "pid": os.getpid()})
+        with pytest.raises(SystemExit) as e:
+            publish_song.main()
+        assert e.value.code == publish_song.EXIT_ANOTHER_RUN
+        assert progress.read(str(folder))["state"] == "singing"
+    finally:
+        os.close(held)
+
+
+def test_a_hash_number_is_the_part_whatever_the_names():
+    names = ["Solo", "2", "Solo"]
+    assert publish_song.find_part("#3", names) == 3
+    assert publish_song.find_part("#2", names) == 2
+    assert publish_song.find_part("2", names) == 2   # the part named "2"
+    assert publish_song.find_part("#4", names) is None
+    with pytest.raises(SystemExit):
+        publish_song.find_part("Solo", names)

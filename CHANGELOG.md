@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- **Publish**: *Sing and publish* sings the parts and publishes the sung song to the
+  chosen choir from the app, with progress and a Stop button; under *Pronunciation*,
+  *▶ Try* sings a word's bar, or any part over any bars, and plays it in the page. A
+  singer now waits for the graphics card instead of crashing on it, and a homr read reads
+  on the processor while somebody sings. (#510)
 - **Clean** marks a bar whose tie or slur the page prints **dashed** (`⚠ dashed tie?`,
   `⚠ dashed slur?`): such an arc usually belongs to a later verse only, so check whether
   verse 1 sings it and take it out with an `untie` or `unslur` fix if not. Needs a homr

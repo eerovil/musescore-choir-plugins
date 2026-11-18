@@ -21,6 +21,7 @@ song list shows (#453); --waiting only writes "waiting" there, for a run about t
 See docs/pdf-to-practice-track.md for the whole flow and what the machine needs.
 """
 import argparse
+import contextlib
 import glob
 import json
 import os
@@ -42,6 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # this checkout: the app whose publish code builds the bundle
 from src.sing_song import language_check  # noqa: E402
 from src.sing_song import progress  # noqa: E402
+from src import gpu_card  # noqa: E402
 from src.sing_song.fold import fold  # noqa: E402
 from src.sing_song import places as song_places  # noqa: E402
 from src.sing_song import languages  # noqa: E402
@@ -182,7 +184,11 @@ def find_part(key, names):
     """The part number (from 1) `key` names in `names`: the one part with that exact name, else
     the one part with that name in any case, else its number. None when it names no part. A name
     that fits more than one part stops the run asking for the number (#483): two parts may both be
-    called "Solo", and the first one is not necessarily the one meant."""
+    called "Solo", and the first one is not necessarily the one meant. "#N" is part N whatever
+    the parts are called, which the app sends (#510 review: a part may be named "2")."""
+    if key.startswith("#") and key[1:].isdigit():
+        n = int(key[1:])
+        return n if 1 <= n <= len(names) else None
     exact = [i for i, name in enumerate(names, 1) if name == key]
     found = exact or [i for i, name in enumerate(names, 1) if name.casefold() == key.casefold()]
     if len(found) > 1:
@@ -1175,9 +1181,35 @@ def main():
     if a.waiting:
         if not os.path.isdir(song_dir):
             sys.exit(f"no song {a.slug!r} under songs/")
-        progress.mark_waiting(song_dir, a.publish)
+        # hold the run lock while writing, so a run cannot start between the check and the
+        # write and have its own record hidden (#510 review)
+        held = progress.run_lock(a.slug)
+        if held is None:
+            print(another_run(a.slug), file=sys.stderr)
+            raise SystemExit(EXIT_ANOTHER_RUN)
+        try:
+            progress.mark_waiting(song_dir, a.publish)
+        finally:
+            os.close(held)
         log(f"{a.slug}: waiting")
         return
+    lock = None
+    if not a.trial:
+        # one full run of a song at a time, held to the end; a phrase (--try) writes nothing
+        # the song's run does, so it takes no lock (#510)
+        lock = progress.run_lock(a.slug)
+        if lock is None:
+            print(another_run(a.slug), file=sys.stderr)
+            raise SystemExit(EXIT_ANOTHER_RUN)
+    try:
+        run_song(a, song_dir)
+    finally:
+        if lock is not None:
+            os.close(lock)
+
+
+def run_song(a, song_dir):
+    """The run itself, with the song's lock held by main()."""
     # a phrase to listen to (--try) keeps no run record: the song list is not told of it
     run_record = progress.Run(song_dir, a.publish, progress.singer_version(), remote=a.remote_only,
                               sing=not a.no_sing, kept=not a.trial)
@@ -1196,6 +1228,13 @@ def main():
         run_record.finish(f"{type(e).__name__}: {e}")
         raise
     run_record.finish()
+
+
+EXIT_ANOTHER_RUN = 4   # another sing_song run holds the song (#510)
+
+
+def another_run(slug):
+    return f"another sing_song run is singing {slug}; wait for it to end, or stop it"
 
 
 def failure(code):
@@ -1270,11 +1309,17 @@ def sing_and_publish(a, run_record):
         gpu = not a.cpu and nvidia_dir(python) is not None
         log("singing every line on the remote runner" if a.remote_only
             else f"singing on the {'graphics card' if gpu else 'processor'}")
-        tried = sing(manifest, cleaned, bundle_dir, work, [v and v[0] for v in sung_by], lang, python, ufr_dir, gpu,
-             parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
-             on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
-             version=run_record.record["version"], remote_only=a.remote_only,
-             pronounce=pronounce, trial=trial)
+        # the card is one singer's at a time, and homr's reads take it too (#510); a run that
+        # sings only on the remote runner leaves this machine's card alone
+        card = gpu_card.hold(log, on_wait=lambda: run_record.step("waiting", **{"for": "graphics card"})) \
+            if gpu and not a.remote_only else contextlib.nullcontext()
+        with card:
+            run_record.step("singing", **{"for": None})
+            tried = sing(manifest, cleaned, bundle_dir, work, [v and v[0] for v in sung_by], lang, python,
+                         ufr_dir, gpu, parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
+                         on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
+                         version=run_record.record["version"], remote_only=a.remote_only,
+                         pronounce=pronounce, trial=trial)
         if trial:
             log(trial_said(trial[3], *tried))
             return

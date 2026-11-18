@@ -75,6 +75,7 @@ from typing import Callable, Dict, List, Optional
 from lxml import etree
 
 from . import heavy_slot
+from .. import gpu_card
 
 Logger = Callable[[str], None]
 
@@ -629,6 +630,7 @@ def read_page(
     engine: Optional[Engine] = None,
     repairs: Optional[List["MovedRest"]] = None,
     bar_length: Optional[Fraction] = None,
+    wait_for_card: bool = False,
 ) -> str:
     """Read one page image and return the path of the MusicXML written for it.
 
@@ -673,6 +675,10 @@ def read_page(
     caller that has to tell somebody a bar was touched passes one -- the log
     says it too, but a log is not a record. :mod:`scan` writes them into the
     song's ``fixes.json``.
+
+    When a singer has the graphics card, a read reads on the processor
+    (:func:`on_card`); with ``wait_for_card`` it waits for the card instead,
+    outside its heavy slot (#510).
     """
     if not os.path.exists(image_path):
         raise HomrError(f"No such image: {image_path}")
@@ -701,7 +707,7 @@ def read_page(
         shutil.copy2(image_path, scratch_image)
         produced = os.path.join(scratch, base + ".musicxml")
 
-        flags = ["--gpu", engine.gpu, "--no-title"]
+        flags = ["--no-title"]
         if bar_length is not None and engine_supports(engine, BAR_LENGTH_FLAG):
             flags += [BAR_LENGTH_FLAG, str(bar_length)]
         if engine_supports(engine, MARK_DOUBT_FLAG):
@@ -711,16 +717,22 @@ def read_page(
                 "marked: update homr to have them checked")
 
         # Another machine first, when .env names a reader for it (#437).
-        output = _read_remotely(engine, flags, scratch_image, scratch, log)
+        # The other machine's card is its own, so no lock is taken for it.
+        output = _read_remotely(engine, ["--gpu", engine.gpu] + flags, scratch_image, scratch, log)
         watched = log
-        if output is None:
-            with _queued(label or f"song app homr {base}", log, queue) as slot:
+        while output is None:
+            if wait_for_card and engine.gpu != "no":
+                gpu_card.wait_free(log)   # outside the heavy slot, so the cores are not held idle
+            with _queued(label or f"song app homr {base}", log, queue) as slot, \
+                    on_card(engine, log, wait=wait_for_card) as gpu:
+                if gpu is None:
+                    continue   # a singer took the card first: let the slot go and wait again
                 # homr's own output is the only place a page can be interrupted, so
                 # that is where the lease is checked (heavy_slot.Slot.guard).
                 watched = slot.guard(log)
                 watched(f"Reading {os.path.basename(image_path)} with homr")
                 try:
-                    output = _run(list(engine.command) + flags + [scratch_image],
+                    output = _run(list(engine.command) + ["--gpu", gpu] + flags + [scratch_image],
                                   watched, timeout, engine.env)
                 except HomrAborted as aborted:
                     # onnxruntime can abort while homr exits, after the page is
@@ -1012,6 +1024,31 @@ def _read_remotely(engine: Engine, flags: List[str], image: str, out_dir: str,
         log("The remote runner wrote no MusicXML; reading it on this host")
         return None
     return lines
+
+
+@contextmanager
+def on_card(engine: "Engine", log: Logger = _noop, wait: bool = False, what: str = "band"):
+    """The ``--gpu`` value to read with, holding the graphics card while it is used (#510).
+
+    A singer and homr cannot share the card's memory, so a homr read on the card
+    takes the card lock (:mod:`src.gpu_card`) for its run. It never waits for it
+    inside a heavy slot: a first read, or Ask homr, reads on the processor when a
+    singer has the card, and says so. With ``wait`` (a re-read of a system that
+    was already read once) it yields ``None`` instead, and the caller lets go of
+    its heavy slot, waits for the card with :func:`gpu_card.wait_free` and tries
+    again. An engine that does not use the card takes no lock.
+    """
+    if engine.gpu == "no":
+        yield engine.gpu
+        return
+    with gpu_card.try_hold() as got:
+        if got:
+            yield engine.gpu
+        elif wait:
+            yield None
+        else:
+            log(f"the graphics card is singing; reading this {what} on the processor")
+            yield "no"
 
 
 @contextmanager

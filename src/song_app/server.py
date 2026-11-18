@@ -25,12 +25,14 @@ from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_st
                state, system_finder, verification)
 from . import clean_backup
 from . import resing
+from . import sing_run
 from src.sing_song import places as song_places
 from src.sing_song import languages
 from src.sing_song import language_check
 from src.sing_song import progress
 from src.clean_score import lyric_txt
 from src.clean_score.utils.score_fixes import FixError
+from src.clean_score.utils.utils import part_staff_ids
 from src.score_export.score import START as START_TEMPO
 from src.score_export import staff_groups
 
@@ -2254,7 +2256,34 @@ def api_pronunciation(slug: str) -> Dict:
             "stale": song_places.stale(choices, cleaned), "language": song.language,
             "languages": [{"code": c, "name": n} for c, n in languages.names().items()
                           if c in languages.sung_by_g2p()],
-            "pack": pack, "note": None if pack is not None else NO_PACK, "english_note": english_note}
+            "pack": pack, "note": None if pack is not None else NO_PACK, "english_note": english_note,
+            "parts": _sung_parts(song, cleaned)}
+
+
+def _sung_parts(song: state.Song, cleaned: str) -> List[Dict]:
+    """The parts a run sings, by the number sing_song.py gives them (`#n` in --try): the
+    parts a publish keeps, top staff first, with the names a publish uses and their staff ids,
+    so a place's Try finds its part by staff and two parts called alike stay apart (#510 review)."""
+    from src.score_export import score as score_copy
+    if not cleaned or not os.path.exists(cleaned):
+        return []
+    root = etree.parse(cleaned).getroot()
+    sc = root.find("Score")
+    if sc is None:
+        return []
+    music = {staff.get("id"): staff for staff in sc.findall("Staff")}
+    names = _publish_parts(song, cleaned)["names"]
+    kept = [p for p in sc.findall("Part") if not score_copy.part_is_silent(p, music)]
+    parts = sc.findall("Part")
+    ids = part_staff_ids(sc)
+    out = []
+    for n, part in enumerate(kept, 1):
+        # MuseScore 4 writes a part's own staves with no id; part_staff_ids then numbers
+        # them by position, as the score's staves of music are numbered.
+        staves = [str(i) for i in ids[parts.index(part)]]
+        name = names[n - 1] if n <= len(names) else (part.findtext("trackName") or f"Part {n}")
+        out.append({"n": n, "name": name, "staves": staves})
+    return out
 
 
 @app.post("/api/songs/{slug}/pronunciation")
@@ -2291,6 +2320,108 @@ def api_pronunciation_save(slug: str, body: Dict = None) -> Dict:
         song_places.save(song.dir, {"places": kept + chosen, "everywhere": {**kept_every, **everywhere}})
     reply = api_pronunciation(slug)
     return reply
+
+
+# --------------------------------------------------------------------------
+# Singing from the app (#510): Sing and publish, and Try in Pronunciation. Each run is
+# sing_song.py in a systemd user unit off a pinned snapshot of the code (sing_run.py).
+
+@app.post("/api/songs/{slug}/sing")
+def api_sing(slug: str, body: Dict = None) -> Dict:
+    """Sing every part and publish to one choir: {"choir": id}. 409 while this song sings, or
+    while a job writes it; 502 when the unit could not be started."""
+    song = _require(slug)
+    choir = str((body or {}).get("choir") or "")
+    if not re.fullmatch(r"[\w-]+", choir):
+        raise HTTPException(400, "Choose a choir first.")
+    config = publish.Config.from_env()
+    if config is None:
+        raise HTTPException(400, publish.MISSING_CONFIG)
+    _cleaned_or_400(song)
+    if _publish_busy(song):
+        raise HTTPException(409, "A job is working on this song; sing once it is done.")
+    # The choir must be one the site has, as Publish checks, before a unit is started.
+    listing = publish.choirs(config, state.SONGS_DIR)
+    if listing["error"]:
+        raise HTTPException(502, f"Could not read the site's choirs: {listing['error']}")
+    known = [c["id"] for c in listing["choirs"]]
+    if choir not in known:
+        raise HTTPException(400, f"Choose a choir: {', '.join(known) or 'the site has none'}")
+    reason = sing_run.busy_reason(slug)
+    if reason:
+        raise HTTPException(409, reason)
+    try:
+        record = sing_run.start(slug, choir)
+    except sing_run.StartError as exc:
+        raise HTTPException(502, f"Could not start singing: {exc}")
+    hub.emit(slug, {"type": "state"})
+    # The panel reads the reply as a status (state, choir, run), like GET /sing.
+    return {**record, **sing_run.status(slug, song.dir)}
+
+
+@app.get("/api/songs/{slug}/sing")
+def api_sing_status(slug: str) -> Dict:
+    song = _require(slug)
+    return sing_run.status(slug, song.dir)
+
+
+@app.post("/api/songs/{slug}/sing/stop")
+def api_sing_stop(slug: str) -> Dict:
+    song = _require(slug)
+    try:
+        sing_run.stop(sing_run.unit(slug))
+    except sing_run.StartError as exc:
+        raise HTTPException(502, str(exc))
+    return sing_run.status(slug, song.dir)
+
+
+@app.post("/api/songs/{slug}/sing/try")
+def api_sing_try(slug: str, body: Dict = None) -> Dict:
+    """Sing one part over bars first..last with the saved readings: {"part", "first", "last"}.
+    Writes nothing in the song; 409 while a trial of this song runs."""
+    song = _require(slug)
+    body = body or {}
+    part = str(body.get("part") or "").strip()
+    try:
+        first, last = int(body.get("first")), int(body.get("last") or body.get("first"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Give the part and the first and last bar.")
+    if not part or ":" in part or first < 1 or last < first:
+        raise HTTPException(400, "Give the part and the first and last bar.")
+    _cleaned_or_400(song)
+    if sing_run.active(sing_run.unit(slug, True)):
+        raise HTTPException(409, "A try of this song is still singing.")
+    if _publish_busy(song):   # it would sing from a score being rewritten (#510 review)
+        raise HTTPException(409, "A job is working on this song; try once it is done.")
+    singing = sing_run.busy_reason(slug)
+    if singing:
+        raise HTTPException(409, f"{singing} Try once it is done, or stop it first.")
+    name = part
+    if part.startswith("#"):   # the part by its number, as the panel sends it (#510 review)
+        sung = {f"#{q['n']}": q["name"] for q in _sung_parts(song, song.cleaned_path())}
+        if part not in sung:
+            raise HTTPException(400, f"No part {part} in this song.")
+        name = sung[part]
+    try:
+        sing_run.start_try(slug, part, first, last, name=name)
+    except sing_run.StartError as exc:
+        raise HTTPException(409, f"Could not start the try: {exc}")
+    return sing_run.try_status(slug)
+
+
+@app.get("/api/songs/{slug}/sing/try")
+def api_sing_try_status(slug: str) -> Dict:
+    _require(slug)
+    return sing_run.try_status(slug)
+
+
+@app.get("/api/songs/{slug}/sing/try/{name}")
+def api_sing_try_mp3(slug: str, name: str):
+    _require(slug)
+    path = sing_run.try_mp3(slug, name)
+    if not path:
+        raise HTTPException(404, "No such try")
+    return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/songs/{slug}/publish-settings")
@@ -2433,6 +2564,9 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     if _publish_busy(song):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
+    singing = sing_run.busy_reason(slug)   # a sung run publishes when it is done (#510)
+    if singing:
+        raise HTTPException(409, f"{singing} Publish once it is done, or stop it first.")
     listing = await asyncio.get_running_loop().run_in_executor(
         None, publish.choirs, config, state.SONGS_DIR)
     if listing["error"]:

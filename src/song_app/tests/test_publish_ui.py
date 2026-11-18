@@ -537,17 +537,13 @@ def test_publishing_over_a_sung_version_asks_first(live, page, tmp_path, recorde
     section.locator("button.publish-btn").click()
 
     expect(note).to_be_visible(timeout=15000)
-    # #500: one red line and the button; the way to keep it sung is folded away
+    # #500: one red line and the button; #510: keeping it sung is the Sing and publish button,
+    # not a command to copy
     expect(note.locator("p.hint.err")).to_have_css("color", "rgb(224, 106, 106)")
     expect(note.locator("button.publish-piano-only")).to_be_visible()
-    keep = note.locator("details.publish-keep-sung")
-    expect(keep.locator("summary")).to_have_text("Keep it sung instead")
-    expect(note.locator("input.publish-sing-cmd")).to_be_hidden()
-    note.scroll_into_view_if_needed()
-    _shot(page, f"publish-sung-{'recorded' if recorded else 'site'}-folded-1280.png")
-    keep.locator("summary").click()
-    expect(note.locator("input.publish-sing-cmd")).to_have_value(
-        f".venv/bin/python sing_song.py {slug} --publish jm")
+    expect(note.locator(".publish-keep-sung")).to_have_text("To keep it sung, use Sing and publish instead.")
+    expect(note.locator("input.publish-sing-cmd")).to_have_count(0)
+    expect(section.locator("button.sing-btn")).to_be_visible()
     expect(note).to_contain_text("The Joensuun Mieslaulajat (jm) list has a sung version of this song.")
     expect(note).to_contain_text("would replace it")
     assert all(p["sung"] for p in __import__("json").loads(cf.listed("jm")[0][3]))

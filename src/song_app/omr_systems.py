@@ -217,6 +217,7 @@ def read_system(
     queue: bool = True,
     engine: Optional[omr.Engine] = None,
     bar_length: Optional[Fraction] = None,
+    wait_for_card: bool = False,
 ) -> SystemScan:
     """Read one cropped system and flatten what comes back into staves.
 
@@ -233,6 +234,7 @@ def read_system(
         engine=engine,
         repairs=moved,
         bar_length=bar_length,
+        wait_for_card=wait_for_card,
     )
     staves = flatten(produced)
     if not staves:
