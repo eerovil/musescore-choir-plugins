@@ -7,10 +7,13 @@ the planned changes. A person decides at the violet boxes.
 ```mermaid
 flowchart TD
   pdf[PDF uploaded] --> find[Find systems: propose bands per page]
-  find --> grey{Page grey or cropped tight?}
-  grey -- Yes --> otsu[Pick the ink threshold from the page itself; ignore page-border lines]
-  grey -- No --> bands
-  otsu --> bands[Bands shown unsaved in the Systems editor]
+  find --> grey{Paper grey?}
+  grey -- Yes --> ink[Ink is what is clearly darker than the page's own paper]
+  grey -- No --> tight
+  ink --> tight{Page cropped tight to the staves?}
+  tight -- Yes --> edge[Later, gated: narrower edge margin; ignore page-border lines]
+  tight -- No --> bands
+  edge --> bands[Bands shown unsaved in the Systems editor]
   bands --> drag[Person drags bands into place]
   drag --> skip{Page has no music to sing?}
   skip -- Yes --> leave[Leave this page out]
@@ -32,8 +35,8 @@ flowchart TD
   reh --> clean
 
   class pdf,find,bands,save,read,union,meter,clean,lyrics blue
-  class otsu,leave,timesig,unrep,reh amber
-  class drag,skip,fix,grey,gate violet
+  class ink,edge,leave,timesig,unrep,reh amber
+  class drag,skip,fix,grey,tight,gate violet
 ```
 
 ## Colours
@@ -45,7 +48,8 @@ flowchart TD
 ## Boxes
 
 - **Find systems: propose bands per page**: `src/song_app/system_finder.py`, `page_systems` and `_joined`; joins two staves when one column of ink fills the gap between them.
-- **Pick the ink threshold from the page itself; ignore page-border lines**: planned. A grey scan uses Otsu's threshold instead of the fixed 230, the edge margin drops to 1% of the width, a join must also run through both staves, and a column inked through the page's top or bottom margin (a page border) is not a barline.
+- **Ink is what is clearly darker than the page's own paper**: #494, `system_finder._ink`. On a page whose median grey is 240 or darker, ink is below the paper's median by at least 10 levels or four times the paper's grain (never lighter than 230); a white page keeps the fixed 230. The spec named Otsu's method here; #494 uses this rule instead because Otsu lost faint staff lines, and the choice is with the owner.
+- **Later, gated: narrower edge margin; ignore page-border lines**: a separate pull request that ships only once no hand-drawn page gets worse. The edge margin drops from 3% to 1% of the width, a join must also run through both staves, and a column inked through the page's top or bottom margin (a page border) is not a barline.
 - **Leave this page out**: planned. `.systems.json` gains `skipped_pages`; `scan.pages_without_bands` stops counting those pages.
 - **Every page marked or left out?**: `src/song_app/scan.py`, `pages_without_bands`; the Scan button stays off until it is empty.
 - **Repeat signs written on every staff of the system**: `src/song_app/omr_systems.py`, `_system_barlines`; one staff reading a repeat puts it on all of them.
