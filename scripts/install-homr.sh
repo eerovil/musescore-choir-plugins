@@ -66,6 +66,32 @@ DEFAULT_VENV="$HOME/.local/share/musescore-choir-plugins/homr-venv"
 
 # `main` is a label a person recognises; a hand-written HOMR_SOURCE is not one,
 # so an install made from an explicit source is labelled by that source instead.
+# The app reads homr from HOMR_BIN when .env sets one (omr.homr_binary), so with
+# no HOMR_VENV of its own this script looks at the venv that binary sits in, for
+# --status and for installs alike, as the app's Update button does
+# (homr_install._venv). A HOMR_BIN outside any venv is not one this script made.
+if [ -z "${HOMR_VENV:-}" ]; then
+    homr_bin="${HOMR_BIN:-}"
+    if [ -z "$homr_bin" ]; then
+        repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
+        if [ -f "$repo_dir/.env" ]; then
+            homr_bin=$(sed -n 's/^HOMR_BIN=//p' "$repo_dir/.env" | tail -n 1)
+            homr_bin="${homr_bin%\"}"; homr_bin="${homr_bin#\"}"
+            homr_bin="${homr_bin%\'}"; homr_bin="${homr_bin#\'}"
+        fi
+    fi
+    case "$homr_bin" in
+        "") ;;
+        */*)
+            bin_venv="$(dirname "$(dirname "$homr_bin")")"
+            if [ -f "$bin_venv/pyvenv.cfg" ]; then
+                HOMR_VENV="$bin_venv"
+            else
+                echo "HOMR_BIN=$homr_bin is not inside a venv this script can manage; set HOMR_VENV" >&2
+            fi
+            ;;
+    esac
+fi
 HOMR_VENV="${HOMR_VENV:-$DEFAULT_VENV}"
 
 # A GPU onnxruntime chosen on an earlier run stays chosen: the app's Update
