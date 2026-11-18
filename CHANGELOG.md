@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- The Clean grid has a **No voices here (piano or instruments only)** tick under each
+  system: every part rests there, the part names carry on past it, and pasted lines with
+  no bar number skip it. (#482)
 - The prompt for **Paste from AI** now lists the song's part names and asks for them on
   every line, so words go to the right part even where a resting part changes the printed
   staff numbers. A line naming a part that has no notes there is not placed and is shown

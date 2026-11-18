@@ -800,3 +800,70 @@ def test_a_dash_after_the_last_name_keeps_the_chord_notes_below_it_silent():
     staves = _by_part(root)
     assert _pitches(staves["A2"], 0) == ["74"]
     assert _pitches(staves["A2b"], 0) == ["69"]
+
+
+# --------------------------------------------------------------------------- #
+# "No voices here" (#482, D5): a system with piano or instruments only
+# --------------------------------------------------------------------------- #
+
+from src.clean_score.utils.per_system import ALL_REST, REST, parse_answers  # noqa: E402
+
+# System 1 (m7-11) marked as having no voices; systems 2-3 answer nothing and so
+# carry system 0's names, skipping the rest system.
+RESTING = {0: ANSWERS[0], 1: {ALL_REST: REST}, 4: ANSWERS[4], 5: ANSWERS[5], 6: ANSWERS[6]}
+
+
+def test_a_system_with_no_voices_rests_on_every_part():
+    _, _, staves = _rebuilt(RESTING)
+    for name, staff in staves.items():
+        for m in range(6, 11):   # m7-11
+            assert _pitches(staff, m) == [], (name, m + 1)
+            assert staff.findall("Measure")[m].find("voice/Rest/durationType").text == "measure"
+
+
+def test_the_system_after_a_rest_system_carries_the_names_from_before_it():
+    full, _, full_staves = _rebuilt()
+    _, _, staves = _rebuilt(RESTING)
+    for name in ("T1", "T2", "B"):
+        for m in range(11, 19):   # systems 2-3, m12-19
+            assert _pitches(staves[name], m) == _pitches(full_staves[name], m), (name, m + 1)
+
+
+def test_the_lyric_map_marks_the_rest_system_and_routes_nothing_there():
+    result, _, _ = _rebuilt(RESTING)
+    entries = {(e["start"], e["end"]): e for e in result.lyric_map}
+    assert entries[(7, 11)]["rest"] is True and entries[(7, 11)]["map"] == {}
+    assert entries[(12, 15)]["map"] == {1: [1, 2], 2: [4]}
+    assert not any(e.get("rest") for k, e in entries.items() if k != (7, 11))
+
+
+def test_a_rest_system_reports_no_dropped_voices():
+    # One name on the two-voice staff 1, carried on: every system that inherits it
+    # is reported, the rest system is not.
+    one_name = {0: {1: "T1", 2: "B"}, 1: {ALL_REST: REST}}
+    plain = {d.system for d in dropped_voices(_load(), {0: {1: "T1", 2: "B"}})}
+    marked = {d.system for d in dropped_voices(_load(), one_name)}
+    assert 1 in plain and marked == plain - {1}
+
+
+def test_the_rest_flag_round_trips_through_the_answer_store_and_layout():
+    save_answers(FIXTURE, RESTING)
+    assert saved_answers(FIXTURE) == RESTING
+    by_index = {l.index: l for l in layout_for_file(FIXTURE)}
+    assert by_index[1].rest and by_index[1].to_dict()["rest"] is True
+    assert not by_index[0].rest and by_index[0].to_dict()["rest"] is False
+
+
+def test_parse_answers_keeps_the_star_and_numbers_the_staves():
+    assert parse_answers({"1": {"*": "rest", "2": "B"}}) == {1: {ALL_REST: REST, 2: "B"}}
+
+
+def test_lines_with_no_bar_number_skip_the_rest_system():
+    from src.clean_score.lyric_txt import place_lyrics
+    _, root, _ = _rebuilt(RESTING)
+    blocks = [{"measure_start": None, "lyrics": [{"text": "la", "parts": ["B"]}]}
+              for _ in range(6)]
+    result = place_lyrics(root, blocks, fmt="json")
+    assert 7 not in result.filled_measure_starts
+    assert result.filled_measure_starts[:2] == [1, 12]
+    assert not [m for m in result.mismatches if m.kind == "no_system_for_line"]

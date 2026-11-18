@@ -205,6 +205,8 @@ table.grid .undernote { color: var(--warn); font-size: 12px; }
 table.grid .undernote:empty { display: none; }
 .sysblock { margin-bottom: 18px; }
 .sysblock h4 { margin: 0 0 6px; }
+.sysblock .restpick { gap: 6px; margin: 0 0 6px; font-size: 0.9em; }
+.sysblock.restsys table.grid { opacity: 0.45; }
 .syshead { justify-content: space-between; margin-bottom: 6px; }
 .syshead h4 { margin: 0; }
 .lyrow { margin-bottom: 8px; }

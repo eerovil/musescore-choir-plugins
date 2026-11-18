@@ -561,7 +561,7 @@ def _read_lyrics_system_map(
             }
             result.append(
                 {"start": int(entry["start"]), "end": int(entry["end"]),
-                 "map": pmap, "follow": follow}
+                 "map": pmap, "follow": follow, "rest": bool(entry.get("rest"))}
             )
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
@@ -1590,6 +1590,11 @@ def _fill_missing_measure_starts(
     # The printed systems when the caller knows them: normal-mode cleaning strips the
     # line breaks this would otherwise read them off.
     starts = starts or [r.start for r in system_ranges(score_root)]
+    # A system nobody sings in ("No voices here", #482) prints no words, so the
+    # JSON has no line for it: the lines go to the systems after it.
+    rest = [(e["start"], e["end"]) for e in (_read_lyrics_system_map(score_root) or [])
+            if e.get("rest")]
+    starts = [s for s in starts if not any(a <= s <= b for a, b in rest)]
     if not starts:
         return json_str, [Mismatch(
             kind=NO_SYSTEMS,
