@@ -7,8 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
-- *Find systems* now finds the systems on a scan with grey paper; before, it found none on
-  any page of such a scan. (#494)
+- *Find systems* (the quick finder, not *Ask homr*) now finds the systems on a scan with grey
+  paper; before, it found none on any page of such a scan. The lyric editor's staff pictures
+  and the Fix panel's bar box read such a scan too. (#494)
 
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)

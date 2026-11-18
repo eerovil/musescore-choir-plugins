@@ -2166,11 +2166,15 @@ state model are in `DESIGN.md`.
   and both B1 scans for the acceptance (needs poppler, no homr).
   **A grey page sets its own ink threshold** (#480, `_ink`): ink was anything darker than
   230, so a scan on grey paper read as ink from edge to edge and no system was found on any
-  page. A page whose median brightness is 240 or less now takes Otsu's threshold off its
-  own histogram; a white page keeps 230, so the pages already drawn by hand read as before.
+  page. A page whose median brightness is 240 or less now counts as ink what is clearly
+  darker than its own paper: 10 grey levels below the median, or four times the paper's
+  grain on a noisy scan, and never above 230. A whiter page keeps 230, so the pages
+  already drawn by hand read as before. Otsu's method was tried first and refused: on
+  near-white paper with faint staff lines its threshold fell between the black ink and
+  the lines, so the lines were read as paper and the page lost its systems.
   `scripts/finder_vs_hand.py` counts the systems found on every hand-drawn page in `songs/`
-  against the bands drawn there (run it before and after a change to the finder). `bar_box`
-  still uses 230.
+  against the bands drawn there (run it before and after a change to the finder). The
+  lyric editor's staff finder and `bar_box` use the same `_ink`.
 - The **Scan panel** is added by this pull request (#116), replacing the holding one that
   #115 left. Its whole job is to stop a tidy-looking parse becoming a practice track, and
   every piece of it follows from that.
