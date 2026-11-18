@@ -270,6 +270,8 @@ table.grid .undernote:empty { display: none; }
 .tempo-row { flex-wrap: nowrap; }
 .tempo-row input[type=number] { min-width: 0; }
 .tempo-row label.tempo-start { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--text); white-space: nowrap; }
+.gradual-row { flex-wrap: wrap; }
+.gradual-row label { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--text); white-space: nowrap; }
 
 /* ---- Systems: printed-system boundaries drawn over the page ---- */
 .sysbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;

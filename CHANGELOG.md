@@ -11,9 +11,42 @@ developers are listed under *Behind the scenes*.
   the meter before it, is no longer written onto every part (a stray 1/1 in a 3/4 song). And the
   `timesig` fix can now change a bar's length, bar 1 included, where every bar the signature
   covers is already that long; it takes their length overrides off. (#487)
+- A printed rit. or accel. now slows down or speeds up the practice track and the sung voices,
+  beat by beat, to three quarters (or five quarters) of the speed by the next "a tempo", tempo
+  change, fermata or the end. The Publish panel lists each one, with a target BPM or "play as
+  written". A part whose name says no voice ("Solo") is sung by its clef instead of stopping
+  the run (`--voice NAME=VOICE` to choose), `sing_song.py --try PART:A-B` sings one phrase of
+  one part to listen to, and publishing piano only asks before it replaces a sung version on
+  the site. (#483)
+
+- Lines can be sung on another machine over plain SSH: `REMOTE_RUNNER=scripts/ssh-runner.sh`
+  with `SSH_RUNNER_HOST`, and that machine's singer and voices. (#483)
+
+- `SING_PROVIDER` picks how the singer runs: `cpu`, `cuda` or `coreml` (tried, with the processor
+  as the fallback); the log names each model's provider. (#483)
+
+- A scan keeps a page when homr crashes as it exits after writing a whole result, and says so in
+  the log. (#483)
+
+- `scripts/install-homr.sh` installs into and reports on the venv `HOMR_BIN` in `.env` points
+  at, so `--status` no longer says homr is missing when it is installed elsewhere. (#483)
+
+- MuseScore 4 can now read a scan where a voice runs past its barline. Before, it refused the
+  whole file and the staff list failed with an error blaming `MUSESCORE_CLI_PATH`. The raw scan
+  is now converted with `-f`, the Clean panel lists each over-long bar, the clean's log names
+  them too, and a cleaned score
+  is checked by the same rule when the MuseScore is 4, so the bar is reset and listed in Fix. A
+  MuseScore error now gives the reason from MuseScore's own log, and the staff list answers with
+  it instead of a server error. (#491)
 
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)
+
+- Every singing part of a cleaned score is now a voice (soprano, alto, tenor, bass, baritone, or
+  plain voice), and so is the score you download for a song cleaned earlier. MuseScore 4 took
+  these parts for a piano and put a dynamic added there below the staff, over the words; now it
+  goes above. The sound is not changed. Dynamics already in an older score keep their side.
+  (#497)
 
 - Behind the scenes: `scripts/` is a regular package, so the tests import its scripts even
   where another project's `scripts` package is on the path. (#475)

@@ -92,6 +92,42 @@ def test_the_score_comes_down_under_its_own_name(client):
     assert "attachment" in r.headers["content-disposition"]
 
 
+def _with_instruments(score):
+    # As a song cleaned before #481 has them: a piano id MuseScore 3 gave the import.
+    for name in ("T1", "B1"):
+        score = score.replace(
+            f"<trackName>{name}</trackName>",
+            f"<trackName>{name}</trackName><Instrument id=\"piano\"><longName>{name}"
+            f"</longName><trackName>{name}</trackName><instrumentId>keyboard.piano"
+            f"</instrumentId><Channel><program value=\"0\"/></Channel></Instrument>", 1)
+    return score
+
+
+@pytest.mark.parametrize("name", [CLEANED, "Kesä_cleaned.mscx"])
+def test_an_older_score_comes_down_with_voice_instruments_and_stays_as_it_was(client, name):
+    # MuseScore 4 puts a new dynamic above a voice's staff and below a piano's (#481).
+    client, song = client
+    with open(song.path(name), "w", encoding="utf-8") as fh:
+        fh.write(_with_instruments(SCORE))
+    song.data["cleaned"] = name
+    song.data["cleaned_fingerprint"] = state.file_fingerprint(song.cleaned_path())
+    song.save()
+    stored, fingerprint = _cleaned_text(song), song.data["cleaned_fingerprint"]
+
+    r = client.get(f"/api/songs/{song.slug}/score-file")
+
+    assert r.status_code == 200
+    assert '<Instrument id="tenor">' in r.text and "voice.tenor" in r.text
+    assert "voice.bass" not in r.text            # B1 only rests here: left as it was
+    assert '<program value="0"/>' in r.text      # the sound is not changed
+    disposition = r.headers["content-disposition"]
+    assert "attachment" in disposition
+    assert name in disposition or "Kes%C3%A4_cleaned.mscx" in disposition
+    # Only the copy: the stored score, and everything checked against it, is untouched.
+    assert _cleaned_text(song) == stored
+    assert state.file_fingerprint(song.cleaned_path()) == fingerprint
+
+
 def test_a_song_with_no_cleaned_score_has_nothing_to_download(client):
     client, song = client
     del song.data["cleaned"]
