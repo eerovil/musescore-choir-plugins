@@ -2234,9 +2234,10 @@ state model are in `DESIGN.md`.
   file on every load, so a reload shows them too) and the clean's log names them; the
   cleaned check and publish never use `-f`. When a MuseScore 4 run fails,
   `musescore_cli.failed_load_reason` reads the reason off its log (lines stamped during
-  the run, and only a refusal of the file this run passed, since two songs may convert
+  the run, and only a refusal naming the file this run passed, since two songs may convert
   at once) and the error names the bar
-  instead of blaming `MUSESCORE_CLI_PATH`. Without any MuseScore the song records
+  instead of blaming `MUSESCORE_CLI_PATH`; a MuseScore that does not start at all is
+  named once, in `musescore_cli.run`, so every render and export says so. Without any MuseScore the song records
   "not checked". Note MuseScore fills *gaps* with rests while reading, so a
   short voice passes; what fails is a voice that runs past the bar, typically a
   misread triplet. `check_opens_in_musescore` runs after the recorded fixes: each

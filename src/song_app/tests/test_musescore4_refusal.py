@@ -68,11 +68,37 @@ def test_the_newest_refusal_in_the_run_is_the_reason(tmp_path):
 
 
 def test_a_refusal_with_no_path_stops_at_the_next_log_line(tmp_path):
+    # Read with no file to tie it to (a run with no ``-o``): the refusal ends there.
     now = time.time()
     text = (f"{_at(now)} | ERROR | main | x | failed load notation, err: [2009] Voice too long: measure 2\n"
             f"{_at(now)} | INFO  | main | x | shutting down\n{_at(now)} | INFO  | main | x | bye\n")
     _log(str(tmp_path), "MuseScore_261118_090000.log", text)
     assert musescore_cli.failed_load_reason(now - 5, [str(tmp_path)]) == "Voice too long: measure 2"
+
+
+def test_refusals_naming_no_file_are_no_runs_reason_when_runs_overlap(tmp_path):
+    # Two conversions at once, each refused, neither line naming its file: the bar
+    # could be either song's, so neither run is told it.
+    now = time.time()
+    text = "".join(f"{_at(now)} | ERROR | main | x | failed load notation, err: [2009] "
+                   f"Voice too long: measure {bar}\n" for bar in (2, 33))
+    _log(str(tmp_path), "MuseScore_261118_090000.log", text)
+    for song in ("a", "b"):
+        source = str(tmp_path / "songs" / song / "in.musicxml")
+        assert musescore_cli.failed_load_reason(now - 5, [str(tmp_path)], source=source) is None
+
+
+def test_a_run_whose_refusal_names_no_file_falls_back_to_what_it_printed(monkeypatch, tmp_path):
+    now = time.time()
+    _log(str(tmp_path), "MuseScore_261118_090000.log",
+         f"{_at(now)} | ERROR | main | x | failed load notation, err: [2009] Voice too long: measure 9\n")
+    real = musescore_cli.failed_load_reason
+    monkeypatch.setattr(musescore_cli, "failed_load_reason",
+                        lambda since, source=None: real(since, [str(tmp_path)], source=source))
+    outcome = musescore_cli.Outcome(1, "", "", "/tmp/out.mscx", None, now - 5,
+                                    str(tmp_path / "in.musicxml"))
+    assert musescore_cli.explain(outcome, "conversion failed") == \
+        "MuseScore conversion failed and said nothing. Check MUSESCORE_CLI_PATH."
 
 
 def test_another_songs_refusal_at_the_same_time_is_not_this_runs_reason(tmp_path):
@@ -256,3 +282,46 @@ def test_a_musescore_that_will_not_start_points_at_the_path(tmp_path, monkeypatc
     reply = TestClient(server.app).get(f"/api/songs/{song.slug}/systems")
     assert reply.status_code == 422
     assert "MUSESCORE_CLI_PATH" in reply.json()["detail"]
+
+
+MISSING = "no-such-musescore"
+
+
+def test_every_run_says_the_path_when_musescore_will_not_start(tmp_path):
+    with pytest.raises(musescore_cli.MuseScoreError, match="MUSESCORE_CLI_PATH"):
+        musescore_cli.run([str(tmp_path / MISSING), "in.mscx", "-o", "out.pdf"], "out.pdf")
+    with pytest.raises(musescore_cli.MuseScoreError, match="MUSESCORE_CLI_PATH"):
+        musescore_cli.export(str(tmp_path / MISSING), "in.mscx", str(tmp_path / "out.mid"))
+
+
+def test_a_timeout_is_still_a_timeout(tmp_path):
+    import subprocess
+    with pytest.raises(subprocess.TimeoutExpired):
+        musescore_cli.run(["sleep", "5"], str(tmp_path / "o"), timeout=0.2)
+
+
+def test_the_publish_export_says_the_path_when_musescore_will_not_start(tmp_path, monkeypatch):
+    from src.score_export import musescore
+    monkeypatch.setenv("MUSESCORE_CLI_PATH", str(tmp_path / MISSING))
+    with pytest.raises(RuntimeError, match="MUSESCORE_CLI_PATH"):
+        musescore.run_musescore(str(tmp_path / "in.mscx"), str(tmp_path / "score.mid"))
+
+
+def test_the_scan_picture_and_the_page_preview_say_the_path(tmp_path, monkeypatch):
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from src.song_app import scan, server
+
+    song = _song_with_scan(tmp_path, monkeypatch)
+    fragment = tmp_path / "songs" / song.slug / "frag.musicxml"
+    fragment.write_text("<score-partwise/>")
+    monkeypatch.setattr(scan, "fragment_path", lambda _song, _i: str(fragment))
+    monkeypatch.setenv("MUSESCORE_CLI_PATH", str(tmp_path / MISSING))
+    client = TestClient(server.app)
+    for url in (f"/api/songs/{song.slug}/scan-system/0",
+                f"/api/songs/{song.slug}/render?doc=original"):
+        reply = client.get(url)
+        assert reply.status_code >= 400, url
+        assert "MUSESCORE_CLI_PATH" in reply.json()["detail"], url

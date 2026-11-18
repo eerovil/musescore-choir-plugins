@@ -109,12 +109,19 @@ def run(argv: Sequence[str], output_path: str,
 
     ``output_path`` is the file the run is expected to leave. It is only looked
     at, never passed on: the caller's ``argv`` already says where to write.
-    ``subprocess.TimeoutExpired`` is left to the caller, as it always was.
+    ``subprocess.TimeoutExpired`` is left to the caller, as it always was. A
+    MuseScore that does not start at all (no such program, not executable) raises
+    :class:`MuseScoreError` naming `MUSESCORE_CLI_PATH`: that is the one case where
+    the path is to blame, and every run comes through here, so every caller says so.
     """
     before = _fingerprint(output_path)
     started = time.time()
-    result = subprocess.run(list(argv), capture_output=True, text=True,
-                            errors="replace", timeout=timeout)
+    try:
+        result = subprocess.run(list(argv), capture_output=True, text=True,
+                                errors="replace", timeout=timeout)
+    except OSError as exc:
+        raise MuseScoreError(f"MuseScore could not be started ({exc}). "
+                             "Check MUSESCORE_CLI_PATH.") from exc
     args = list(argv)
     source = args[args.index("-o") - 1] if "-o" in args[2:] else None
     return Outcome(result.returncode, result.stdout or "", result.stderr or "",
@@ -313,10 +320,11 @@ def _stamp(line: str) -> Optional[float]:
 
 
 def _same_file(logged: str, source: str) -> bool:
-    """Whether the path a refusal names is ``source``, as given or relative to it."""
+    """Whether the path a refusal names is ``source``, as given or relative to it.
+    A refusal naming no path is not tied to any file, so it is never ``source``'s."""
     logged = logged.strip()
     if not logged:
-        return True
+        return False
     if os.path.isabs(logged):
         return os.path.abspath(logged) == os.path.abspath(source)
     whole = os.path.abspath(source)
@@ -332,8 +340,9 @@ def failed_load_reason(since: float, log_dirs: Sequence[str] = LOG_DIRS,
     refusal of some other file is never handed back as this run's reason. The
     refusal may carry on over following lines without a time stamp (one per bar), up
     to the `, path:` that ends it; the next stamped line ends it too. Given
-    ``source``, a refusal naming another file is skipped: two songs' runs at once
-    write into the same day's log.
+    ``source``, only a refusal whose path names that file counts, and one naming no
+    path is skipped too: two songs' runs at once write into the same day's log, and a
+    refusal that cannot be tied to this run's file may be the other song's.
     """
     logs = []
     for folder in log_dirs:
@@ -363,7 +372,7 @@ def failed_load_reason(since: float, log_dirs: Sequence[str] = LOG_DIRS,
                     break
                 parts.append(more)
             text, _, named = "\n".join(parts).partition(", path:")
-            if source and named and not _same_file(named.splitlines()[0], source):
+            if source and not _same_file(named.splitlines()[0] if named else "", source):
                 continue
             said = [html.unescape(_TAG.sub("", one)).strip() for one in text.splitlines()]
             reason = "\n".join(one for one in said if one) or reason
