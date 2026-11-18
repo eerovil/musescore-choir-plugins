@@ -11,6 +11,8 @@ developers are listed under *Behind the scenes*.
   such as the publish record `sing_song.py --publish` writes: a save now writes only what that
   job changed, and the app and the command-line tools take turns with the song's file. Reading
   a system again now drops that system's Clean-grid answers, not the next system's. (#498)
+- A new fix kind, `rehearsal`, puts a rehearsal mark the scan could not read on a bar, and
+  it reaches the published score. (#493)
 - A song's language is saved with it: choose it on the New song form or the song's Start panel,
   or with the first `sing_song.py --lang`. A song with no language whose words do not look
   Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"
