@@ -1166,6 +1166,9 @@ async function systemsEditor(view, slug) {
     return;
   }
   let bands = (data.systems || []).map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+  // Pages a person said hold no music to scan (#480): counted as marked, and the
+  // finder proposes nothing on them.
+  let skipped = new Set(data.skipped_pages || []);
   let dirty = false;
 
   const status = el("div", { className: "sysstatus" });
@@ -1175,6 +1178,8 @@ async function systemsEditor(view, slug) {
     const agree = want && n === want;
     status.replaceChildren(
       el("span", {}, `${n} system${n === 1 ? "" : "s"}`),
+      skipped.size ? el("span", { className: "muted" },
+        ` — ${skipped.size} page${skipped.size === 1 ? "" : "s"} left out`) : el("span"),
       want ? el("span", { className: agree ? "ok" : "warn" },
         agree ? ` — matches the score` : ` — the score declares ${want}`) : el("span"),
       dirty ? el("span", { className: "warn" }, " — unsaved") : el("span"),
@@ -1184,11 +1189,12 @@ async function systemsEditor(view, slug) {
   const save = async () => {
     const res = await fetch(`${P}/bounds`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ systems: bands }),
+      body: JSON.stringify({ systems: bands, skipped_pages: [...skipped] }),
     });
     if (!res.ok) { alert("Save failed: " + (await res.text())); return; }
     const out = await res.json();
     bands = out.systems.map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+    skipped = new Set(out.skipped_pages || []);
     dirty = false;
     drawBands();
   };
@@ -1212,7 +1218,8 @@ async function systemsEditor(view, slug) {
       });
       if (!res.ok) throw new Error(await res.text());
       const out = await res.json();
-      bands = out.systems.map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
+      bands = out.systems.filter((b) => !skipped.has(b.page))
+        .map((b) => ({ page: b.page, top: b.top, bottom: b.bottom }));
       dirty = true;
       findNote.textContent = ` Proposed ${bands.length} — check each one against the`
         + " page, then save.";
@@ -1246,6 +1253,7 @@ async function systemsEditor(view, slug) {
       const holder = el("div", { className: "syspage" }, img, overlay);
       holder.onclick = (ev) => {
         if (ev.target !== img) return;              // only empty page area adds one
+        if (skipped.has(p)) return;                 // a left-out page takes no system
         const r = img.getBoundingClientRect();
         if (!r.height) return;
         const y = (ev.clientY - r.top) / r.height;
@@ -1253,16 +1261,36 @@ async function systemsEditor(view, slug) {
         dirty = true; drawBands();
       };
       img.onload = drawBands;                        // positions need the real height
-      pageEls.push({ page: p, img, overlay });
+      const leave = el("input", { type: "checkbox", className: "sysskip" });
+      leave.onchange = () => {
+        const on = bands.filter((b) => b.page === p).length;
+        if (leave.checked && on && !confirm(
+          `Leave page ${p} out of the scan? Its ${on} system(s) will be removed.`)) {
+          leave.checked = false;
+          return;
+        }
+        if (leave.checked) {
+          skipped.add(p);
+          bands = bands.filter((b) => b.page !== p);
+        } else skipped.delete(p);
+        dirty = true; drawBands();
+      };
+      pageEls.push({ page: p, img, overlay, holder, leave });
       kids.push(el("div", { className: "syspagewrap" },
-        el("div", { className: "muted" }, `Page ${p}`), holder));
+        el("div", { className: "syspagehead" },
+          el("span", { className: "muted" }, `Page ${p}`),
+          el("label", { className: "muted", title: "A page with no music to sing, such as a title page" },
+            leave, " Leave this page out")),
+        holder));
     }
     pagesWrap.replaceChildren(...kids);
   }
 
   function drawBands() {
     redrawStatus();
-    for (const { page, img, overlay } of pageEls) {
+    for (const { page, img, overlay, holder, leave } of pageEls) {
+      leave.checked = skipped.has(page);
+      holder.classList.toggle("skipped", skipped.has(page));
       const mine = bands
         .map((b, i) => ({ b, i }))
         .filter(({ b }) => b.page === page)
@@ -1627,7 +1655,7 @@ function panelScan(panel, song, P, refresh, actions) {
     ready ? `${st.systems} printed system(s) marked.`
       : !st.systems
       ? "No printed systems marked yet. Draw a band around each system in the Systems tab — the scan reads exactly those bands."
-      : `Page(s) ${gaps.join(", ")} have no systems marked. Every page has to be marked, or its music is simply never read.`,
+      : `Page(s) ${gaps.join(", ")} have no systems marked. Every page has to be marked, or its music is simply never read. A page with no music to sing can be left out in the Systems tab.`,
     " ",
     el("button", { onclick: () => actions?.openDoc?.("systems") }, "Open the Systems editor")));
 

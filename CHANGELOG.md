@@ -12,6 +12,9 @@ developers are listed under *Behind the scenes*.
   Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"
   sounds (child, now, boy) are sung as two vowels, and only songs sung in English wait for a
   re-sing because of it. (#484)
+- A page with no music to sing, such as a title page, can be left out of a scan with a
+  *Leave this page out* switch in the Systems editor. Before, the Scan button stayed off until
+  every page had a system drawn on it, so the page had to be cut from the PDF first. (#490)
 - Cleaning's "was 9/8, cut to 4/4" red mark now says which voice lost notes, and a `bar` fix
   that rewrites that voice (voice 1) takes the mark off, so the bar stops showing red; before,
   only an `unmark` took it off. A cut in voice 2 still needs an `unmark`. (#488)
