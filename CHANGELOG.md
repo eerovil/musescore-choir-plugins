@@ -12,6 +12,10 @@ developers are listed under *Behind the scenes*.
   voice's own sounds for a word in any language the singer reads (Latin, German, Swedish,
   Estonian, English), with the language it is sung in; the sing run says which saved readings
   it did not use. English and Latin songs sing exactly as before. (#484)
+- *Find systems* splits a page into the systems it prints more often: a page cropped
+  tight to the music no longer comes back as one system per staff, and a scan with a
+  printed frame or a grey shadow down its side no longer comes back as one system for the
+  whole page. (#502)
 - *Find systems* (the quick finder, not *Ask homr*) now finds the systems on a scan with grey
   paper; before, it found none on any page of such a scan. The lyric editor's staff pictures
   and the Fix panel's bar box read such a scan too. (#494)
