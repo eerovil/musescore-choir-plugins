@@ -44,7 +44,8 @@ def singer_changes(path=SINGER):
     """SINGER_CHANGES in sing_ufr.py, read as text: {version: "*" or a language code or a list of
     them}, every version up to SINGER_VERSION. A version the line does not name, or a line that
     cannot be read, counts as "*" (it changed every song), so a mistake re-sings too much rather
-    than too little (#484)."""
+    than too little (#484). A language code covers its variants ("la" covers "la-de",
+    languages.chain), as resing.up_to_date reads it."""
     version = singer_version(path)
     changes = {}
     try:

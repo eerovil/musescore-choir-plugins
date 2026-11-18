@@ -1320,3 +1320,157 @@ def test_folded_divisi_still_finds_the_solos_clef(tmp_path, monkeypatch, trial):
         assert sung["voices"] == [None, publish_song.LOW[0]]
     else:
         assert sung["voices"] == [publish_song.HIGH[0], publish_song.LOW[0]]
+
+
+# #484: saved readings in a language, the unused-readings log, one copy of pronounce.json a run
+def reading_song(tmp_path, monkeypatch, saved, stale=None, edit_midway=None):
+    """sing() a two-part song in Latin whose tenor sings "do do" in Latin and "re re" in English
+    (--lang-from en:re), and whose bass sings "do" in Latin: a fake g2p.py records which pronounce.json it read and writes the used list
+    its language's readings name in `uses`. Returns (stdout, the g2p calls)."""
+    from src.sing_song.tests.test_fold import chord, score
+    cleaned = score(tmp_path / "cleaned.mscx", [("T1", [chord(60, syl="do") * 2 + chord(62, syl="re") * 2]),
+                                                     ("B1", [chord(48, syl="do") * 4])])
+    bundle, work = tmp_path / "bundle", tmp_path / "work"
+    bundle.mkdir()
+    work.mkdir()
+    (bundle / "timing.json").write_text(json.dumps({"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}))
+    song = tmp_path / "pronounce.json"
+    song.write_text(json.dumps(saved))
+    for name, entries in (stale or {}).items():
+        (work / name).write_text(json.dumps(entries))
+    calls, real_run = [], publish_song.run
+
+    def run(cmd, **kw):
+        if str(cmd[2]).endswith("unroll.py"):
+            return real_run(cmd, **kw)
+        if str(cmd[2]).endswith("g2p.py"):
+            code, js, path = cmd[3], cmd[4], kw["env"]["SONG_PRONOUNCE"]
+            with open(path) as f:
+                calls.append((code, os.path.basename(js), path, json.load(f)))
+            if edit_midway and len(calls) == 1:
+                song.write_text(json.dumps(edit_midway))
+            with open(f"{js}.{code}.used.json", "w") as f:
+                json.dump(saved["uses"][code], f)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if no_silent(cmd, kw):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == "ffmpeg":
+            open(cmd[-1], "w").write("mp3")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(publish_song, "run", run)
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    manifest = {"duration": 4, "parts": [{"name": "T1"}, {"name": "B1"}]}
+    publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "la",
+                      sys.executable, "/ufr", False, lang_from={"re": "en"},
+                      pronounce={"SONG_PRONOUNCE": str(song), "CHOIR_WORDS": ""})
+    return calls
+
+
+READ = {"lang": "en", "bar": None, "beat": None, "word": "read"}
+JESU = {"lang": "la", "bar": None, "beat": None, "word": "jesu"}
+DO_PLACE = {"lang": "la", "bar": 1, "beat": 0.0, "word": "do"}
+
+
+def test_readings_used_by_either_languages_run_are_not_logged_and_the_rest_are(tmp_path, monkeypatch, capsys):
+    saved = {"places": [dict(DO_PLACE, sounds="it/d it/o"), {"bar": 2, "beat": 0, "word": "wind",
+                                                             "sounds": "W IH1 N D", "lang": "en"}],
+             "everywhere": {"en": {"read": "R EH1 D"}, "la": {"jesu": "it/j it/e"}},
+             "uses": {"en": [READ], "la": [JESU]}}
+    calls = reading_song(tmp_path, monkeypatch, saved)
+    # the tenor's line has an English and a Latin run, and both runs' used lists count
+    assert [(c[0], c[1]) for c in calls] == [("en", "p1-high.json"), ("la", "p1-high.json"), ("la", "p2-high.json")]
+    out = capsys.readouterr().out
+    assert "not used: 'wind' (en, bar 2, beat 0)" in out and "not used: 'do' (la, bar 1, beat 0.0)" in out
+    assert "'read'" not in out and "'jesu'" not in out   # each used by its own language's run
+
+
+def test_a_stale_used_list_from_an_earlier_run_is_deleted_and_not_counted(tmp_path, monkeypatch, capsys):
+    # an earlier run left a German used list for the tenor naming the "do" reading; this run
+    # sings no German, and its own runs use nothing
+    saved = {"places": [dict(DO_PLACE, sounds="it/d it/o")], "everywhere": {},
+             "uses": {"en": [], "la": []}}
+    reading_song(tmp_path, monkeypatch, saved, stale={"p1-high.json.de.used.json": [DO_PLACE]})
+    assert not (tmp_path / "work" / "p1-high.json.de.used.json").exists()
+    assert "not used: 'do' (la, bar 1, beat 0.0)" in capsys.readouterr().out
+
+
+def test_the_saved_readings_are_copied_once_so_a_save_midway_waits_for_the_next_run(tmp_path, monkeypatch):
+    saved = {"places": [], "everywhere": {"en": {"read": "R EH1 D"}}, "uses": {"en": [READ], "la": []}}
+    later = {"places": [], "everywhere": {"en": {"read": "R IY1 D"}}}
+    calls = reading_song(tmp_path, monkeypatch, saved, edit_midway=later)
+    assert len(calls) == 3 and all(c[2] == str(tmp_path / "work" / "pronounce.json") for c in calls)
+    assert all(c[3]["everywhere"] == {"en": {"read": "R EH1 D"}} for c in calls)
+    assert json.loads((tmp_path / "pronounce.json").read_text()) == later   # the app's own file untouched
+
+
+def test_unused_readings_reads_old_shapes_as_english(tmp_path):
+    path = tmp_path / "pronounce.json"
+    path.write_text(json.dumps({"places": [{"bar": 3, "beat": 1, "word": "Wind", "sounds": "W IH1 N D"}],
+                                "everywhere": {"read": "R EH1 D"}}))
+    used = tmp_path / "x.en.used.json"
+    used.write_text(json.dumps([{"lang": "en", "bar": 3, "beat": 1.0, "word": "wind"}]))
+    assert publish_song.unused_readings(str(path), [str(used), str(tmp_path / "missing.json")]) == [READ]
+
+
+def test_a_trial_logs_no_unused_readings(tmp_path, monkeypatch, capsys):
+    from src.sing_song.tests.test_fold import chord, score
+    cleaned = score(tmp_path / "cleaned.mscx", [("T1", [chord(60, syl="la") * 4])])
+    bundle, work = tmp_path / "bundle", tmp_path / "work"
+    bundle.mkdir()
+    work.mkdir()
+    (bundle / "timing.json").write_text(json.dumps({"points": [[0, 0, 0], [4, 0, 4]], "duration": 4, "measures": 1}))
+    song = tmp_path / "pronounce.json"
+    song.write_text(json.dumps({"places": [], "everywhere": {"la": {"jesu": "it/j it/e"}}}))
+    real_run = publish_song.run
+
+    def run(cmd, **kw):
+        if str(cmd[2]).endswith("unroll.py"):
+            return real_run(cmd, **kw)
+        if no_silent(cmd, kw):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == "ffmpeg":
+            open(cmd[-1], "w").write("mp3")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(publish_song, "run", run)
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    mp3 = tmp_path / "try.mp3"
+    publish_song.sing({"duration": 4, "parts": [{"name": "T1"}]}, cleaned, str(bundle), str(work), ["remy_adult"],
+                      "la", sys.executable, "/ufr", False, pronounce={"SONG_PRONOUNCE": str(song)},
+                      trial=(1, 1, 1, str(mp3)))
+    assert "not used" not in capsys.readouterr().out
+
+
+def test_finnish_words_are_refused_in_latin_sung_as_german_choirs_do():
+    notes = sung("Ho-di-e", "Sei-mes-sä", bar=4)
+    assert publish_song.unmarked_finnish(publish_song.mark_languages(notes, "la-de", {}), "la-de", {}) == [
+        (4, "seimessä")]
+    # and in a la-de stretch of a Finnish song, from the word --lang-from names
+    switches = publish_song.parse_lang_from(["la-de:Hodie"])
+    notes = sung("Ter-ve", "Ho-di-e", "Sei-mes-sä", bar=4)
+    assert publish_song.unmarked_finnish(publish_song.mark_languages(notes, "fi", switches), "fi", switches) == [
+        (4, "seimessä")]
+
+
+def test_a_variant_takes_its_bases_fields_and_its_prefixes_cover_its_sounds():
+    from src.sing_song import languages
+    assert languages.chain("la-de") == ["la-de", "la"] and languages.root("la-de") == "la"
+    assert languages.get("la-de", "vowels") == languages.get("la", "vowels")
+    assert languages.get("la-de", "finnish_look") == languages.LANGUAGES["la"]["finnish_look"]
+    assert "la-de" in languages.sung_by_g2p() and "fi" not in languages.sung_by_g2p()
+    for code in languages.LANGUAGES:
+        prefixes = tuple(languages.get(code, "prefixes"))
+        sounds = list(languages.get(code, "vowels"))
+        for rule in languages.get(code, "rules", {}).values():
+            sounds += rule
+        assert all(s.startswith(prefixes) for s in sounds), code
+
+
+def test_the_language_list_is_languages_pys():
+    from src.sing_song import languages
+    assert language_check_languages() == languages.names()
+    assert publish_song.G2P == languages.sung_by_g2p()
+
+
+def language_check_languages():
+    from src.sing_song import language_check
+    return language_check.LANGUAGES

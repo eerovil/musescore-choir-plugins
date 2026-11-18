@@ -7,6 +7,11 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A song can be sung in Latin the German way (soft c as "ts", h sounded, qu as "kv"): pick
+  **Latin (German style)** as its language. The Pronunciation list now takes a reading in the
+  voice's own sounds for a word in any language the singer reads (Latin, German, Swedish,
+  Estonian, English), with the language it is sung in; the sing run says which saved readings
+  it did not use. English and Latin songs sing exactly as before. (#484)
 - A clean, scan or other long job no longer erases what was saved to the song while it ran,
   such as the publish record `sing_song.py --publish` writes: a save now writes only what that
   job changed, and the app and the command-line tools take turns with the song's file. Reading
