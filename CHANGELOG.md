@@ -10,6 +10,9 @@ developers are listed under *Behind the scenes*.
 - A clean, scan or other long job no longer erases what was saved to the song while it ran,
   such as the publish record `sing_song.py --publish` writes: a save now writes only what that
   job changed, and the app and the command-line tools take turns with the song's file. (#498)
+- A page with no music to sing, such as a title page, can be left out of a scan with a
+  *Leave this page out* switch in the Systems editor. Before, the Scan button stayed off until
+  every page had a system drawn on it, so the page had to be cut from the PDF first. (#490)
 - Cleaning's "was 9/8, cut to 4/4" red mark now says which voice lost notes, and a `bar` fix
   that rewrites that voice (voice 1) takes the mark off, so the bar stops showing red; before,
   only an `unmark` took it off. A cut in voice 2 still needs an `unmark`. (#488)

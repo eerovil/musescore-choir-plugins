@@ -414,3 +414,37 @@ def test_two_commits_of_one_worktree_are_two_readings(live, page, monkeypatch):
     assert page.get_by_text("main — system-4 @ 2222222 — system(s) 2").is_visible()
     assert page.locator(".scanby p.hint").count() == 3, "two readings and the one installed"
     assert not errors, f"the panel raised: {errors}"
+
+
+def test_a_page_left_out_counts_as_marked_and_the_scan_can_start(live, page, tmp_path):
+    """#480: a page with no music is left out with a switch, and the Scan button
+    then waits for nothing more. Needs poppler, for the page count."""
+    import shutil
+    if not shutil.which("pdfinfo"):
+        pytest.skip("pdfinfo (poppler) is not installed")
+    base, _ = live
+    pdf = os.path.join(os.path.dirname(__file__), "..", "..", "..", "fixtures",
+                       "virta-venhetta-vie", "00-registered", "Virta venhettä vie.pdf")
+    song = state.create("Left Out Page Song", per_system=True)
+    shutil.copyfile(pdf, song.path("scan.pdf"))
+    song.data["sources"]["pdf"] = "scan.pdf"
+    song.set_stage("scan")
+    song.save()
+    pdf_systems.save_bounds(song.dir, [            # pages 1-3 marked, page 4 not
+        pdf_systems.SystemBounds(index=i, page=i, top=0.2, bottom=0.4)
+        for i in (1, 2, 3)])
+
+    errors = _open(page, base, song.slug)
+    assert page.get_by_text("Page(s) 4 have no systems marked").is_visible()
+    assert page.get_by_role("button", name="Scan the score").is_disabled()
+
+    page.locator(".syspagewrap", has_text="Page 4").locator(".sysskip").check()
+    page.get_by_role("button", name="Save boundaries").click()
+
+    scan_btn = page.get_by_role("button", name="Scan the score")
+    scan_btn.wait_for(state="visible")
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('button')].some("
+        "b => b.textContent.includes('Scan the score') && !b.disabled)")
+    assert pdf_systems.load_skipped(song.dir) == [4]
+    assert not errors, f"the panel raised: {errors}"
