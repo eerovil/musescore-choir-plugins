@@ -31,7 +31,7 @@ import tempfile
 import time
 from typing import Dict, List, Optional
 
-from src.sing_song import language_check, progress
+from src.sing_song import language_check, languages, progress
 
 from . import publish, state
 
@@ -136,9 +136,12 @@ def up_to_date(record: Dict, row: Dict, version: int, changes: Optional[Dict] = 
     if record.get("prefix") != row.get("prefix") or not isinstance(sung_with, int):
         return False
     language = record.get("language") or "fi"
+    # a variant changes with its base: a version naming "la" re-sings a "la-de" song too (#484)
+    family = set(languages.chain(language)) or {language}
     for v in range(sung_with + 1, version + 1):
         said = (changes or {}).get(v, "*")
-        if said == "*" or language in said:
+        named = {said} if isinstance(said, str) else set(said)
+        if "*" in named or family & named:
             return False
     if saved_language:
         return saved_language == language

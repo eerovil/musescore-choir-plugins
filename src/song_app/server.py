@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import tempfile
 import traceback
@@ -24,6 +25,7 @@ from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_st
 from . import clean_backup
 from . import resing
 from src.sing_song import places as song_places
+from src.sing_song import languages
 from src.sing_song import language_check
 from src.sing_song import progress
 from src.clean_score.utils.score_fixes import FixError
@@ -388,8 +390,9 @@ def api_set_language(slug: str, body: Dict) -> Dict:
     code = (body or {}).get("language")
     if code not in language_check.LANGUAGES:
         raise HTTPException(400, f"language must be one of {', '.join(language_check.LANGUAGES)}")
-    old = song.language
-    language_check.save(song.dir, code, "app")
+    with state.song_lock(slug):   # a reading saved meanwhile reads the language under it (#484)
+        old = song.language
+        language_check.save(song.dir, code, "app")
     reply = {"language": code, "previous": old, "note": None}
     run = progress.read(song.dir)
     if run and run.get("state") in progress.RUNNING and run.get("sing", True) \
@@ -1993,13 +1996,14 @@ def _publish_busy(song: state.Song) -> bool:
                                     for kind in ("clean", "check", "publish"))
 
 
-def _readings(words: List[str]) -> Dict:
+def _readings(words: List[str]) -> Optional[Dict]:
     """{word: readings} of the words the dictionary reads more than one way, from
-    src/sing_song/readings.py in the singer's venv (g2p_en and its dictionary live there)."""
+    src/sing_song/readings.py in the singer's venv (g2p_en and its dictionary live there), or
+    None on a host with no singer venv: the readings typed by hand need none (#484 review)."""
     from src.sing_song.main import sing_venv
     python = os.path.join(sing_venv(), "bin", "python")
     if not os.path.exists(python):
-        raise HTTPException(503, f"No singer at {sing_venv()}: run scripts/install-singer.sh")
+        return None
     script = os.path.join(os.path.dirname(song_places.__file__), "readings.py")
     r = subprocess.run([python, "-I", script], input=json.dumps(words), capture_output=True,
                        text=True, timeout=300)
@@ -2008,39 +2012,127 @@ def _readings(words: List[str]) -> Dict:
     return json.loads(r.stdout)
 
 
+NO_PACK = "not checked against a voice pack: none found at UFR_DIR"
+
+
+def _pack_sounds() -> Optional[set]:
+    """The voice pack's sounds (UFR_DIR/core/phonemes.json, the file the singer reads), or None
+    when this host has no pack."""
+    ufr = os.environ.get("UFR_DIR")
+    path = os.path.join(ufr, "core", "phonemes.json") if ufr else None
+    if not path or not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return set(json.load(f))
+
+
+def _pack_by_language(pack: Optional[set]) -> Optional[Dict[str, List[str]]]:
+    """{language g2p sings: the pack's sounds with that language's prefixes}"""
+    if pack is None:
+        return None
+    return {code: sorted(p for p in pack if any(p.startswith(x) for x in languages.get(code, "prefixes", [])))
+            for code in sorted(languages.sung_by_g2p())}
+
+
+def _check_reading(word: str, sounds: str, lang: str, pack: Optional[set]) -> str:
+    """The reading with its whitespace normalised, or a 400 naming the word: voice sounds
+    ("it/k it/w") in the pack, or with no pack in one of the language's prefixes; ARPAbet only
+    for English; never a mix (#484). g2p checks it again against the pack it sings with."""
+    if lang not in languages.sung_by_g2p():
+        raise HTTPException(400, f"{word!r}: {lang!r} is not a language g2p sings "
+                                 f"({', '.join(sorted(languages.sung_by_g2p()))})")
+    toks = str(sounds).split()
+    if not toks:
+        raise HTTPException(400, f"{word!r}: the reading is empty")
+    voiced = ["/" in t for t in toks]
+    if any(voiced) and not all(voiced):
+        raise HTTPException(400, f"{word!r}: give the reading all in voice sounds (it/k) or all in "
+                                 f"ARPAbet (K AA1), not both: {' '.join(toks)}")
+    if not any(voiced):
+        if lang != "en":
+            raise HTTPException(400, f"{word!r}: ARPAbet is for English readings; give a "
+                                     f"{languages.get(lang, 'name')} reading in voice sounds (it/k ...)")
+        return " ".join(toks)   # g2p checks ARPAbet against its own sound list, as before #484
+    if pack is not None:
+        bad = [t for t in toks if t not in pack]
+        if bad:
+            raise HTTPException(400, f"{word!r}: the voice pack has no sound {bad[0]!r}")
+    else:
+        prefixes = languages.get(lang, "prefixes", [])
+        bad = [t for t in toks if not re.match(r"^[a-z]+/[a-z0-9]+$", t)
+               or not any(t.startswith(x) for x in prefixes)]
+        if bad:
+            raise HTTPException(400, f"{word!r}: {bad[0]!r} is not a {languages.get(lang, 'name')} "
+                                     f"voice sound ({', '.join(prefixes)}...)")
+    return " ".join(toks)
+
+
 @app.get("/api/songs/{slug}/pronunciation")
 def api_pronunciation(slug: str) -> Dict:
-    """The song page's Pronunciation list (eeron-omat-taskit#144): every place a part sings a
-    word the dictionary reads more than one way, its readings (the one sung by default first),
-    the readings chosen, and the chosen places the score no longer has."""
+    """The song page's Pronunciation list (eeron-omat-taskit#144, #484): every place a part sings
+    a word the English dictionary reads more than one way, its readings (the one sung by default
+    first) and the English reading chosen there; every saved reading in any language ("saved");
+    the chosen places the score no longer has; the song's language, the languages g2p sings, and
+    the voice pack's sounds for each (null with no pack, and "note" says so)."""
     song = _require(slug)
     cleaned = _cleaned_or_400(song)
     every = song_places.places(cleaned)
     readings = _readings(sorted({p["word"] for p in every}))
+    english_note = None
+    if readings is None:
+        from src.sing_song.main import sing_venv
+        english_note = (f"The English dictionary's readings are not listed: no singer at {sing_venv()} "
+                        "(scripts/install-singer.sh). Readings typed in voice sounds still work.")
+        readings = {}
     choices = song_places.load(song.dir)
-    chosen = {song_places.key(c): c["sounds"] for c in choices["places"]}
+    chosen = {song_places.key(c): c["sounds"] for c in choices["places"] if c["lang"] == "en"}
     rows = [dict(p, readings=readings[p["word"]], chosen=chosen.get(song_places.key(p)))
             for p in every if p["word"] in readings]
-    return {"places": rows, "everywhere": choices["everywhere"],
-            "stale": song_places.stale(choices, cleaned)}
+    saved = [dict(c) for c in choices["places"]]
+    saved += [{"bar": None, "beat": None, "word": w, "sounds": v, "lang": lang}
+              for lang, m in choices["everywhere"].items() for w, v in m.items()]
+    pack = _pack_by_language(_pack_sounds())
+    return {"places": rows, "everywhere": choices["everywhere"], "saved": saved,
+            "stale": song_places.stale(choices, cleaned), "language": song.language,
+            "languages": [{"code": c, "name": n} for c, n in languages.names().items()
+                          if c in languages.sung_by_g2p()],
+            "pack": pack, "note": None if pack is not None else NO_PACK, "english_note": english_note}
 
 
 @app.post("/api/songs/{slug}/pronunciation")
 def api_pronunciation_save(slug: str, body: Dict = None) -> Dict:
-    """Save the readings chosen on the song page: {"places": [{"bar", "beat", "word", "sounds"}],
-    "everywhere": {word: sounds}}. A place left out sings the dictionary's reading."""
+    """Save the readings chosen on the song page (#484): {"places": [{"bar", "beat", "word",
+    "sounds", "lang"}], "everywhere": {lang: {word: sounds}}, "langs": [lang, ...]}. Only the
+    readings in a language `langs` names are replaced; every other language's are kept. With no
+    `langs`, an entry with no `lang`, or a flat everywhere map {word: sounds} (an older page or a
+    script), the language is English, which is all a save could mean before #484. A place left out
+    sings the dictionary's reading."""
     body = body or {}
+    pack = _pack_sounds()
     try:
-        chosen = [{"bar": int(c["bar"]), "beat": float(c["beat"]), "word": song_places.word_key(str(c["word"])),
-                   "sounds": " ".join(str(c["sounds"]).split())} for c in body.get("places") or []]
-        everywhere = {song_places.word_key(str(w)): " ".join(str(v).split())
-                      for w, v in (body.get("everywhere") or {}).items()}
+        langs = [str(x) for x in (body.get("langs") or ["en"])]
+        sent = song_places.normalise({"places": list(body.get("places") or []),
+                                      "everywhere": dict(body.get("everywhere") or {})})
+        chosen = [{"bar": int(c["bar"]), "beat": float(c["beat"]),
+                   "word": languages.word_key(str(c["word"]), c["lang"]),
+                   "sounds": _check_reading(str(c["word"]), c["sounds"], c["lang"], pack), "lang": c["lang"]}
+                  for c in sent["places"]]
+        everywhere = {lang: {languages.word_key(str(w), lang): _check_reading(str(w), v, lang, pack)
+                             for w, v in m.items()} for lang, m in sent["everywhere"].items()}
     except (KeyError, TypeError, ValueError, AttributeError):
-        raise HTTPException(400, "Give places as [{bar, beat, word, sounds}] and everywhere as {word: sounds}")
+        raise HTTPException(400, "Give places as [{bar, beat, word, sounds, lang}], everywhere as "
+                                 "{lang: {word: sounds}} and langs as [lang, ...]")
+    outside = sorted(({c["lang"] for c in chosen} | set(everywhere)) - set(langs))
+    if outside:
+        raise HTTPException(400, f"readings in {', '.join(outside)} are not in langs {langs}")
     with state.song_lock(slug):
         song = _require(slug)
-        song_places.save(song.dir, {"places": chosen, "everywhere": everywhere})
-    return api_pronunciation(slug)
+        old = song_places.load(song.dir)
+        kept = [c for c in old["places"] if c["lang"] not in langs]
+        kept_every = {lang: m for lang, m in old["everywhere"].items() if lang not in langs}
+        song_places.save(song.dir, {"places": kept + chosen, "everywhere": {**kept_every, **everywhere}})
+    reply = api_pronunciation(slug)
+    return reply
 
 
 @app.post("/api/songs/{slug}/publish-settings")

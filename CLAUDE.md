@@ -2959,6 +2959,19 @@ cannot undo it), set from the New song form, the Start panel (`POST /language`) 
 words look Finnish (`looks_foreign`), and the re-sing list reads that check once per score
 (`songs/.resing-language.json`).
 
+**Languages and saved readings** (#484): every language a song can be sung in is one entry in
+`languages.py` (name, whether g2p sings it, its exact vowel set, the sound prefixes a reading may
+use, its rules); a variant (`la-de`, Latin the German way) names a `base` and lays its own rules
+over it, and `languages.get` follows the chain. `language_check.LANGUAGES` and `main.G2P` are
+read from it. `g2p.py` loads it by path, since the singer runs it with `python -I`. A saved
+reading in `pronounce.json` carries the `lang` it is sung in (places `{bar, beat, word, sounds,
+lang}`, `everywhere: {lang: {word: sounds}}`; an entry with none is English) and is voice sounds,
+or ARPAbet for English only, checked against the pack's `core/phonemes.json` on save. A run
+copies `pronounce.json` into its work folder once, so a save mid-run waits for the next run; each
+g2p run writes `<notes>.<lang>.used.json`, and the run logs the saved readings none used.
+`src/sing_song/tests/test_g2p_unchanged.py` (host only) pins English and Latin against g2p
+before #484 over every foreign-looking song in `songs/`.
+
 `SING_PROVIDER` (#483, `sing_ufr.providers`) picks the singer's onnxruntime provider: `cpu`,
 `cuda` (or `GPU=1` when unset), or `coreml`, which falls back to the processor when the build has
 no CoreML; each model's provider is logged. The kube runner does not pass it on.

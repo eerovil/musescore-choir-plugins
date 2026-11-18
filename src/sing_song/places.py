@@ -6,28 +6,36 @@ as word_key() gives it. Parts singing the word together share the place, and a r
 there is sung by all of them, on every pass through the bar; a part entering later on the same
 word in the bar has a place of its own.
 
-The choices are kept with the song in songs/<slug>/pronounce.json:
+The choices are kept with the song in songs/<slug>/pronounce.json, each in the language it is
+a reading in (#484):
 
-    {"places": [{"bar": 3, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"}],
-     "everywhere": {"read": "R EH1 D"}}
+    {"places": [{"bar": 3, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D", "lang": "en"}],
+     "everywhere": {"en": {"read": "R EH1 D"}, "la": {"coeli": "it/tsh it/e it/l it/i"}}}
 
-g2p.py reads that file when it sings (a place first, then "everywhere"), song-app's song page
-lists and saves it, and stale() names the choices whose place a score edit took away.
+A reading is ARPAbet (English only) or the voice pack's own sounds ("it/k it/w ..."). A file
+written before languages, with no "lang" on a place and a flat "everywhere", is English; load()
+gives it the shape above. g2p.py reads the file when it sings (a place first, then "everywhere",
+only the readings in the language it is reading), song-app's song page lists and saves it, and
+stale() names the choices whose place a score edit took away.
 """
 import json
 import os
-import re
-import unicodedata
 
 from lxml import etree
+
+try:
+    from . import languages
+except ImportError:   # run as a file
+    import languages
 
 FILE = "pronounce.json"
 
 
 def word_key(s):
-    """A word as the English lookup sees it: lower case, letters and the apostrophe. g2p.py has
-    the same function; tests/test_places.py checks that they agree."""
-    return re.sub(r"[^a-z']", "", unicodedata.normalize("NFC", s.lower().replace("’", "'"))).strip("'")
+    """A word as the English lookup sees it: lower case, letters and the apostrophe
+    (languages.word_key, which g2p.py uses too). A place's "word" is this; a reading in another
+    language is matched by the word's own key in that language, off its "text"."""
+    return languages.word_key(s, "en")
 
 
 def _part_names(root):
@@ -112,15 +120,15 @@ def key(c):
 
 
 def places(score):
-    """Each place once, with the parts that start the word there: [{"bar", "beat", "word", "n",
-    "parts", "line", "at"}] in bar order; "n" counts the places of the word in its bar (1 for the
+    """Each place once, with the parts that start the word there: [{"bar", "beat", "word", "text",
+    "n", "parts", "line", "at"}] in bar order ("text" as the first part printed it); "n" counts the places of the word in its bar (1 for the
     first beat it starts on), for people to read. Parts singing a word together share its place;
     one entering later on the same word has a place of its own."""
     out = {}
     for w in words(score):
         k = key(w)
         if k not in out:
-            out[k] = {"bar": w["bar"], "beat": w["beat"], "word": w["word"], "parts": [],
+            out[k] = {"bar": w["bar"], "beat": w["beat"], "word": w["word"], "text": w["text"], "parts": [],
                       "line": w["line"], "at": w["at"]}
         if w["part"] not in out[k]["parts"]:
             out[k]["parts"].append(w["part"])
@@ -130,26 +138,45 @@ def places(score):
     return rows
 
 
+def normalise(d):
+    """Any pronounce.json body as {"places": [... each with "lang"], "everywhere": {lang: {word:
+    sounds}}}: a place with no "lang", and a flat "everywhere" map, are English."""
+    d = d or {}
+    out = [dict(c, lang=c.get("lang") or "en") for c in d.get("places") or []]
+    every = d.get("everywhere") or {}
+    if any(isinstance(v, str) for v in every.values()):
+        flat = {w: v for w, v in every.items() if isinstance(v, str)}
+        every = {lang: dict(m) for lang, m in every.items() if isinstance(m, dict)}
+        every.setdefault("en", {}).update(flat)
+    return {"places": out, "everywhere": {lang: dict(m) for lang, m in every.items() if m}}
+
+
 def load(song_dir):
-    """The song's choices: {"places": [...], "everywhere": {...}} (empty when none were made)."""
+    """The song's choices, normalised: {"places": [...], "everywhere": {lang: {...}}} (empty when
+    none were made)."""
     try:
         with open(os.path.join(song_dir, FILE), encoding="utf-8") as f:
             d = json.load(f)
     except FileNotFoundError:
         d = {}
-    return {"places": list(d.get("places") or []), "everywhere": dict(d.get("everywhere") or {})}
+    return normalise(d)
 
 
 def save(song_dir, choices):
     path = os.path.join(song_dir, FILE)
     tmp = path + ".tmp"
+    c = normalise(choices)
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"places": choices.get("places", []), "everywhere": choices.get("everywhere", {})},
-                  f, ensure_ascii=False, indent=1)
+        json.dump({"places": c["places"], "everywhere": c["everywhere"]}, f, ensure_ascii=False, indent=1)
     os.replace(tmp, path)
 
 
 def stale(choices, score):
-    """The place choices whose word the score no longer sings there."""
-    here = {key(p) for p in places(score)}
-    return [c for c in choices.get("places", []) if key(c) not in here]
+    """The place choices whose word the score no longer sings there, each matched in its own
+    language: (bar, beat, the printed word's key in that language)."""
+    rows = places(score)
+    cs = normalise(choices)["places"]
+    here = {(int(r["bar"]), round(float(r["beat"]), 3), languages.word_key(r.get("text") or r["word"], lang))
+            for lang in {c["lang"] for c in cs} for r in rows}
+    return [c for c in cs
+            if (int(c["bar"]), round(float(c["beat"]), 3), languages.word_key(c["word"], c["lang"])) not in here]

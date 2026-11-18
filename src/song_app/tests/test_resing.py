@@ -247,3 +247,15 @@ def test_singer_changes_covers_every_version_and_a_bad_line_means_every_song(tmp
     assert progress.singer_changes(str(bad)) == {1: "*", 2: "*"}
     real = progress.singer_changes()
     assert sorted(real) == list(range(1, progress.singer_version() + 1))
+
+
+def test_a_change_to_a_language_re_sings_its_variants_and_not_the_other_way():
+    rows = [row("jm")]
+    la_de = {"jm": dict(record("jm", 3), language="la-de")}
+    la = {"jm": dict(record("jm", 3), language="la")}
+    assert resing.song_status(rows, la_de, 4, changes={**CHANGES, 4: "la"})["pending"] == ["jm"]
+    assert resing.song_status(rows, la, 4, changes={**CHANGES, 4: "la-de"})["current"] == ["jm"]
+    assert resing.song_status(rows, la_de, 4, changes={**CHANGES, 4: ["en", "et"]})["current"] == ["jm"]
+    # a code is matched whole, never as a piece of another ("e" is no change to "en")
+    assert resing.song_status(rows, {"jm": dict(record("jm", 3), language="e")}, 4,
+                              changes={**CHANGES, 4: "en"})["current"] == ["jm"]

@@ -62,14 +62,32 @@ def test_a_choice_whose_place_is_gone_is_reported(tmp_path):
     s = score(tmp_path, WIND)
     choices = {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"},
                           {"bar": 1, "beat": 2.0, "word": "wind", "sounds": "W IH1 N D"}]}
-    assert places.stale(choices, s) == [choices["places"][1]]
+    assert places.stale(choices, s) == [dict(choices["places"][1], lang="en")]
+
+
+def test_a_reading_in_another_language_is_matched_by_its_own_word_key(tmp_path):
+    # the score prints "Seimessä"; a Finnish-style key keeps the ä, the English one drops it
+    s = score(tmp_path, {"S": [w("Seimessä", "Hodie")]})
+    keep = {"bar": 1, "beat": 0.0, "word": "seimessä", "sounds": "it/s it/e", "lang": "la"}
+    gone = {"bar": 1, "beat": 0.0, "word": "seimess", "sounds": "it/s it/e", "lang": "la"}
+    assert places.stale({"places": [keep, gone]}, s) == [gone]
 
 
 def test_choices_are_kept_with_the_song(tmp_path):
     assert places.load(str(tmp_path)) == {"places": [], "everywhere": {}}
-    c = {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"}], "everywhere": {"read": "R EH1 D"}}
+    c = {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D", "lang": "en"},
+                    {"bar": 2, "beat": 0.0, "word": "hodie", "sounds": "de/h it/o", "lang": "la-de"}],
+         "everywhere": {"en": {"read": "R EH1 D"}, "la": {"jesu": "it/j it/e"}}}
     places.save(str(tmp_path), c)
     assert places.load(str(tmp_path)) == c and (tmp_path / "pronounce.json").exists()
+
+
+def test_the_shapes_saved_before_484_load_as_english(tmp_path):
+    (tmp_path / "pronounce.json").write_text(json.dumps(
+        {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"}], "everywhere": {"read": "R EH1 D"}}))
+    assert places.load(str(tmp_path)) == {
+        "places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D", "lang": "en"}],
+        "everywhere": {"en": {"read": "R EH1 D"}}}
 
 
 def test_the_singer_finds_the_place_the_page_chose_in_every_part_and_pass(tmp_path):
@@ -99,13 +117,15 @@ def test_the_singer_finds_the_place_the_page_chose_in_every_part_and_pass(tmp_pa
     assert sung == {"1": [["en/aa", "en/iy"], ["en/aa", "en/iy"]], "2": [["en/ih"], ["en/ih"]]}
 
 
-def test_word_key_is_g2ps():
+def test_word_key_is_the_one_languages_gives():
+    # the app, the place list and g2p all key a word through languages.word_key: English as
+    # its dictionary sees it, any other language with every letter it has (#484)
+    from src.sing_song import languages
+    assert [places.word_key(x) for x in ("Wind,", "don’t", "'Tis", "Ääni!")] == ["wind", "don't", "tis", "ni"]
+    assert [languages.word_key(x, "la") for x in ("Hodie,", "Jesu!", "Seimessä", "don’t")] == [
+        "hodie", "jesu", "seimessä", "don't"]
     src = (HERE / "g2p.py").read_text()
-    body = src[src.index("def word_key"):src.index("\n\n", src.index("def word_key"))]
-    ns = {}
-    exec("import re, unicodedata\n" + body, ns)
-    for word in ("Wind,", "don’t", "'Tis", "Ääni!"):
-        assert ns["word_key"](word) == places.word_key(word)
+    assert "return L.word_key(s, lang)" in src
 
 
 # the CMU dictionary's readings, as g2p_en has them
