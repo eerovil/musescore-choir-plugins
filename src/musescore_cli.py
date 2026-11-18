@@ -34,10 +34,16 @@ before MuseScore starts and compared afterwards.
 
 from __future__ import annotations
 
+import datetime
+import glob
+import html
 import logging
 import os
+import re
+import shutil
 import struct
 import subprocess
+import time
 import zipfile
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Sequence, Tuple
@@ -77,6 +83,11 @@ class Outcome:
     stderr: str
     output_path: str
     before: Optional[Tuple[int, int]]
+    #: When the run began (``time.time()``), so its own MuseScore 4 log can be found.
+    started: float = 0.0
+    #: The file MuseScore was asked to read (the argument before ``-o``), so its
+    #: refusal can be told apart from another run's in the shared MuseScore 4 log.
+    source: Optional[str] = None
 
     @property
     def said(self) -> str:
@@ -98,13 +109,23 @@ def run(argv: Sequence[str], output_path: str,
 
     ``output_path`` is the file the run is expected to leave. It is only looked
     at, never passed on: the caller's ``argv`` already says where to write.
-    ``subprocess.TimeoutExpired`` is left to the caller, as it always was.
+    ``subprocess.TimeoutExpired`` is left to the caller, as it always was. A
+    MuseScore that does not start at all (no such program, not executable) raises
+    :class:`MuseScoreError` naming `MUSESCORE_CLI_PATH`: that is the one case where
+    the path is to blame, and every run comes through here, so every caller says so.
     """
     before = _fingerprint(output_path)
-    result = subprocess.run(list(argv), capture_output=True, text=True,
-                            errors="replace", timeout=timeout)
+    started = time.time()
+    try:
+        result = subprocess.run(list(argv), capture_output=True, text=True,
+                                errors="replace", timeout=timeout)
+    except OSError as exc:
+        raise MuseScoreError(f"MuseScore could not be started ({exc}). "
+                             "Check MUSESCORE_CLI_PATH.") from exc
+    args = list(argv)
+    source = args[args.index("-o") - 1] if "-o" in args[2:] else None
     return Outcome(result.returncode, result.stdout or "", result.stderr or "",
-                   output_path, before)
+                   output_path, before, started, source)
 
 
 def crashed_on_exit(outcome: Outcome) -> bool:
@@ -265,6 +286,165 @@ def ok(outcome: Outcome, log: Optional[Logger] = None) -> bool:
     return False
 
 
+# --- why it failed ------------------------------------------------------------
+#
+# MuseScore 4 refuses a score it calls corrupted with exit code 40 and prints
+# nothing (#481). The reason is only in its own log file, one per day, as
+#
+#     failed load notation, err: [2009] <b>Voice too long</b>: Full score, measure
+#     33, staff 5, voice 2. Found: 8/2. Expected: 6/2., path: ...
+#
+# So a failed run reads the log MuseScore wrote while it ran and says that,
+# instead of blaming MUSESCORE_CLI_PATH, which was fine.
+
+#: Where MuseScore 4 writes its logs: Linux, then macOS.
+LOG_DIRS = (
+    os.path.expanduser("~/.local/share/MuseScore/MuseScore4/logs"),
+    os.path.expanduser("~/Library/Application Support/MuseScore/MuseScore4/logs"),
+)
+
+_FAILED_LOAD = re.compile(r"failed load notation, err:\s*(?:\[\d+\]\s*)?")
+_TAG = re.compile(r"<[^>]+>")
+_STAMP = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)\s*\|")
+
+
+def _stamp(line: str) -> Optional[float]:
+    """The time a MuseScore 4 log line was written (local time), or None."""
+    found = _STAMP.match(line)
+    if not found:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(found.group(1)).timestamp()
+    except ValueError:
+        return None
+
+
+def _same_file(logged: str, source: str) -> bool:
+    """Whether the path a refusal names is ``source``, as given or relative to it.
+    A refusal naming no path is not tied to any file, so it is never ``source``'s."""
+    logged = logged.strip()
+    if not logged:
+        return False
+    if os.path.isabs(logged):
+        return os.path.abspath(logged) == os.path.abspath(source)
+    whole = os.path.abspath(source)
+    return whole == os.path.abspath(logged) or whole.endswith(os.sep + os.path.normpath(logged))
+
+
+def failed_load_reason(since: float, log_dirs: Sequence[str] = LOG_DIRS,
+                       source: Optional[str] = None) -> Optional[str]:
+    """Why MuseScore 4 refused to open a score, read off its log; None if it did not say.
+
+    Only a refusal written at or after ``since`` counts: a log file written to after
+    it is read, and in it a refusal line stamped before it is skipped, so an old
+    refusal of some other file is never handed back as this run's reason. The
+    refusal may carry on over following lines without a time stamp (one per bar), up
+    to the `, path:` that ends it; the next stamped line ends it too. Given
+    ``source``, only a refusal whose path names that file counts, and one naming no
+    path is skipped too: two songs' runs at once write into the same day's log, and a
+    refusal that cannot be tied to this run's file may be the other song's.
+    """
+    logs = []
+    for folder in log_dirs:
+        for path in glob.glob(os.path.join(folder, "MuseScore_*.log")):
+            try:
+                if os.path.getmtime(path) >= since - 1:
+                    logs.append((os.path.getmtime(path), path))
+            except OSError:
+                continue
+    for _mtime, path in sorted(logs, reverse=True):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            continue
+        reason = None
+        for i, line in enumerate(lines):
+            found = _FAILED_LOAD.search(line)
+            if not found:
+                continue
+            when = _stamp(line)
+            if when is not None and when < since - 1:
+                continue
+            parts = [line[found.end():]]
+            for more in lines[i + 1:]:
+                if ", path:" in parts[-1] or _stamp(more) is not None:
+                    break
+                parts.append(more)
+            text, _, named = "\n".join(parts).partition(", path:")
+            if source and not _same_file(named.splitlines()[0] if named else "", source):
+                continue
+            said = [html.unescape(_TAG.sub("", one)).strip() for one in text.splitlines()]
+            reason = "\n".join(one for one in said if one) or reason
+        if reason:
+            return reason
+    return None
+
+
+def explain(outcome: Outcome, what: str) -> str:
+    """The error for a run that did not produce its file: MuseScore's reason if known.
+
+    `what` names the step ("conversion failed"). The `MUSESCORE_CLI_PATH` hint is
+    kept for when MuseScore said nothing at all and its log has no refusal, which is
+    what a wrong path looks like.
+    """
+    reason = (failed_load_reason(outcome.started, source=outcome.source)
+              if outcome.started else None)
+    if reason:
+        return f"MuseScore {what}: MuseScore refused to open the score.\n{reason}"
+    if outcome.said.strip():
+        return f"MuseScore {what}.\n{outcome.said}"
+    return f"MuseScore {what} and said nothing. Check MUSESCORE_CLI_PATH."
+
+
+_MAJORS: dict = {}
+
+
+def _major(cli: str, mtime: float) -> Optional[int]:
+    """Ask ``cli --version`` once per program file. A failed ask is not kept, so a
+    MuseScore that timed out once is asked again next time."""
+    if (cli, mtime) in _MAJORS:
+        return _MAJORS[(cli, mtime)]
+    try:
+        result = subprocess.run([cli, "--version"], capture_output=True, text=True,
+                                errors="replace", timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    found = _version_major(f"{result.stdout}\n{result.stderr}")
+    if found is not None:
+        _MAJORS[(cli, mtime)] = found
+    return found
+
+
+def _version_major(said: str) -> Optional[int]:
+    """The major version in ``--version`` output: "MuseScore4 4.7.5", "MuseScore3
+    3.6.2", "MuseScore Studio 4.4.4". Only a line naming MuseScore is read, so a
+    library's version printed beside it (Qt 6.5.3) is not taken for it."""
+    for line in said.splitlines():
+        if "musescore" not in line.lower() and "mscore" not in line.lower():
+            continue
+        found = re.search(r"(?i)(?:muse ?score|mscore)(?:\s*studio)?\s*(\d)\b", line) \
+            or re.search(r"\b(\d+)\.\d+(?:\.\d+)?", line)
+        if found:
+            return int(found.group(1))
+    return None
+
+
+def major(cli: Optional[str] = None) -> Optional[int]:
+    """Which MuseScore ``cli`` is (3 or 4), from its ``--version``; None if it did not say.
+
+    Asked once per program file (its path and modification time), since the answer
+    changes only when the program does.
+    """
+    cli = cli or os.getenv("MUSESCORE_CLI_PATH") or "musescore3"
+    path = cli if os.sep in cli else (shutil.which(cli) or cli)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    return _major(path, mtime)
+
+
 def export(cli: str, input_path: str, output_path: str,
            timeout: Optional[float] = None, log: Optional[Logger] = None) -> str:
     """Ask MuseScore to write ``output_path`` from ``input_path``; return the path.
@@ -273,9 +453,7 @@ def export(cli: str, input_path: str, output_path: str,
     """
     outcome = run([cli, input_path, "-o", output_path], output_path, timeout=timeout)
     if not ok(outcome, log):
-        raise MuseScoreError(
-            f"MuseScore CLI failed writing {os.path.basename(output_path)}. "
-            "Check MUSESCORE_CLI_PATH.\n" + outcome.said)
+        raise MuseScoreError(explain(outcome, f"failed writing {os.path.basename(output_path)}"))
     return output_path
 
 

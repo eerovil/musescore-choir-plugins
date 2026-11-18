@@ -2,8 +2,8 @@
 
 Publish-only edits live here: dropping staves that carry no music, taking out
 the red marks cleaning leaves for a person, supplying an opening tempo when the
-score has none, the tempo changes set on the Publish panel, holding each
-fermata one beat longer than written, and letting parts share a staff in the
+score has none, the tempo changes set on the Publish panel, easing a printed
+rit. or accel. beat by beat, holding each fermata one beat longer than written, and letting parts share a staff in the
 published picture (#420). The source score is never changed.
 """
 
@@ -241,6 +241,279 @@ def hold_fermatas(root: etree._Element) -> int:
     return changed
 
 
+# ---------------------------------------------------------------------------
+# rit. and accel. printed in the score (#483)
+# ---------------------------------------------------------------------------
+# MuseScore plays a printed "rit." at the speed before it, so a song slowing into
+# its last bar played straight through. The copy eases the tempo beat by beat
+# instead, with hidden tempo marks, to GRADUAL_TO of the speed it started at unless
+# the Publish panel gives another speed or switches the mark off.
+GRADUAL_TO = {"rit": 0.75, "accel": 1.25}
+_GRADUAL = re.compile(r"\b(?:(rit|ritard|ritardando|riten|ritenuto|rall|rallentando)"
+                      r"|(accel|accelerando))\b", re.I)
+_A_TEMPO = re.compile(r"\ba\s+tempo\b|\btempo\s+(?:i|1|primo)\b", re.I)
+_TEMPO_I = re.compile(r"\btempo\s+(?:i|1|primo)\b", re.I)
+_TEXT_TAGS = ("StaffText", "SystemText", "Tempo", "Expression")
+# MuseScore's own tempo when a score declares none.
+_DEFAULT_BPM = 120.0
+
+
+def _shown(element: etree._Element) -> str:
+    """The words a text element prints (a note symbol's name is not one)."""
+    text = element.find("text")
+    if text is None:
+        return ""
+    shown = [text.text or ""]
+    for child in text:
+        if child.tag != "sym":
+            shown.extend(child.itertext())
+        shown.append(child.tail or "")
+    return "".join(shown)
+
+
+def _gradual_kind(text: str) -> Optional[str]:
+    found = _GRADUAL.search(text)
+    if not found:
+        return None
+    return "rit" if found.group(1) else "accel"
+
+
+def _timeline(root: etree._Element):
+    """What the gradual marks need to know about the score, by place.
+
+    Returns (bars, events, starts): each bar's (length, beat); every event as
+    ((bar, at), kind, payload) in score order, where kind is "gradual", "a tempo",
+    "tempo" or "fermata"; and per bar, where a chord or rest starts and a voice it
+    starts in (the top staff's first)."""
+    staves = root.findall("./Score/Staff")
+    if not staves:
+        return [], [], []
+    all_bars = [staff.findall("Measure") for staff in staves]
+    sig_n, sig_d = 4, 4
+    bars, events, starts = [], [], []
+    seen = set()
+    for index, top in enumerate(all_bars[0]):
+        here: Dict[Fraction, etree._Element] = {}
+        for staff_bars in all_bars:
+            if index >= len(staff_bars):
+                continue
+            measure = staff_bars[index]
+            if staff_bars is all_bars[0]:
+                for sig in measure.iter("TimeSig"):
+                    sig_n = int(_fraction(sig.findtext("sigN")) or sig_n)
+                    sig_d = int(_fraction(sig.findtext("sigD")) or sig_d)
+            for voice in measure.findall("voice"):
+                for element, at in _walk(voice):
+                    if element.tag in ("Chord", "Rest"):
+                        if not any(element.find(tag) is not None for tag in _GRACE):
+                            here.setdefault(at, voice)
+                    elif element.tag == "Fermata":
+                        if element.findtext("play", "1").strip() != "0":
+                            events.append(((index, at), "fermata", None))
+                    elif element.tag in _TEXT_TAGS:
+                        text = _shown(element)
+                        kind = _gradual_kind(text)
+                        if kind:
+                            if (index, at) not in seen:
+                                seen.add((index, at))
+                                events.append(((index, at), "gradual",
+                                               {"kind": kind, "text": text.strip()}))
+                        elif _A_TEMPO.search(text):
+                            # Before the tempo marks: a "Tempo I" MuseScore keeps as a
+                            # <Tempo> carries a number of its own, which may not be the
+                            # opening speed it means.
+                            numbered = element.tag == "Tempo" and element.findtext("tempo")
+                            events.append(((index, at), "a tempo",
+                                           {"first": bool(_TEMPO_I.search(text)),
+                                            "mark": element if numbered else None}))
+                        elif element.tag == "Tempo" and element.findtext("tempo"):
+                            events.append(((index, at), "tempo",
+                                           float(element.findtext("tempo")) * 60))
+        length = _fraction(top.get("len")) if top.get("len") else Fraction(sig_n, sig_d)
+        bars.append((length, _beat(sig_n, sig_d)))
+        starts.append(here)
+    events.sort(key=lambda event: event[0])
+    return bars, events, starts
+
+
+def _ramp_end(events, number, bars):
+    """What ends the ramp of the mark `events[number]`: the first event at a later
+    place, or None for the end of the song; and that place."""
+    where = events[number][0]
+    end = next((e for e in events[number + 1:] if e[0] > where), None)
+    return end, (end[0] if end else (len(bars), Fraction(0)))
+
+
+def _why(end) -> str:
+    """The Publish panel's word for what ends a ramp."""
+    if end is None:
+        return "end"
+    kind, payload = end[1], end[2]
+    if kind == "a tempo":
+        return "Tempo I" if payload["first"] else "a tempo"
+    if kind == "gradual":
+        return f"next {payload['kind']}."
+    return {"tempo": "tempo change", "fermata": "fermata"}[kind]
+
+
+def gradual_marks(root: etree._Element) -> List[Dict]:
+    """Every rit./rall./accel. the score prints, one per place, in score order:
+    `{"measure": n, "beat": b, "kind": "rit" | "accel", "text": "poco rit.",
+    "until": {"measure": n, "beat": b}, "until_why": "fermata"}`, bars and beats from
+    1. `until` is where the ramp stops (the place of what ends it, or the last bar's
+    end for "end"), and `until_why` one of "a tempo", "Tempo I", "tempo change",
+    "fermata", "next rit.", "next accel." or "end"."""
+    bars, events, _starts = _timeline(root)
+    out = []
+    for number, (where, kind, payload) in enumerate(events):
+        if kind != "gradual":
+            continue
+        end, end_at = _ramp_end(events, number, bars)
+        if end is None:
+            until = {"measure": len(bars), "beat": None}
+        else:
+            until = {"measure": end_at[0] + 1, "beat": _beat_number(bars, end_at)}
+        out.append({"measure": where[0] + 1, "beat": _beat_number(bars, where), **payload,
+                    "until": until, "until_why": _why(end)})
+    return out
+
+
+def _beat_number(bars, where) -> float:
+    """Which beat of its bar `where` falls on, from 1 (2.5 between beats 2 and 3)."""
+    bar, at = where
+    number = 1 + at / bars[bar][1] if bar < len(bars) else Fraction(1)
+    return int(number) if number == int(number) else round(float(number), 2)
+
+
+def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
+                log=None) -> int:
+    """Ease the tempo beat by beat from each printed rit./accel. Returns how many
+    hidden tempo marks it wrote.
+
+    A ramp runs from the mark to the first of: an "a tempo" or "Tempo I", a tempo
+    change, a fermata, the next rit./accel., or the end. It reaches its speed on the
+    last beat before that; "a tempo" goes back to the speed before the mark ("Tempo
+    I" to the opening one), and after a fermata the music goes on at the speed
+    before the mark too. `settings` are the Publish panel's `{"measure": n, "bpm":
+    72 or None, "off": bool}`, matched to the first mark in that bar. Run it after
+    the tempo changes are written, so the ramp starts from the speed they set.
+    """
+    say = log or (lambda message: None)
+    bars, events, starts = _timeline(root)
+    if not bars:
+        return 0
+    by_bar: Dict[int, Dict] = {}
+    for item in settings or ():
+        by_bar.setdefault(int(item["measure"]), item)
+    opening = opening_bpm(root) or _DEFAULT_BPM
+    for _where, kind, payload in events:
+        # "Tempo I" is the opening speed, whatever number MuseScore stored with it.
+        if kind == "a tempo" and payload["first"] and payload["mark"] is not None:
+            _set_speed(payload["mark"], opening)
+    used_bars = set()
+    plan: List[Tuple[Tuple[int, Fraction], float]] = []
+    for number, (where, kind, payload) in enumerate(events):
+        if kind != "gradual":
+            continue
+        measure = where[0] + 1
+        setting = by_bar.get(measure) if measure not in used_bars else None
+        used_bars.add(measure)
+        if setting and setting.get("off"):
+            say(f"{payload['text']} at bar {measure}: switched off on the Publish panel")
+            continue
+        base = _speed_at(where, events, plan, opening)  # a mark in its own place counts
+        end, end_at = _ramp_end(events, number, bars)
+        beats = _beats_between(bars, where, end_at)
+        if not beats:
+            say(f"{payload['text']} at bar {measure}: no beat left before what ends it; "
+                "played as written")
+            continue
+        target = float(setting["bpm"]) if setting and setting.get("bpm") else \
+            base * GRADUAL_TO[payload["kind"]]
+        count = len(beats)
+        for step, at in enumerate(beats, 1):
+            plan.append((at, base + (target - base) * step / count))
+        if end and end[1] == "a tempo":
+            back = opening if end[2]["first"] else base
+            if end[2]["mark"] is not None:
+                _set_speed(end[2]["mark"], back)   # a second mark there would fight it
+            else:
+                plan.append((end[0], back))
+        elif end and end[1] == "fermata":
+            after = _next_start(starts, end[0])
+            following = next((e[0] for e in events[number + 1:] if e[0] > end[0]), None)
+            if after and (following is None or after < following):
+                plan.append((after, base))
+    written = 0
+    top = root.find("./Score/Staff").findall("Measure")
+    for (bar, at), bpm in plan:
+        if bar >= len(starts):
+            continue
+        voice = starts[bar].get(at)
+        if voice is not None:
+            _insert_at(voice, at, _tempo_mark(round(bpm, 2)))
+        else:
+            # nothing starts on this beat (a held note): the mark still goes there
+            voice = top[bar].find("voice") if bar < len(top) else None
+            if voice is None:
+                continue
+            _place_at(voice, at, _tempo_mark(round(bpm, 2)))
+        written += 1
+    return written
+
+
+def _place_at(voice: etree._Element, at: Fraction, element: etree._Element) -> None:
+    """Put `element` at `at` in a bar where nothing of this voice starts there: at the
+    voice's end, a `location` stepping back (or on) to `at` before it, the way
+    MuseScore itself writes a mark that stands inside a held note."""
+    voice.append(element)
+    end = next(start for item, start in _walk(voice) if item is element)
+    if end != at:
+        step = etree.Element("location")
+        etree.SubElement(step, "fractions").text = str(at - end)
+        element.addprevious(step)
+
+
+def _set_speed(mark: etree._Element, bpm: float) -> None:
+    """Make a <Tempo> MuseScore plays at `bpm` (its text is left as printed)."""
+    mark.find("tempo").text = format(round(bpm, 2) / 60, ".12g")
+
+
+def _speed_at(where, before, plan, opening) -> float:
+    """The speed in force at `where`: the last tempo mark or eased beat before it."""
+    marks = [(at, value if kind == "tempo" else float(value["mark"].findtext("tempo")) * 60)
+             for at, kind, value in before if at <= where and
+             (kind == "tempo" or (kind == "a tempo" and value["mark"] is not None))]
+    eased = [(at, value) for at, value in plan if at <= where]
+    latest = max(marks[-1:] + eased, key=lambda item: item[0], default=None)
+    if eased and latest is not None and eased[-1][0] >= latest[0]:
+        return eased[-1][1]
+    return latest[1] if latest else opening
+
+
+def _beats_between(bars, start, end) -> List[Tuple[int, Fraction]]:
+    """Every beat strictly after `start` and before `end`, as (bar, at)."""
+    out = []
+    for bar in range(start[0], min(end[0], len(bars) - 1) + 1):
+        length, beat = bars[bar]
+        at = Fraction(0)
+        while at < length:
+            if start < (bar, at) < end:
+                out.append((bar, at))
+            at += beat
+    return out
+
+
+def _next_start(starts, where) -> Optional[Tuple[int, Fraction]]:
+    """The first place after `where` where a chord or rest starts."""
+    bar, at = where
+    for index in range(bar, len(starts)):
+        later = sorted(a for a in starts[index] if index > bar or a > at)
+        if later:
+            return index, later[0]
+    return None
+
+
 def _voice_end(voice: etree._Element) -> Fraction:
     """Where this voice's last chord or rest ends in the bar."""
     # `_walk` says where each child starts, so a marker after the last one says
@@ -339,8 +612,13 @@ def rename_parts(root: etree._Element, names: Sequence[str]) -> int:
 def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
             initial_bpm: Optional[int] = None,
             tempo_changes: Optional[Sequence[Dict]] = None,
-            part_names: Optional[Sequence[str]] = None) -> Tuple[str, List[str]]:
+            part_names: Optional[Sequence[str]] = None,
+            gradual: Optional[Sequence[Dict]] = None,
+            log=None) -> Tuple[str, List[str]]:
     """Return (score to render, names dropped).
+
+    `gradual` is the Publish panel's say on the printed rit./accel. marks
+    (`add_gradual`); every mark is eased whether or not it is given.
 
     `part_names` renames the parts left after the silent ones go, top staff first
     (#402): the names a person corrected on the Publish panel, since cleaning
@@ -371,6 +649,7 @@ def prepare(mscx_path: str, work_dir: str, keep_silent: bool = False,
     if initial_bpm is not None:
         changed = add_opening_tempo(root, initial_bpm) or changed
     changed = bool(add_tempo_changes(root, tempo_changes or ())) or changed
+    changed = bool(add_gradual(root, gradual, log)) or changed
     changed = bool(hold_fermatas(root)) or changed
     if not changed:
         return mscx_path, []

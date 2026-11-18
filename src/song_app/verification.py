@@ -93,26 +93,30 @@ def compare_notes(source_mscx: str, cleaned_mscx: str) -> Dict:
 
 
 def _musescore_result(stored: Optional[Dict], current: Optional[str]) -> Dict:
-    """Whether MuseScore 3 opens the cleaned score without calling it corrupted."""
+    """Whether MuseScore opens the cleaned score without calling it corrupted.
+
+    `by` names the MuseScore that checked; a record from before #481 was MuseScore 3's.
+    """
     if not current:
         return _result("not_checked", "No cleaned score exists.")
     if not stored:
-        return _result("not_checked", "Not checked yet; Check again runs MuseScore 3's own check.")
+        return _result("not_checked", "Not checked yet; Check again runs MuseScore's own check.")
+    name = stored.get("by") or "MuseScore 3"
     if stored.get("checked_against") != current:
-        return _result("stale", "MuseScore 3's check applies to an older cleaned score.")
+        return _result("stale", f"{name}'s check applies to an older cleaned score.")
     status = stored.get("status")
     reset = len(stored.get("reset") or [])
     if status == "passed":
-        return _result("passed", "MuseScore 3 opens it without calling it corrupted.")
+        return _result("passed", f"{name} opens it without calling it corrupted.")
     if status == "repaired":
-        return _result("warning", f"MuseScore 3 called {reset} staff-bar(s) corrupted; they were "
+        return _result("warning", f"{name} called {reset} staff-bar(s) corrupted; they were "
                                   "reset to rests and are listed in the Fix panel.", reset=reset)
     if status == "rejected":
         left = len(stored.get("rejected") or [])
         still = "still calls" if reset else "calls"
-        return _result("warning", f"MuseScore 3 {still} it corrupted ({left} problem(s)); "
+        return _result("warning", f"{name} {still} it corrupted ({left} problem(s)); "
                                   "see the Fix panel.", reset=reset, rejected=left)
-    return _result("not_checked", "No MuseScore 3 was available to check it (MuseScore 4 does not run this check).")
+    return _result("not_checked", "No MuseScore was available to check it (MUSESCORE_CLI_PATH).")
 
 
 def summary(song: state.Song, systems: int) -> Dict:

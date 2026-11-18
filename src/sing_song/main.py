@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unicodedata
 
 from lxml import etree
@@ -71,11 +72,13 @@ def log(msg):
     print(msg, flush=True)
 
 
-def part_voice(name, voice=None, voicing=None):
+def part_voice(name, voice=None, voicing=None, clef=None):
     """(sing_ufr.py voice, credit) for a part: `voice` (LYSE or REMY) when given; else the song's
     voicing, a men's song sung by REMY and a women's by LYSE whatever a part is called (a men's
     "Solo" was sung by LYSE, #453); else the one its name says (Sopraano, Altto, Mezzo... -> LYSE;
-    Tenori, Baritoni, Basso... -> REMY). A name that says no voice ("Solo") stops the run."""
+    Tenori, Baritoni, Basso... -> REMY); else, for a name that says no voice ("Solo"), the one its
+    `clef` says (#483: treble LYSE, treble-8 or bass REMY), said in the log. With none of these the
+    run stops."""
     if voice:
         return VOICES[voice]
     if voicing == "men":
@@ -83,16 +86,138 @@ def part_voice(name, voice=None, voicing=None):
     if voicing == "women":
         return HIGH
     words = unicodedata.normalize("NFKD", name.strip()).split()
-    if words and words[0].casefold() == "solo":   # "Solo" says nothing of the voice; "Sopraano solo" does
-        sys.exit(f"which voice sings the part {name!r}? Name it by its voice on the Publish panel "
-                 "(Sopraano solo, Tenori solo...), record the song's voicing, or give --voice LYSE or --voice REMY")
     first = unicodedata.normalize("NFKD", name.strip())[:1].upper()
-    if first and first in "SAM":   # "" is in every string: a blank name must stop, not pick LYSE
+    # "Solo" says nothing of the voice ("Sopraano solo" does); "" is in every string, so a blank
+    # name must not pick LYSE
+    says = bool(first) and first in "SATBM" and not (words and words[0].casefold() == "solo")
+    if says and first in "SAM":
         return HIGH
-    if first and first in "TB":
+    if says:
         return LOW
-    sys.exit(f"which voice sings the part {name!r}? Name it S/A/T/B (Sopraano, Altto, Tenori, Basso) "
-             "or give --voice LYSE or --voice REMY")
+    by_clef = CLEF_VOICES.get(clef or "")
+    if by_clef:
+        log(f"voice: {name!r} says no voice; its clef ({CLEF_NAMES.get(clef, clef)}) gives {by_clef[1]}"
+            f" (--voice {shlex.quote(name + '=...')} to change it)")
+        return by_clef
+    sys.exit(f"which voice sings the part {name!r}? Name it by its voice on the Publish panel "
+             "(Sopraano, Altto, Tenori, Basso, Tenori solo...), record the song's voicing, or give "
+             f"--voice {shlex.quote(name + '=LYSE')} (or REMY)")
+
+
+# A clef as MuseScore names it (concertClefType) -> the voice that sings it (#483). A C clef or
+# percussion says nothing and is not here.
+CLEF_VOICES = {"G": HIGH, "G8vb": LOW, "F": LOW, "F8vb": LOW, "F15mb": LOW}
+CLEF_NAMES = {"G": "treble", "G8vb": "treble-8", "F": "bass", "F8vb": "bass-8", "F15mb": "bass-15"}
+
+
+def opening_clef(staff):
+    """The clef written at the very start of a staff's first bar, before any note or rest, or
+    None. A clef change later in the song is not the part's clef: a Solo opening in treble
+    stays LYSE however low it goes later (#483)."""
+    measure = staff.find("Measure")
+    if measure is None:
+        return None
+    for voice in measure.iter("voice"):
+        for child in voice:
+            if child.tag in ("Chord", "Rest"):
+                break
+            if child.tag == "Clef":
+                return child.findtext("concertClefType")
+        break   # only the first voice opens the bar
+    return None
+
+
+def part_clefs(cleaned, count):
+    """The clef each singing part of the cleaned score opens with, top first, as MuseScore names
+    it ("G", "G8vb", "F"...): its first staff's first clef, else the staff's or instrument's
+    default, else "G" (MuseScore's own default). A list of `count` Nones when the score's singing
+    parts are not `count`, since then they cannot be paired with the bundle's."""
+    try:
+        from src.score_export.score import _part_name, _staff_ids, silent_parts
+        root = etree.parse(cleaned).getroot()
+    except (OSError, etree.XMLSyntaxError, ImportError):
+        return [None] * count
+    score = root.find("Score")
+    if score is None:
+        return [None] * count
+    silent = set(silent_parts(root))
+    clefs = []
+    for index, part in enumerate(score.findall("Part")):
+        if _part_name(part, index) in silent:
+            continue
+        clef = None
+        own = part.find("Staff")
+        ids = _staff_ids(part)   # by number, or by position for a MuseScore 4 save
+        staff = score.find(f"Staff[@id='{ids[0]}']") if ids else None
+        if staff is not None:
+            clef = opening_clef(staff)
+        if not clef and own is not None:
+            clef = own.findtext("defaultClef")
+        clefs.append(clef or part.findtext("Instrument/clef") or "G")
+    return clefs if len(clefs) == count else [None] * count
+
+
+def parse_voices(given):
+    """`--voice` values -> (one voice for every part or None, {part name: voice}). `LYSE` is
+    every part; `Solo=REMY` one part (#483). A name may hold '='; the last one splits."""
+    every, named = None, {}
+    for value in given or []:
+        name, eq, voice = value.rpartition("=")
+        if not eq:
+            name, voice = None, value
+        voice = voice.strip().upper()
+        if voice not in VOICES:
+            raise argparse.ArgumentTypeError(f"--voice {value!r}: the voice is LYSE or REMY")
+        if name is None:
+            if every not in (None, voice):
+                raise argparse.ArgumentTypeError(
+                    f"--voice gives every part both {every} and {voice}; give one, and NAME=VOICE for the rest")
+            every = voice
+        elif not name.strip():
+            raise argparse.ArgumentTypeError(f"--voice {value!r}: give the part's name before '='")
+        else:
+            named[name.strip()] = voice
+    return every, named
+
+
+def find_part(key, names):
+    """The part number (from 1) `key` names in `names`: the one part with that exact name, else
+    the one part with that name in any case, else its number. None when it names no part. A name
+    that fits more than one part stops the run asking for the number (#483): two parts may both be
+    called "Solo", and the first one is not necessarily the one meant."""
+    exact = [i for i, name in enumerate(names, 1) if name == key]
+    found = exact or [i for i, name in enumerate(names, 1) if name.casefold() == key.casefold()]
+    if len(found) > 1:
+        sys.exit(f"{key!r} names parts {', '.join(f'{i} {names[i - 1]!r}' for i in found)}; "
+                 "give the part's number instead")
+    if found:
+        return found[0]
+    if key.isdigit() and 1 <= int(key) <= len(names):
+        return int(key)
+    return None
+
+
+def voices_for(parts, given, voicing, clefs, only=None):
+    """The (voice, credit) of each manifest part: a `--voice NAME=` for that part first (NAME its
+    name in any case, or its number), then part_voice's own order. A NAME no part has stops the
+    run, so a typo is not sung past. With `only` (a part number), just that part's voice is worked
+    out and the others are None, so a --try does not stop on another part's voice (#483)."""
+    every, named = given
+    names = [p["name"] for p in parts]
+    chosen, unknown = {}, []
+    for key, voice in named.items():
+        i = find_part(key, names)
+        if i is None:
+            unknown.append(key)
+        elif chosen.get(i, voice) != voice:
+            sys.exit(f"--voice gives part {i} {names[i - 1]!r} both {chosen[i]} and {voice}")
+        else:
+            chosen[i] = voice
+    if unknown:
+        sys.exit(f"--voice names {', '.join(map(repr, unknown))}, which the song has no part called; "
+                 f"its parts are {', '.join(f'{i} {n}' for i, n in enumerate(names, 1))}")
+    return [part_voice(n, chosen.get(i) or every, voicing, clef) if only in (None, i) else None
+            for i, (n, clef) in enumerate(zip(names, clefs), 1)]
 
 
 def song_voicing(slug):
@@ -138,7 +263,8 @@ def build_bundle(song_app, slug, out, folded=None):
             # panel gave (#402) and the staff pairing it saved
             bundle = publish.build_bundle(folded or cleaned, tmp, initial_bpm=bpm, tempo_changes=tempo_changes,
                                           part_names=folded_names(settings.get("part_names"), groups),
-                                          staff_groups=None if folded else settings.get("staff_groups"), log=log)
+                                          staff_groups=None if folded else settings.get("staff_groups"),
+                                          gradual=settings.get("gradual"), log=log)
             shutil.copy(bundle.musicxml, os.path.join(out, "score.musicxml"))
             shutil.copy(os.path.join(tmp, "score.mid"), os.path.join(out, "score.mid"))
             with open(os.path.join(out, "timing.json"), "w") as f:
@@ -316,7 +442,7 @@ def sung_staves(cleaned):
 
 def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu, lang_from=None,
          groups=None, resume=False, allow_silent=False, on_part=None, version=None, remote_only=False,
-         pronounce=None):
+         pronounce=None, trial=None):
     """parts/<n>-<Name>.mp3 for every part, sung on the bundle's clock:
 
     - each line is checked against the piano before it is sung (check_onsets.py); a part whose
@@ -335,7 +461,10 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     - with resume, a line a stopped run already sang from the same notes for the same voice is
       not sung again (sung_before()), unless it was sung by another singer version;
     - with remote_only, every line is sung on REMOTE_RUNNER and a line it fails stops the run;
-    - on_part(i, n, name) is told each part as one of its lines starts being sung (progress.py)."""
+    - on_part(i, n, name) is told each part as one of its lines starts being sung (progress.py);
+    - with trial (part number, first bar, last bar, mp3), only that part's first pass through
+      those bars is sung, whole words (try_window()), into that mp3 and nowhere else: no
+      parts/, no words.json (#483). Returns (seconds of music tried, seconds it took to sing)."""
     staves = sung_staves(cleaned)
     names = [p["name"] for p in manifest["parts"]]
     if groups:
@@ -351,14 +480,18 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     bars = len(etree.parse(cleaned).getroot().find("Score").find(f"Staff[@id='{staves[0]}']").findall("Measure"))
     if played != bars:
         sys.exit(f"timing.json has {played} bars, the score {bars}")
+    if trial and trial[2] > bars:
+        sys.exit(f"--try: bars {trial[1]}-{trial[2]} run past the song, which has {bars} bars")
     midi = os.path.join(bundle_dir, "score.mid")
     env = singer_env(python, ufr_dir, lang, gpu)
     os.makedirs(os.path.join(bundle_dir, "parts"), exist_ok=True)
     switches = lang_from or {}
     if switches and lang not in G2P | {"fi"}:
         sys.exit(f"--lang-from needs --lang fi or one of {', '.join(sorted(G2P))}, not {lang}")
-    plan, unmarked, words = [], [], []
+    plan, unmarked, words, music, unchecked = [], [], [], None, []
     for i, (group, name) in enumerate(zip(groups, names), 1):
+        if trial and i != trial[0]:
+            continue
         lines = {}
         for k, staff in enumerate(group):
             for line in ("high", "low"):
@@ -366,8 +499,12 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                 js = os.path.join(work, f"p{i}-{key}.json")
                 run([sys.executable, "-I", os.path.join(HERE, "unroll.py"), cleaned, staff, timing, js],
                     env=dict(os.environ, LINE=line))
-                # before the spoken lines are cut: the piano has one note there, not one per syllable
-                run([sys.executable, "-I", os.path.join(HERE, "check_onsets.py"), js, midi, str(i - 1), timing])
+                # before the spoken lines are cut: the piano has one note there, not one per syllable.
+                # A trial checks only its own phrase, once it is known (below).
+                if trial:
+                    unchecked.append(js)
+                else:
+                    run([sys.executable, "-I", os.path.join(HERE, "check_onsets.py"), js, midi, str(i - 1), timing])
                 with open(js) as f:
                     notes = json.load(f)
                 # a line that sings what another of the part's lines sings is sung once, and a
@@ -379,6 +516,16 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                     lines[key] = notes
         if not lines:
             sys.exit(f"{name} has no notes to sing")
+        if trial:
+            window = try_window(lines.values(), trial[1], trial[2])
+            if window is None:
+                sys.exit(f"{name} sings no words in bars {trial[1]}-{trial[2]}")
+            for js in unchecked:
+                run([sys.executable, "-I", os.path.join(HERE, "check_onsets.py"), js, midi, str(i - 1), timing,
+                     f"{window[0]:.4f}", f"{window[1]:.4f}"])
+            lines = {k: cut(v, *window) for k, v in lines.items()}
+            music = window[1] - window[0]
+            log(f"trying {name}, bars {trial[1]}-{trial[2]}: {window[0]:.2f}-{window[1]:.2f} s")
         words.append(sung_words(lines.values()))
         two = len(lines) > 1
         for line in lines:
@@ -386,7 +533,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
             if not any(n.get("syl") for n in notes):
                 sys.exit(f"{name} has no lyrics to sing")
             length = sum(n["sec"] for n in notes)
-            if abs(length - manifest["duration"]) > 0.05:
+            if not trial and abs(length - manifest["duration"]) > 0.05:
                 sys.exit(f"{name} lasts {length:.2f} s, the song {manifest['duration']} s")
             unmarked += [(name, bar, word) for bar, word in unmarked_finnish(notes, lang, switches)]
             plan.append((i, name, two, line, notes))
@@ -396,7 +543,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                  f"language comes back with --lang-from {lang}:WORD. A word below that is right as it "
                  "is: name it with the language it is sung in.\n"
                  + "\n".join(f"  {name}, bar {bar}: {word}" for name, bar, word in dict.fromkeys(unmarked)))
-    write_words(os.path.join(bundle_dir, "words.json"), words)
+    if not trial:
+        write_words(os.path.join(bundle_dir, "words.json"), words)
     jobs, quiet = [], []
     for i, name, two, line, notes in plan:
         js = os.path.join(work, f"p{i}-{line}.json")
@@ -441,14 +589,84 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         mark_sung(work, i, line, voices[i - 1], version)
 
     runner = (os.environ.get("REMOTE_RUNNER") or "").strip()
+    began = time.monotonic()
     sing_lines(jobs, here, there, runner, remote_only)
+    took = time.monotonic() - began
     for i, name in enumerate(names, 1):
         lines = [p[3] for p in plan if p[0] == i]
-        mp3 = os.path.join(bundle_dir, sung_file(i, name))
+        if not lines:
+            continue
+        mp3 = trial[3] + ".part.mp3" if trial else os.path.join(bundle_dir, sung_file(i, name))
         run(part_mp3_command([os.path.join(work, f"p{i}-{line}.wav") for line in lines], mp3))
         r = run([python, "-I", os.path.join(HERE, "gate.py"), mp3]
                 + [os.path.join(work, f"p{i}-{line}.json") for line in lines])
         log(r.stdout.strip())
+        if trial:
+            os.replace(mp3, trial[3])   # a listener never finds half a file
+    return (music, took) if trial else None
+
+
+def opens_word(n):
+    """A sung note that starts a syllable of its own and not the middle or end of a word."""
+    return n.get("pitch") is not None and bool(n.get("syl")) and n.get("syllabic") not in ("middle", "end")
+
+
+def ends_word(n):
+    return n.get("pitch") is not None and bool(n.get("syl")) and n.get("syllabic") not in ("begin", "middle")
+
+
+def try_window(lines, first, last):
+    """(start, end) in seconds of the first pass through bars first..last over the part's lines,
+    widened to whole words: back to the note a word in it starts on, on past `last` until the
+    word sung there and the notes held on its syllable end. None when no word is sung there."""
+    window = None
+    for notes in lines:
+        times, t = [], 0.0
+        for n in notes:
+            times.append((t, t + n["sec"]))
+            t += n["sec"]
+        sung = [k for k, n in enumerate(notes) if n.get("pitch") is not None]
+        inside = []
+        for k in sung:
+            if inside and notes[k]["bar"] < notes[inside[-1]]["bar"]:
+                break               # a repeat jumped back: its second pass is not this one
+            if first <= notes[k]["bar"] <= last:
+                inside.append(k)
+            elif inside:
+                break               # left the bars
+        if not inside or not any(notes[k].get("syl") for k in inside):
+            continue
+        at = sung.index(inside[0])
+        while at > 0 and not opens_word(notes[sung[at]]):
+            at -= 1
+        start = sung[at]
+        at = sung.index(inside[-1])
+        while at + 1 < len(sung):
+            here, nxt = notes[sung[at]], notes[sung[at + 1]]
+            if nxt.get("syl") and (opens_word(nxt) or ends_word(here)):
+                break               # the next note starts a word of its own
+            at += 1
+        end = sung[at]
+        span = (times[start][0], times[end][1])
+        window = span if window is None else (min(window[0], span[0]), max(window[1], span[1]))
+    return window
+
+
+def cut(notes, start, end):
+    """The notes sounding between start and end seconds; a note reaching over either edge is
+    silence for the part of it inside, so every line of a part starts at the same moment."""
+    out, t = [], 0.0
+    for n in notes:
+        a, b = t, t + n["sec"]
+        t = b
+        inside = min(b, end) - max(a, start)
+        if inside <= 1e-6:
+            continue
+        if a >= start - 1e-6 and b <= end + 1e-6:
+            out.append(n)
+        else:
+            out.append({"pitch": None, "beats": 0, "syl": None, "sec": inside})
+    return out
 
 
 
@@ -527,15 +745,41 @@ def part_mp3_command(wavs, mp3):
             "-ac", "1", "-b:a", "64k", mp3]
 
 
-def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None):
-    """Send the bundle (with the sung MP3s when there are) to the site's `choir` list with the
-    app's own publish code, and keep the record on the song as the app's Publish does, so the
-    next publish from either takes this version away. Review's approval is not needed here.
-    A sung publish records the singer `version` it was sung with (#453)."""
-    from src.song_app import publish, state
+def site_client():
+    """The Cloudflare client publishing uses, made once per run; stops the run without the keys."""
+    from src.song_app import publish
     config = publish.Config.from_env()
     if config is None:
         sys.exit(publish.MISSING_CONFIG)
+    return publish.Cloudflare(config)
+
+
+def sung_choirs(client, slug, choirs):
+    """The choirs among `choirs` whose live version of the song on the site is sung (#483).
+    A choir that cannot be read stops the run: publishing blind could replace a sung version."""
+    from src.song_app import publish
+    sung = []
+    for choir in choirs:
+        try:
+            if publish.sung_on_site(client, choir, slug):
+                sung.append(choir)
+        except Exception as e:   # a D1 error, a timeout, a refused key
+            sys.exit(f"could not check {choir} on the site before publishing: {e}")
+    return sung
+
+
+def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None,
+                    client=None, piano_over_sung=False):
+    """Send the bundle (with the sung MP3s when there are) to the site's `choir` list with the
+    app's own publish code, and keep the record on the song as the app's Publish does, so the
+    next publish from either takes this version away. Review's approval is not needed here.
+    A sung publish records the singer `version` it was sung with (#453).
+
+    A piano-only bundle raises ``publish.SungOnSite`` rather than replace a sung version on
+    the site, unless `piano_over_sung` (#483); any other failure is ``publish.PublishError``."""
+    from src.song_app import publish, state
+    if client is None:
+        client = site_client()
     song = state.load(slug)
     settings = song.data.get("publish") or {}
     sung = {}
@@ -550,15 +794,20 @@ def publish_to_site(slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
         layout={p["name"]: {k: p[k] for k in ("staff", "voices") if k in p} for p in manifest["parts"]
                 if "staff" in p}, sung=sung,
         words=os.path.join(bundle_dir, "words.json") if sung and os.path.exists(os.path.join(bundle_dir, "words.json")) else "")
-    client = publish.Cloudflare(config)
     choirs = publish.site_choirs(client)
     credits = {k: manifest[k] for k in publish.CREDITS if manifest.get(k)}
-    try:
-        record = publish.publish(slug=slug, title=manifest["title"], choir=choir, bundle=bundle,
-                                 client=client, credits=credits, published=publish.records(settings),
-                                 choirs=choirs, places=(settings.get("places") or []) + places, log=log)
-    except publish.PublishError as e:
-        sys.exit(f"publish failed: {e}")
+
+    def records_now():
+        with state.song_lock(slug):
+            return publish.records(state.load(slug).data.get("publish") or {})
+
+    record = publish.publish(slug=slug, title=manifest["title"], choir=choir, bundle=bundle,
+                             client=client, credits=credits, published=publish.records(settings),
+                             choirs=choirs, places=(settings.get("places") or []) + places, log=log,
+                             piano_over_sung=piano_over_sung, records_now=records_now)
+    if not record.pop("live", True):
+        log(f"{choir}: another publish replaced this one before it was recorded; its record was not saved")
+        return
     record["published_against"] = state.file_fingerprint(cleaned)
     record["sung"] = bool(sung)
     if sung:
@@ -589,6 +838,40 @@ def parse_places(specs):
 
 
 BUNDLE = ("score.musicxml", "score.mid", "timing.json", "manifest.json")   # what a run writes into --out
+
+
+def parse_trial(text):
+    """--try PART:A-B -> (part, first bar, last bar); the part stays a name or a number."""
+    part, colon, bars = text.rpartition(":")
+    first, dash, last = bars.partition("-")
+    try:
+        first, last = int(first), int(last if dash else first)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--try {text!r}: give PART:A-B, e.g. Solo:12-16 or 2:5-8")
+    if not colon or not part or first < 1 or last < first:
+        raise argparse.ArgumentTypeError(f"--try {text!r}: give PART:A-B, e.g. Solo:12-16 or 2:5-8")
+    return part, first, last
+
+
+def trial_part(trial, names):
+    """(part number, first, last) for a --try: the part by its name (any case) or its number."""
+    part, first, last = trial
+    index = find_part(part, names)
+    if index is None:
+        sys.exit(f"--try: no part {part!r}; the parts are " + ", ".join(f"{i} {n}" for i, n in enumerate(names, 1)))
+    return index, first, last
+
+
+def folded_path(out, slug, trial=None):
+    """Where --fold-divisi writes the folded score: under <out>/try/ for a trial, which writes
+    nothing else, so a full run's folded score stays as it was (#483)."""
+    return os.path.join(out, "try", f"{slug}_folded.mscx") if trial else os.path.join(out, f"{slug}_folded.mscx")
+
+
+def trial_said(mp3, music, took):
+    """A trial's last line: the music's length against the time singing it took, which is how
+    fast this machine (or the remote runner) sings (#483)."""
+    return f"Trial: {mp3} ({music:.1f} s of music, sung in {took:.1f} s)"
 
 
 def clear_bundle(out):
@@ -759,9 +1042,14 @@ def main():
                     help="only mark the song as waiting for a run in the song app's list, and exit: "
                          "run it just before queueing the run")
     ap.add_argument("--no-sing", action="store_true", help="piano only")
+    ap.add_argument("--piano-over-sung", action="store_true",
+                    help="with --no-sing --publish: replace a sung version on the site with piano only; "
+                         "without it such a choir is refused")
     ap.add_argument("--out", help="where the result goes (default /var/tmp/practice-<slug>)")
-    ap.add_argument("--voice", choices=sorted(VOICES), help="one voice for every part, when the part names "
-                    "do not say (S/A/M: LYSE, T/B: REMY)")
+    ap.add_argument("--voice", action="append", metavar="[PART=]LYSE|REMY",
+                    help="the voice for one part (Solo=REMY, repeatable), or for every part (LYSE), when "
+                         "the part names do not say (S/A/M: LYSE, T/B: REMY); a part that says no voice "
+                         "otherwise takes it from its clef (treble LYSE, treble-8 or bass REMY)")
     ap.add_argument("--cpu", action="store_true", help="sing on the processor even when the singer has a GPU")
     ap.add_argument("--remote-only", action="store_true",
                     help="sing every line on the remote runner (REMOTE_RUNNER: eero-pc's GPU on Eero's host), "
@@ -781,7 +1069,25 @@ def main():
     ap.add_argument("--allow-silent", action="store_true",
                     help="sing notes whose syllable has no vowel and no held sound (only stops), which are "
                          "heard as silence; without it such notes stop the run before anything is sung")
+    ap.add_argument("--try", dest="trial", metavar="PART:A-B",
+                    help="sing one phrase to hear it: the part (its name or number) in bars A to B, its "
+                         "first pass, whole words, into <out>/try/; nothing else is written or published")
     a = ap.parse_args()
+    if a.trial:
+        try:
+            a.trial = parse_trial(a.trial)
+        except argparse.ArgumentTypeError as e:
+            ap.error(str(e))
+        for flag, given in (("--publish", a.publish), ("--resume", a.resume), ("--no-sing", a.no_sing),
+                            ("--waiting", a.waiting)):
+            if given:
+                ap.error(f"--try sings one phrase to listen to; it does not go with {flag}")
+    if a.piano_over_sung and not (a.no_sing and a.publish):
+        ap.error("--piano-over-sung goes with --no-sing and --publish")
+    try:
+        a.voices = parse_voices(a.voice)
+    except argparse.ArgumentTypeError as e:
+        ap.error(str(e))
 
     check_slug(a.slug)
     song_dir = os.path.join(ROOT, "songs", a.slug)   # the app's songs/ (state.song_dir)
@@ -791,12 +1097,15 @@ def main():
         progress.mark_waiting(song_dir, a.publish)
         log(f"{a.slug}: waiting")
         return
+    # a phrase to listen to (--try) keeps no run record: the song list is not told of it
     run_record = progress.Run(song_dir, a.publish, progress.singer_version(), remote=a.remote_only,
-                              sing=not a.no_sing)
+                              sing=not a.no_sing, kept=not a.trial)
     run_record.step("bundle")
     try:
         sing_and_publish(a, run_record)
     except SystemExit as e:
+        if run_record.finished:   # it already said why (a choir refused, #483)
+            raise
         if e.code not in (None, 0):
             run_record.finish(failure(e.code))
         else:
@@ -836,10 +1145,23 @@ def sing_and_publish(a, run_record):
             sys.exit("download the UFR DiffSinger pack from https://utaufrance.com/telechargement-du-pack-diffsinger-ufr/ "
                      "and run scripts/install-singer.sh <the .zip>; it sets UFR_DIR in .env")
         pronounce = pronounce_env(a.slug, list(dict.fromkeys(a.publish)))
-    bundle_dir = out
-    os.makedirs(out, exist_ok=True)
-    clear_bundle(out)
-    folded = os.path.join(out, f"{a.slug}_folded.mscx") if a.fold_divisi else None
+    choirs = list(dict.fromkeys(a.publish))
+    client = site_client() if choirs else None
+    if choirs and a.no_sing and not a.piano_over_sung:
+        # Before anything is built: a piano-only run would replace a sung version (#483).
+        sung = sung_choirs(client, a.slug, choirs)
+        if sung:
+            # the record says what became of every choir asked for, as publish_choirs() does
+            for choir in choirs:
+                run_record.choir_outcome(choir, "refused-sung" if choir in sung else "not-tried")
+            stop(run_record, f"{', '.join(sung)} {'has' if len(sung) == 1 else 'have'} a sung version on "
+                 f"the site; this run would replace {'it' if len(sung) == 1 else 'them'} with piano only. "
+                 "Run again with --piano-over-sung to do that, or leave "
+                 f"{'that choir' if len(sung) == 1 else 'those choirs'} out of --publish.")
+    bundle_dir = os.path.join(out, "try", "bundle") if a.trial else out
+    os.makedirs(bundle_dir, exist_ok=True)
+    clear_bundle(bundle_dir)   # a trial leaves an earlier full run's bundle and parts/ alone
+    folded = folded_path(out, a.slug, a.trial) if a.fold_divisi else None
     manifest, cleaned, groups = build_bundle(ROOT, a.slug, bundle_dir, folded)
     log(f"bundle: {bundle_dir} ({manifest['duration']} s, parts {[p['name'] for p in manifest['parts']]})")
     sung_by = []
@@ -849,28 +1171,85 @@ def sing_and_publish(a, run_record):
             log(f"pronunciation: the reading chosen for {c.get('word')!r} at bar {c.get('bar')} "
                 f"(time {c.get('n')} there) has no such word there any more; choose it again on the song page")
         voicing = song_voicing(a.slug)
-        sung_by = [part_voice(p["name"], a.voice, voicing) for p in manifest["parts"]]
-        work = os.path.join(out, "work")
+        work = os.path.join(out, "try", "work") if a.trial else os.path.join(out, "work")
         os.makedirs(work, exist_ok=True)
+        trial = None
+        if a.trial:
+            # the part first: a trial needs only its own part's voice (#483)
+            index, first, last = trial_part(a.trial, [p["name"] for p in manifest["parts"]])
+            name = manifest["parts"][index - 1]["name"]
+            mp3 = os.path.join(out, "try", os.path.basename(sung_file(index, name))[:-len(".mp3")]
+                               + f"-bars-{first}-{last}.mp3")
+            trial = (index, first, last, mp3)
+        sung_by = voices_for(manifest["parts"], a.voices, voicing,
+                             part_clefs(folded or cleaned, len(manifest["parts"])), only=trial and trial[0])
         gpu = not a.cpu and nvidia_dir(python) is not None
         log("singing every line on the remote runner" if a.remote_only
             else f"singing on the {'graphics card' if gpu else 'processor'}")
-        sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
+        tried = sing(manifest, cleaned, bundle_dir, work, [v and v[0] for v in sung_by], a.lang, python, ufr_dir, gpu,
              parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
              on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
              version=run_record.record["version"], remote_only=a.remote_only,
-             pronounce=pronounce)
+             pronounce=pronounce, trial=trial)
+        if trial:
+            log(trial_said(trial[3], *tried))
+            return
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit
     with open(os.path.join(bundle_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, ensure_ascii=False)
-    choirs = list(dict.fromkeys(a.publish))
+    publish_choirs(a, run_record, choirs, client, bundle_dir, manifest, sung_by, places, cleaned)
+    log(f"practice track: {bundle_dir}")
+
+
+EXIT_REFUSED = 3   # a choir was not replaced: its sung version stays (#483)
+
+
+def stop(run_record, message, code=EXIT_REFUSED):
+    """End the run with `message` on stderr and in the run record, and exit with `code`."""
+    print(message, file=sys.stderr, flush=True)
+    run_record.finish(message)
+    raise SystemExit(code)
+
+
+def publish_choirs(a, run_record, choirs, client, bundle_dir, manifest, sung_by, places, cleaned):
+    """Publish to each choir in turn. A choir whose sung version a piano-only run would replace
+    is refused and the others still go (#483); any other failure stops here, and the run says
+    which choirs it did not try and how to try them."""
+    from src.song_app import publish
+    for choir in choirs:
+        run_record.choir_outcome(choir, "not-tried")
+    refused, done = [], []
     for k, choir in enumerate(choirs, 1):
         run_record.step("publishing", choir=choir, choir_index=k, choir_count=len(choirs))
-        publish_to_site(a.slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
-                        run_record.record["version"])
-    log(f"practice track: {bundle_dir}")
+        try:
+            publish_to_site(a.slug, choir, bundle_dir, manifest, sung_by, places, cleaned,
+                            run_record.record["version"], client=client,
+                            piano_over_sung=a.piano_over_sung)
+        except publish.SungOnSite as e:
+            log(f"{choir}: {e}")
+            run_record.choir_outcome(choir, "refused-sung")
+            refused.append(choir)
+            continue
+        except publish.PublishError as e:
+            run_record.choir_outcome(choir, "failed")
+            rest = choirs[k:]
+            message = f"publish to {choir} failed: {e}"
+            if rest:
+                message += (f". Not tried: {', '.join(rest)}; publish them with "
+                            + " ".join(f"--publish {c}" for c in [choir] + rest) + ".")
+            sys.exit(message)
+        run_record.choir_outcome(choir, "published")
+        done.append(choir)
+    if refused:
+        message = (f"{', '.join(refused)} {'has' if len(refused) == 1 else 'have'} a sung version on the "
+                   "site and " + ("was" if len(refused) == 1 else "were") + " not replaced.")
+        if done:
+            message += f" {', '.join(done)} {'was' if len(done) == 1 else 'were'} published."
+        message += (" To replace " + ("it" if len(refused) == 1 else "them") + " with piano only, run "
+                    "again with --no-sing --piano-over-sung " + " ".join(f"--publish {c}" for c in refused) + ".")
+        stop(run_record, message)
 
 
 if __name__ == "__main__":

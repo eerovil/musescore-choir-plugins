@@ -503,6 +503,35 @@ def test_a_clean_exit_with_no_file_is_still_a_failure(monkeypatch, tmp_path):
     assert "gave up quietly" in str(caught.value)
 
 
+WHOLE = ('<score-partwise><part-list><score-part id="P1"><part-name>V</part-name>'
+         '</score-part></part-list><part id="P1"><measure number="1"/></part></score-partwise>')
+
+
+def test_an_abort_after_a_whole_result_keeps_the_page(monkeypatch, tmp_path):
+    # onnxruntime can crash while homr exits, after the page is written (#483)
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path, f"echo '{WHOLE}' > \"${{!#%.*}}.musicxml\"\nkill -ABRT $$\n"))
+    said = []
+    produced = omr.read_page(a_page(tmp_path), log=said.append)
+    assert "<measure" in open(produced).read()
+    assert any("crashed while exiting" in line for line in said)
+
+
+@pytest.mark.parametrize("written", ["", "<score-partwise>", "<score-partwise/>"])
+def test_an_abort_with_no_whole_result_is_a_failure(monkeypatch, tmp_path, written):
+    write = f"printf '%s' '{written}' > \"${{!#%.*}}.musicxml\"\n" if written else ""
+    monkeypatch.setenv("HOMR_BIN", stub_homr(tmp_path, write + "kill -ABRT $$\n"))
+    with pytest.raises(omr.HomrError):
+        omr.read_page(a_page(tmp_path))
+
+
+def test_another_crash_with_a_whole_result_is_still_a_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOMR_BIN", stub_homr(
+        tmp_path, f"echo '{WHOLE}' > \"${{!#%.*}}.musicxml\"\nkill -SEGV $$\n"))
+    with pytest.raises(omr.HomrError):
+        omr.read_page(a_page(tmp_path))
+
+
 def test_a_wedged_run_is_killed(monkeypatch, tmp_path):
     monkeypatch.setenv("HOMR_BIN", stub_homr(tmp_path, 'sleep 30\n'))
     with pytest.raises(omr.HomrError) as caught:

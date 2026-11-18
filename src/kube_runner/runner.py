@@ -862,7 +862,7 @@ def _singer_env() -> Dict[str, str]:
     tuning), on the card, with the pod's own voice files."""
     with open(SINGER, encoding="utf-8") as f:
         reads = set(re.findall(r"environ(?:\.get\(|\[)\"(\w+)\"|\"(\w+)\" (?:not )?in os\.environ", f.read()))
-    reads = {a or b for a, b in reads} - {"UFR_DIR", "DUMP_TOKENS", "PRINT_DURS", "GPU"}
+    reads = {a or b for a, b in reads} - {"UFR_DIR", "DUMP_TOKENS", "PRINT_DURS", "GPU", "SING_PROVIDER"}
     keep = {k: v for k, v in os.environ.items() if k in reads}
     return dict(keep, **GPU_ENV, UFR_DIR=f"{KEEP}/ufr")
 
