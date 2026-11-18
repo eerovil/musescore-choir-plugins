@@ -1953,9 +1953,13 @@ async function panelClean(panel, song, slug, P, refresh) {
       // carry instead of setting it — same rule the backend applies (per_system.CLEARED).
       const CLEARED = "-";
       const inputs = [...holder.querySelectorAll("input[data-sys]")];
+      // "No voices here" (per_system.ALL_REST): the system's rows are switched off and
+      // the names carry on past it from the system before, as the clean does (#482).
+      const restBoxes = [...holder.querySelectorAll("input[data-rest]")];
+      const isRest = (si) => restBoxes.some((box) => +box.dataset.rest === +si && box.checked);
       const byStaff = () => {
         const m = {};
-        for (const inp of inputs) (m[inp.dataset.staff] ||= []).push(inp);
+        for (const inp of inputs) if (!isRest(inp.dataset.sys)) (m[inp.dataset.staff] ||= []).push(inp);
         for (const sid in m) m[sid].sort((a, b) => a.dataset.sys - b.dataset.sys);
         return m;
       };
@@ -1971,6 +1975,17 @@ async function panelClean(panel, song, slug, P, refresh) {
         return +inp.dataset.lines - answered;
       };
       const cascade = () => {
+        for (const inp of inputs) {
+          const off = isRest(inp.dataset.sys);
+          inp.disabled = off;
+          if (off) {
+            inp.classList.remove("unset", "undernamed");
+            const note = inp.parentElement.querySelector(".undernote");
+            if (note) note.textContent = "";
+          }
+        }
+        for (const box of restBoxes)
+          box.closest(".sysblock").classList.toggle("restsys", box.checked);
         for (const list of Object.values(byStaff())) {
           let carry = "";
           for (const inp of list) {
@@ -2007,6 +2022,7 @@ async function panelClean(panel, song, slug, P, refresh) {
         button.onclick = () => {
           const start = +button.dataset.reuse;
           for (let si = start; si < grid.length && grid[si].can_reuse_previous; si++) {
+            if (isRest(si)) continue;
             for (const inp of inputs.filter((candidate) => +candidate.dataset.sys === si)) {
               const suggested = effectiveBefore(inp.dataset.staff, si);
               if (!inp.value.trim() && suggested) inp.value = suggested;
@@ -2034,6 +2050,7 @@ async function panelClean(panel, song, slug, P, refresh) {
         .map((inp) => `staff ${inp.dataset.staff} · system ${+inp.dataset.sys + 1}`
           + ` — ${inp.parentElement.querySelector(".undernote").textContent}`);
       inputs.forEach((inp) => (inp.oninput = cascade));
+      restBoxes.forEach((box) => (box.onchange = cascade));
       cascade();
 
       const collect = () => {
@@ -2042,6 +2059,8 @@ async function panelClean(panel, song, slug, P, refresh) {
           const si = inp.dataset.sys, sid = inp.dataset.staff;
           (answers[si] ||= {})[sid] = inp.value.trim();
         });
+        // Kept beside the names typed there, so unticking it gives them back.
+        restBoxes.forEach((box) => { if (box.checked) (answers[box.dataset.rest] ||= {})["*"] = "rest"; });
         return answers;
       };
       const save = () => api(`${P}/systems`, {
@@ -2132,9 +2151,13 @@ function sysBlock(sys) {
   const reuse = sys.can_reuse_previous
     ? el("button", { "data-reuse": sys.system }, "Reuse previous assignments through matching systems")
     : "";
+  const rest = el("input", { type: "checkbox", "data-rest": sys.system });
+  rest.checked = !!sys.rest;
   return el("div", { className: "sysblock" },
     el("div", { className: "row syshead" },
       el("h4", {}, `System ${sys.system + 1} — measures ${sys.measure_start}–${sys.measure_end}`), reuse),
+    el("label", { className: "row restpick" }, rest,
+      el("span", {}, "No voices here (piano or instruments only)")),
     el("table", { className: "grid" },
       el("tr", {}, el("th", {}, "Staff"), el("th", {}, "Voices"), el("th", {}, "Content"), el("th", {}, "Part names")),
       rows));
