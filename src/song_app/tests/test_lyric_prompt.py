@@ -69,17 +69,51 @@ def test_a_score_that_does_not_parse_gets_the_plain_prompt(tmp_path):
     assert pipeline.lyric_prompt("p\n", str(path)) == "p\n"
 
 
-def test_a_part_rests_warning_goes_once_the_line_is_written_or_said_again():
-    from types import SimpleNamespace as NS
+def _two_tenors_t2_resting_in_bar_2():
+    from src.clean_score.tests.scorebuilder import build_score
+    root = build_score(staff_ids=(1, 2), measures=3, chords=2, names={1: "T1", 2: "T2"},
+                       line_breaks=(1, 2))
+    voice = root.findall(".//Score/Staff[@id='2']/Measure")[1].find("voice")
+    for chord in voice.findall("Chord"):
+        voice.remove(chord)
+    rest = etree.SubElement(voice, "Rest")
+    etree.SubElement(rest, "durationType").text = "measure"
+    etree.SubElement(rest, "duration").text = "4/4"
+    return root
 
-    old = {"kind": "part_rests", "measure_start": 2, "measure_end": 2, "staff_ids": [2],
-           "verse": 1, "voice": 1, "message": "T2 has no notes"}
-    untouched = NS(written=[], mismatches=[])
-    assert server._kept_warnings([old], untouched) == [old]
-    # Written again on another part (the name was corrected): answered.
-    moved = NS(written=[NS(staff=1, verse=1, voice=1, start=2, end=2)], mismatches=[])
-    assert server._kept_warnings([old], moved) == []
-    # Said again by this import: the new one stands, the old one is not doubled.
-    again = NS(written=[], mismatches=[lyric_txt.Mismatch(
-        kind="part_rests", message="", measure_start=2, measure_end=2, staff_ids=(2,))])
-    assert server._kept_warnings([old], again) == []
+
+SYSTEMS = [(1, 1), (2, 2), (3, 3)]
+
+
+def _paste(root, *lyrics):
+    return lyric_txt.place_lyrics(root, [{"measure_start": 2, "lyrics": list(lyrics)}],
+                                  systems=SYSTEMS)
+
+
+def test_a_part_rests_warning_stays_until_its_own_line_is_sent_again():
+    root = _two_tenors_t2_resting_in_bar_2()
+    first = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T2"]})
+    old = [m.to_dict() for m in first.mismatches]
+    assert [w["kind"] for w in old] == ["part_rests"]
+    # Another part pasted into the same system does not answer it.
+    other = _paste(root, {"staff_number": 1, "text": "yk-si", "parts": ["T1"]})
+    assert server._kept_warnings(old, other) == old
+    # The same printed line with its name corrected answers it.
+    fixed = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T1"]})
+    assert server._kept_warnings(old, fixed) == []
+    # Sent again unchanged: the new warning stands and the old one is not doubled.
+    again = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T2"]})
+    assert server._kept_warnings(old, again) == []
+    assert [m.kind for m in again.mismatches] == ["part_rests"]
+
+
+def test_an_unknown_part_warning_stays_until_its_own_line_is_sent_again():
+    root = _two_tenors_t2_resting_in_bar_2()
+    first = _paste(root, {"text": "yk-si", "parts": ["Typo"]})
+    old = [m.to_dict() for m in first.mismatches]
+    assert [w["kind"] for w in old] == ["unknown_part"]
+    other = _paste(root, {"text": "yk-si", "parts": ["T1"]})
+    assert server._kept_warnings(old, other) == old
+    again = _paste(root, {"text": "yk-si", "parts": ["Typo"]})
+    assert server._kept_warnings(old, again) == []
+

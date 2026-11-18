@@ -75,6 +75,9 @@ class Mismatch:
     slots: int = 0
     verse: int = 1
     voice: int = 1
+    # The source lines a warning is about (`_line_id`), for a caller deciding which
+    # earlier warnings a later import answered (#482); empty when it is about bars.
+    lines: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -87,6 +90,7 @@ class Mismatch:
             "slots": self.slots,
             "verse": self.verse,
             "voice": self.voice,
+            "lines": list(self.lines),
         }
 
 
@@ -116,6 +120,7 @@ class LyricImport:
     mismatches: List[Mismatch] = field(default_factory=list)
     filled_measure_starts: List[int] = field(default_factory=list)
     written: List[Written] = field(default_factory=list)
+    lines: List[str] = field(default_factory=list)   # every source line read (`_line_id`)
 
     @property
     def ok(self) -> bool:
@@ -647,6 +652,7 @@ class _Line:
     verse: int
     text: str
     named: bool = False     # the part came from the line's own "parts", not a staff number
+    sources: Tuple[str, ...] = ()   # the source lines it came from (`_line_id`)
 
     @property
     def key(self) -> Tuple[int, int, int]:
@@ -662,6 +668,22 @@ def _int_or(value: Any, default: Any) -> Any:
         return default
 
 
+def _line_id(measure_start: int, verse: int, voice: int, lyric: Dict[str, Any],
+             parts: List[Any]) -> str:
+    """Which source line this is, the same from one import to the next (#482).
+
+    A line with a staff_number is that printed staff and position, so correcting the
+    name in its "parts" keeps it the same line; one with only "parts" (the by-system
+    editor's) is the parts it names.
+    """
+    sn = lyric.get("staff_number")
+    if isinstance(sn, int) and not isinstance(sn, bool):
+        where = f"staff {sn} {lyric.get('position') or ''}".strip()
+    else:
+        where = "parts " + ",".join(str(p) for p in parts)
+    return f"m{measure_start} verse {verse} voice {voice} {where}"
+
+
 def _block_lines(
     block: Dict[str, Any],
     measure_start: int,
@@ -671,6 +693,7 @@ def _block_lines(
     name_map: Dict[str, int],
     notes: Optional[List[Mismatch]] = None,
     repeated: Optional[set] = None,
+    seen: Optional[List[str]] = None,
 ) -> List[_Line]:
     """The lines one `{measure_start, lyrics: [...]}` block names.
 
@@ -701,6 +724,7 @@ def _block_lines(
                 lyric.get("position"))
     texts: Dict[Tuple[int, int, int], List[str]] = {}
     named: set = set()
+    sources: Dict[Tuple[int, int, int], List[str]] = {}
     for lyric in block_lyrics:
         verse = _int_or(lyric.get("verse"), 1)
         voice = _int_or(lyric.get("voice"), 1)
@@ -713,36 +737,44 @@ def _block_lines(
             parts = lyric.get("part")
         if not isinstance(parts, list):
             parts = [parts] if parts is not None else []
+        line_id = _line_id(measure_start, verse, voice, lyric, parts)
+        if seen is not None:
+            seen.append(line_id)
         targets = []
+        unresolved: List[str] = []
         if parts:
-            unresolved: List[str] = []
             targets = _resolve_targets(parts, name_map, unresolved, repeated)
-            if unresolved and notes is not None:
-                # A name no part carries, or two parts share (#482): said, and the
-                # line falls back to its staff_number rather than vanishing.
-                where = f", verse {verse}" if verse > 1 else ""
-                where += f", voice {voice}" if voice > 1 else ""
-                said = ", ".join(f'"{n}"' for n in unresolved)
-                notes.append(Mismatch(
-                    kind=UNKNOWN_PART,
-                    message=(f"Measure {measure_start}{where}: \"parts\" names {said}, "
-                             f"which is not one part of this song; "
-                             + ("the line was placed by staff_number instead."
-                                if not targets else "the other parts named got the words.")),
-                    measure_start=measure_start,
-                    measure_end=measure_end or measure_start,
-                    verse=verse, voice=voice))
-            if not targets:
-                parts = []
-        if not parts:
+        by_name = bool(targets)
+        if not by_name:
             sn = lyric.get("staff_number")
             targets = _derive_target_staves(
                 sn, lyric.get("position"), block_map,
                 positions.get((sn, verse), set()) if isinstance(sn, int) else set(),
             )
+        if unresolved and notes is not None:
+            # A name no part carries, or two parts share (#482): said, and the line
+            # falls back to its staff_number, or is not placed when it has none.
+            where = f", verse {verse}" if verse > 1 else ""
+            where += f", voice {voice}" if voice > 1 else ""
+            said = ", ".join(f'"{n}"' for n in unresolved)
+            if by_name:
+                outcome = "the other parts named got the words."
+            elif targets:
+                outcome = "the line was placed by staff_number instead."
+            else:
+                outcome = ("the line was not placed, since it has no staff_number "
+                           "to place it by.")
+            notes.append(Mismatch(
+                kind=UNKNOWN_PART,
+                message=(f"Measure {measure_start}{where}: \"parts\" names {said}, "
+                         f"which is not one part of this song; {outcome}"),
+                measure_start=measure_start,
+                measure_end=measure_end or measure_start,
+                verse=verse, voice=voice, lines=(line_id,)))
         for staff in targets:
             texts.setdefault((staff, voice, verse), []).append(text)
-            if parts:
+            sources.setdefault((staff, voice, verse), []).append(line_id)
+            if by_name:
                 named.add((staff, voice, verse))
     for base, followers in _follow_for_measure(system_map, measure_start).items():
         for (staff, voice, verse), words in list(texts.items()):
@@ -750,10 +782,12 @@ def _block_lines(
                 continue
             for child in followers:
                 texts.setdefault((child, voice, verse), list(words))
+                sources.setdefault((child, voice, verse), list(sources.get((base, voice, verse), [])))
                 if (base, voice, verse) in named:
                     named.add((child, voice, verse))
     return [_Line(measure_start, measure_end, staff, voice, verse,
-                  " ".join(t for t in words if t), (staff, voice, verse) in named)
+                  " ".join(t for t in words if t), (staff, voice, verse) in named,
+                  tuple(sources.get((staff, voice, verse), ())))
             for (staff, voice, verse), words in sorted(texts.items())]
 
 
@@ -765,6 +799,7 @@ def _lines_from_blocks(
     part_to_staff: Optional[Dict[str, int]] = None,
     notes: Optional[List[Mismatch]] = None,
     repeated: Optional[set] = None,
+    seen: Optional[List[str]] = None,
 ) -> List[_Line]:
     """Every line a lyric JSON names, in either of its two shapes.
 
@@ -788,7 +823,7 @@ def _lines_from_blocks(
         end = _int_or(block.get("measure_end"), None)
         if isinstance(block.get("lyrics"), list):
             lines += _block_lines(block, start, end, staff_map, system_map, name_map,
-                                  notes, repeated)
+                                  notes, repeated, seen)
             continue
         for key, text in block.items():
             if key in ("measure_start", "measure_end"):
@@ -924,7 +959,7 @@ def _lines_to_by_measure(
                              f"check the part named in \"parts\"."),
                     measure_start=ln.start, measure_end=end, staff_ids=(staff,),
                     syllables=len(_tokens_to_syllables(tokens)), slots=0,
-                    verse=verse, voice=voice))
+                    verse=verse, voice=voice, lines=ln.sources))
                 continue
             syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
             prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
@@ -1500,10 +1535,11 @@ def _import_json_txt_into_mscx(
     if (not isinstance(data, list) or not data or not isinstance(data[0], dict)
             or "measure_start" not in data[0]):
         return LyricImport(mismatches=notes, filled_measure_starts=filled)
+    seen: List[str] = []
     lines = _lines_from_blocks(data, staff_map, system_map, name_map, part_to_staff,
-                               notes, _repeated_names(score_root))
+                               notes, _repeated_names(score_root), seen)
     if not lines:
-        return LyricImport(mismatches=notes, filled_measure_starts=filled)
+        return LyricImport(mismatches=notes, filled_measure_starts=filled, lines=seen)
     if clear_existing:
         _clear_all_verse1_lyrics(score_root)
     by_measure, mismatches, written = _lines_to_by_measure(lines, score, systems)
@@ -1512,7 +1548,7 @@ def _import_json_txt_into_mscx(
     _import_txt_into_mscx(score_root, by_measure=by_measure, clear_existing=clear_existing)
     _place_two_voice_words(score, written, systems)
     return LyricImport(mismatches=notes + mismatches, filled_measure_starts=filled,
-                       written=written)
+                       written=written, lines=seen)
 
 
 def _add_rests_to_empty_measures(score_root: etree._Element) -> None:

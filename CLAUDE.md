@@ -1288,10 +1288,14 @@ state model are in `DESIGN.md`.
   system its part rests in: it comes back as a `part_rests` mismatch naming the part and
   bars, since the name or the system is wrong. Without printed systems the check reads the
   score's own line breaks. A name no part carries, or one two parts share, is an
-  `unknown_part` mismatch and the line falls back to `staff_number`; names are read like
-  `lyric_parts` reads them (the instrument's name when the part has none). Both warnings
-  are about a line, so the next import drops them once it writes those bars on any part, or
-  says them again (`server._kept_warnings`). A line placed by `staff_number` behaves as before.
+  `unknown_part` mismatch and the line falls back to `staff_number`, or is not placed (and
+  says so) when it has none; names are read like `lyric_parts` reads them (the instrument's
+  name when the part has none). Both warnings are about a source line, named in their
+  `lines` (`lyric_txt._line_id`: the bar, verse, voice and printed staff and position, or
+  the parts for a line with no `staff_number`), and every import lists the lines it read
+  (`LyricImport.lines`); a later import drops such a warning only when it sends that line
+  again, its name corrected or not (`server._kept_warnings`), so pasting another part into
+  the same system keeps it. A line placed by `staff_number` behaves as before.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are

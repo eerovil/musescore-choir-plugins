@@ -72,6 +72,7 @@ def test_mismatch_survives_serialization_for_the_browser():
     assert d == {
         "kind": TOO_FEW, "message": d["message"], "measure_start": 1, "measure_end": 1,
         "staff_ids": [1], "syllables": 2, "slots": 8, "verse": 1, "voice": 1,
+        "lines": [],
     }
 
 

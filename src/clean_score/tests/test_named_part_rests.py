@@ -141,6 +141,16 @@ def test_a_name_no_part_carries_falls_back_to_the_staff_number_and_says_so():
     assert placed_lyrics(root) == {2: "kol-me"}
 
 
+def test_a_bad_name_with_no_staff_number_says_the_line_was_not_placed():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"text": "kol-me", "parts": ["Typo"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
+    message = result.mismatches[0].message
+    assert "not placed" in message and "placed by staff_number" not in message
+    assert placed_lyrics(root) == {}
+
+
 def test_a_name_two_parts_share_falls_back_to_the_staff_number():
     root = build_score(staff_ids=(1, 2), measures=3, chords=2, names={1: "T", 2: "T"},
                        line_breaks=(1, 2))
