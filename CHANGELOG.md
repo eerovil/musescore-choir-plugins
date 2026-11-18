@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- *Find systems* (the quick finder, not *Ask homr*) now finds the systems on a scan with grey
+  paper; before, it found none on any page of such a scan. The lyric editor's staff pictures
+  and the Fix panel's bar box read such a scan too. (#494)
 - Publish and Clean panels tidied after the day's new features: the note about a sung
   version on the site is one red line and a *Replace with piano only* button, with the
   sing command folded under *Keep it sung instead*; its error lines are shown in red; each
