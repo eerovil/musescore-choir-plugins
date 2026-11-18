@@ -58,7 +58,8 @@ TOO_FEW = "too_few"            # fewer syllables than eligible chords
 NO_SYSTEMS = "no_systems"      # null measure_start, but the score has no system breaks
 NO_SYSTEM_FOR_LINE = "no_system_for_line"   # more null lines than printed systems
 BLOCK_COUNT = "block_count"    # lines vs systems disagree, so the fill may be off
-PART_RESTS = "part_rests"      # a line names a part with no notes in its system (#482)
+PART_RESTS = "part_rests"
+UNKNOWN_PART = "unknown_part"  # "parts" names no part of the song, or two of them      # a line names a part with no notes in its system (#482)
 
 
 @dataclass(frozen=True)
@@ -559,14 +560,32 @@ def _read_part_name_map(score_root: etree._Element) -> Dict[str, int]:
         return {}
     result: Dict[str, int] = {}
     for part, owned in zip(score.findall("Part"), part_staff_ids(score)):
-        name = (part.findtext("trackName") or "").strip()
+        name = _part_name(part)
         if name and owned:
             result[name.upper()] = int(owned[0])
     return result
 
 
-def _resolve_targets(values: List[Any], name_map: Dict[str, int]) -> List[int]:
-    """Turn a parts list of ints and/or part-name strings into output staff ids."""
+def _part_name(part: etree._Element) -> str:
+    """A Part's name as people see it: its trackName, else its instrument's (#482)."""
+    return (part.findtext("trackName") or part.findtext("Instrument/trackName") or "").strip()
+
+
+def _repeated_names(score_root: etree._Element) -> set:
+    """Upper-cased part names more than one part carries: a name cannot pick one of them."""
+    seen: Dict[str, int] = {}
+    for p in lyric_parts(score_root):
+        seen[p.name.upper()] = seen.get(p.name.upper(), 0) + 1
+    return {n for n, c in seen.items() if c > 1}
+
+
+def _resolve_targets(values: List[Any], name_map: Dict[str, int],
+                     unresolved: Optional[List[str]] = None,
+                     repeated: Optional[set] = None) -> List[int]:
+    """Turn a parts list of ints and/or part-name strings into output staff ids.
+
+    A name no part carries, or one two parts share, goes into `unresolved` (#482).
+    """
     targets: List[int] = []
     for v in values:
         if isinstance(v, bool):
@@ -577,8 +596,10 @@ def _resolve_targets(values: List[Any], name_map: Dict[str, int]) -> List[int]:
             s = v.strip()
             if s.isdigit():
                 targets.append(int(s))
-            elif s.upper() in name_map:
+            elif s.upper() in name_map and s.upper() not in (repeated or ()):
                 targets.append(name_map[s.upper()])
+            elif s and unresolved is not None:
+                unresolved.append(s)
     return targets
 
 
@@ -648,6 +669,8 @@ def _block_lines(
     staff_map: Dict[int, List[int]],
     system_map: Optional[List[Dict[str, Any]]],
     name_map: Dict[str, int],
+    notes: Optional[List[Mismatch]] = None,
+    repeated: Optional[set] = None,
 ) -> List[_Line]:
     """The lines one `{measure_start, lyrics: [...]}` block names.
 
@@ -690,9 +713,28 @@ def _block_lines(
             parts = lyric.get("part")
         if not isinstance(parts, list):
             parts = [parts] if parts is not None else []
+        targets = []
         if parts:
-            targets = _resolve_targets(parts, name_map)
-        else:
+            unresolved: List[str] = []
+            targets = _resolve_targets(parts, name_map, unresolved, repeated)
+            if unresolved and notes is not None:
+                # A name no part carries, or two parts share (#482): said, and the
+                # line falls back to its staff_number rather than vanishing.
+                where = f", verse {verse}" if verse > 1 else ""
+                where += f", voice {voice}" if voice > 1 else ""
+                said = ", ".join(f'"{n}"' for n in unresolved)
+                notes.append(Mismatch(
+                    kind=UNKNOWN_PART,
+                    message=(f"Measure {measure_start}{where}: \"parts\" names {said}, "
+                             f"which is not one part of this song; "
+                             + ("the line was placed by staff_number instead."
+                                if not targets else "the other parts named got the words.")),
+                    measure_start=measure_start,
+                    measure_end=measure_end or measure_start,
+                    verse=verse, voice=voice))
+            if not targets:
+                parts = []
+        if not parts:
             sn = lyric.get("staff_number")
             targets = _derive_target_staves(
                 sn, lyric.get("position"), block_map,
@@ -708,6 +750,8 @@ def _block_lines(
                 continue
             for child in followers:
                 texts.setdefault((child, voice, verse), list(words))
+                if (base, voice, verse) in named:
+                    named.add((child, voice, verse))
     return [_Line(measure_start, measure_end, staff, voice, verse,
                   " ".join(t for t in words if t), (staff, voice, verse) in named)
             for (staff, voice, verse), words in sorted(texts.items())]
@@ -719,6 +763,8 @@ def _lines_from_blocks(
     system_map: Optional[List[Dict[str, Any]]] = None,
     name_map: Optional[Dict[str, int]] = None,
     part_to_staff: Optional[Dict[str, int]] = None,
+    notes: Optional[List[Mismatch]] = None,
+    repeated: Optional[set] = None,
 ) -> List[_Line]:
     """Every line a lyric JSON names, in either of its two shapes.
 
@@ -741,7 +787,8 @@ def _lines_from_blocks(
             continue
         end = _int_or(block.get("measure_end"), None)
         if isinstance(block.get("lyrics"), list):
-            lines += _block_lines(block, start, end, staff_map, system_map, name_map)
+            lines += _block_lines(block, start, end, staff_map, system_map, name_map,
+                                  notes, repeated)
             continue
         for key, text in block.items():
             if key in ("measure_start", "measure_end"):
@@ -797,6 +844,27 @@ def _lines_to_by_measure(
         later = [c for c in cuts if c > start]
         return min(later[0] - 1, last) if later else last
 
+    # Where a named part's rest check stops when the caller gave no systems: the
+    # score's own line breaks, not the next line someone happened to send (#482).
+    breaks = [] if systems else [(r.start, r.end) for r in system_ranges(score)]
+
+    def rest_end(ln: _Line, end: int) -> int:
+        for a, b in breaks:
+            if a <= ln.start <= b and not ln.end:
+                return min(b, end)
+        return end
+
+    notes_by_key: Dict[Tuple[int, int], set] = {}
+
+    def sung(staff: int, voice: int) -> set:
+        """Bars where this part's voice has any chord (a tied note counts)."""
+        if (staff, voice) not in notes_by_key:
+            notes_by_key[(staff, voice)] = set()
+            for el in _music_staves(score):
+                if int(el.get("id", "0")) == staff:
+                    notes_by_key[(staff, voice)] = {m for m, _, _ in _walk_voice(el, voice)}
+        return notes_by_key[(staff, voice)]
+
     counts_by_voice: Dict[int, Dict[int, Dict[int, int]]] = {}
     by_measure: Dict[int, Dict[Tuple[int, int, int], List[str]]] = {}
     found: List[Tuple[int, int, Tuple[int, int, int], str, int, int]] = []
@@ -840,12 +908,13 @@ def _lines_to_by_measure(
             if not has_words(ln):
                 continue
             tokens = tokens_of[id(ln)]
-            if ln.named and not any(counts.get(m, 0) for m in range(ln.start, own_end(ln) + 1)):
+            if ln.named and not any(m in sung(staff, voice)
+                                    for m in range(ln.start, rest_end(ln, own_end(ln)) + 1)):
                 # A part named for a system it rests through: the name or the system is
                 # wrong, and running the words on into the next system would hide it.
                 if names is None:
                     names = {p.id: p.name for p in lyric_parts(score)}
-                end = own_end(ln)
+                end = rest_end(ln, own_end(ln))
                 where = f", verse {verse}" if verse > 1 else ""
                 where += f", voice {voice}" if voice > 1 else ""
                 resting.append(Mismatch(
@@ -867,6 +936,8 @@ def _lines_to_by_measure(
                 if ahead is not None and has_words(ahead):
                     break
                 seg = (nxt, system_end(nxt))
+                if ln.named and not any(seg[0] <= m <= seg[1] for m in sung(staff, voice)):
+                    break  # a named part does not run on through a system it rests in
                 if ahead is None:
                     if words_now is None:
                         words_now = _bars_with_words(score, key)
@@ -1429,7 +1500,8 @@ def _import_json_txt_into_mscx(
     if (not isinstance(data, list) or not data or not isinstance(data[0], dict)
             or "measure_start" not in data[0]):
         return LyricImport(mismatches=notes, filled_measure_starts=filled)
-    lines = _lines_from_blocks(data, staff_map, system_map, name_map, part_to_staff)
+    lines = _lines_from_blocks(data, staff_map, system_map, name_map, part_to_staff,
+                               notes, _repeated_names(score_root))
     if not lines:
         return LyricImport(mismatches=notes, filled_measure_starts=filled)
     if clear_existing:
@@ -1576,7 +1648,7 @@ def lyric_parts(score_root: etree._Element) -> List[EditorPart]:
     parts: List[EditorPart] = []
     for p, owned in zip(score.findall("Part"), part_staff_ids(score)):
         sid = int(owned[0]) if owned else 0
-        name = (p.findtext("trackName") or p.findtext("Instrument/trackName") or "").strip()
+        name = _part_name(p)
         if any(w in name.lower() for w in _NON_LYRIC_PART_WORDS):
             continue
         parts.append(EditorPart(id=sid, name=name or f"staff {sid}"))

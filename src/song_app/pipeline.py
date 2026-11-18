@@ -772,12 +772,28 @@ def lyric_prompt(prompt: str, cleaned_path: str = "") -> str:
     """
     if not cleaned_path or not os.path.exists(cleaned_path):
         return prompt
-    names = [p.name for p in lyric_txt.lyric_parts(etree.parse(cleaned_path).getroot())]
-    if not names:
+    try:
+        parts = lyric_txt.lyric_parts(etree.parse(cleaned_path).getroot())
+    except (etree.XMLSyntaxError, OSError):
         return prompt
-    listed = ", ".join(f'"{n}"' for n in names)
-    return (prompt.rstrip("\n") + "\n\nTHIS SONG'S PARTS, top staff first: " + listed
-            + ".\nUse these exact names in \"parts\".\n")
+    if not parts:
+        return prompt
+    # A name two parts share cannot pick one of them, and an unnamed part has none:
+    # those are listed by staff id, which "parts" also takes.
+    count: Dict[str, int] = {}
+    for p in parts:
+        count[p.name.upper()] = count.get(p.name.upper(), 0) + 1
+    listed, by_id = [], False
+    for p in parts:
+        if count[p.name.upper()] > 1 or p.name == f"staff {p.id}" or p.name.isdigit():
+            listed.append(f'{p.id} ("{p.name}")')
+            by_id = True
+        else:
+            listed.append(f'"{p.name}"')
+    note = ("\nA part listed as a number has no name of its own: put that number in "
+            "\"parts\" (a staff id, written without quotes)." if by_id else "")
+    return (prompt.rstrip("\n") + "\n\nTHIS SONG'S PARTS, top staff first: "
+            + ", ".join(listed) + ".\nUse these exact names in \"parts\"." + note + "\n")
 
 
 def score_parts_and_measures(cleaned_path: str) -> Tuple[List[Dict], int]:

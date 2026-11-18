@@ -50,3 +50,36 @@ def test_the_prompt_without_a_song_is_the_plain_file(song):
 
 def test_a_song_not_cleaned_yet_gets_the_plain_prompt():
     assert pipeline.lyric_prompt("the prompt\n", "") == "the prompt\n"
+
+
+def test_a_name_two_parts_share_is_listed_by_staff_id(tmp_path):
+    from src.clean_score.tests.scorebuilder import build_score
+
+    path = tmp_path / "s.mscx"
+    path.write_bytes(etree.tostring(build_score(staff_ids=(1, 2, 3), measures=1, chords=1,
+                                                names={1: "T1", 2: "T2", 3: "T2"})))
+    prompt = pipeline.lyric_prompt("p\n", str(path))
+    assert 'top staff first: "T1", 2 ("T2"), 3 ("T2").' in prompt
+    assert "staff id" in prompt
+
+
+def test_a_score_that_does_not_parse_gets_the_plain_prompt(tmp_path):
+    path = tmp_path / "broken.mscx"
+    path.write_text("<museScore><Score>")
+    assert pipeline.lyric_prompt("p\n", str(path)) == "p\n"
+
+
+def test_a_part_rests_warning_goes_once_the_line_is_written_or_said_again():
+    from types import SimpleNamespace as NS
+
+    old = {"kind": "part_rests", "measure_start": 2, "measure_end": 2, "staff_ids": [2],
+           "verse": 1, "voice": 1, "message": "T2 has no notes"}
+    untouched = NS(written=[], mismatches=[])
+    assert server._kept_warnings([old], untouched) == [old]
+    # Written again on another part (the name was corrected): answered.
+    moved = NS(written=[NS(staff=1, verse=1, voice=1, start=2, end=2)], mismatches=[])
+    assert server._kept_warnings([old], moved) == []
+    # Said again by this import: the new one stands, the old one is not doubled.
+    again = NS(written=[], mismatches=[lyric_txt.Mismatch(
+        kind="part_rests", message="", measure_start=2, measure_end=2, staff_ids=(2,))])
+    assert server._kept_warnings([old], again) == []

@@ -1247,6 +1247,17 @@ def _kept_warnings(previous: List, result) -> List[Dict]:
         verse, voice = w.get("verse") or 1, w.get("voice") or 1
         # One warning can name several staves (the same range, kind and counts are
         # said once); only the staves this import rewrote are answered.
+        if w.get("kind") in ("part_rests", "unknown_part"):
+            # About a line, not a staff (#482): answered once this import wrote those
+            # bars on any part, or said it again (the new one is in its own warnings).
+            if any(x.verse == verse and x.voice == voice and x.start <= end and x.end >= start
+                   for x in result.written) or any(
+                    m.kind == w["kind"] and m.verse == verse and m.voice == voice
+                    and m.measure_start <= end and (m.measure_end or m.measure_start) >= start
+                    for m in result.mismatches):
+                continue
+            kept.append(w)
+            continue
         left = [sid for sid in (w.get("staff_ids") or []) if not any(
             x.staff == sid and x.verse == verse and x.voice == voice
             and x.start <= end and x.end >= start
