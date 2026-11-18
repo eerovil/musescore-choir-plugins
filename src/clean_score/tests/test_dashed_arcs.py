@@ -124,3 +124,34 @@ def test_a_new_tie_does_not_answer_it():
     mark_dashed_arcs(root)
     apply_fixes(root, [_fix(root, "tie", 1, 1, index=2, pitch=62)])
     assert [m["text"] for m in marks(root)] == ["dashed tie?"]
+
+
+def _two_ties(second):
+    """A dashed tie on 60, then `second` ("2" dashed, None solid) on 62."""
+    return (_chord(60, _tie("2")) + _chord(60, TIE_IN)
+            + _chord(62, _tie(second)) + _chord(62, TIE_IN))
+
+
+def test_taking_out_a_solid_tie_keeps_the_mark():
+    root = _score(("S1", [_two_ties(None)]))
+    mark_dashed_arcs(root)
+    apply_fixes(root, [_fix(root, "untie", 1, 1, index=2, pitch=62)])
+    assert [m["text"] for m in marks(root)] == ["dashed tie?"]
+
+
+def test_taking_out_one_dashed_tie_of_two_keeps_the_mark():
+    root = _score(("S1", [_two_ties("2")]))
+    mark_dashed_arcs(root)
+    apply_fixes(root, [_fix(root, "untie", 1, 1, index=0, pitch=60)])
+    assert [m["text"] for m in marks(root)] == ["dashed tie?"]
+    apply_fixes(root, [_fix(root, "untie", 1, 1, index=2, pitch=62)])
+    assert marks(root) == []
+
+
+def test_a_part_sharing_the_printed_staff_keeps_its_mark():
+    root = _score(("S1", [_tied_bar("2")]), ("A1", [_tied_bar("2")]))
+    root.find("Score").insert(0, etree.fromstring(
+        '<metaTag name="lyricsStaffMap">1:1,2</metaTag>'))
+    mark_dashed_arcs(root)
+    apply_fixes(root, [_fix(root, "untie", 1, 1, index=0, pitch=60)])
+    assert marks(root) == [{"staff": 2, "measure": 1, "text": "dashed tie?"}]

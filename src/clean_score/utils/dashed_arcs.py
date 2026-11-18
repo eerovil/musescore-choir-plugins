@@ -31,6 +31,11 @@ def _dashed(spanner: etree._Element) -> bool:
             and (spanner.findtext(f"{kind}/lineType") or "").strip() == DASHED)
 
 
+def has_dashed(measure: etree._Element, kind: str) -> bool:
+    """True when a dashed `kind` ("Tie" or "Slur") still starts in this staff's bar."""
+    return any(s.get("type") == kind and _dashed(s) for s in measure.iter("Spanner"))
+
+
 def mark_dashed_arcs(root: etree._Element) -> list[dict]:
     """Mark each bar where a dashed tie or slur starts in a sung part.
 

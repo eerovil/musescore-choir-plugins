@@ -218,7 +218,8 @@ Strict about `from` like the others, and replayed on every clean.
 A homr that reads the dash (eerovil/homr#100) writes `line-type="dashed"` on the tie or
 slur, MuseScore keeps it as `<lineType>2</lineType>`, and cleaning marks the bar `⚠ dashed
 tie?` or `⚠ dashed slur?` on a sung part (`utils/dashed_arcs.py`, #482) and leaves the arc:
-whether verse 1 sings it is the person's call. `untie` and `unslur` answer the mark; an
+whether verse 1 sings it is the person's call. `untie` and `unslur` answer the mark once
+no dashed arc of that kind is left in that part's bar (a part sharing the staff keeps its own); an
 assembled tie or slur over a line break is dashed when either half was. homr finds a dash
 chain of four or more, so a short dashed tie can still come through solid and unmarked.
 
@@ -698,7 +699,8 @@ Key test modules:
   leaves other ties alone, and replays on a rebuild.
 - `test_dashed_arcs.py` — added for #482: a dashed tie or slur in a sung part is marked
   and kept, a solid or dotted one and an instrument part are not, a second clean marks
-  once, and `untie` / `unslur` answer the mark while a new `tie` does not.
+  once, and `untie` / `unslur` answer the mark while a new `tie` does not; taking out a
+  solid tie, or one dashed tie of two, keeps it, and so does a part sharing the staff.
 - `test_delete_mark.py` — added for #352, on the shapes of Mieslaulu bar 13 and Annin
   laulu bar 19: the named fermata goes and the chord, its words and the bar's other
   fermata stay; every listed kind and `subtype`; each refused kind names its tool; a

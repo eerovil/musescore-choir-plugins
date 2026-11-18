@@ -1204,9 +1204,27 @@ def _strike_words(bar: etree._Element, words) -> List[str]:
 
 #: The words of homr's mark the other kinds answer: a tie written or taken out has
 #: been read against the page, and so has a slur, and a length (#347). Taking out a
-#: tie or slur cleaning marked as printed dashed answers that mark whole (#482).
-_KIND_WORDS = {"tie": ("tie?",), "untie": ("tie?", "dashed tie?"), "slur": ("slur?",),
-               "unslur": ("slur?", "dashed slur?"), "duration": ("rhythm?",)}
+#: tie or slur cleaning marked as printed dashed answers that mark only once no dashed
+#: arc of that kind is left in the part's own bar (`_strike_dashed`, #482).
+_KIND_WORDS = {"tie": ("tie?",), "untie": ("tie?",), "slur": ("slur?",),
+               "unslur": ("slur?",), "duration": ("rhythm?",)}
+
+#: The arc each taking-out kind removes, for its `dashed ...?` mark (#482).
+_DASHED_KIND = {"untie": "Tie", "unslur": "Slur"}
+
+
+def _strike_dashed(root: etree._Element, staff: int, measure: int, kind: str) -> List[str]:
+    """Take `dashed tie?`/`dashed slur?` off this part's bar once no such arc is left.
+
+    The mark is about this part's own arcs, so a part sharing the printed staff keeps
+    its mark, and taking out one arc of two (or a solid one) leaves it.
+    """
+    from .dashed_arcs import WORDS, has_dashed  # noqa: PLC0415 - a cycle
+    arc = _DASHED_KIND[kind]
+    bar = _measure(root, staff, measure)
+    if has_dashed(bar, arc):
+        return []
+    return _strike_words(bar, (WORDS[arc],))
 
 
 def _strike(root: etree._Element, staff: int, measure: int, words) -> List[str]:
@@ -2872,7 +2890,10 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             # read identically, and the message is all the reader gets.
             raise FixError(f"staff {staff} m{measure} ({kind}): {exc}") from None
         if kind in _KIND_WORDS:
-            what += _answered(_strike(root, staff, measure, _KIND_WORDS[kind]))
+            struck = _strike(root, staff, measure, _KIND_WORDS[kind])
+            if kind in _DASHED_KIND:
+                struck += _strike_dashed(root, staff, measure, kind)
+            what += _answered(struck)
         if kind == "bar":
             cut = _strike_cut(_measure(root, staff, measure))
             if cut:
