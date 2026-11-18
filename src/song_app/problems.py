@@ -53,7 +53,7 @@ from src.clean_score.utils.problem_marks import marks
 from src.clean_score.utils.rejected_bars import staff_names
 from src.clean_score.utils.score_fixes import FixError
 
-from . import bar_readings, pdf_systems, pipeline, state
+from . import bar_readings, pipeline, state
 
 #: The row for a words map that no longer fits the score's bars (#482).
 STALE_MAP = ("Bars were added or removed in MuseScore after Clean; the words map still "
@@ -66,6 +66,17 @@ REPEAT_SOURCE = "repeat-choice"
 VOLTA_SOURCE = "volta-choice"
 #: The longest "1." bracket offered.
 MAX_VOLTA_BARS = 4
+
+
+def _bounds(song, root) -> List[Tuple[int, int, int]]:
+    """(index, start, end) of each printed system, in the cleaned score's bars.
+
+    Through `pipeline._printed_system_bounds`, so a recorded `delbar`/`insbar` and a
+    bar added by hand in MuseScore (#482) move the systems the same way the words map's
+    staves move, and a row's system and its staff come off one numbering.
+    """
+    return [(b.index, r[0], r[1])
+            for b, r in pipeline._printed_system_bounds(song.dir, root) if r]
 
 
 def _system_of(bounds: List[Tuple[int, int, int]], measure: Optional[int]) -> Optional[int]:
@@ -291,8 +302,7 @@ def problems(song: state.Song) -> List[Dict]:
     root = etree.parse(cleaned).getroot()
     names = staff_names(root)
     order = {name: position for position, name in names.items()}
-    bounds = [(b.index, b.measure_start, b.measure_end)
-              for b in pdf_systems.load_bounds(song.dir) if b.measure_start]
+    bounds = _bounds(song, root)
     rows: Dict[Tuple, Dict] = {}
 
     def row(measure: Optional[int], part: str, system: Optional[int] = None) -> Dict:
@@ -501,8 +511,7 @@ def record_repeat_choice(song: state.Song, cid: str, letter: str) -> Dict:
     if not cleaned or not os.path.exists(cleaned):
         raise FixError("clean the score first")
     root = etree.parse(cleaned).getroot()
-    bounds = [(b.index, b.measure_start, b.measure_end)
-              for b in pdf_systems.load_bounds(song.dir) if b.measure_start]
+    bounds = _bounds(song, root)
     question = next((q for q in repeat_questions(root, bounds) if q["id"] == cid), None)
     if question is None:
         raise FixError("that repeat is not in question any more — the score has been "

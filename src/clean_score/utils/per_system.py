@@ -1074,6 +1074,14 @@ class SystemMap:
     state: str = MAP_AS_RECORDED
 
 
+def has_system_map(root: etree._Element) -> bool:
+    """Whether the score carries a `lyricsSystemMap`, readable or not."""
+    score = _score_of(root)
+    return score is not None and any(
+        tag.get("name") == "lyricsSystemMap" and (tag.text or "").strip()
+        for tag in score.findall("metaTag"))
+
+
 def read_system_map(root: etree._Element) -> Optional[SystemMap]:
     """The score's per-system lyric map, its bar ranges checked against the score.
 

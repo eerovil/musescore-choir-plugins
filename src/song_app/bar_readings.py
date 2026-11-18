@@ -226,6 +226,8 @@ def printed_staves(root: etree._Element) -> List[Tuple[int, int, Dict[int, List[
             return out
         except (KeyError, TypeError, ValueError, AttributeError):
             return []
+    if per_system.has_system_map(root):
+        return []  # a map that does not parse says nothing, rather than a guess
     staves = lyric_txt._read_lyrics_staff_map(root)
     return [(1, 10 ** 9, staves, len(staves))] if staves else []
 
