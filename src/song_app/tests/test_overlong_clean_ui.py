@@ -87,6 +87,14 @@ def live(tmp_path):
             os.environ["MUSESCORE_CLI_PATH"] = previous_cli
 
 
+def _evidence(page, name):
+    """Screenshot only where the run was told to put one; none is committed here."""
+    where = os.environ.get("EVIDENCE_DIR")
+    if where:
+        os.makedirs(where, exist_ok=True)
+        page.screenshot(path=os.path.join(where, name), full_page=True)
+
+
 def test_the_clean_panel_lists_the_long_bars_on_first_view_and_after_a_reload(live, page):
     base, song = live
     errors = []
@@ -98,4 +106,16 @@ def test_the_clean_panel_lists_the_long_bars_on_first_view_and_after_a_reload(li
         expect(listed).to_have_count(1)
         expect(listed).to_contain_text("measure 2, staff 1, voice 2")
         page.reload()
+    _evidence(page, "overlong-clean-desktop.png")
     assert not errors, f"the panel raised: {errors}"
+
+
+def test_the_list_fits_a_phone(live, page):
+    base, song = live
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{base}/#/song/{song.slug}")
+    listed = page.locator(".overlong li")
+    expect(listed).to_contain_text("measure 2, staff 1, voice 2")
+    box = page.locator(".overlong").bounding_box()
+    assert box and box["x"] >= 0 and box["x"] + box["width"] <= 390
+    _evidence(page, "overlong-clean-phone.png")
