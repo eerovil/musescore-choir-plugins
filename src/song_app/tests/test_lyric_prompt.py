@@ -311,6 +311,28 @@ def test_an_old_warning_without_an_id_can_be_dismissed(song):
     assert _saved(dest)["stage"] == "review"
 
 
+def test_a_warning_saved_as_a_plain_sentence_can_be_dismissed(song):
+    """Songs imported before warnings had fields hold the sentence as a string. It is
+    sent with an id, and Dismiss takes it off like any other (review on #505)."""
+    api, slug, dest = song
+    fp = state.file_fingerprint(str(dest / CLEANED))
+    data = _saved(dest)
+    text = "Measures 3-4 (staffs 1): too few tokens (2 syllables, 5 slots)"
+    other = "Measures 5-6 (staffs 2): too many tokens (6 syllables, 5 slots)"
+    data["lyrics"] = {"json": "lyrics.json", "imported_against": fp, "warnings": [text, other]}
+    (dest / ".song.json").write_text(json.dumps(data))
+    shown = api.get(f"/api/songs/{slug}").json()["lyrics"]["warnings"]
+    assert [w["message"] for w in shown] == [text, other]
+    assert shown[0]["id"] != shown[1]["id"]
+    assert shown[0]["id"] == lyric_txt.warning_id(text)
+    assert api.post(f"/api/songs/{slug}/lyrics/warnings/dismiss",
+                    json={"id": shown[0]["id"]}).status_code == 200
+    assert _saved(dest)["lyrics"]["warnings"] == [other]
+    assert _saved(dest)["stage"] == "lyrics"
+    api.post(f"/api/songs/{slug}/lyrics/warnings/dismiss", json={"id": shown[1]["id"]})
+    assert _saved(dest)["stage"] == "review"
+
+
 def test_a_dismiss_on_a_stale_score_or_another_stage_does_not_move_the_stage(song):
     api, slug, dest = song
     w = {"kind": "too_few", "message": "m", "measure_start": 3, "staff_ids": [1]}

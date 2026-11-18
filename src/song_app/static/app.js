@@ -2655,16 +2655,19 @@ async function panelLyrics(panel, song, P, refresh) {
 
 // Import mismatches come from the server as fields (kind, measure range, staff ids,
 // syllables, slots, message). Songs imported before that shipped hold the sentence as
-// a plain string; read the fields back out of it so those keep their cell markers too.
+// a plain string, which the server sends as {message, id} (#482); read the fields back
+// out of it so those keep their cell markers too, and keep the id for Dismiss.
 const LEGACY_WARN = /^Measures (\d+)-(\d+) \(staffs ([\d,\s]+)\): (too many|too few) tokens \((\d+) syllables, (\d+) slots\)/;
 
 function lyricMismatches(song) {
   return (song.lyrics?.warnings || []).map((w) => {
-    if (typeof w !== "string") return w;
-    const m = w.match(LEGACY_WARN);
-    if (!m) return { message: w, staff_ids: [] };
+    const text = typeof w === "string" ? w : (!w.kind && typeof w.message === "string" ? w.message : null);
+    if (text === null) return w;
+    const id = typeof w === "string" ? undefined : w.id;
+    const m = text.match(LEGACY_WARN);
+    if (!m) return { message: text, staff_ids: [], id };
     return {
-      kind: m[4] === "too many" ? "too_many" : "too_few", message: w,
+      id, kind: m[4] === "too many" ? "too_many" : "too_few", message: text,
       measure_start: +m[1], measure_end: +m[2],
       staff_ids: m[3].split(",").map((s) => +s.trim()).filter(Number.isFinite),
       syllables: +m[5], slots: +m[6],

@@ -1301,10 +1301,12 @@ def _with_ids(warnings) -> List:
     """The stored lyric warnings, each with the id Dismiss sends back (#482).
 
     Worked out on reading (`lyric_txt.warning_id`), so a warning saved before ids
-    existed has one too and no `.song.json` needs rewriting.
+    existed has one too and no `.song.json` needs rewriting. One saved as a plain
+    sentence goes out as `{"message", "id"}`, so it can be dismissed like the rest.
     """
-    return [{**w, "id": lyric_txt.warning_id(w)} if isinstance(w, dict) else w
-            for w in warnings or []]
+    return [{**w, "id": lyric_txt.warning_id(w)} if isinstance(w, dict)
+            else {"message": w, "id": lyric_txt.warning_id(w)}
+            for w in warnings or [] if isinstance(w, (dict, str))]
 
 
 def _settle_lyrics_stage(song: state.Song, cleaned: Optional[str]) -> bool:
@@ -1505,7 +1507,7 @@ def api_dismiss_lyric_warning(slug: str, body: Dict) -> Dict:
         lyrics = dict(fresh.data.get("lyrics") or {})
         warnings = lyrics.get("warnings") or []
         left = [w for w in warnings
-                if not (isinstance(w, dict) and lyric_txt.warning_id(w) == wid)]
+                if not (isinstance(w, (dict, str)) and lyric_txt.warning_id(w) == wid)]
         if len(left) == len(warnings):
             raise HTTPException(404, "That warning is no longer on the list")
         lyrics["warnings"] = left

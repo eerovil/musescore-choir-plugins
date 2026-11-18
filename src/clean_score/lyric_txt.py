@@ -115,14 +115,17 @@ def _line_warning_id(kind: str, lines, start: int, end: int) -> str:
     return _digest(["line", kind, sorted(lines), start, end])
 
 
-def warning_id(w: Dict[str, Any]) -> str:
+def warning_id(w: Any) -> str:
     """A stored lyric warning's id: the one it was saved with, else one from its fields.
 
     The kinds about a source line are saved with theirs (`Mismatch.to_dict`); every
     other kind, and a warning saved before ids existed, gets one here from what
     describes it, so the panel and the dismiss route compute the same id without
-    any `.song.json` being rewritten. Identical warnings share an id.
+    any `.song.json` being rewritten. Identical warnings share an id. A warning
+    saved as a plain sentence, before warnings had fields, gets one off its text.
     """
+    if isinstance(w, str):
+        return _digest(["text", w])
     if isinstance(w.get("id"), str) and w["id"]:
         return w["id"]
     return _digest(["fields"] + [w.get(k) for k in (
