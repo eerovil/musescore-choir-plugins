@@ -1269,3 +1269,53 @@ def test_a_trial_run_keeps_no_record_for_the_song_list(tmp_path):
     assert os.listdir(tmp_path) == []
     progress.Run(str(tmp_path), (), "v1").step("bundle")
     assert os.listdir(tmp_path) == [progress.RUN_FILE]
+
+
+@pytest.mark.parametrize("trial", [[], ["--try", "Solo:1-1"]])
+def test_folded_divisi_still_finds_the_solos_clef(tmp_path, monkeypatch, trial):
+    """#483 review: --fold-divisi makes [S1, S1b, Solo] the bundle's [S1, Solo]; the clefs are read
+    off the folded score, so a Solo in a mixed song still takes its voice from its clef."""
+    from src.sing_song.tests.test_fold import chord, score
+    from src.sing_song.fold import fold
+    cleaned = score(tmp_path / "cleaned.mscx", [("S1", [chord(72) * 4]), ("S1b", [chord(69) * 4]),
+                                                ("Solo", [chord(48) * 4])])
+    root = publish_song.etree.parse(cleaned).getroot()
+    solo = root.find("Score/Staff[@id='3']/Measure/voice")
+    clef = publish_song.etree.Element("Clef")
+    publish_song.etree.SubElement(clef, "concertClefType").text = "F"
+    solo.insert(0, clef)
+    root.getroottree().write(cleaned)
+
+    def build_bundle(app, slug, out, folded):
+        assert folded
+        groups = [ids for _, ids in fold(cleaned, folded)]
+        return {"duration": 1.0, "parts": [{"name": "S1"}, {"name": "Solo"}]}, cleaned, groups
+    sung = {}
+
+    def sing(manifest, cleaned_, bundle, work, voices, *a, trial=None, **kw):
+        sung["voices"], sung["trial"] = voices, trial
+        return 1.0, 1.0
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("")
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(publish_song, "sing_venv", lambda: str(tmp_path / "venv"))
+    monkeypatch.setattr(publish_song, "is_ours", lambda d: True)
+    monkeypatch.setattr(publish_song, "pronounce_env", lambda *a: {})
+    monkeypatch.setattr(publish_song, "song_voicing", lambda slug: "mixed")
+    monkeypatch.setattr(publish_song, "build_bundle", build_bundle)
+    monkeypatch.setattr(publish_song, "sing", sing)
+    monkeypatch.setattr(publish_song, "trial_said", lambda *a: "tried")
+    monkeypatch.setattr(publish_song, "publish_to_site", lambda *a, **k: pytest.fail("published"),
+                        raising=False)
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--out", str(tmp_path / "out"),
+                                      "--fold-divisi", "--cpu", *trial])
+    try:
+        publish_song.main()
+    except SystemExit as e:
+        assert e.code in (None, 0), e.code
+    if trial:
+        assert sung["trial"][:3] == (2, 1, 1)
+        assert sung["voices"] == [None, publish_song.LOW[0]]
+    else:
+        assert sung["voices"] == [publish_song.HIGH[0], publish_song.LOW[0]]

@@ -1182,7 +1182,7 @@ def sing_and_publish(a, run_record):
                                + f"-bars-{first}-{last}.mp3")
             trial = (index, first, last, mp3)
         sung_by = voices_for(manifest["parts"], a.voices, voicing,
-                             part_clefs(cleaned, len(manifest["parts"])), only=trial and trial[0])
+                             part_clefs(folded or cleaned, len(manifest["parts"])), only=trial and trial[0])
         gpu = not a.cpu and nvidia_dir(python) is not None
         log("singing every line on the remote runner" if a.remote_only
             else f"singing on the {'graphics card' if gpu else 'processor'}")
