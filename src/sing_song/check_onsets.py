@@ -1,12 +1,13 @@
 """Does a sung part start its notes where the site's piano does? (musescore-choir-plugins#419)
 
-    python3 check_onsets.py <part.json> <score.mid> <track index> <timing.json>
+    python3 check_onsets.py <part.json> <score.mid> <track index> <timing.json> [<start s> <end s>]
 
 <part.json> is unroll.py's output for one part, <track index> that part's track in score.mid
 (0-based, the parts' order). Every sung note except a grace note, and the note a grace note
 leads to (it starts late by the time the grace borrows), must start within TOLERANCE seconds
 of a note start on that MIDI track. Prints one line per note that does not, with its bar, and
-exits 1 if any; run_all/run2 refuse to publish such a part. Es ist ein Ros's breve and long
+exits 1 if any. With a start and an end, only notes starting in that window are checked
+(a `--try` phrase, #483). run_all/run2 refuse to publish such a part. Es ist ein Ros's breve and long
 rests counted as nothing and its lower parts were sung 6-18 s early; a double dot counted as
 one put notes off the beat mid-bar."""
 import bisect, json, sys
@@ -65,11 +66,15 @@ def bar_at(points, sec):
     return bar
 
 
-def off_notes(notes, ref, points):
-    """[(bar, sung start, nearest MIDI start)] for each checked note too far from the MIDI."""
+def off_notes(notes, ref, points, window=None):
+    """[(bar, sung start, nearest MIDI start)] for each checked note too far from the MIDI;
+    with a (start, end) window, only notes starting inside it are checked."""
     out, t, after_grace = [], 0.0, False
     for n in notes:
-        if n.get("pitch") is not None:
+        skip = window is not None and not (window[0] - 1e-3 <= t < window[1] - 1e-3)   # given to 4 places
+        if n.get("pitch") is not None and skip:
+            after_grace = bool(n.get("grace"))
+        elif n.get("pitch") is not None:
             if n.get("grace"):
                 after_grace = True
             elif after_grace:
@@ -88,7 +93,8 @@ if __name__ == "__main__":
     tracks = midi_onsets(midi)
     if track >= len(tracks):
         sys.exit(f"no MIDI track {track} (the MIDI has {len(tracks)})")
-    bad = off_notes(json.load(open(part)), tracks[track], json.load(open(timing))["points"])
+    window = (float(sys.argv[5]), float(sys.argv[6])) if len(sys.argv) > 6 else None
+    bad = off_notes(json.load(open(part)), tracks[track], json.load(open(timing))["points"], window)
     for bar, t, near in bad:
         print(f"bar {bar}: note at {t} s, nearest MIDI note at {near} s")
     sys.exit(1 if bad else 0)

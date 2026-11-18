@@ -27,11 +27,13 @@ from src.clean_score.lyric_txt import LyricImport, import_file
 from src.clean_score.utils import per_system
 from src.clean_score.utils.per_system import dropped_voices_for_file
 from src.clean_score.utils.problem_marks import mark_bar, marks
+from src.clean_score.utils.overlong_voices import overlong_voices
 from src.clean_score.utils.rejected_bars import clear_bar, staff_names
 from src.clean_score.utils.score_fixes import (FixError, after_moves, apply_fixes, bar_items, voice2_tokens,
                                                 bar_moves, bar_tokens, free_text, read_bar)
 from src.clean_score.utils.staff_display import fix_staff_display
 from src.clean_score.utils.utils import starts_new_system
+from src.clean_score.utils.voice_instruments import needs_voice_instruments, set_voice_instruments
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
 Logger = Callable[[str], None]
@@ -55,6 +57,8 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
 
     # Reuse a previous conversion if it's still newer than the source.
     if os.path.exists(target) and os.path.getmtime(target) >= os.path.getmtime(input_path):
+        if log is not _noop and not lower.endswith(".mscz"):
+            log_overlong_voices(target, log)
         return target
 
     if lower.endswith(".mscz"):
@@ -73,16 +77,40 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
             shutil.rmtree(tmp, ignore_errors=True)
         return target
 
-    # MusicXML -> MuseScore CLI
+    # MusicXML -> MuseScore CLI. `-f` (force) because MuseScore 4 refuses the whole
+    # file over one voice a scan made longer than its bar, and nothing can be fixed
+    # before the staff list loads (#481). MuseScore 3 writes the same file with or
+    # without it. The bars are named here; cleaning cuts or resets them.
     log(f"Converting {os.path.basename(input_path)} with MuseScore CLI")
     cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
-    result = musescore_cli.run([cli, input_path, "-o", target], target)
+    result = musescore_cli.run([cli, "-f", input_path, "-o", target], target)
     if not musescore_cli.ok(result, log):
-        raise RuntimeError(
-            "MuseScore CLI conversion failed. Check MUSESCORE_CLI_PATH.\n"
-            + result.said
-        )
+        raise RuntimeError(musescore_cli.explain(result, "conversion failed"))
+    log_overlong_voices(target, log)
     return target
+
+
+def overlong_in(mscx_path: str) -> List[Dict]:
+    """Each voice of the file that runs past its barline; [] for a file not readable."""
+    try:
+        return overlong_voices(etree.parse(mscx_path).getroot())
+    except (OSError, etree.XMLSyntaxError):
+        return []
+
+
+def log_overlong_voices(mscx_path: str, log: Logger = _noop) -> List[Dict]:
+    """Say in the log each voice that runs past its barline. Returns them.
+
+    MuseScore 4 will not open such a score without `-f`; cleaning cuts a bar longer
+    than its time signature and resets what is left (`check_opens_in_musescore`).
+    """
+    found = overlong_in(mscx_path)
+    if found:
+        log(f"{len(found)} voice(s) run past their barline; MuseScore 4 refuses to open "
+            "a score like this, so cleaning will cut or reset these bars:")
+        for one in found:
+            log("  " + one["message"])
+    return found
 
 
 # --------------------------------------------------------------------------
@@ -115,6 +143,21 @@ def _uploaded_score_summary(mscx_path: str) -> Dict:
         raise ScoreUploadError("That score has no staves with any music in them.")
     return {"staves": len(staves),
             "measures": max(len(s.findall("Measure")) for s in staves)}
+
+
+def score_for_download(cleaned_path: str) -> Optional[bytes]:
+    """The cleaned score as it should leave the app, or None when the file on disk will do.
+
+    A song cleaned before #481 has no voice instruments, so MuseScore 4 reads its
+    parts as pianos and puts new dynamics below the staff. The download gets them in
+    a copy; the stored score is never rewritten, so its fingerprint, Review's approval
+    and the lyrics stay as they are.
+    """
+    tree = etree.parse(cleaned_path)
+    if not needs_voice_instruments(tree.getroot()):
+        return None
+    set_voice_instruments(tree.getroot())
+    return etree.tostring(tree, xml_declaration=True, encoding="UTF-8")
 
 
 def accept_uploaded_score(cleaned_path: str, filename: str, data: bytes) -> Dict:
@@ -339,15 +382,27 @@ _REJECTION = re.compile(
     r"(?P<what>incomplete|too long)\. Expected: (?P<expected>\S+); Found: (?P<found>\S+)")
 
 
+def checker() -> str:
+    """Which MuseScore the check speaks for: "MuseScore 4" or "MuseScore 3"."""
+    return "MuseScore 4" if musescore_cli.major() == 4 else "MuseScore 3"
+
+
 def musescore_check(mscx_path: str) -> Optional[List[Dict]]:
-    """What MuseScore 3 objects to when it opens this score. Empty list: nothing.
+    """What MuseScore objects to when it opens this score. Empty list: nothing.
 
     Each objection is `{measure, staff, voice, message}`, 1-based the way MuseScore
     counts (staff = position in the score, measure = every bar from the top). None
-    when no MuseScore answered -- which is "not checked", never "fine". MuseScore 4
-    writes no `.mlog`, so with it this is always None.
+    when no MuseScore answered -- which is "not checked", never "fine".
+
+    MuseScore 3 is asked through its `.mlog`. MuseScore 4 writes none, so for it the
+    rule it refuses a file by is run here instead (`overlong_voices`, #481).
     """
     cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
+    if musescore_cli.major(cli) == 4:
+        try:
+            return overlong_voices(etree.parse(mscx_path).getroot())
+        except (OSError, etree.XMLSyntaxError):
+            return None
     with tempfile.TemporaryDirectory() as tmp:
         out = os.path.join(tmp, "check.mlog")
         # MuseScore reads the format off the extension, and a clean checks the file
@@ -409,7 +464,7 @@ def reset_rejected_bars(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
         if removed is None:
             continue
         mark_bar(root.findall(".//Score/Staff")[key[0] - 1].findall("Measure")[key[1] - 1],
-                 f"MuseScore 3 rejected this bar; reset to a rest. Taken out: "
+                 f"{checker()} refuses this bar; reset to a rest. Taken out: "
                  f"{' '.join(removed) or 'nothing'}")
         done[key] = {"measure": one["measure"], "staff": one["staff"],
                      "part": names.get(one["staff"], f"staff {one['staff']}"),
@@ -438,7 +493,7 @@ def record_musescore_resets(song_dir: str, resets: List[Dict]) -> int:
             "measure": one["measure"],
             "staff": one["staff"],
             "what": (
-                f"Bar {one['measure']}, {one['part']}: MuseScore 3 called this bar "
+                f"Bar {one['measure']}, {one['part']}: {checker()} called this bar "
                 f"corrupted ({one['message']}), so cleaning reset it to a whole-bar "
                 f"rest. Taken out: {' '.join(one['removed']) or 'nothing'}. "
                 "Put the notes back from the page."
@@ -520,15 +575,16 @@ def check_opens_in_musescore(mscx_path: str, song_dir: str, log: Logger = _noop)
     objects to after that, which should be nothing).
     """
     found = musescore_check(mscx_path)
+    name = checker()
     if found is None:
-        log("Not checked against MuseScore 3's own check: no MuseScore 3 answered "
-            "(MUSESCORE_CLI_PATH). MuseScore 4 does not run this check.")
-        return {"status": "not_checked", "reset": [], "rejected": []}
+        log("Not checked against MuseScore's own check: no MuseScore answered "
+            "(MUSESCORE_CLI_PATH).")
+        return {"status": "not_checked", "reset": [], "rejected": [], "by": name}
     if not found:
         record_musescore_resets(song_dir, [])
-        log("MuseScore 3 opens the cleaned score without calling it corrupted.")
-        return {"status": "passed", "reset": [], "rejected": []}
-    log(f"MuseScore 3 would call this score corrupted ({len(found)} problem(s)):")
+        log(f"{name} opens the cleaned score without calling it corrupted.")
+        return {"status": "passed", "reset": [], "rejected": [], "by": name}
+    log(f"{name} would call this score corrupted ({len(found)} problem(s)):")
     for one in found:
         log("  " + one["message"])
     resets = reset_rejected_bars(mscx_path, found)
@@ -539,12 +595,12 @@ def check_opens_in_musescore(mscx_path: str, song_dir: str, log: Logger = _noop)
     again = musescore_check(mscx_path)
     if again is None:
         log("Could not check again after resetting those bars.")
-        return {"status": "not_checked", "reset": resets, "rejected": []}
+        return {"status": "not_checked", "reset": resets, "rejected": [], "by": name}
     if again:
-        log(f"MuseScore 3 still calls the score corrupted ({len(again)} problem(s)).")
-        return {"status": "rejected", "reset": resets, "rejected": again}
-    log("MuseScore 3 opens it now.")
-    return {"status": "repaired", "reset": resets, "rejected": []}
+        log(f"{name} still calls the score corrupted ({len(again)} problem(s)).")
+        return {"status": "rejected", "reset": resets, "rejected": again, "by": name}
+    log(f"{name} opens it now.")
+    return {"status": "repaired", "reset": resets, "rejected": [], "by": name}
 
 
 def musescore_findings(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
@@ -558,7 +614,7 @@ def musescore_findings(mscx_path: str, rejected: List[Dict]) -> List[Dict]:
         "kind": "musescore-corrupt",
         "measure": one["measure"] or None,
         "staff": names.get(one["staff"], f"staff {one['staff']}") if one["staff"] else "whole score",
-        "detail": f"MuseScore 3 calls this corrupted: {one['message']}",
+        "detail": f"{checker()} calls this corrupted: {one['message']}",
     } for one in rejected]
 
 
@@ -696,7 +752,7 @@ def _reset_as_scanned(root: etree._Element, song_dir: str, staff: int,
         staff_id = fix.get("staff_id") or (ids[position - 1] if 0 < position <= len(ids) else None)
         if str(staff_id) == str(staff) and int(fix.get("measure", 0)) == measure:
             return {"from": fix["scanned_from"], "notes": fix.get("scanned_notes", []),
-                    "why": ("MuseScore 3 refused this bar and cleaning reset it to a rest "
+                    "why": ("MuseScore refused this bar and cleaning reset it to a rest "
                             "after the recorded fixes ran. A fix for it replays before "
                             "that, so its `from` must be this one, not the bar above.")}
     return None
@@ -1091,7 +1147,7 @@ def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str
         return out
     cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
     result = musescore_cli.run(
-        [cli, "-T", "10", "-r", str(dpi), musicxml_path, "-o", out], out,
+        [cli, "-f", "-T", "10", "-r", str(dpi), musicxml_path, "-o", out], out,
         timeout=MUSESCORE_TIMEOUT)
     # MuseScore numbers the pages it writes, so a one-page export lands as
     # <name>-1.png rather than under the name it was asked for. It is moved into
@@ -1108,9 +1164,7 @@ def scan_system_render(song_dir: str, musicxml_path: str, dpi: int = 200) -> str
     # the file at `out` is one this run wrote, and until the numbered page has been
     # moved into place the only thing there is the previous picture.
     if not musescore_cli.ok(result):
-        raise RuntimeError(
-            "MuseScore CLI could not engrave the scanned system. Check "
-            "MUSESCORE_CLI_PATH.\n" + result.said)
+        raise RuntimeError(musescore_cli.explain(result, "could not engrave the scanned system"))
     return out
 
 
@@ -1119,7 +1173,7 @@ RENDER_VERSION = "2"
 
 
 def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
-                     tidy: bool = False) -> str:
+                     tidy: bool = False, force: bool = False) -> str:
     """Render a .mscx to a PDF via the MuseScore CLI (cached; re-renders if stale).
 
     Returns the rendered PDF path. The render lives next to the score as
@@ -1135,6 +1189,10 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
     (`_scaled_staff_mscx`). A sidecar ``.key`` holds the breaks, `tidy` and
     `RENDER_VERSION` the render was made with: the score's mtime alone does not
     move when a recorded ``delbar`` moves the breaks (#354).
+
+    `force` passes `-f`, for the raw input only: MuseScore 4 refuses to draw a score
+    whose voice runs past its barline, and the scan's picture has to show anyway
+    (#481). A cleaned score is never forced, so a corrupt one is not hidden.
     """
     stem = os.path.splitext(mscx_path)[0]
     out = f"{stem}.breaks.render.pdf" if breaks else f"{stem}.render.pdf"
@@ -1162,15 +1220,12 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
     for i, scale in enumerate(scales):
         src = _scaled_staff_mscx(mscx_path, breaks, scale, tidy) or mscx_path
         try:
-            result = musescore_cli.run([cli, src, "-o", out], out)
+            result = musescore_cli.run([cli] + (["-f"] if force else []) + [src, "-o", out], out)
         finally:
             if src != mscx_path and os.path.exists(src):
                 os.remove(src)
         if not musescore_cli.ok(result):
-            raise RuntimeError(
-                "MuseScore CLI render failed. Check MUSESCORE_CLI_PATH.\n"
-                + result.said
-            )
+            raise RuntimeError(musescore_cli.explain(result, "render failed"))
         if not want or not staves or i == len(scales) - 1:
             break
         got = len(pdf_systems.rendered_system_bands(out, staves, cache))
@@ -1178,19 +1233,6 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
             break
     with open(key_path, "w", encoding="utf-8") as f:
         f.write(key)
-    return out
-    cli = (os.getenv("MUSESCORE_CLI_PATH") or "musescore3")
-    src = _scaled_staff_mscx(mscx_path, breaks) or mscx_path
-    try:
-        result = subprocess.run([cli, src, "-o", out], capture_output=True, text=True)
-    finally:
-        if src != mscx_path and os.path.exists(src):
-            os.remove(src)
-    if result.returncode != 0 or not os.path.exists(out):
-        raise RuntimeError(
-            "MuseScore CLI render failed. Check MUSESCORE_CLI_PATH.\n"
-            + (result.stderr or result.stdout or "")
-        )
     return out
 
 
@@ -1441,6 +1483,26 @@ def bar_count(mscx_path: str) -> int:
     """How many bars the score has, counted on its first staff."""
     staff = etree.parse(mscx_path).getroot().find("Score/Staff")
     return len(staff.findall("Measure")) if staff is not None else 0
+
+
+def gradual_marks(mscx_path: str, tempo_changes=None, initial_bpm=None) -> List[Dict]:
+    """The score's printed rit. and accel. marks, each with where its ramp stops
+    (#483). The Publish panel's tempo changes end a ramp too, so they are written
+    into the parsed copy first, as the publish copy has them; a list the score
+    refuses is left out rather than failing the page."""
+    from src.score_export.score import (add_opening_tempo, add_tempo_changes,
+                                        gradual_marks as score_gradual_marks,
+                                        has_opening_tempo)
+    from lxml import etree
+    root = etree.parse(mscx_path).getroot()
+    if tempo_changes:
+        try:
+            if initial_bpm and not has_opening_tempo(root):
+                add_opening_tempo(root, float(initial_bpm))
+            add_tempo_changes(root, tempo_changes)
+        except (ValueError, TypeError):
+            root = etree.parse(mscx_path).getroot()
+    return score_gradual_marks(root)
 
 
 def has_opening_tempo(mscx_path: str) -> bool:
