@@ -209,7 +209,11 @@ _STRIPS = 24             # narrow enough that a skewed line stays in a few rows
 _LINE_FILL = 0.45        # share of a strip's width a staff line row has to cover
 _STRIP_AGREE = 0.25      # share of strips that must see a staff for it to count
 _JOIN_FILL = 0.9         # share of the gap a joining column must cover
-_EDGE = 0.03             # page edges ignored for joins: a scan's border is a line
+_EDGE = 0.01             # page edges ignored for joins (#480: 3% lost tight crops' barlines)
+_BORDER_ZONE = 0.03      # where a scan's border line may stand, from each side
+_BORDER_FILL = 0.9       # share of a margin (or of its reach) a border column covers
+_BORDER_REACH = 2.0      # staff heights a border runs past the first or last staff
+_BORDER_ROOM = 8         # pixels either side of a border column that cannot join
 
 
 def _strip_staves(strip) -> List[tuple]:
@@ -257,17 +261,86 @@ def _staves(ink) -> List[tuple]:
             for c in clusters if len(c) >= need]
 
 
-def _joined(ink, upper: tuple, lower: tuple) -> bool:
-    """Whether one column of ink spans the whole gap between two staves."""
+def _lean(a):
+    """Ink in a column or either neighbour: a barline can lean a pixel."""
+    out = a.copy()
+    out[:, 1:-1] = a[:, :-2] | a[:, 1:-1] | a[:, 2:]
+    return out
+
+
+def _widen(cols, n: int):
+    out = cols.copy()
+    for k in range(1, n + 1):
+        out[k:] |= cols[:-k]
+        out[:-k] |= cols[k:]
+    return out
+
+
+def _border_columns(ink, staves: List[tuple]):
+    """Columns holding a line of the scan's own border rather than a barline (#480).
+
+    A border is inked through the page's top or bottom margin, where no barline is,
+    or, near a side of the page, from the first staff to the last and on past one
+    end of them. A barline stops at its system."""
+    import numpy as np
+
+    top, bottom = int(staves[0][0]), int(staves[-1][1])
+    width = ink.shape[1]
+    cols = np.zeros(width, bool)
+    for band in (ink[:max(top - 2, 0)], ink[bottom + 3:]):
+        if band.shape[0] >= 10:
+            cols |= _lean(band).mean(axis=0) >= _BORDER_FILL
+    reach = _BORDER_REACH * max(s[1] - s[0] for s in staves)
+    near = np.zeros(width, bool)
+    for lo, hi in ((max(0, int(top - reach)), bottom), (top, min(ink.shape[0], int(bottom + reach)))):
+        if hi - lo > bottom - top:
+            near |= _lean(ink[lo:hi]).mean(axis=0) >= _BORDER_FILL
+    near = _widen(near, 2)
+    zone = int(width * _BORDER_ZONE)
+    near[zone:width - zone] = False
+    return _widen(_widen(cols, 2) | near, _BORDER_ROOM)
+
+
+def _dark_level(grey) -> float:
+    """Grey halfway between the paper and the darkest ink: a barline is darker."""
+    import numpy as np
+
+    paper = float(np.median(grey))
+    deep = float(np.percentile(grey, 0.5))
+    return deep + (paper - deep) / 2
+
+
+def _joined(ink, upper: tuple, lower: tuple, grey=None, border=None, dark: float = 255) -> bool:
+    """Whether one column of dark ink spans the gap between two staves and runs into both.
+
+    A systemic barline crosses the gap and carries on through the half of each staff
+    next to it (#480). A column of the scan's border (`border`), a faint grey shadow
+    along the page's edge (lighter than `dark`), and the outer 1% of the page never join."""
+    import numpy as np
+
     space = max(upper[2], lower[2])
     # A staff space clear of each staff, so a tilted page's lines are not counted.
     lo, hi = int(upper[1] + space * 1.2), int(lower[0] - space * 1.2)
     if hi - lo < 3:
         return True
-    gap = ink[lo:hi]
-    gap = gap[:, :-2] | gap[:, 1:-1] | gap[:, 2:]      # a barline can lean a pixel
-    margin = int(gap.shape[1] * _EDGE)
-    return bool(gap[:, margin:gap.shape[1] - margin].mean(axis=0).max() >= _JOIN_FILL)
+    width = ink.shape[1]
+    ok = _lean(ink[lo:hi]).mean(axis=0) >= _JOIN_FILL
+    margin = int(width * _EDGE)
+    ok[:margin] = False
+    ok[width - margin:] = False
+    up = ink[int(upper[1] - (upper[1] - upper[0]) / 2):int(upper[1]) + 1]
+    down = ink[int(lower[0]):int(lower[0] + (lower[1] - lower[0]) / 2) + 1]
+    ok &= _lean(up).mean(axis=0) >= _JOIN_FILL
+    ok &= _lean(down).mean(axis=0) >= _JOIN_FILL
+    if border is not None:
+        ok &= ~border
+    if grey is not None and ok.any():
+        g = grey[lo:hi].astype(float)
+        g = np.minimum(np.minimum(g[:, :-2], g[:, 1:-1]), g[:, 2:])
+        level = np.full(width, 255.0)
+        level[1:-1] = np.median(g, axis=0)
+        ok &= level <= dark
+    return bool(ok.any())
 
 
 def _ink(grey):
@@ -292,12 +365,15 @@ def page_systems(image: "Image.Image") -> List[tuple]:
     """The printed systems of one page image, as (top, bottom) fractions of height."""
     import numpy as np
 
-    ink = _ink(np.asarray(image.convert("L")))
+    grey = np.asarray(image.convert("L"))
+    ink = _ink(grey)
     height = ink.shape[0]
     staves = _staves(ink)
     if not staves:
         return []
-    joins = [_joined(ink, a, b) for a, b in zip(staves, staves[1:])]
+    border = _border_columns(ink, staves)
+    dark = _dark_level(grey)
+    joins = [_joined(ink, a, b, grey, border, dark) for a, b in zip(staves, staves[1:])]
     if len(staves) > 2 and not any(joins):
         # Nothing joins anything: either one-staff systems, or an edition that
         # prints no systemic barline. Let the gaps decide when they clearly split

@@ -75,6 +75,40 @@ def test_a_grey_page_is_read_by_its_own_threshold():
         system_finder.page_systems(grey)              # same bands as on white paper
 
 
+def test_a_tight_crop_keeps_its_systemic_barlines():
+    """#480: a page cropped tight puts the systemic barline 1-3% from the edge, and
+    the old 3% edge margin threw every join away."""
+    page = draw_page([2, 2, 2], gap=0).crop((85, 0, WIDTH, HEIGHT))   # barline at x=15
+    # gap=0: every gap the same size, so only the barlines can tell the systems apart
+    assert 0.01 < 15 / page.width < 0.03
+    assert len(system_finder.page_systems(page)) == 3
+
+
+def test_a_printed_border_does_not_join_systems():
+    """#480: a frame line down the side of a scan runs through every gap and joined
+    the whole page into one system."""
+    page = draw_page([2, 2, 2])
+    ImageDraw.Draw(page).line([(18, 40), (18, HEIGHT - 40)], fill=0, width=3)
+    assert len(system_finder.page_systems(page)) == 3
+
+
+def test_a_faint_edge_shadow_does_not_join_systems():
+    """A grey shadow beside the binding is paler than any print, so it joins nothing."""
+    page = draw_page([2, 2, 2])
+    ImageDraw.Draw(page).line([(60, 150), (60, 1400)], fill=215, width=4)
+    assert len(system_finder.page_systems(page)) == 3
+
+
+def test_a_line_only_in_the_gap_does_not_join():
+    """A join has to run into both staves: a mark standing in the gap alone is not a
+    barline (a tall word, a hairpin's end)."""
+    page = draw_page([2, 2, 2])
+    pen = ImageDraw.Draw(page)
+    for top in (150 + 2 * (4 * SPACE + 90) - 90 + 30, 150 + 4 * (4 * SPACE + 90) + 150 - 90 + 30):
+        pen.line([(700, top), (700, top + 200)], fill=0, width=3)
+    assert len(system_finder.page_systems(page)) == 3
+
+
 def _scan(page, paper, lines, dark=40, grain=0.0, seed=4):
     """`page` as a scan: paper at `paper`, staff lines at `lines`, barlines and words
     at `dark`, with Gaussian grain of `grain` grey levels."""
