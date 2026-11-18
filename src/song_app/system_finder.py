@@ -69,8 +69,10 @@ def _page_from_homr(
 
 
 def _ask_homr(pdf_path, page, engine, dpi, log, timeout, gpu) -> List[SystemBounds]:
-    command = _engine_command(engine) + ["--gpu", gpu] + [
+    command = _engine_command(engine) + [
         pdf_path,
+        "--gpu",
+        gpu,
         "--find-system-bounds",
         "--system-page",
         str(page),

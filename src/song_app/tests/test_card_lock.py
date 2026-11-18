@@ -65,7 +65,7 @@ def test_a_singer_rests_the_card_after_the_last_one(card):
     slept, said = [], []
     with gpu_card.hold(said.append, sleep=slept.append):
         pass
-    assert len(slept) == 1 and 35 < slept[0] <= 40
+    assert len(slept) == 1 and 35 < slept[0] <= 40.01   # the stamp is kept to the millisecond
     assert said and said[0].startswith("letting the graphics card rest")
 
 
