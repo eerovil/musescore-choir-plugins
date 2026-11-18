@@ -14,7 +14,7 @@ developers are listed under *Behind the scenes*.
   plain voice), and so is the score you download for a song cleaned earlier. MuseScore 4 took
   these parts for a piano and put a dynamic added there below the staff, over the words; now it
   goes above. The sound is not changed. Dynamics already in an older score keep their side.
-  (#481)
+  (#497)
 
 - Behind the scenes: `scripts/` is a regular package, so the tests import its scripts even
   where another project's `scripts` package is on the path. (#475)
