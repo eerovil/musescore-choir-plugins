@@ -173,6 +173,8 @@ async function renderLibrary() {
 let resingTimer = null;
 const RESING_BUSY_MS = window.RESING_BUSY_MS || 10000;   // a test may set these first
 const RESING_IDLE_MS = window.RESING_IDLE_MS || 60000;
+const TRY_POLL_MS = window.TRY_POLL_MS || 3000;   // a Try that is singing (#510)
+const SING_POLL_MS = window.SING_POLL_MS || 5000; // Sing and publish while it runs
 
 // "14:32" today, "Oct 21 14:32" another day.
 function when(t) {
@@ -3403,9 +3405,46 @@ function pronunciationSection(P) {
       .catch((e) => { body.replaceChildren(el("p", { className: "hint err" }, e.message)); });
   });
   const say = (r) => `“${r.say}”${r.as_in ? `, as in ${r.as_in}` : ""}`;
+  // Try (#510): sing one part over a few bars with the saved readings and play it here. The
+  // result box outlives a redraw (a save draws the list again).
+  const tryOut = el("div", { className: "pron-try-out", "data-pron-try-out": "", hidden: true });
+  let saveFirst = null;   // the current draw's save, when it has unsaved changes
+  let tryTimer = null;
+  const showTry = (st) => {
+    clearTimeout(tryTimer);
+    tryOut.hidden = st.state === "none";
+    const what = `${st.part}, bar${st.first === st.last ? ` ${st.first}` : `s ${st.first}-${st.last}`}`;
+    if (st.state === "waiting" || st.state === "singing") {
+      tryOut.replaceChildren(el("p", { className: "hint" },
+        `${st.state === "waiting" ? "Waiting for the graphics card" : "Singing"}… (${what})`));
+      tryTimer = setTimeout(() => { if (box.isConnected) pollTry(); }, TRY_POLL_MS);
+    } else if (st.state === "done") {
+      tryOut.replaceChildren(
+        el("p", { className: "hint" }, `${what}: music ${st.music ?? "?"} s, sung in ${st.took ?? "?"} s`),
+        el("audio", { controls: true, src: `${P}/sing/try/${encodeURIComponent(st.mp3)}?id=${st.id}` }));
+    } else if (st.state === "failed") {
+      tryOut.replaceChildren(el("p", { className: "hint err" }, `The try of ${what} failed:`),
+        el("pre", { className: "log" }, (st.log || []).join("\n") || "no output"));
+    }
+  };
+  const pollTry = () => getJSON(`${P}/sing/try`).then(showTry)
+    .catch((e) => { tryOut.hidden = false; tryOut.replaceChildren(el("p", { className: "hint err" }, e.message)); });
+  const startTry = async (part, first, last) => {
+    tryOut.hidden = false;
+    try {
+      if (saveFirst) {
+        tryOut.replaceChildren(el("p", { className: "hint" }, "Saving…"));
+        if (!(await saveFirst())) { tryOut.hidden = true; return; }
+      }
+      tryOut.replaceChildren(el("p", { className: "hint" }, "Starting…"));
+      showTry(await postJSON(`${P}/sing/try`, { part, first, last }));
+    } catch (e) { tryOut.replaceChildren(el("p", { className: "hint err" }, e.message)); }
+  };
+  box.addEventListener("toggle", () => { if (box.open) pollTry(); }, { once: true });
   function draw(reply) {
+    saveFirst = null;
     const note = el("span", { className: "hint save-note" }, "");
-    const unsaved = () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; };
+    const unsaved = () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; saveFirst = doSave; };
     const langName = Object.fromEntries((reply.languages || []).map((l) => [l.code, l.name]));
     const byWord = {};
     for (const row of reply.places) (byWord[row.word] ||= []).push(row);
@@ -3438,7 +3477,10 @@ function pronunciationSection(P) {
           ...words.flatMap((w, i) => [i === row.at ? el("strong", {}, w) : w, " "]));
         return el("div", { className: "pron-row row" },
           el("span", { className: "pron-place" }, `Bar ${row.bar}${row.n > 1 ? ` (${row.n}.)` : ""}`),
-          line, el("span", { className: "hint" }, row.parts.join(", ")), pick);
+          line, el("span", { className: "hint" }, row.parts.join(", ")), pick,
+          el("button", { className: "pron-try", "data-pron-try": `${row.bar}:${row.word}`,
+            title: `Sing ${row.parts[0]} in bar ${row.bar} with the saved readings`,
+            onclick: () => startTry(row.parts[0], row.bar, row.bar) }, "▶ Try"));
       });
       all.addEventListener("input", unsaved);
       return el("div", { className: "pron-word" },
@@ -3494,12 +3536,13 @@ function pronunciationSection(P) {
       el("strong", {}, "A reading in the voice's own sounds"),
       el("p", { className: "hint" }, "For a word in any language the song sings, everywhere in this song. Choose the language the word is sung in: a Latin refrain in a Finnish song is Latin."),
       el("div", { className: "row" }, newWord, newLang, newSounds), soundList);
-    const save = el("button", { className: "pron-save", onclick: async () => {
+    // true once saved (the list is drawn again), false when refused (said beside the button)
+    async function doSave() {
       if (newWord.value.trim() || newSounds.value.trim()) {
         if (!newLang.value || !newWord.value.trim() || !newSounds.value.trim()) {
           note.className = "hint save-note err";
           note.textContent = "Give the word, the language it is sung in and its sounds.";
-          return;
+          return false;
         }
       }
       const places = placeSelects.filter(([, pick]) => pick.value)
@@ -3514,15 +3557,33 @@ function pronunciationSection(P) {
       const langs = [...new Set(["en", ...(reply.saved || []).map((c) => c.lang), ...Object.keys(every), ...stale.map((c) => c.lang)])];
       try {
         draw(await postJSON(`${P}/pronunciation`, { places: [...places, ...stale], everywhere: every, langs }));
-      } catch (e) { note.className = "hint save-note err"; note.textContent = e.message; }
-    } }, "Save pronunciation");
+        return true;
+      } catch (e) { note.className = "hint save-note err"; note.textContent = e.message; return false; }
+    }
+    const save = el("button", { className: "pron-save", onclick: doSave }, "Save pronunciation");
+    // any other word: a part and the bars to sing
+    const tryPart = el("select", { "data-pron-try-part": "" },
+      ...(reply.parts || []).map((n) => el("option", { value: n }, n)));
+    const tryFirst = el("input", { type: "number", min: 1, value: 1, style: "width:5em", "data-pron-try-first": "" });
+    const tryLast = el("input", { type: "number", min: 1, value: 1, style: "width:5em", "data-pron-try-last": "" });
+    const tryBars = el("div", { className: "pron-try-bars" },
+      el("strong", {}, "Try bars"),
+      el("div", { className: "row" }, tryPart, el("span", { className: "hint" }, "bars"), tryFirst,
+        el("span", { className: "hint" }, "to"), tryLast,
+        el("button", { className: "pron-try", "data-pron-try-bars": "",
+          onclick: () => {
+            const first = Number(tryFirst.value), last = Math.max(first, Number(tryLast.value) || first);
+            startTry(tryPart.value, first, last);
+          } }, "▶ Try")),
+      el("p", { className: "hint" }, "Sings this part over these bars with the saved readings."));
     body.replaceChildren(
       el("p", { className: "hint", "data-pron-english": "" }, reply.english_note ? reply.english_note
         : groups.length
         ? "English words the dictionary reads more than one way. Choose the reading the song means; until you do, the dictionary's is sung."
         : "No English word in the lyrics has two readings."),
       staleBox, ...groups, savedBox, addBox,
-      el("div", { className: "row" }, save, note));
+      el("div", { className: "row" }, save, note),
+      ...(reply.parts?.length ? [tryBars] : []), tryOut);
   }
   return box;
 }
@@ -3577,20 +3638,12 @@ function publishSection(P, song, refresh, settings, saveNote) {
     sungNote.querySelector("p").textContent = `The ${choirName(c)} list has a sung version of this song. `
       + "Publishing from here sends piano only and would replace it.";
   };
-  // To keep the voices, sing it again instead: the command a person can copy.
-  const singCommand = (c) => `.venv/bin/python sing_song.py ${song.slug} --publish ${c}`;
   const offerPianoOnly = (detail) => {
-    const cmd = el("input", { type: "text", readOnly: true, className: "publish-sing-cmd",
-      value: singCommand(detail.choir), style: "width:100%", onfocus: (e) => e.target.select() });
-    // One red line and the button; how to keep it sung is folded away (#500),
-    // since nearly every live song is sung and this shows for most of them.
+    // One red line and the button; keeping it sung is the Sing and publish button (#510).
     sungNote.replaceChildren(el("p", { className: "hint err" }),
       el("button", { className: "publish-piano-only", onclick: () => go(detail.choir, true) },
         "Replace with piano only"),
-      el("details", { className: "publish-keep-sung" },
-        el("summary", {}, "Keep it sung instead"),
-        el("p", { className: "hint" }, "Publish by singing it again, on the host:"),
-        cmd));
+      el("p", { className: "hint publish-keep-sung" }, "To keep it sung, use Sing and publish instead."));
     sungNote.dataset.choir = detail.choir;
     sungText(detail.choir);
     sungNote.hidden = false;
@@ -3654,11 +3707,56 @@ function publishSection(P, song, refresh, settings, saveNote) {
       if (!choir.value) { status.className = "hint publish-status err"; status.textContent = "Choose a choir first."; return; }
       go(choir.value, false);
     } }, site ? "Publish again" : "Publish");
+  // Sing and publish (#510): sing_song.py --publish <choir> as its own systemd unit, so a
+  // deploy restart does not cut it off. Polled while it runs.
+  const singStatus = el("p", { className: "hint sing-status", hidden: true });
+  const singBtn = el("button", { className: "sing-btn", disabled: !song.publish_configured,
+    onclick: async () => {
+      if (!choir.value) { status.className = "hint publish-status err"; status.textContent = "Choose a choir first."; return; }
+      singBtn.disabled = true;
+      try {
+        await postJSON(`${P}/publish-settings`, settings());   // the run reads the saved settings
+        saveNote.textContent = "";
+        showRun(await postJSON(`${P}/sing`, { choir: choir.value }));
+      } catch (e) {
+        singStatus.hidden = false; singStatus.className = "hint sing-status err"; singStatus.textContent = e.message;
+        singBtn.disabled = false;
+      }
+    } }, "Sing and publish");
+  const stopBtn = el("button", { className: "sing-stop", hidden: true, onclick: async () => {
+    stopBtn.disabled = true;
+    try { showRun(await postJSON(`${P}/sing/stop`, {})); }
+    catch (e) { singStatus.className = "hint sing-status err"; singStatus.textContent = e.message; }
+    stopBtn.disabled = false;
+  } }, "Stop singing");
+  let singTimer = null;
+  const RUNNING = ["starting", "waiting", "bundle", "singing", "publishing"];
+  function showRun(st) {
+    clearTimeout(singTimer);
+    const going = RUNNING.includes(st.state);
+    singBtn.disabled = !song.publish_configured || going;
+    stopBtn.hidden = !going;
+    singStatus.hidden = st.state === "none";
+    if (st.state === "none") return;
+    let text, kind = "";
+    if (st.state === "starting") text = `Starting the singer for ${choirName(st.choir)}…`;
+    else if (st.run) [text, kind] = runText({ ...st.run, state: st.state });
+    else text = `Singing failed: ${(st.log || []).slice(-1)[0] || "the run ended without a word"}`;
+    if (st.state === "failed" && st.run) text = `Singing failed ${when(st.run.finished || st.run.updated)}: ${st.run.error || "no reason given"}`;
+    if (st.state === "done" && st.run?.choirs?.length) { text = `Sung and published ${when(st.run.finished)} (${st.run.choirs.join(", ")})`; kind = "good"; }
+    if (st.state === "failed" && !st.run && st.log?.length) kind = "warn";
+    singStatus.className = `hint sing-status ${kind === "warn" || st.state === "failed" ? "err" : ""}`;
+    singStatus.textContent = text;
+    if (going) singTimer = setTimeout(() => { if (singBtn.isConnected) poll(); }, SING_POLL_MS);
+  }
+  const poll = () => getJSON(`${P}/sing`).then(showRun).catch(() => {});
+  if (song.publish_configured) poll();
   return el("div", { className: "publish-section" },
     el("h3", {}, "Stemmanauhat site"),
     el("label", {}, "Choir"),
-    el("div", { className: "row" }, choir, btn),
+    el("div", { className: "row" }, choir, btn, singBtn, stopBtn),
     choirNote,
     status,
+    singStatus,
     sungNote);
 }

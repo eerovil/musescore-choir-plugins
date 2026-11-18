@@ -2976,9 +2976,11 @@ The flow is `docs/pdf-to-practice-track.md`. What is particular to this host:
 - The running app is at `http://localhost:8123` (`song-app.service`); drive it through its API.
 - Run `sing_song.py` as a background command in your own chat (a few minutes on the card),
   not as an `agentdeck job`: the job queue's one heavy slot is shared with other projects' tests,
-  and singing needs the card, not the processor (eerovil/eeron-omat-taskit#123). Check the card
-  is free first, pause 60 s between songs (a continuous run crashed the old GTX 970 and needed a
-  reboot), and split a long batch into runs under 2 hours, the background command's limit.
+  and singing needs the card, not the processor (eerovil/eeron-omat-taskit#123). The card lock
+  (`src/gpu_card.py`, #510) makes a singer wait for the card and rest 60 s after the last one (a
+  continuous run crashed the old GTX 970 and needed a reboot), so runs can be started back to
+  back; split a long batch into runs under 2 hours, the background command's limit. A person
+  starts one from the app instead: Publish panel, *Sing and publish*.
   Give it the desktop's `DISPLAY` and `XAUTHORITY` (`systemctl --user show-environment`):
   MuseScore needs a screen even to export.
 - Every live Finnish song has AI-sung parts (eeron-omat-taskit#36): a new song is done when it
@@ -3009,8 +3011,8 @@ voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s t
 `publish.publish` as `Bundle.sung`. A publish that sends piano only (`--no-sing --publish`, or the app's
 Publish) is refused, exit 3, when the site already has a sung version for that choir, checked
 against the site's own row right before writing it; `--piano-over-sung` (the panel's "Publish
-piano only" after it asks) replaces it (#483); the panel then also shows the `sing_song.py --publish`
-line that keeps it sung. Each publish writes under its own version prefix (time plus six hex
+piano only" after it asks) replaces it (#483); the panel then points at *Sing and publish*, which
+keeps it sung (#510). Each publish writes under its own version prefix (time plus six hex
 characters), so a refused one deletes only its own files. `--try PART:A-B` sings bars A to B of one part
 (the first pass through them, so a repeat is not sung twice; `check_onsets.py` then checks only
 the notes starting in that phrase) and stops, to listen to a phrase before a whole run: it writes `try/<n>-<Name>-bars-A-B.mp3`
@@ -3033,6 +3035,27 @@ Stdlib only, so the app's service can run it as a file. One pod per job kind (`h
 minutes. Every step is a short `kubectl exec`, retried, because eero-pc's long streams were
 cut (#103). The reader builds its homr venv from this host's pins and checks it file by file.
 `src/kube_runner/tests/` runs it against a fake cluster.
+
+**Singing from the app** (#510, `song_app/sing_run.py`, diagram `docs/diagrams/sing-from-the-app.md`).
+The Publish panel's *Sing and publish* (`POST /sing {choir}`, `GET /sing`, `POST /sing/stop`) runs
+`sing_song.py <slug> --publish <choir>` with the panel's saved settings, and the Pronunciation
+list's *Try* (`POST /sing/try {part, first, last}`, `GET /sing/try`, `GET /sing/try/<mp3>`) runs
+`--try PART:A-B` and plays the MP3 in the page. Neither sings in the app's process: each is a
+transient systemd user unit (`sing-<slug>`, `sing-<slug>-try`, `RuntimeMaxSec=3h`) running off a
+snapshot of HEAD in `/var/tmp/sing-code/<sha>/` (`SING_CODE_DIR`), so a deploy restart or a merge
+mid-run changes nothing; the desktop's `DISPLAY`/`XAUTHORITY` come from `systemctl --user
+show-environment`, and a `REMOTE_RUNNER` inside the checkout is pointed into the snapshot. The app
+writes nothing in `songs/`: `app.json`, `run.log` and `try/<id>/` (the last 3 tries) live under
+`progress.state_dir(slug)`, `~/.local/state/musescore-choir-plugins/sing/<slug>/`
+(`SING_STATE_DIR` in tests). A run's `.sing-run.json` is matched to the app's run by `run_id`
+(`SING_RUN_ID`). One full run of a song at a time is `sing_song.py`'s song lock
+(`progress.run_lock`); a start is refused (409) while it is held, the unit is active, or a job that
+writes the song runs. **The card lock** (`src/gpu_card.py`): a singer holds a `flock` on
+`~/.local/state/musescore-choir-plugins/card.lock` while it sings and waits for it otherwise
+(the panel says "Waiting for the graphics card"), resting 60 s after the last singer; a homr read
+takes the card only when it is free and otherwise reads on the processor, never waiting inside its
+heavy slot. Tests: `test_card_lock.py`, `test_sing_api.py` (a fake `systemd-run` on `PATH`),
+`test_sing_ui.py`.
 
 **Re-sings** (#453): `SINGER_VERSION` in `sing_ufr.py` is bumped when the singing rules change; a
 sung publish records it as `singer_version` on that choir's publish record, and a run writes its

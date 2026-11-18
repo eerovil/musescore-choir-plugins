@@ -25,6 +25,7 @@ from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_st
                state, system_finder, verification)
 from . import clean_backup
 from . import resing
+from . import sing_run
 from src.sing_song import places as song_places
 from src.sing_song import languages
 from src.sing_song import language_check
@@ -2254,7 +2255,8 @@ def api_pronunciation(slug: str) -> Dict:
             "stale": song_places.stale(choices, cleaned), "language": song.language,
             "languages": [{"code": c, "name": n} for c, n in languages.names().items()
                           if c in languages.sung_by_g2p()],
-            "pack": pack, "note": None if pack is not None else NO_PACK, "english_note": english_note}
+            "pack": pack, "note": None if pack is not None else NO_PACK, "english_note": english_note,
+            "parts": [p.name for p in lyric_txt.lyric_parts(etree.parse(cleaned).getroot())]}
 
 
 @app.post("/api/songs/{slug}/pronunciation")
@@ -2291,6 +2293,88 @@ def api_pronunciation_save(slug: str, body: Dict = None) -> Dict:
         song_places.save(song.dir, {"places": kept + chosen, "everywhere": {**kept_every, **everywhere}})
     reply = api_pronunciation(slug)
     return reply
+
+
+# --------------------------------------------------------------------------
+# Singing from the app (#510): Sing and publish, and Try in Pronunciation. Each run is
+# sing_song.py in a systemd user unit off a pinned snapshot of the code (sing_run.py).
+
+@app.post("/api/songs/{slug}/sing")
+def api_sing(slug: str, body: Dict = None) -> Dict:
+    """Sing every part and publish to one choir: {"choir": id}. 409 while this song sings, or
+    while a job writes it; 502 when the unit could not be started."""
+    song = _require(slug)
+    choir = str((body or {}).get("choir") or "")
+    if not re.fullmatch(r"[\w-]+", choir):
+        raise HTTPException(400, "Choose a choir first.")
+    if publish.Config.from_env() is None:
+        raise HTTPException(400, publish.MISSING_CONFIG)
+    _cleaned_or_400(song)
+    if _publish_busy(song):
+        raise HTTPException(409, "A job is working on this song; sing once it is done.")
+    reason = sing_run.busy_reason(slug)
+    if reason:
+        raise HTTPException(409, reason)
+    try:
+        record = sing_run.start(slug, choir)
+    except sing_run.StartError as exc:
+        raise HTTPException(502, f"Could not start singing: {exc}")
+    hub.emit(slug, {"type": "state"})
+    return record
+
+
+@app.get("/api/songs/{slug}/sing")
+def api_sing_status(slug: str) -> Dict:
+    song = _require(slug)
+    return sing_run.status(slug, song.dir)
+
+
+@app.post("/api/songs/{slug}/sing/stop")
+def api_sing_stop(slug: str) -> Dict:
+    song = _require(slug)
+    try:
+        sing_run.stop(sing_run.unit(slug))
+    except sing_run.StartError as exc:
+        raise HTTPException(502, str(exc))
+    return sing_run.status(slug, song.dir)
+
+
+@app.post("/api/songs/{slug}/sing/try")
+def api_sing_try(slug: str, body: Dict = None) -> Dict:
+    """Sing one part over bars first..last with the saved readings: {"part", "first", "last"}.
+    Writes nothing in the song; 409 while a trial of this song runs."""
+    song = _require(slug)
+    body = body or {}
+    part = str(body.get("part") or "").strip()
+    try:
+        first, last = int(body.get("first")), int(body.get("last") or body.get("first"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Give the part and the first and last bar.")
+    if not part or ":" in part or first < 1 or last < first:
+        raise HTTPException(400, "Give the part and the first and last bar.")
+    _cleaned_or_400(song)
+    if sing_run.active(sing_run.unit(slug, True)):
+        raise HTTPException(409, "A try of this song is still singing.")
+    try:
+        sing_run.start_try(slug, part, first, last)
+    except sing_run.StartError as exc:
+        raise HTTPException(409, f"Could not start the try: {exc}")
+    return sing_run.try_status(slug)
+
+
+@app.get("/api/songs/{slug}/sing/try")
+def api_sing_try_status(slug: str) -> Dict:
+    _require(slug)
+    return sing_run.try_status(slug)
+
+
+@app.get("/api/songs/{slug}/sing/try/{name}")
+def api_sing_try_mp3(slug: str, name: str):
+    _require(slug)
+    path = sing_run.try_mp3(slug, name)
+    if not path:
+        raise HTTPException(404, "No such try")
+    return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/songs/{slug}/publish-settings")

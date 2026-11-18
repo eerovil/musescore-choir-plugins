@@ -55,6 +55,11 @@ stage at any time; redoing one clears only what depended on it.
    and the composer, lyricist and arranger the site shows, then press *Publish*.
    The site gets the score, its MIDI and a timing file; publishing again replaces
    the song there. Part names follow the same rule as Clean: S2b, not S2-2.
+   *Sing and publish* sings every part with the AI voices and publishes the
+   song with them; it takes a few minutes a part, shows how far it is and can
+   be stopped. Under *Pronunciation*, *▶ Try* sings one part over a few bars
+   with the readings chosen there and plays it in the page. Both need the
+   singer installed (`scripts/install-singer.sh`).
 
 <img src="docs/images/scan.png" width="400" alt="Scan stage: proposed system bands drawn over the page"> <img src="docs/images/review.png" width="400" alt="Review stage with the original PDF beside it">
 

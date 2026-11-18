@@ -2,7 +2,7 @@
 
 What the Publish panel shows once a choir is chosen, as changed by #500.
 Nearly every live song is sung, so the warning is on screen for most songs; it
-keeps it to one red line and a button, with the sing command folded away.
+keeps it to one red line and a button, and a line pointing at Sing and publish (#510).
 
 ```mermaid
 flowchart TD
@@ -10,7 +10,7 @@ flowchart TD
     sung -- No --> plain[Publish button only]
     sung -- Yes --> line[One red line: publishing sends piano only]
     line --> replace[Replace with piano only button]
-    line --> keep[Folded: Keep it sung - the sing_song.py command]
+    line --> keep[To keep it sung: the Sing and publish button]
     plain --> press[Publish pressed]
     press --> server{Server finds a sung row?}
     server -- No --> done[Published]
@@ -24,7 +24,7 @@ flowchart TD
 
 ## Colours
 
-- **amber**: changed by #500
+- **amber**: changed by #500 (the keep-it-sung box by #510)
 - **rose**: replaces the sung version on the site
 - **blue**: as today
 
@@ -32,5 +32,5 @@ flowchart TD
 
 - **One red line: publishing sends piano only**: `publishSection` in `static/app.js`, `sungText`. Red: `style.css` gives `.hint.err` the `--bad` colour (it had none, so it showed grey).
 - **App knows of a sung version for it?**: `showSung` in `static/app.js`: the app recorded a sung publish for that choir, or the last publish was refused with `sung_on_site`. A sung version only the site has shows after Publish is refused.
-- **Folded: Keep it sung - the sing_song.py command**: `details.publish-keep-sung`; it was an always-open hint and a text box under the button.
+- **To keep it sung: the Sing and publish button**: `p.publish-keep-sung`. #500 folded the `sing_song.py` command to copy here; #510 replaced it with the button, which runs that command.
 - **Server finds a sung row?**: `publish.publish` reads the site's own row right before writing (#483) and answers 409 `sung_on_site`.
