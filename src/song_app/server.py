@@ -8,6 +8,7 @@ import os
 import subprocess
 import tempfile
 import traceback
+import urllib.parse
 from typing import Dict, List, Optional, Set
 
 import dotenv
@@ -169,6 +170,11 @@ def _derived(song: state.Song) -> Dict:
         "has_pdf": bool(pdf and os.path.exists(pdf)),
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
         "needs_initial_bpm": needs_initial_bpm,
+        # the score's printed rit./accel. marks, for the Publish panel (#483)
+        "gradual_marks": pipeline.gradual_marks(
+            cleaned, (song.data.get("publish") or {}).get("tempo_changes"),
+            (song.data.get("publish") or {}).get("bpm"))
+        if cleaned and os.path.exists(cleaned) else [],
         # Printed-system bounds, labelled with the measures they cover: what lets
         # the viewer show one system and the lyric editor ask per system.
         "systems": systems,
@@ -530,8 +536,15 @@ def api_systems(slug: str) -> Dict:
     xml = song.source_path("xml")
     if not xml:
         raise HTTPException(400, "No source file")
-    mscx = pipeline.convert_to_mscx(xml, song.dir)
-    return {"grid": pipeline.system_grid(mscx)}
+    try:
+        mscx = pipeline.convert_to_mscx(xml, song.dir)
+    except RuntimeError as exc:
+        # MuseScore refused the input; say why rather than a bare 500 (#481).
+        raise HTTPException(422, str(exc))
+    # The bars whose voices run past the barline, read off the converted file on
+    # every load, so the Clean panel shows them on its first view and after a
+    # reload alike (#481). The clean's own log names them again as it runs.
+    return {"grid": pipeline.system_grid(mscx), "overlong": pipeline.overlong_in(mscx)}
 
 
 @app.put("/api/songs/{slug}/systems")
@@ -662,7 +675,7 @@ def api_undo_clean(slug: str) -> Dict:
 def _run_check(slug: str) -> None:
     """Run the clean's checks again on the cleaned score as it is now (#391).
 
-    A clean compares the notes against the scan and asks MuseScore 3 whether it would
+    A clean compares the notes against the scan and asks MuseScore whether it would
     open the result, and those answers hold only for the file they were made on. A
     score fixed in MuseScore, uploaded, or changed by a recorded fix showed both as
     stale, and the only way to refresh them was a re-clean, which throws the score
@@ -681,21 +694,21 @@ def _run_check(slug: str) -> None:
         log("Comparing the notes with the scan…")
         notes = verification.compare_notes(source_mscx, cleaned)
         log(notes.get("detail") or "Notes compared.")
-        log("Asking MuseScore 3 whether it opens the score…")
+        name = pipeline.checker()
+        log(f"Asking {name} whether it opens the score…")
         found = pipeline.musescore_check(cleaned)
         if found is None:
-            opens = {"status": "not_checked", "reset": [], "rejected": []}
-            log("Not checked: no MuseScore 3 answered (MUSESCORE_CLI_PATH). "
-                "MuseScore 4 does not run this check.")
+            opens = {"status": "not_checked", "reset": [], "rejected": [], "by": name}
+            log("Not checked: no MuseScore answered (MUSESCORE_CLI_PATH).")
         elif found:
-            opens = {"status": "rejected", "reset": [], "rejected": found}
-            log(f"MuseScore 3 calls this score corrupted ({len(found)} problem(s)); "
+            opens = {"status": "rejected", "reset": [], "rejected": found, "by": name}
+            log(f"{name} calls this score corrupted ({len(found)} problem(s)); "
                 "listed in the Fix panel:")
             for one in found:
                 log("  " + one["message"])
         else:
-            opens = {"status": "passed", "reset": [], "rejected": []}
-            log("MuseScore 3 opens it without calling it corrupted.")
+            opens = {"status": "passed", "reset": [], "rejected": [], "by": name}
+            log(f"{name} opens it without calling it corrupted.")
         with state.song_lock(song.slug):
             fresh = state.load(song.slug) or song
             if state.file_fingerprint(cleaned) != fingerprint:
@@ -1504,7 +1517,8 @@ def api_render(slug: str, doc: str = "cleaned"):
                 breaks = pipeline.cleaned_line_breaks(
                     song.dir, pipeline.convert_to_mscx(xml, song.dir)) or None
             tidy = True
-        rendered = pipeline.render_score_pdf(mscx, breaks, tidy=tidy)
+        rendered = pipeline.render_score_pdf(mscx, breaks, tidy=tidy,
+                                             force=doc == "original")
     except HTTPException:
         raise
     except Exception as exc:
@@ -1532,12 +1546,23 @@ def api_score_file(slug: str):
 
     `open-score` above only works for somebody sitting at this host. This is the
     other half of the same idea for everybody else: take the file to whatever
-    machine has MuseScore on it.
+    machine has MuseScore on it. Singing parts get voice instruments in the copy
+    sent (#481), so MuseScore 4 puts new dynamics above the staff; the file here is
+    not touched.
     """
     song = _require(slug)
     cleaned = _cleaned_or_400(song)
-    return FileResponse(cleaned, media_type="application/octet-stream",
-                        filename=os.path.basename(cleaned), headers=dict(REVALIDATE))
+    name = os.path.basename(cleaned)
+    copy = pipeline.score_for_download(cleaned)
+    if copy is None:
+        return FileResponse(cleaned, media_type="application/octet-stream",
+                            filename=name, headers=dict(REVALIDATE))
+    # Said the way FileResponse says it, so a name with ä in it survives.
+    quoted = urllib.parse.quote(name)
+    disposition = (f"attachment; filename*=utf-8''{quoted}" if quoted != name
+                   else f'attachment; filename="{name}"')
+    return Response(copy, media_type="application/octet-stream",
+                    headers={**REVALIDATE, "Content-Disposition": disposition})
 
 
 @app.post("/api/songs/{slug}/score-file")
@@ -1762,6 +1787,38 @@ def _places(value) -> List[Dict]:
     return out
 
 
+def _gradual(cleaned: str, value) -> List[Dict]:
+    """The Publish panel's say on the score's printed rit./accel. marks (#483):
+    `[{"measure": 30, "bpm": 50, "off": false}]`. `bpm` null eases to the default
+    (three quarters for a rit., five quarters for an accel.). A bar with no mark
+    in the score is a 400, so a setting cannot quietly point at nothing."""
+    if not isinstance(value, list):
+        raise HTTPException(400, "Gradual changes must be a list")
+    marks = {m["measure"] for m in pipeline.gradual_marks(cleaned)}
+    out: Dict[int, Dict] = {}
+    for item in value:
+        try:
+            measure = _whole_number(item.get("measure"))
+        except (AttributeError, TypeError, ValueError):
+            raise HTTPException(400, "Each rit./accel. setting needs a whole bar number") from None
+        if measure not in marks:
+            raise HTTPException(400, f"Bar {measure} has no rit. or accel. in the score")
+        bpm = item.get("bpm")
+        if bpm is not None and bpm != "":
+            try:
+                bpm = _whole_number(bpm)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"rit./accel. at bar {measure}: BPM must be "
+                                         "a whole number") from None
+            if not 20 <= bpm <= 300:
+                raise HTTPException(400, f"rit./accel. at bar {measure}: BPM must be "
+                                         "between 20 and 300")
+        else:
+            bpm = None
+        out[measure] = {"measure": measure, "bpm": bpm, "off": bool(item.get("off"))}
+    return [out[m] for m in sorted(out)]
+
+
 def _publish_settings(song: state.Song, opts: Dict) -> Dict:
     """What the site plays and shows a song with, out of a request (#400).
 
@@ -1777,6 +1834,10 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
         raise HTTPException(400, "Clean the score first")
     out: Dict = {"tempo_changes": _tempo_changes(
         cleaned, opts.get("tempo_changes", saved.get("tempo_changes", [])))}
+    if "gradual" in opts:
+        out["gradual"] = _gradual(cleaned, opts["gradual"])
+    elif "gradual" in saved:
+        out["gradual"] = saved["gradual"]
     if not pipeline.has_opening_tempo(cleaned):
         try:
             bpm = _whole_number(opts.get("bpm", saved.get("bpm", publish.DEFAULT_BPM)))
@@ -1881,8 +1942,14 @@ async def api_publish_settings(slug: str, body: Dict = None) -> Dict:
     return _derived(song)
 
 
+def _publish_records_now(slug: str) -> Dict[str, Dict]:
+    """The song's publish records as saved now, not as the job found them (#483)."""
+    with state.song_lock(slug):
+        return publish.records(_require(slug).data.get("publish") or {})
+
+
 def _run_publish(slug: str, choir: str, config: "publish.Config",
-                 choirs: Optional[List[Dict]] = None) -> None:
+                 choirs: Optional[List[Dict]] = None, piano_over_sung: bool = False) -> None:
     song = _require(slug)
     log = lambda m: _job_emit(slug, "publish", m)
     try:
@@ -1901,27 +1968,45 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
                     tempo_changes=settings.get("tempo_changes"),
                     part_names=settings.get("part_names"),
                     staff_groups=settings.get("staff_groups"),
+                    gradual=settings.get("gradual"),
                     log=slot.guard(log))
                 slot.check()
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
                 client=publish.Cloudflare(config), credits=credits,
                 published=published, choirs=choirs,
-                places=settings.get("places") or [], log=log)
+                places=settings.get("places") or [], log=log,
+                piano_over_sung=piano_over_sung,
+                records_now=lambda: _publish_records_now(slug))
         record["published_against"] = state.file_fingerprint(cleaned)
         with state.song_lock(slug):
             song = _require(slug)
             pub = song.data.setdefault("publish", {})
             sites = publish.records(pub)
-            staging = [c["id"] for c in (choirs or []) if c.get("staging")]
-            for gone in publish.replaced(choir, sites, staging):
-                del sites[gone]
-            sites[choir] = record
+            if record.pop("live", True):
+                staging = [c["id"] for c in (choirs or []) if c.get("staging")]
+                for gone in publish.replaced(choir, sites, staging):
+                    del sites[gone]
+                sites[choir] = record
+            else:
+                # Another publish wrote the site's row after this one (#483): its
+                # record, not this one, says what the site serves.
+                log("Another publish replaced this one before it was recorded; "
+                    "its record was not saved.")
             # One record per choir (#384): a song can be in public and one choir at once.
             pub.pop("site", None)
             pub.update({"sites": sites, "choir": choir, "error": None})
             song.save()
         _job_finish(song, "publish")
+    except publish.SungOnSite as exc:
+        # Kept as a kind, not a sentence, so the panel can offer the confirm (#483).
+        error = {"kind": exc.kind, "choir": exc.choir, "message": str(exc)}
+        with state.song_lock(slug):
+            song = _require(slug)
+            song.data.setdefault("publish", {}).update({"error": error, "choir": choir})
+            song.save()
+        _job_emit(slug, "publish", str(exc), "error")
+        _job_finish(song, "publish", str(exc))
     except Exception as exc:
         traceback.print_exc()
         with state.song_lock(slug):
@@ -1965,6 +2050,16 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     # to publish against, and the upload would fail anyway.
     if not choir:
         raise HTTPException(400, "Choose a choir first.")
+    # The app publishes piano only (#483): a sung version this app recorded for the
+    # choir is not replaced unless the panel's confirm says so. The job checks the
+    # site itself too, since a sung version may have come from elsewhere.
+    piano_over_sung = bool(body.get("piano_only"))
+    if not piano_over_sung:
+        with state.song_lock(slug):
+            recorded = publish.records(_require(slug).data.get("publish") or {}).get(choir) or {}
+        if recorded.get("sung"):
+            raise HTTPException(409, {"kind": publish.SungOnSite.kind, "choir": choir,
+                                      "message": publish.sung_message(choir)})
     if _publish_busy(song):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
@@ -1991,7 +2086,7 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         song.data.setdefault("publish", {}).update(settings)
         song.save()
     asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config,
-                                               listing["choirs"])
+                                               listing["choirs"], piano_over_sung)
     return {"started": True}
 
 

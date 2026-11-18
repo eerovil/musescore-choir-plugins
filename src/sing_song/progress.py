@@ -7,7 +7,12 @@ songs/<slug>/.sing-run.json, written whole (by rename) at every step. The song l
      "started": t, "updated": t, "finished": t, "pid": n, "version": SINGER_VERSION,
      "choirs": [...], "remote": true when only the remote runner sings (--remote-only),
      "sing": false for a piano-only run (--no-sing), which is no re-sing,
-     "part": i, "parts": n, "part_name": "T2", "choir": "jm", "error": "..."}
+     "part": i, "parts": n, "part_name": "T2", "choir": "jm", "error": "...",
+     "choir_outcomes": {"jm": "published" | "refused-sung" | "failed" | "not-tried"}}
+
+A piano-only run does not replace a sung version on the site without --piano-over-sung
+(#483), so one choir of several may be refused while the others are published;
+"choir_outcomes" says which.
 
 Stdlib only: the app imports it too.
 """
@@ -83,20 +88,32 @@ def read(song_dir):
 class Run:
     """One sing_song.py run's record, kept up to date as it goes."""
 
-    def __init__(self, song_dir, choirs=(), version=None, remote=False, sing=True):
+    def __init__(self, song_dir, choirs=(), version=None, remote=False, sing=True, kept=True):
         self.song_dir = song_dir
+        self.kept = kept   # False: nothing is written (a --try phrase, #483)
         self.lock = threading.Lock()   # the singers here and on the runner report from two threads
         self.record = {"state": "bundle", "started": time.time(), "pid": os.getpid(),
                        "version": version, "choirs": list(choirs), "remote": bool(remote),
                        "sing": bool(sing)}
+        self.finished = False
+
+    def choir_outcome(self, choir, outcome):
+        """How publishing to `choir` went: published, refused-sung, failed or not-tried."""
+        with self.lock:
+            outcomes = dict(self.record.get("choir_outcomes") or {}, **{choir: outcome})
+        self.step(self.record["state"], choir_outcomes=outcomes)
 
     def step(self, state, **fields):
         with self.lock:
             self.record = dict(self.record, state=state, **fields)
-            if os.path.isdir(self.song_dir):
+            if self.kept and os.path.isdir(self.song_dir):
                 write(self.song_dir, self.record)
 
     def finish(self, error=None):
+        """End the record; only the first call counts, so a run that said why it stopped keeps it."""
+        if self.finished:
+            return
+        self.finished = True
         if error is None:
             self.step("done", finished=time.time())
         else:
