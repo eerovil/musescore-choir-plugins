@@ -772,8 +772,11 @@ Key test modules:
   clean held its start-of-run copy for minutes and saved it whole, erasing the publish record
   `sing_song.py --publish` wrote meanwhile. `state.load` remembers what it read (`_base`), and
   `Song.save` re-reads the file under the lock and writes only the top-level records this copy
-  changed since then, whole; `publish` and `publish.sites` (`state.MERGED`) are merged a key
-  deeper, so the panel's settings and a CLI's choir record both survive. Take another copy's
+  changed since then, whole; `publish`, `publish.sites`, `scan.systems` and
+  `scan.answered_against` (`state.MERGED`) are merged a key deeper, so the panel's settings and a
+  CLI's choir record both survive, and a scan's band save keeps a grid answer stamped meanwhile.
+  `GET /systems` returns each system's reading (`stamps`) and the grid's `PUT` sends them back:
+  answers about a system read again since the grid loaded are refused (409). Take another copy's
   data with `song.adopt(fresh)`, never `song.data = fresh.data`, which drops the base and saves
   whole. `song_lock` is re-entrant and also takes an `flock` under
   `~/.local/state/musescore-choir-plugins/song-locks/` (the home from `pwd`, not `$HOME`), so

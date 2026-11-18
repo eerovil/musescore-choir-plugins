@@ -83,8 +83,10 @@ log = logging.getLogger(__name__)
 # (`{checked_against, issues}`) is written by one writer as one unit, and stitching
 # it from two would make a record nobody wrote. `publish` holds the Publish panel's
 # settings beside the publish job's `sites`, and `sites` one record per choir, each
-# written by a different writer (the app, `sing_song.py --publish`).
-MERGED = {"publish": {"sites": {}}}
+# written by a different writer (the app, `sing_song.py --publish`). `scan` holds
+# one fragment and one answer stamp per system: a scan saves after each band from
+# its start-of-run copy, and must not erase a stamp a grid save wrote meanwhile.
+MERGED = {"publish": {"sites": {}}, "scan": {"systems": {}, "answered_against": {}}}
 
 _MISSING = object()
 

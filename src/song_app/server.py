@@ -544,18 +544,38 @@ def api_systems(slug: str) -> Dict:
     # The bars whose voices run past the barline, read off the converted file on
     # every load, so the Clean panel shows them on its first view and after a
     # reload alike (#481). The clean's own log names them again as it runs.
-    return {"grid": pipeline.system_grid(mscx), "overlong": pipeline.overlong_in(mscx)}
+    grid = pipeline.system_grid(mscx)
+    # Which reading of each system this grid shows. The panel sends them back
+    # with its answers, so answers typed against a system read again since the
+    # grid was loaded are refused rather than stamped onto the new reading (#498).
+    stamps = scan.fragment_stamps(song, range(len(grid)))
+    return {"grid": grid, "overlong": pipeline.overlong_in(mscx),
+            "stamps": {str(i): stamp for i, stamp in stamps.items()}}
 
 
 @app.put("/api/songs/{slug}/systems")
 def api_save_systems(slug: str, answers: Dict = None) -> Dict:
-    """Persist grid answers: {system_index: {staff_id: 'T1,T2'}}."""
+    """Persist grid answers.
+
+    The body is `{"answers": {system_index: {staff_id: 'T1,T2'}}, "stamps":
+    {system_index: reading}}`, the stamps being what `GET /systems` said the grid
+    showed. A bare answers mapping is still taken, checked against the readings
+    as this request found them.
+    """
     song = _require(slug)
+    body = answers or {}
+    client_stamps = body.get("stamps") if isinstance(body.get("answers"), dict) else None
+    if isinstance(body.get("answers"), dict):
+        body = body["answers"]
     parsed = {int(si): {int(sid): v for sid, v in staves.items()}
-              for si, staves in (answers or {}).items()}
-    # The readings these answers are about: the fragments as this request found
-    # them, before the slow conversion below.
-    answered = scan.fragment_stamps(song, list(parsed))
+              for si, staves in body.items()}
+    # The readings these answers are about: the ones the grid showed when the
+    # panel loaded it, or failing that the fragments as this request found them,
+    # before the slow conversion below.
+    if isinstance(client_stamps, dict):
+        answered = {i: client_stamps.get(str(i)) for i in parsed}
+    else:
+        answered = scan.fragment_stamps(song, list(parsed))
     xml = song.source_path("xml")
     mscx = pipeline.convert_to_mscx(xml, song.dir)
     # An answer is about the staves of one scanned system, so it is derived from

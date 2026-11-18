@@ -392,3 +392,59 @@ def test_grid_answers_are_stamped_with_the_reading_they_answer(songs, monkeypatc
     assert saved == [{1: {1: "T1"}}]
     assert disk["scan"]["answered_against"] == {"1": disk["scan"]["systems"]["1"]["content"]}
     assert disk["publish"]["sites"]["jm"] == RECORD      # saved meanwhile, kept
+
+
+def _grid_patches(monkeypatch, saved):
+    monkeypatch.setattr(server, "_require", lambda slug: state.load(slug))
+    monkeypatch.setattr(pipeline, "convert_to_mscx", lambda xml, d: "x.mscx")
+    monkeypatch.setattr(pipeline, "system_grid", lambda mscx: [{}, {}, {}, {}])
+    monkeypatch.setattr(pipeline, "overlong_in", lambda mscx: [])
+    monkeypatch.setattr(pipeline, "save_system_answers", lambda m, a: saved.append(a))
+
+
+def test_grid_answers_are_refused_when_their_system_was_read_again_after_the_grid_loaded(
+        songs, monkeypatch):
+    song = _scanned(songs, monkeypatch)
+    saved = []
+    _grid_patches(monkeypatch, saved)
+    stamps = server.api_systems(song.slug)["stamps"]
+    assert stamps["1"] == _disk(song)["scan"]["systems"]["1"]["content"]
+
+    _set_content(song.slug, 2, "new")       # read again while the person typed
+    with pytest.raises(server.HTTPException) as err:
+        server.api_save_systems(song.slug, {"answers": {"1": {"1": "T1"}, "2": {"1": "B1"}},
+                                            "stamps": stamps})
+    assert err.value.status_code == 409
+    assert "System 2" in err.value.detail
+    assert saved == []
+
+    # A grid loaded again shows the new reading, and its answers are taken.
+    stamps = server.api_systems(song.slug)["stamps"]
+    server.api_save_systems(song.slug, {"answers": {"2": {"1": "B1"}}, "stamps": stamps})
+    assert saved == [{2: {1: "B1"}}]
+    assert _disk(song)["scan"]["answered_against"] == {"2": "new"}
+
+
+def test_a_scan_band_save_keeps_grid_answers_stamped_meanwhile(songs, monkeypatch):
+    reader = Reader()
+    monkeypatch.setattr(pdf_systems, "crop_systems", reader.crop)
+    song = _song(songs)
+    saved = []
+    _grid_patches(monkeypatch, saved)
+
+    def read_and_answer(image, *args, **kwargs):
+        if image.index == 2:  # system 1 is saved; answer it while 2 is read
+            # (what GET /systems would show; the song has no score to grid yet)
+            stamps = {str(i): s for i, s in
+                      scan.fragment_stamps(state.load(song.slug), [1]).items()}
+            server.api_save_systems(song.slug, {"answers": {"1": {"1": "T1"}},
+                                                "stamps": stamps})
+        return reader.read_system(image, *args, **kwargs)
+
+    monkeypatch.setattr(omr_systems, "read_system", read_and_answer)
+    scan.run(song)
+
+    disk = _disk(song)
+    assert sorted(disk["scan"]["systems"]) == ["1", "2", "3"]
+    assert saved == [{1: {1: "T1"}}]
+    assert disk["scan"]["answered_against"] == {"1": disk["scan"]["systems"]["1"]["content"]}
