@@ -1576,6 +1576,19 @@ def test_a_slur_and_a_tie_ending_on_one_note_share_its_stop(tmp_path):
     assert [t.get("type") for t in root.iter("tied")] == ["start", "stop"]
 
 
+
+def test_a_dashed_slur_sharing_a_tie_s_stop_stays_dashed(tmp_path):
+    """The same shape with the slur drawn dashed (#482): the stop written for
+    it is dashed too, so the slur reads dashed at both ends."""
+    first = _slurred_system(1, 1, {(1, 1, 2): "start", (1, 1, 4): "start"})
+    _steps(first, 1, 1, "CAGA")
+    _slur_at(first, 1, 2).set("line-type", "dashed")
+    second = _slurred_system(2, 1, {(1, 1, 1): "stop"})
+    _steps(second, 1, 1, "ADEF")
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    root = etree.parse(out).getroot()
+    assert [s.get("line-type") for s in root.iter("slur")] == ["dashed", "dashed"]
+
 def _slur_at(scan_, bar, note):
     """The slur element on one note (staff 1) of a `_slurred_system`."""
     return scan_.staves[0].measures[bar - 1].findall("note")[note - 1].find("notations/slur")

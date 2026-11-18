@@ -974,6 +974,8 @@ def _join_column(part, scans, column, starts_at) -> None:
                 notations = shared.note.find("notations")
                 stop_slur = etree.SubElement(notations, "slur", type="stop")
                 _number_pair(end.slur, stop_slur)
+                if end.slur.get("line-type") == "dashed":
+                    stop_slur.set("line-type", "dashed")
                 _mark_note(end.note, "slur?")
                 continue
             _drop_loose_end(end, already_tied=_has_tie(end.note, "start"))
