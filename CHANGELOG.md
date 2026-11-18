@@ -15,8 +15,22 @@ developers are listed under *Behind the scenes*.
   one part to listen to, and publishing piano only asks before it replaces a sung version on
   the site. (#483)
 
+- MuseScore 4 can now read a scan where a voice runs past its barline. Before, it refused the
+  whole file and the staff list failed with an error blaming `MUSESCORE_CLI_PATH`. The raw scan
+  is now converted with `-f`, the Clean panel lists each over-long bar, the clean's log names
+  them too, and a cleaned score
+  is checked by the same rule when the MuseScore is 4, so the bar is reset and listed in Fix. A
+  MuseScore error now gives the reason from MuseScore's own log, and the staff list answers with
+  it instead of a server error. (#491)
+
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)
+
+- Every singing part of a cleaned score is now a voice (soprano, alto, tenor, bass, baritone, or
+  plain voice), and so is the score you download for a song cleaned earlier. MuseScore 4 took
+  these parts for a piano and put a dynamic added there below the staff, over the words; now it
+  goes above. The sound is not changed. Dynamics already in an older score keep their side.
+  (#497)
 
 - Behind the scenes: `scripts/` is a regular package, so the tests import its scripts even
   where another project's `scripts` package is on the path. (#475)

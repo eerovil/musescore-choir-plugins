@@ -1845,8 +1845,13 @@ async function panelClean(panel, song, slug, P, refresh) {
     const holder = el("div", {}, el("p", { className: "hint" }, "Loading systems…"));
     panel.append(holder);
     try {
-      const { grid } = await getJSON(`${P}/systems`);
+      const { grid, overlong = [] } = await getJSON(`${P}/systems`);
       holder.replaceChildren(
+        ...(overlong.length ? [el("div", { className: "overlong" },
+          el("p", { className: "sub" },
+            "These voices run past their barline. MuseScore 4 will not open the score " +
+            "like this, so cleaning cuts or resets these bars:"),
+          el("ul", { className: "warnlist" }, overlong.map((o) => el("li", {}, o.message))))] : []),
         el("p", { className: "hint fallbackhint" },
           "S1b sings S1's notes wherever it has none of its own; the same goes for any part name plus one small letter."),
         ...grid.map((sys) => sysBlock(sys)));
@@ -2035,13 +2040,13 @@ function sysBlock(sys) {
       rows));
 }
 
-// Run the clean's own checks again -- notes against the scan, MuseScore 3's check,
+// Run the clean's own checks again -- notes against the scan, MuseScore's check,
 // health -- on the cleaned score as it is now, without cleaning (#391). A score fixed
 // by hand showed them as stale, and a re-clean would have thrown the fixes away.
 function checkAgainButton(song, P) {
   const running = song.jobs?.check?.status === "running";
   const btn = el("button", { disabled: running, title:
-      "Compare the notes with the scan, ask MuseScore 3 whether it opens the score, "
+      "Compare the notes with the scan, ask MuseScore whether it opens the score, "
       + "and check health -- on the score as it is now. Changes nothing in the score.",
     onclick: async () => {
       btn.disabled = true;
