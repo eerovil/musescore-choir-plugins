@@ -470,6 +470,12 @@ def _answered(song: state.Song) -> Dict[str, str]:
     return song.data.get("scan", {}).get("answered_against", {})
 
 
+def fragment_stamps(song: state.Song, indices: Sequence[int]) -> Dict[int, Optional[str]]:
+    """The content stamp of each named system's fragment now (None: no fragment)."""
+    fragments = _fragments(song)
+    return {int(i): fragments.get(int(i), {}).get("content") for i in indices}
+
+
 def stamp_answers(song: state.Song, indices: Sequence[int]) -> None:
     """Record which fragment each system's grid answers were answered against."""
     if "scan" not in song.data:

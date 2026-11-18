@@ -341,3 +341,54 @@ def test_dismiss_works_on_the_record_as_it_is_now(songs, monkeypatch):
     assert health["checked_against"] == "B"
     assert health["issues"] == [{"id": "x", "status": "dismissed"},
                                 {"id": "y", "status": "open"}]
+
+
+# --- grid answers saved while a system is read again ---------------------------
+
+
+def _scanned(songs, monkeypatch):
+    reader = Reader()
+    monkeypatch.setattr(pdf_systems, "crop_systems", reader.crop)
+    monkeypatch.setattr(omr_systems, "read_system", reader.read_system)
+    song = _song(songs)
+    scan.run(song)
+    return state.load(song.slug)
+
+
+def _set_content(slug, index, stamp):
+    with state.song_lock(slug):
+        other = state.load(slug)
+        other.data["scan"]["systems"][str(index)]["content"] = stamp
+        other.save()
+
+
+def test_grid_answers_are_refused_when_their_system_was_read_again(songs, monkeypatch):
+    song = _scanned(songs, monkeypatch)
+    saved = []
+    monkeypatch.setattr(server, "_require", lambda slug: state.load(slug))
+    # The system is read again while the slow conversion runs.
+    monkeypatch.setattr(pipeline, "convert_to_mscx",
+                        lambda xml, d: _set_content(song.slug, 2, "new") or "x.mscx")
+    monkeypatch.setattr(pipeline, "save_system_answers", lambda m, a: saved.append(a))
+
+    with pytest.raises(server.HTTPException) as err:
+        server.api_save_systems(song.slug, {"1": {"1": "T1"}, "2": {"1": "B1"}})
+    assert err.value.status_code == 409
+    assert "System 2" in err.value.detail
+    assert saved == []                                   # no answers written
+    assert _disk(song)["scan"].get("answered_against", {}) == {}  # nothing stamped
+
+
+def test_grid_answers_are_stamped_with_the_reading_they_answer(songs, monkeypatch):
+    song = _scanned(songs, monkeypatch)
+    saved = []
+    monkeypatch.setattr(server, "_require", lambda slug: state.load(slug))
+    monkeypatch.setattr(pipeline, "convert_to_mscx",
+                        lambda xml, d: _sing_publishes(song.slug) or "x.mscx")
+    monkeypatch.setattr(pipeline, "save_system_answers", lambda m, a: saved.append(a))
+
+    server.api_save_systems(song.slug, {"1": {"1": "T1"}})
+    disk = _disk(song)
+    assert saved == [{1: {1: "T1"}}]
+    assert disk["scan"]["answered_against"] == {"1": disk["scan"]["systems"]["1"]["content"]}
+    assert disk["publish"]["sites"]["jm"] == RECORD      # saved meanwhile, kept

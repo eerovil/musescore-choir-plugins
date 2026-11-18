@@ -551,18 +551,29 @@ def api_systems(slug: str) -> Dict:
 def api_save_systems(slug: str, answers: Dict = None) -> Dict:
     """Persist grid answers: {system_index: {staff_id: 'T1,T2'}}."""
     song = _require(slug)
-    xml = song.source_path("xml")
-    mscx = pipeline.convert_to_mscx(xml, song.dir)
     parsed = {int(si): {int(sid): v for sid, v in staves.items()}
               for si, staves in (answers or {}).items()}
-    pipeline.save_system_answers(mscx, parsed)
+    # The readings these answers are about: the fragments as this request found
+    # them, before the slow conversion below.
+    answered = scan.fragment_stamps(song, list(parsed))
+    xml = song.source_path("xml")
+    mscx = pipeline.convert_to_mscx(xml, song.dir)
     # An answer is about the staves of one scanned system, so it is derived from
     # that system's fragment and has to say which one, or a re-scan cannot know
-    # it has invalidated it.
-    # On the state as it is now: a scan saving its bands meanwhile writes the
-    # same `scan` record, and this copy was loaded before the slow conversion.
+    # it has invalidated it. Checked and written on the state as it is now, under
+    # the lock: a system read again meanwhile has other staves, and stamping the
+    # new reading onto answers about the old one would make them look current
+    # (#498).
     with state.song_lock(slug):
         fresh = state.load(slug) or song
+        changed = sorted(i for i, stamp in scan.fragment_stamps(fresh, list(parsed)).items()
+                         if stamp != answered[i])
+        if changed:
+            raise HTTPException(
+                409, "System " + ", ".join(str(i) for i in changed)
+                + " was read again while these answers were saved. "
+                "Reload the grid and answer it again.")
+        pipeline.save_system_answers(mscx, parsed)
         scan.stamp_answers(fresh, list(parsed))
         fresh.save()
     song.adopt(fresh)
