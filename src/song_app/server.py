@@ -24,6 +24,7 @@ from . import (agentdeck, bar_readings, health, heavy_slot, homr_install, job_st
 from . import clean_backup
 from . import resing
 from src.sing_song import places as song_places
+from src.sing_song import language_check
 from src.sing_song import progress
 from src.clean_score.utils.score_fixes import FixError
 from src.score_export.score import START as START_TEMPO
@@ -165,6 +166,8 @@ def _derived(song: state.Song) -> Dict:
     return {
         **song.data,
         "slug": song.slug,
+        # The language it is sung in (#484): its own file, not .song.json; None when unsaved.
+        "language": song.language,
         "stages": state.STAGES,
         "stage_index": state.STAGES.index(song.stage) if song.stage in state.STAGES else 0,
         "has_pdf": bool(pdf and os.path.exists(pdf)),
@@ -331,6 +334,7 @@ async def api_create(
     name: str = Form(""),
     per_system: bool = Form(False),
     voicing: str = Form(""),
+    language: str = Form(""),
     xml: UploadFile = None,
     pdf: UploadFile = None,
 ) -> Dict:
@@ -355,6 +359,8 @@ async def api_create(
 
     if voicing and voicing not in ("men", "women", "mixed"):
         raise HTTPException(400, "voicing must be men, women or mixed")
+    if language and language not in language_check.LANGUAGES:
+        raise HTTPException(400, f"language must be one of {', '.join(language_check.LANGUAGES)}")
     # Read every upload first, then make the song and write them in one step under
     # its lock (#428): no await may fall between claiming a slug and filling it.
     sources = {}
@@ -363,8 +369,34 @@ async def api_create(
     if has_pdf:
         sources["pdf"] = (pdf.filename, await pdf.read())
     song = state.create(name, per_system, voicing, sources=sources,
-                        stage="clean" if has_xml else "scan")
+                        stage="clean" if has_xml else "scan", language=language)
     return {"slug": song.slug}
+
+
+@app.get("/api/languages")
+def api_languages() -> Dict:
+    """The languages a song can be sung in (#484), code -> name, Finnish first."""
+    return {"languages": [{"code": c, "name": n} for c, n in language_check.LANGUAGES.items()]}
+
+
+@app.post("/api/songs/{slug}/language")
+def api_set_language(slug: str, body: Dict) -> Dict:
+    """Save the language the song is sung in (#484). Not held back by a running job: it is its
+    own file, which no job writes. A singing run already going keeps the language it started
+    with, and the reply says so; the song list then shows the song as needing a re-sing."""
+    song = _require(slug)
+    code = (body or {}).get("language")
+    if code not in language_check.LANGUAGES:
+        raise HTTPException(400, f"language must be one of {', '.join(language_check.LANGUAGES)}")
+    old = song.language
+    language_check.save(song.dir, code, "app")
+    reply = {"language": code, "previous": old, "note": None}
+    run = progress.read(song.dir)
+    if run and run.get("state") in progress.RUNNING and run.get("sing", True) \
+            and run.get("language") and run.get("language") != code:
+        reply["note"] = (f"a singing run (pid {run.get('pid')}) is singing this song in "
+                         f"{language_check.describe(run['language'])}; it will be marked for re-singing")
+    return reply
 
 
 @app.get("/api/songs/{slug}")
@@ -2212,7 +2244,7 @@ async def api_resing() -> Dict:
     def answer() -> Dict:
         version = progress.singer_version()
         listed = resing.site(publish.Config.from_env(), state.SONGS_DIR)
-        return resing.overview(state.list_songs(), listed, version)
+        return resing.overview(state.list_songs(), listed, version, progress.singer_changes())
     return await asyncio.get_running_loop().run_in_executor(None, answer)
 
 

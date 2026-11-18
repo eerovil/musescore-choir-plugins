@@ -52,13 +52,13 @@ def test_notes_marked_with_another_language_are_left_to_it(tmp_path):
 # ---- English readings chosen on the song page or by a choir (eeron-omat-taskit#143, #144) ----
 FAKE_G2P_EN = '''
 WORDS = {"wind": "W AY1 N D", "harvest": "HH AA1 R V AH0 S T", "the": "DH AH0", "blows": "B L OW1 Z",
-         "clock": "K L AA1 K", "har": "HH AA1 R", "vist": "V IH1 S T", "vust": "V UH1 S T"}
+         "clock": "K L AA1 K", "now": "N AW1", "boy": "B OY1", "har": "HH AA1 R", "vist": "V IH1 S T", "vust": "V UH1 S T"}
 class G2p:
     def __call__(self, text):
         return WORDS[text].split()
 '''
 EN = ["en/w", "en/ay", "en/ih", "en/n", "en/d", "en/hh", "en/aa", "en/r", "en/v", "en/ax", "en/s", "en/t",
-      "en/er", "en/dh", "en/b", "en/l", "en/ow", "en/z", "en/k"]
+      "en/er", "en/dh", "en/b", "en/l", "en/ow", "en/z", "en/k", "en/iy", "en/uw", "en/ao"]
 
 
 def sing_en(tmp_path, words, song=None, choirs=()):
@@ -94,7 +94,7 @@ WIND_SONG = [(1, 0.0, "the"), (1, 1.0, "wind"), (2, 0.0, "blows"), (5, 0.0, "win
 def test_without_a_choice_the_dictionary_gives_the_sounds(tmp_path):
     r, notes = sing_en(tmp_path, WIND_SONG)
     assert r.returncode == 0, r.stderr
-    assert notes[1]["ph"] == notes[3]["ph"] == {"on": ["en/w"], "vs": ["en/ay"], "co": ["en/n", "en/d"]}
+    assert notes[1]["ph"] == notes[3]["ph"] == {"on": ["en/w"], "vs": ["en/aa", "en/iy"], "co": ["en/n", "en/d"]}
 
 
 def test_a_reading_chosen_at_one_place_is_sung_there_only(tmp_path):
@@ -102,7 +102,7 @@ def test_a_reading_chosen_at_one_place_is_sung_there_only(tmp_path):
     r, notes = sing_en(tmp_path, WIND_SONG, song)
     assert r.returncode == 0, r.stderr
     assert notes[1]["ph"]["vs"] == ["en/ih"]     # the wind blows
-    assert notes[3]["ph"]["vs"] == ["en/ay"]     # wind the clock
+    assert notes[3]["ph"]["vs"] == ["en/aa", "en/iy"]     # wind the clock
 
 
 def test_the_place_is_the_bar_and_beat_on_every_pass_through_it(tmp_path):
@@ -111,7 +111,7 @@ def test_the_place_is_the_bar_and_beat_on_every_pass_through_it(tmp_path):
     words = [(1, 0.0, "wind"), (1, 2.0, "wind"), (1, 0.0, "wind"), (1, 2.0, "wind"), (2, 0.0, "the")]
     r, notes = sing_en(tmp_path, words, song)
     assert r.returncode == 0, r.stderr
-    assert [n["ph"]["vs"] for n in notes] == [["en/ay"], ["en/ih"], ["en/ay"], ["en/ih"], ["en/ax"]]
+    assert [n["ph"]["vs"] for n in notes] == [["en/aa", "en/iy"], ["en/ih"], ["en/aa", "en/iy"], ["en/ih"], ["en/ax"]]
 
 
 def test_everywhere_in_the_song_and_a_place_wins_over_it(tmp_path):
@@ -119,7 +119,7 @@ def test_everywhere_in_the_song_and_a_place_wins_over_it(tmp_path):
             "places": [{"bar": 5, "beat": 0.0, "word": "wind", "sounds": "W AY1 N D"}]}
     r, notes = sing_en(tmp_path, WIND_SONG, song)
     assert r.returncode == 0, r.stderr
-    assert notes[1]["ph"]["vs"] == ["en/ih"] and notes[3]["ph"]["vs"] == ["en/ay"]
+    assert notes[1]["ph"]["vs"] == ["en/ih"] and notes[3]["ph"]["vs"] == ["en/aa", "en/iy"]
 
 
 def test_a_choirs_sound_alike_spelling_and_the_song_page_wins_over_it(tmp_path):
@@ -127,9 +127,16 @@ def test_a_choirs_sound_alike_spelling_and_the_song_page_wins_over_it(tmp_path):
     r, notes = sing_en(tmp_path, [(1, 0.0, "harvest"), (5, 0.0, "wind")], song, [{"harvest": "har-vist"}])
     assert r.returncode == 0, r.stderr
     assert notes[0]["ph"]["vs"] == ["en/aa", "en/ih"]          # har-vist, not HH AA1 R V AH0 S T
-    assert notes[1]["ph"]["vs"] == ["en/ay"]
+    assert notes[1]["ph"]["vs"] == ["en/aa", "en/iy"]
 
 
 def test_a_spelling_with_a_sound_the_voice_lacks_names_the_word_and_choir_file(tmp_path):
     r, _ = sing_en(tmp_path, [(1, "harvest")], None, [{"pronounce": {"harvest": "har-vust"}}])
     assert r.returncode != 0 and "'harvest'" in r.stderr and "choir0.json" in r.stderr and "UH1" in r.stderr
+
+
+def test_two_part_vowels_are_sung_as_their_two_vowels(tmp_path):
+    # #484: AY, AW and OY as the voice has them do not move; a user wrote "child" as AA then IY
+    r, notes = sing_en(tmp_path, [(1, "wind"), (2, "now"), (3, "boy"), (4, "blows")])
+    assert r.returncode == 0, r.stderr
+    assert [n["ph"]["vs"] for n in notes] == [["en/aa", "en/iy"], ["en/aa", "en/uw"], ["en/ao", "en/iy"], ["en/ow"]]

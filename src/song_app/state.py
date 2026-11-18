@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 from . import health
 from . import job_state
 from .job_state import SongGone
+from src.sing_song import language_check
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SONGS_DIR = os.path.join(SCRIPT_DIR, "songs")
@@ -193,6 +194,13 @@ class Song:
     def mode(self) -> str:
         return self.data.get("mode", "normal")
 
+    @property
+    def language(self) -> Optional[str]:
+        """The language the song is sung in, or None when none is saved (#484). Kept in its own
+        file, `language.json` (`language_check`), not in `.song.json`: a job saves the whole of
+        `.song.json` it loaded minutes earlier, which would undo a language set meanwhile."""
+        return language_check.saved(self.dir)
+
     def published(self) -> List[str]:
         """The choirs whose lists the site shows this song in, sorted.
 
@@ -284,6 +292,7 @@ class Song:
             "lyric_warnings": len(self.data.get("lyrics", {}).get("warnings", [])),
             # Which choirs' lists the site shows it in.
             "published": self.published(),
+            "language": self.language,
             "created_at": self.data.get("created_at") or self.data.get("updated_at") or 0,
             "updated_at": self.data.get("updated_at") or 0,
         }
@@ -463,7 +472,8 @@ def trash(slug: str) -> str:
 
 
 def create(name: str, per_system: bool, voicing: str = "",
-           sources: Optional[Dict[str, tuple]] = None, stage: str = "register") -> Song:
+           sources: Optional[Dict[str, tuple]] = None, stage: str = "register",
+           language: str = "") -> Song:
     """Create a new song folder + state file.
 
     `sources` maps a kind ("xml", "pdf") to `(file name, bytes)`; they are written
@@ -473,7 +483,12 @@ def create(name: str, per_system: bool, voicing: str = "",
     `voicing` ("men"/"women"/"mixed") settles what the parts are called. Clef and
     pitch cannot: a male-choir score is written in treble sounding an octave down
     and editions often leave the 8 off, so a tenor line reads as a soprano one.
+
+    `language` (a `language_check.LANGUAGES` code, or "" for none) is what the song is
+    sung in (#484), saved in its own `language.json`.
     """
+    if language and language not in language_check.LANGUAGES:
+        raise ValueError(f"unknown language {language!r}")
     _ensure_songs_dir()
     base = slugify(name)
     # Avoid collisions with an existing song. A slug is claimed under its lock, the
@@ -482,13 +497,13 @@ def create(name: str, per_system: bool, voicing: str = "",
     while True:
         with song_lock(slug):
             if not os.path.exists(os.path.join(song_dir(slug), STATE_FILE)):
-                return _create_at(slug, name, per_system, voicing, sources or {}, stage)
+                return _create_at(slug, name, per_system, voicing, sources or {}, stage, language)
         slug = f"{base}-{n}"
         n += 1
 
 
 def _create_at(slug: str, name: str, per_system: bool, voicing: str,
-               sources: Dict[str, tuple], stage: str) -> Song:
+               sources: Dict[str, tuple], stage: str, language: str = "") -> Song:
     s = Song(slug, {
         "name": name,
         "slug": slug,
@@ -504,5 +519,7 @@ def _create_at(slug: str, name: str, per_system: bool, voicing: str,
         with open(s.path(file_name), "wb") as f:
             f.write(data)
         s.data["sources"][kind] = file_name
+    if language:
+        language_check.save(s.dir, language, "app")
     s.save()
     return s
