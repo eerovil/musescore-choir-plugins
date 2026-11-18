@@ -7,6 +7,18 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Lines can be sung on another machine over plain SSH: `REMOTE_RUNNER=scripts/ssh-runner.sh`
+  with `SSH_RUNNER_HOST`, and that machine's singer and voices. (#483)
+
+- `SING_PROVIDER` picks how the singer runs: `cpu`, `cuda` or `coreml` (tried, with the processor
+  as the fallback); the log names each model's provider. (#483)
+
+- A scan keeps a page when homr crashes as it exits after writing a whole result, and says so in
+  the log. (#483)
+
+- `scripts/install-homr.sh` installs into and reports on the venv `HOMR_BIN` in `.env` points
+  at, so `--status` no longer says homr is missing when it is installed elsewhere. (#483)
+
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)
 

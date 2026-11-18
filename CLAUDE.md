@@ -1586,6 +1586,13 @@ state model are in `DESIGN.md`.
   runner shipped is `src/kube_runner/runner.py` (see "Where heavy work runs" in
   `docs/pdf-to-practice-track.md`); on the owner's host it reads on eero-pc's GPU.
   `test_remote_runner.py` pins the contract with a stub runner.
+  `scripts/ssh-runner.sh` (#483) is a second runner, over plain SSH (`SSH_RUNNER_HOST`): it sings
+  lines only (`read-band` exits 2, so the band is read here), copies this checkout's `sing_ufr.py`
+  over with each line so the two sides cannot drift, and on SIGTERM ends the singer over there.
+  `src/sing_song/tests/test_ssh_runner.py` runs it against stub `ssh`/`scp`.
+  **A homr abort after a whole result is kept** (#483): homr can die in onnxruntime's shutdown
+  (SIGABRT, exit -6 or 134) after writing its MusicXML. `read_page` uses the file when it parses
+  and holds a measure, and logs it; any other crash, or an abort with no whole file, still fails.
   **One slot per page, not one per song.** The page is the unit `read_page` owns and
   each page writes its own MusicXML, so releasing between pages lets a suite in, and an interruption costs the page in flight rather than the song — the
   pages already read are on disk. A caller that would rather hold one lease across a
@@ -2818,6 +2825,9 @@ progress to `songs/<slug>/.sing-run.json` (`progress.py`). The song list (`GET /
 rows, kept in `songs/.site-songs.json`) and this app did not publish that upload with the current
 version; the test list never counts.
 
+`SING_PROVIDER` (#483, `sing_ufr.providers`) picks the singer's onnxruntime provider: `cpu`,
+`cuda` (or `GPU=1` when unset), or `coreml`, which falls back to the processor when the build has
+no CoreML; each model's provider is logged. The kube runner does not pass it on.
 The singer runs in its own venv (`scripts/install-singer.sh`, default
 `~/.local/share/musescore-choir-plugins/sing-venv`; CUDA 11 onnxruntime when there is an NVIDIA
 card, because eero-pc's GTX 970 is below newer builds' floor; it runs on this host's GTX
