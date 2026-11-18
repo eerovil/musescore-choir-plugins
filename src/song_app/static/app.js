@@ -3413,7 +3413,7 @@ function pronunciationSection(P) {
   const showTry = (st) => {
     clearTimeout(tryTimer);
     tryOut.hidden = st.state === "none";
-    const what = `${st.part}, bar${st.first === st.last ? ` ${st.first}` : `s ${st.first}-${st.last}`}`;
+    const what = `${st.name || st.part}, bar${st.first === st.last ? ` ${st.first}` : `s ${st.first}-${st.last}`}`;
     if (st.state === "waiting" || st.state === "singing") {
       tryOut.replaceChildren(el("p", { className: "hint" },
         `${st.state === "waiting" ? "Waiting for the graphics card" : "Singing"}… (${what})`));
@@ -3475,12 +3475,14 @@ function pronunciationSection(P) {
         const words = row.line.split(" ");
         const line = el("span", { className: "pron-line" },
           ...words.flatMap((w, i) => [i === row.at ? el("strong", {}, w) : w, " "]));
+        // the part a run sings first at this place, found by its staff: two parts may share a name
+        const sung = (reply.parts || []).find((q) => (row.staves || []).some((st) => q.staves.includes(st)));
         return el("div", { className: "pron-row row" },
           el("span", { className: "pron-place" }, `Bar ${row.bar}${row.n > 1 ? ` (${row.n}.)` : ""}`),
           line, el("span", { className: "hint" }, row.parts.join(", ")), pick,
-          el("button", { className: "pron-try", "data-pron-try": `${row.bar}:${row.word}`,
-            title: `Sing ${row.parts[0]} in bar ${row.bar} with the saved readings`,
-            onclick: () => startTry(row.parts[0], row.bar, row.bar) }, "▶ Try"));
+          ...(sung ? [el("button", { className: "pron-try", "data-pron-try": `${row.bar}:${row.word}`,
+            title: `Sing ${sung.name} in bar ${row.bar} with the saved readings`,
+            onclick: () => startTry(`#${sung.n}`, row.bar, row.bar) }, "▶ Try")] : []));
       });
       all.addEventListener("input", unsaved);
       return el("div", { className: "pron-word" },
@@ -3563,7 +3565,8 @@ function pronunciationSection(P) {
     const save = el("button", { className: "pron-save", onclick: doSave }, "Save pronunciation");
     // any other word: a part and the bars to sing
     const tryPart = el("select", { "data-pron-try-part": "" },
-      ...(reply.parts || []).map((n) => el("option", { value: n }, n)));
+      ...(reply.parts || []).map((q, _, all) => el("option", { value: `#${q.n}` },
+        all.filter((o) => o.name === q.name).length > 1 ? `${q.n}. ${q.name}` : q.name)));
     const tryFirst = el("input", { type: "number", min: 1, value: 1, style: "width:5em", "data-pron-try-first": "" });
     const tryLast = el("input", { type: "number", min: 1, value: 1, style: "width:5em", "data-pron-try-last": "" });
     const tryBars = el("div", { className: "pron-try-bars" },

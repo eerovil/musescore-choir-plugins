@@ -258,7 +258,51 @@ def test_the_pronunciation_reply_lists_the_parts(client, monkeypatch):
     monkeypatch.setattr(server, "_readings", lambda words: {})
     monkeypatch.setattr(server, "_pack_sounds", lambda: None)
     parts = client.get(f"/api/songs/{SLUG}/pronunciation").json()["parts"]
-    assert parts and all(isinstance(p, str) for p in parts)
+    assert parts == [{"n": 1, "name": "T1", "staves": ["1"]}, {"n": 2, "name": "T2", "staves": ["2"]},
+                     {"n": 3, "name": "B1", "staves": ["3"]}, {"n": 4, "name": "B2", "staves": ["4"]}]
+
+
+def test_try_is_refused_while_a_job_or_a_full_run_holds_the_song(client):
+    body = {"part": "#1", "first": 3, "last": 4}
+    song = state.load(SLUG)
+    state.start_job(song, "clean", server.WRITERS)   # it would sing a score being rewritten
+    try:
+        r = client.post(f"/api/songs/{SLUG}/sing/try", json=body)
+        assert r.status_code == 409 and "job is working" in r.text
+    finally:
+        job_state.finish(song.dir, "clean")
+    open(client.tmp / "fake" / "active" / f"sing-{SLUG}", "w").close()   # Sing and publish runs
+    r = client.post(f"/api/songs/{SLUG}/sing/try", json=body)
+    assert r.status_code == 409 and "Try once it is done" in r.text
+    finish(client, f"sing-{SLUG}")
+    fd = progress.run_lock(SLUG)   # an agent's sing_song.py run holds the song
+    try:
+        r = client.post(f"/api/songs/{SLUG}/sing/try", json=body)
+        assert r.status_code == 409 and "Another sing_song run" in r.text
+    finally:
+        os.close(fd)
+    assert calls(client, "systemd-run") == []
+    assert client.post(f"/api/songs/{SLUG}/sing/try", json=body).status_code == 200
+
+
+def test_try_by_number_keeps_two_parts_called_alike_apart(client, monkeypatch):
+    monkeypatch.setattr(server, "_readings", lambda words: {})
+    monkeypatch.setattr(server, "_pack_sounds", lambda: None)
+    cleaned = state.load(SLUG).cleaned_path()
+    with open(cleaned, encoding="utf-8") as f:
+        text = f.read()
+    with open(cleaned, "w", encoding="utf-8") as f:   # two parts called "Solo"
+        f.write(text.replace("<trackName>T1</trackName>", "<trackName>Solo</trackName>", 1)
+                    .replace("<trackName>T2</trackName>", "<trackName>Solo</trackName>", 1))
+    parts = client.get(f"/api/songs/{SLUG}/pronunciation").json()["parts"]
+    assert [(p["n"], p["name"]) for p in parts[:2]] == [(1, "Solo"), (2, "Solo")]
+    st = client.post(f"/api/songs/{SLUG}/sing/try", json={"part": "#2", "first": 3, "last": 4}).json()
+    (argv,) = calls(client, "systemd-run")
+    assert argv[argv.index("--try") + 1] == "#2:3-4"
+    assert st["part"] == "#2" and st["name"] == "Solo"
+    finish(client, f"sing-{SLUG}-try")
+    r = client.post(f"/api/songs/{SLUG}/sing/try", json={"part": "#9", "first": 3})
+    assert r.status_code == 400 and "No part #9" in r.text
 
 
 def test_the_snapshot_is_the_commit_with_songs_and_env_linked(tmp_path, monkeypatch):

@@ -184,7 +184,11 @@ def find_part(key, names):
     """The part number (from 1) `key` names in `names`: the one part with that exact name, else
     the one part with that name in any case, else its number. None when it names no part. A name
     that fits more than one part stops the run asking for the number (#483): two parts may both be
-    called "Solo", and the first one is not necessarily the one meant."""
+    called "Solo", and the first one is not necessarily the one meant. "#N" is part N whatever
+    the parts are called, which the app sends (#510 review: a part may be named "2")."""
+    if key.startswith("#") and key[1:].isdigit():
+        n = int(key[1:])
+        return n if 1 <= n <= len(names) else None
     exact = [i for i, name in enumerate(names, 1) if name == key]
     found = exact or [i for i, name in enumerate(names, 1) if name.casefold() == key.casefold()]
     if len(found) > 1:
@@ -1177,10 +1181,16 @@ def main():
     if a.waiting:
         if not os.path.isdir(song_dir):
             sys.exit(f"no song {a.slug!r} under songs/")
-        if progress.run_locked(a.slug):   # it would hide the run's own record (#510)
+        # hold the run lock while writing, so a run cannot start between the check and the
+        # write and have its own record hidden (#510 review)
+        held = progress.run_lock(a.slug)
+        if held is None:
             print(another_run(a.slug), file=sys.stderr)
             raise SystemExit(EXIT_ANOTHER_RUN)
-        progress.mark_waiting(song_dir, a.publish)
+        try:
+            progress.mark_waiting(song_dir, a.publish)
+        finally:
+            os.close(held)
         log(f"{a.slug}: waiting")
         return
     lock = None

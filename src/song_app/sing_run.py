@@ -263,7 +263,9 @@ def _try_root(slug: str) -> str:
     return os.path.join(progress.state_dir(slug), "try")
 
 
-def start_try(slug: str, part: str, first: int, last: int) -> Dict:
+def start_try(slug: str, part: str, first: int, last: int, name: Optional[str] = None) -> Dict:
+    """Sing `part` (a name, or "#n" for the n-th part a run sings) over bars first..last;
+    `name` is what the panel calls the part."""
     root = _try_root(slug)
     os.makedirs(root, exist_ok=True)
     trial_id = int(time.time() * 1000)
@@ -281,7 +283,8 @@ def start_try(slug: str, part: str, first: int, last: int) -> Dict:
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
-    record = {"id": trial_id, "part": part, "first": first, "last": last, "started": time.time()}
+    record = {"id": trial_id, "part": part, "name": name or part, "first": first, "last": last,
+              "started": time.time()}
     _write_json(os.path.join(root, "current.json"), record)
     ids = sorted((n for n in os.listdir(root) if n.isdigit()), key=int)
     for old in ids[:-KEEP_TRIES]:
@@ -302,7 +305,7 @@ def try_status(slug: str) -> Dict:
     folder = os.path.join(root, str(current["id"]))
     log = os.path.join(folder, "log")
     lines = tail(log, 10 ** 6)
-    out = {k: current.get(k) for k in ("id", "part", "first", "last", "started")}
+    out = {k: current.get(k) for k in ("id", "part", "name", "first", "last", "started")}
     if active(unit(slug, True)):
         card = [l for l in lines if any(c in l for c in CARD_LINES)]
         waiting = bool(card) and CARD_LINES[0] in card[-1]

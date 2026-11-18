@@ -109,7 +109,7 @@ def words(score):
                 key = word_key(w["text"])
                 if key:
                     out.append({"bar": w["bar"], "beat": w["beat"], "word": key,
-                                "part": names.get(staff.get("id"), ""), "text": w["text"],
+                                "part": names.get(staff.get("id"), ""), "staff": staff.get("id"), "text": w["text"],
                                 "line": " ".join(x["text"] for x in ws[max(0, i - 4):i + 5]), "at": min(i, 4)})
     return out
 
@@ -121,17 +121,19 @@ def key(c):
 
 def places(score):
     """Each place once, with the parts that start the word there: [{"bar", "beat", "word", "text",
-    "n", "parts", "line", "at"}] in bar order ("text" as the first part printed it); "n" counts the places of the word in its bar (1 for the
+    "n", "parts", "staves", "line", "at"}] in bar order ("text" as the first part printed it); "n" counts the places of the word in its bar (1 for the
     first beat it starts on), for people to read. Parts singing a word together share its place;
     one entering later on the same word has a place of its own."""
     out = {}
     for w in words(score):
         k = key(w)
         if k not in out:
-            out[k] = {"bar": w["bar"], "beat": w["beat"], "word": w["word"], "text": w["text"], "parts": [],
+            out[k] = {"bar": w["bar"], "beat": w["beat"], "word": w["word"], "text": w["text"], "parts": [], "staves": [],
                       "line": w["line"], "at": w["at"]}
         if w["part"] not in out[k]["parts"]:
             out[k]["parts"].append(w["part"])
+        if w["staff"] not in out[k]["staves"]:
+            out[k]["staves"].append(w["staff"])
     rows = [out[k] for k in sorted(out)]
     for r in rows:
         r["n"] = 1 + sum(1 for q in rows if q["bar"] == r["bar"] and q["word"] == r["word"] and q["beat"] < r["beat"])

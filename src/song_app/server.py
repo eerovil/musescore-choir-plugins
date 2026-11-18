@@ -2256,7 +2256,29 @@ def api_pronunciation(slug: str) -> Dict:
             "languages": [{"code": c, "name": n} for c, n in languages.names().items()
                           if c in languages.sung_by_g2p()],
             "pack": pack, "note": None if pack is not None else NO_PACK, "english_note": english_note,
-            "parts": [p.name for p in lyric_txt.lyric_parts(etree.parse(cleaned).getroot())]}
+            "parts": _sung_parts(song, cleaned)}
+
+
+def _sung_parts(song: state.Song, cleaned: str) -> List[Dict]:
+    """The parts a run sings, by the number sing_song.py gives them (`#n` in --try): the
+    parts a publish keeps, top staff first, with the names a publish uses and their staff ids,
+    so a place's Try finds its part by staff and two parts called alike stay apart (#510 review)."""
+    from src.score_export import score as score_copy
+    if not cleaned or not os.path.exists(cleaned):
+        return []
+    root = etree.parse(cleaned).getroot()
+    sc = root.find("Score")
+    if sc is None:
+        return []
+    music = {staff.get("id"): staff for staff in sc.findall("Staff")}
+    names = _publish_parts(song, cleaned)["names"]
+    kept = [p for p in sc.findall("Part") if not score_copy.part_is_silent(p, music)]
+    out = []
+    for n, part in enumerate(kept, 1):
+        staves = [st.get("id") for st in part.findall("Staff")]
+        name = names[n - 1] if n <= len(names) else (part.findtext("trackName") or f"Part {n}")
+        out.append({"n": n, "name": name, "staves": staves})
+    return out
 
 
 @app.post("/api/songs/{slug}/pronunciation")
@@ -2356,8 +2378,19 @@ def api_sing_try(slug: str, body: Dict = None) -> Dict:
     _cleaned_or_400(song)
     if sing_run.active(sing_run.unit(slug, True)):
         raise HTTPException(409, "A try of this song is still singing.")
+    if _publish_busy(song):   # it would sing from a score being rewritten (#510 review)
+        raise HTTPException(409, "A job is working on this song; try once it is done.")
+    singing = sing_run.busy_reason(slug)
+    if singing:
+        raise HTTPException(409, f"{singing} Try once it is done, or stop it first.")
+    name = part
+    if part.startswith("#"):   # the part by its number, as the panel sends it (#510 review)
+        sung = {f"#{q['n']}": q["name"] for q in _sung_parts(song, song.cleaned_path())}
+        if part not in sung:
+            raise HTTPException(400, f"No part {part} in this song.")
+        name = sung[part]
     try:
-        sing_run.start_try(slug, part, first, last)
+        sing_run.start_try(slug, part, first, last, name=name)
     except sing_run.StartError as exc:
         raise HTTPException(409, f"Could not start the try: {exc}")
     return sing_run.try_status(slug)

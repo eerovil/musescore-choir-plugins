@@ -16,7 +16,10 @@ pytestmark = pytest.mark.browser
 live = pub.live
 _shot = pub._shot
 
-PLACES = [{"bar": 2, "beat": 0.0, "word": "wind", "n": 1, "parts": ["T1"], "line": "the wind blows", "at": 1}]
+PLACES = [{"bar": 2, "beat": 0.0, "word": "wind", "n": 1, "parts": ["Solo"], "staves": ["2"],
+           "line": "the wind blows", "at": 1}]
+# two parts called alike: the second one's Try must sing the second one (#510 review)
+SUNG = [{"n": 1, "name": "Solo", "staves": ["1"]}, {"n": 2, "name": "Solo", "staves": ["2"]}]
 WIND = [{"sounds": "W AY1 N D", "say": "wynd", "as_in": "find"}, {"sounds": "W IH1 N D", "say": "wind", "as_in": "sit"}]
 
 
@@ -49,9 +52,9 @@ class FakeSing:
         self.run = {"state": "failed", "choir": "jm",
                     "run": {"state": "failed", "error": "stopped (SIGTERM)", "finished": 1}}
 
-    def start_try(self, slug, part, first, last):
+    def start_try(self, slug, part, first, last, name=None):
         self.calls.append(("try", part, first, last))
-        self.trial = {"state": "waiting", "id": "1", "part": part, "first": first, "last": last}
+        self.trial = {"state": "waiting", "id": "1", "part": part, "name": name, "first": first, "last": last}
         return self.trial
 
 
@@ -61,6 +64,7 @@ def sing(live, tmp_path, monkeypatch):
     fake.install(monkeypatch)
     monkeypatch.setattr(server.song_places, "places", lambda score: [dict(p) for p in PLACES])
     monkeypatch.setattr(server, "_readings", lambda words: {"wind": WIND})
+    monkeypatch.setattr(server, "_sung_parts", lambda song, cleaned: [dict(q) for q in SUNG])
     return live, fake
 
 
@@ -116,13 +120,13 @@ def test_try_saves_unsaved_readings_first_and_plays_the_mp3(sing, page, size):
             if r.method == "POST" else None)
     page.locator('[data-pron-try="2:wind"]').click()
     out = page.locator("[data-pron-try-out]")
-    expect(out).to_contain_text("Waiting for the graphics card… (T1, bar 2)")
+    expect(out).to_contain_text("Waiting for the graphics card… (Solo, bar 2)")
     assert order == [f"{slug}/pronunciation", f"{slug}/sing/try"], order
-    assert fake.calls == [("try", "T1", 2, 2)]
+    assert fake.calls == [("try", "#2", 2, 2)]
     out.scroll_into_view_if_needed()
     _shot(page, f"try-waiting-{size[0]}.png")
     fake.trial = dict(fake.trial, state="done", mp3="1-T1-bars-2-2.mp3", music=2.5, took=9.0)
-    expect(out).to_contain_text("T1, bar 2: music 2.5 s, sung in 9 s")
+    expect(out).to_contain_text("Solo, bar 2: music 2.5 s, sung in 9 s")
     audio = out.locator("audio")
     src = audio.get_attribute("src")
     assert src.endswith("/sing/try/1-T1-bars-2-2.mp3?id=1")
@@ -131,12 +135,14 @@ def test_try_saves_unsaved_readings_first_and_plays_the_mp3(sing, page, size):
     audio.scroll_into_view_if_needed()
     _shot(page, f"try-done-{size[0]}.png")
     # Try bars: any part, any bars; nothing unsaved now, so straight to the singer
-    page.locator("[data-pron-try-part]").select_option(index=0)
+    part = page.locator("[data-pron-try-part]")
+    assert part.locator("option").all_inner_texts() == ["1. Solo", "2. Solo"]
+    part.select_option(index=0)
     page.locator("[data-pron-try-first]").fill("3")
     page.locator("[data-pron-try-last]").fill("5")
     page.locator("[data-pron-try-bars]").click()
     expect(out).to_contain_text("bars 3-5")
-    assert fake.calls[-1][2:] == (3, 5)
+    assert fake.calls[-1] == ("try", "#1", 3, 5)
     assert order.count(f"{slug}/pronunciation") == 1
     fake.trial = dict(fake.trial, state="failed", log=["no part named X"])
     expect(out).to_contain_text("no part named X")
