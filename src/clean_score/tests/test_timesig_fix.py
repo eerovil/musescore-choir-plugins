@@ -78,11 +78,50 @@ def test_from_is_required():
         apply_fixes(_score(), [{**REMOVE, "from": None}])
 
 
-def test_the_opening_signature_is_never_touched():
+def test_the_opening_signature_is_never_taken_off():
     root = _score()
     with pytest.raises(FixError, match="opening"):
         apply_fixes(root, [{**REMOVE, "measure": 1, "from": "6/8"}])
     assert _signs(root, 1) == [["6/8"], ["6/8"]]
+
+
+def test_the_opening_signature_can_be_replaced():
+    root = _score()
+    apply_fixes(root, [{**REMOVE, "measure": 1, "from": "6/8", "to": "3/4"}])
+    assert _signs(root, 1) == [["3/4"], ["3/4"]]
+
+
+def _overridden(root, bars, length="3/4"):
+    for staff in root.findall("Score/Staff"):
+        for i in bars:
+            staff.findall("Measure")[i - 1].set("len", length)
+
+
+def test_a_change_of_length_is_written_where_the_bars_already_have_it():
+    """#480: homr put a 1/1 over a bar three quarters long; the bars carry len 3/4."""
+    root = _score({1: _sig(1, 1), 2: _sig(1, 1)})
+    _overridden(root, (3, 4))
+    done = apply_fixes(root, [{**REMOVE, "from": "1/1", "to": "3/4"}])
+    assert _signs(root, 3) == [["3/4"], ["3/4"]]
+    assert all(m.get("len") is None for m in root.iter("Measure"))
+    assert "4 bar length override" in done[0]
+
+
+def test_taking_off_a_signature_of_another_length_needs_the_bars_to_fit():
+    root = _score({1: _sig(1, 1), 2: _sig(1, 1)})
+    _overridden(root, (3, 4))                     # 6/8 is in force: 6 eighths fit
+    apply_fixes(root, [{**REMOVE, "from": "1/1"}])
+    assert _signs(root, 3) == [[], []]
+    assert all(m.get("len") is None for m in root.iter("Measure"))
+
+
+def test_a_change_of_length_refuses_when_one_governed_bar_is_another_length():
+    root = _score({1: _sig(1, 1), 2: _sig(1, 1)})
+    _overridden(root, (3,))                       # bar 4 has no override: it is 1/1
+    with pytest.raises(FixError, match="bar 4 on staff 1 is 1 long"):
+        apply_fixes(root, [{**REMOVE, "from": "1/1", "to": "3/4"}])
+    assert _signs(root, 3) == [["1/1"], ["1/1"]]
+    assert root.findall("Score/Staff")[0].findall("Measure")[2].get("len") == "3/4"
 
 
 def test_a_change_of_bar_length_refuses():
