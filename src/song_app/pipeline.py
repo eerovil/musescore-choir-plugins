@@ -33,6 +33,7 @@ from src.clean_score.utils.score_fixes import (FixError, after_moves, apply_fixe
                                                 bar_moves, bar_tokens, free_text, read_bar)
 from src.clean_score.utils.staff_display import fix_staff_display
 from src.clean_score.utils.utils import starts_new_system
+from src.clean_score.utils.voice_instruments import needs_voice_instruments, set_voice_instruments
 
 MUSESCORE_EXTS = (".mscz", ".mscx", ".musicxml", ".xml")
 Logger = Callable[[str], None]
@@ -142,6 +143,21 @@ def _uploaded_score_summary(mscx_path: str) -> Dict:
         raise ScoreUploadError("That score has no staves with any music in them.")
     return {"staves": len(staves),
             "measures": max(len(s.findall("Measure")) for s in staves)}
+
+
+def score_for_download(cleaned_path: str) -> Optional[bytes]:
+    """The cleaned score as it should leave the app, or None when the file on disk will do.
+
+    A song cleaned before #481 has no voice instruments, so MuseScore 4 reads its
+    parts as pianos and puts new dynamics below the staff. The download gets them in
+    a copy; the stored score is never rewritten, so its fingerprint, Review's approval
+    and the lyrics stay as they are.
+    """
+    tree = etree.parse(cleaned_path)
+    if not needs_voice_instruments(tree.getroot()):
+        return None
+    set_voice_instruments(tree.getroot())
+    return etree.tostring(tree, xml_declaration=True, encoding="UTF-8")
 
 
 def accept_uploaded_score(cleaned_path: str, filename: str, data: bytes) -> Dict:

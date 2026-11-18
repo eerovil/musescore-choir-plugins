@@ -1380,7 +1380,8 @@ state model are in `DESIGN.md`.
   under `songs/`. From the phone the app is actually used from — or from any other
   computer — neither happens, so the Fix and Review stages could be read and never
   acted on. `GET /score-file` sends the cleaned `.mscx` as a download under its own
-  name, and `POST /score-file` puts the fixed one back: `pipeline.accept_uploaded_score`
+  name (with voice instruments written into the copy for a song cleaned before #481,
+  `pipeline.score_for_download`; the stored file and its fingerprint are untouched), and `POST /score-file` puts the fixed one back: `pipeline.accept_uploaded_score`
   parses it first and only then moves it into place, so a refused upload leaves the
   score that is there alone — this is the one route that overwrites the file every
   later stage is derived from. `.mscz` is accepted as well, because that is what
@@ -2396,6 +2397,16 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    is made from, so a song cleaned before it is drawn right without a re-clean,
    which would cost its lyrics. `omr_systems.flatten` also steps to the bar's end
    before a right barline now, so new scans do not write the fake bar at all.
+11. `set_voice_instruments` (`utils/voice_instruments.py`, #481) runs last, in both
+   modes: every singing part gets a voice instrument id from its name (`S1` →
+   `soprano`/`voice.soprano`, A, T, B, `Bar` → baritone, any other name → `voice`/
+   `voice.vocals`). MuseScore 4 reads a part with no id, or MuseScore 3's `piano`, as a
+   piano and puts a new dynamic **below** the staff, where the words are; on a voice it
+   goes above. Only a part with no id or a piano id changes (any other id is someone's
+   choice), parts named as instruments (`Piano RH`, `Violin`, `Urut`), percussion and
+   rest-only staves are skipped, and the `Channel`/`program` is left alone, so the
+   sound and the MIDI do not change. Dynamics already in a score keep their side:
+   MuseScore 4 writes the side out when it converts an older file.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
 (which makes an upper/lower pair) and is either an OCR glitch or a real multi-way
