@@ -60,6 +60,7 @@ NO_SYSTEM_FOR_LINE = "no_system_for_line"   # more null lines than printed syste
 BLOCK_COUNT = "block_count"    # lines vs systems disagree, so the fill may be off
 PART_RESTS = "part_rests"     # a line names a part with no notes in its system (#482)
 UNKNOWN_PART = "unknown_part"  # "parts" names no part of the song, or two of them (#482)
+TWO_LINES = "two_lines"        # a named line and a staff_number line land on one part (#482)
 
 
 @dataclass(frozen=True)
@@ -809,12 +810,35 @@ def _block_lines(
                 measure_start=measure_start,
                 measure_end=measure_end or measure_start,
                 verse=verse, voice=voice, lines=line_id))
-        # A named entry and a staff_number one stay two lines until placement: only
-        # the named one is checked against a part that rests (#482).
+        # A line naming its part stays in its own system (#482). The by-system
+        # editor's boxes name theirs by staff id too, and still run on into an empty
+        # next system (#393), so a box is not "named" here.
+        named = by_name and not lyric.get("box")
         for staff in targets:
-            k = (staff, voice, verse, by_name)
+            k = (staff, voice, verse, named)
             texts.setdefault(k, []).append(text)
             sources.setdefault(k, []).append(line_id)
+    # A named line and a staff_number line landing on one part, voice and verse are
+    # not combined: the named one is used and the other is said (#482).
+    for (staff, voice, verse, by_name) in list(texts):
+        if by_name or (staff, voice, verse, True) not in texts:
+            continue
+        dropped = sources.pop((staff, voice, verse, False), [])
+        del texts[(staff, voice, verse, False)]
+        if notes is None:
+            continue
+        name = next((n for n, sid in (name_map or {}).items() if sid == staff), f"staff {staff}")
+        where = f", verse {verse}" if verse > 1 else ""
+        where += f", voice {voice}" if voice > 1 else ""
+        for line_id in dict.fromkeys(dropped):
+            notes.append(Mismatch(
+                kind=TWO_LINES,
+                message=(f"Measure {measure_start}{where}: a line naming {name} in "
+                         f"\"parts\" and a line placed by staff_number both land on "
+                         f"{name}; the named line was used and the other was not placed."),
+                measure_start=measure_start,
+                measure_end=measure_end or measure_start,
+                staff_ids=(staff,), verse=verse, voice=voice, lines=line_id))
     own = {(staff, voice, verse) for staff, voice, verse, _ in texts}
     for base, followers in _follow_for_measure(system_map, measure_start).items():
         for (staff, voice, verse, by_name), words in list(texts.items()):
@@ -911,6 +935,11 @@ def _lines_to_by_measure(
     and a part's words in a later system stop a line that runs long. A line's system
     is `systems` (the printed ones) when the caller knows them, else the block starts.
     The syllables are counted against the systems the line reached.
+
+    A line naming its part in "parts" fills only its own printed system and never
+    runs on (#482, the owner's call): its end is cut at the next printed system (the
+    caller's, else the score's own line breaks), an end the source gave included. If
+    its part has no notes there, it is not placed and says so (`PART_RESTS`).
     """
     last = _measure_count(score)
     if systems:
@@ -922,50 +951,17 @@ def _lines_to_by_measure(
         later = [c for c in cuts if c > start]
         return min(later[0] - 1, last) if later else last
 
-    # Where a named part's rest check stops when the caller gave no systems: the
-    # score's own line breaks, not the next line someone happened to send (#482).
-    breaks = [] if systems else [(r.start, r.end) for r in system_ranges(score)]
-
-    def named_end(start: int) -> int:
-        # A named line with no printed systems given ends at the score's own break
-        # too, so the rest check sees each system the line could run on into (#482).
-        end = system_end(start)
-        for a, b in breaks:
-            if a <= start <= b:
-                return min(b, end)
-        return end
-
-    notes_by_key: Dict[Tuple[int, int], set] = {}
+    # Where the printed systems start, for a named line's end: the caller's systems,
+    # else the score's own line breaks, never the next line someone happened to send.
+    printed = (sorted({a for a, _ in systems}) if systems
+               else [r.start for r in system_ranges(score)])
 
     def sung(staff: int, voice: int) -> set:
         """Bars where this part's voice has any chord (a tied note counts)."""
-        if (staff, voice) not in notes_by_key:
-            notes_by_key[(staff, voice)] = set()
-            for el in _music_staves(score):
-                if int(el.get("id", "0")) == staff:
-                    notes_by_key[(staff, voice)] = {m for m, _, _ in _walk_voice(el, voice)}
-        return notes_by_key[(staff, voice)]
-
-    # Where the printed systems start, for cutting a named line's own bars into them:
-    # the caller's systems, else the score's own line breaks.
-    system_starts = sorted({a for a, _ in systems}) if systems else [a for a, _ in breaks]
-
-    def own_end_of(ln: _Line) -> int:
-        if ln.end:
-            return min(ln.end, last)
-        return named_end(ln.start) if ln.named else system_end(ln.start)
-
-    def sung_systems(ln: _Line, staff: int, voice: int) -> List[Tuple[int, int, bool]]:
-        """A named line's own bars, one entry per printed system, and whether its part
-        has notes there. An end the source gave is cut at every system boundary too."""
-        end = own_end_of(ln)
-        cuts_in = [c for c in system_starts if ln.start < c <= end]
-        out = []
-        a = ln.start
-        for c in cuts_in + [end + 1]:
-            out.append((a, c - 1, any(a <= m <= c - 1 for m in sung(staff, voice))))
-            a = c
-        return out
+        for el in _music_staves(score):
+            if int(el.get("id", "0")) == staff:
+                return {m for m, _, _ in _walk_voice(el, voice)}
+        return set()
 
     counts_by_voice: Dict[int, Dict[int, Dict[int, int]]] = {}
     by_measure: Dict[int, Dict[Tuple[int, int, int], List[str]]] = {}
@@ -983,149 +979,114 @@ def _lines_to_by_measure(
             counts_by_voice[voice] = _get_chord_counts_per_measure(score, voice)
         counts = counts_by_voice[voice].get(staff, {})
         key_lines.sort(key=lambda ln: ln.start)
-        words_cache: List[set] = []  # bars with words in the score, read once
+        tokens_of = {id(ln): _tokenize_line(ln.text) for ln in key_lines}
+        has_words = lambda ln: any(t != "_" for t in tokens_of[id(ln)])
+        words_now: Optional[set] = None
+        notes_now: Optional[set] = None
 
-        own_end = own_end_of
+        def own_end(ln: _Line) -> int:
+            end = min(ln.end, last) if ln.end else system_end(ln.start)
+            if ln.named:
+                later = [c for c in printed if c > ln.start]
+                if later:
+                    end = min(end, later[0] - 1)
+            return end
 
         def end_known(ln: _Line) -> bool:
             # A line with no system known to it (a TXT-like JSON naming one bar to
             # start from) rewrites only the bars its words reach.
             return bool(ln.end) or any(c > ln.start for c in cuts)
 
-        # Each source line keeps its own way of running on: a named line fills the
-        # printed systems from its start while its part sings in them, a line placed by
-        # staff number runs on as it always has (#482). Named or not is never decided
-        # for a joined line. A named line whose first system has no notes for its part
-        # warns and is not placed: the name or the system is wrong.
-        pieces: List[_Line] = []
+        # A named line whose part has no notes in its system is not placed: the name
+        # or the system is wrong. One warning per source line, so sending one of them
+        # again answers only its own.
+        placed: List[_Line] = []
         for ln in key_lines:
-            tokens = _tokenize_line(ln.text)
-            if not (ln.named and any(t != "_" for t in tokens)):
-                pieces.append(ln)
-                continue
-            first = sung_systems(ln, staff, voice)[0]
-            if first[2]:
-                pieces.append(ln)
-                continue
-            if names is None:
-                names = {p.id: p.name for p in lyric_parts(score)}
-            where = f", verse {verse}" if verse > 1 else ""
-            where += f", voice {voice}" if voice > 1 else ""
-            # One warning per source line, so sending one of them again
-            # answers only its own.
-            for src in dict.fromkeys(ln.sources) or ((),):
-                resting.append(Mismatch(
-                    kind=PART_RESTS,
-                    message=(f"Measures {first[0]}-{first[1]}: "
-                             f"{names.get(staff, f'staff {staff}')}"
-                             f"{where} has no notes here, so its words were not "
-                             f"placed; check the part named in \"parts\"."),
-                    measure_start=first[0], measure_end=first[1], staff_ids=(staff,),
-                    syllables=len(_tokens_to_syllables(tokens)), slots=0,
-                    verse=verse, voice=voice, lines=src))
-        # Lines from one bar on are one box: their words follow one another, in the
-        # order the block named them, each line within the bars its own mode allows.
-        groups: Dict[int, List[_Line]] = {}
-        for ln in pieces:
-            groups.setdefault(ln.start, []).append(ln)
-        tokens_of = {id(ln): _tokenize_line(ln.text) for ln in pieces}
-        piece_words = lambda ln: any(t != "_" for t in tokens_of[id(ln)])
-        has_words = lambda start: any(piece_words(ln) for ln in groups[start])
+            if ln.named and has_words(ln):
+                if notes_now is None:
+                    notes_now = sung(staff, voice)
+                end = own_end(ln)
+                if not any(ln.start <= m <= end for m in notes_now):
+                    if names is None:
+                        names = {p.id: p.name for p in lyric_parts(score)}
+                    where = f", verse {verse}" if verse > 1 else ""
+                    where += f", voice {voice}" if voice > 1 else ""
+                    for src in dict.fromkeys(ln.sources) or ((),):
+                        resting.append(Mismatch(
+                            kind=PART_RESTS,
+                            message=(f"Measures {ln.start}-{end}: "
+                                     f"{names.get(staff, f'staff {staff}')}{where} has no "
+                                     f"notes here, so its words were not placed; check "
+                                     f"the part named in \"parts\"."),
+                            measure_start=ln.start, measure_end=end, staff_ids=(staff,),
+                            syllables=len(_tokens_to_syllables(tokens_of[id(ln)])),
+                            slots=0, verse=verse, voice=voice, lines=src))
+                    continue
+            placed.append(ln)
+        sent = {ln.start: ln for ln in placed}
 
         # Emptied boxes first, so a line running long can still flow into one.
-        for start, group in sorted(groups.items()):
-            if has_words(start):
+        for ln in placed:
+            if has_words(ln):
                 continue
-            end = max(own_end(ln) for ln in group)
-            for m in range(start, end + 1):
+            end = own_end(ln)
+            for m in range(ln.start, end + 1):
                 by_measure.setdefault(m, {})[key] = []
-            written.append(Written(staff, voice, verse, start, end))
-
-        def segments_of(ln: _Line) -> List[Tuple[int, int]]:
-            """The systems this line may fill: its own, then each next empty one."""
-            if ln.named:
-                segments = []
-                for a, b, sings in sung_systems(ln, staff, voice):
-                    if not sings:
-                        return segments  # a named part stops where it rests
-                    segments.append((a, b))
-            else:
-                segments = [(ln.start, own_end(ln))]
-            while segments[-1][1] < last:
-                nxt = segments[-1][1] + 1
-                if nxt in groups and has_words(nxt):
-                    break
-                seg = (nxt, named_end(nxt) if ln.named else system_end(nxt))
-                if ln.named and not any(seg[0] <= m <= seg[1] for m in sung(staff, voice)):
-                    break  # a named part does not run on through a system it rests in
-                if nxt not in groups:
-                    if not words_cache:
-                        words_cache.append(_bars_with_words(score, key))
-                    if any(seg[0] <= m <= seg[1] for m in words_cache[0]):
-                        break
-                segments.append(seg)
-            return segments
+            written.append(Written(staff, voice, verse, ln.start, end))
 
         prev_trailing_hyphen = False
-        for start, group in sorted(groups.items()):
-            if not has_words(start):
+        for ln in placed:
+            if not has_words(ln):
                 continue
-            used: Dict[int, int] = {}
-            cursor = start
-            n_syllables = 0
-            reached = start
-            cleared = start
-            for ln in group:
-                tokens = tokens_of[id(ln)]
-                if not tokens:
-                    continue
-                syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
-                prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
-                n_syllables += len(syllables)
-                segments = segments_of(ln)
-                syl_offset = 0
-                last_m = None
-                for m in range(max(cursor, ln.start), segments[-1][1] + 1):
-                    if syl_offset >= len(syllables):
+            tokens = tokens_of[id(ln)]
+            syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
+            prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
+            # The systems this line may fill: its own, then (a line placed by staff
+            # number) each next one whose box is empty.
+            segments = [(ln.start, own_end(ln))]
+            while not ln.named and segments[-1][1] < last:
+                nxt = segments[-1][1] + 1
+                ahead = sent.get(nxt)
+                if ahead is not None and has_words(ahead):
+                    break
+                seg = (nxt, system_end(nxt))
+                if ahead is None:
+                    if words_now is None:
+                        words_now = _bars_with_words(score, key)
+                    if any(seg[0] <= m <= seg[1] for m in words_now):
                         break
-                    if not any(a <= m <= b for a, b in segments):
-                        continue
-                    n_slots = counts.get(m, 0) - used.get(m, 0)
-                    if n_slots <= 0:
-                        continue
-                    chunk = syllables[syl_offset : syl_offset + n_slots]
-                    syl_offset += len(chunk)
-                    used[m] = used.get(m, 0) + len(chunk)
-                    by_measure.setdefault(m, {}).setdefault(key, []).extend(_syllables_to_tokens(chunk))
-                    last_m = m
-                # Too many syllables: keep the excess instead of dropping it — append to the
-                # last filled measure so import crams it onto that measure's last note (the
-                # mismatch stays visible for the user to fix, rather than silently vanishing).
-                if syl_offset < len(syllables):
-                    # A line the one before it filled in full still keeps its words,
-                    # on the last note its own bars have.
-                    at = last_m if last_m is not None else max(
-                        (m for a, b in segments for m in range(a, b + 1) if counts.get(m, 0) > 0),
-                        default=None)
-                    if at is not None:
-                        by_measure.setdefault(at, {}).setdefault(key, []).extend(
-                            _syllables_to_tokens(syllables[syl_offset:]))
-                if last_m is not None:
-                    cursor = last_m
-                ln_reached = segments[0][1]
-                for a, b in segments:
-                    if last_m is not None and last_m >= a:
-                        ln_reached = b
-                reached = max(reached, ln_reached)
-                cleared = max(cleared, ln_reached if end_known(ln) else (last_m or ln.start))
-            for m in range(start, cleared + 1):
+                segments.append(seg)
+            syl_offset = 0
+            last_m = None
+            for m in range(ln.start, segments[-1][1] + 1):
+                if syl_offset >= len(syllables):
+                    break
+                n_slots = counts.get(m, 0)
+                if n_slots <= 0:
+                    continue
+                chunk = syllables[syl_offset : syl_offset + n_slots]
+                syl_offset += len(chunk)
+                by_measure.setdefault(m, {})[key] = _syllables_to_tokens(chunk)
+                last_m = m
+            # Too many syllables: keep the excess instead of dropping it — append to the
+            # last filled measure so import crams it onto that measure's last note (the
+            # mismatch stays visible for the user to fix, rather than silently vanishing).
+            if syl_offset < len(syllables) and last_m is not None:
+                by_measure[last_m][key].extend(_syllables_to_tokens(syllables[syl_offset:]))
+            reached = segments[0][1]
+            for a, b in segments:
+                if last_m is not None and last_m >= a:
+                    reached = b
+            cleared = reached if end_known(ln) else (last_m or ln.start)
+            for m in range(ln.start, cleared + 1):
                 by_measure.setdefault(m, {}).setdefault(key, [])
-            written.append(Written(staff, voice, verse, start, cleared))
-            total_slots = sum(counts.get(m, 0) for m in range(start, reached + 1))
+            written.append(Written(staff, voice, verse, ln.start, cleared))
+            total_slots = sum(counts.get(m, 0) for m in range(ln.start, reached + 1))
+            n_syllables = len(syllables)
             if n_syllables > total_slots:
-                found.append((start, reached, key, TOO_MANY, n_syllables, total_slots))
+                found.append((ln.start, reached, key, TOO_MANY, n_syllables, total_slots))
             elif n_syllables < total_slots:
-                found.append((start, reached, key, TOO_FEW, n_syllables, total_slots))
+                found.append((ln.start, reached, key, TOO_FEW, n_syllables, total_slots))
 
     # One record per distinct (range, kind, voice, verse), with every staff it affects.
     key_to_staffs: Dict[Tuple[int, int, str, int, int, int, int], List[int]] = {}
@@ -1973,7 +1934,7 @@ def blocks_from_boxes(
             if box is None or not isinstance(text, str):
                 continue
             # By staff id, not name: a part may be named "1", or two parts the same.
-            lyrics.append({"parts": [box.id], "voice": box.voice, "verse": int(verse),
+            lyrics.append({"parts": [box.id], "box": True, "voice": box.voice, "verse": int(verse),
                            "text": text.strip()})
         if lyrics:
             blocks.append({"measure_start": system.start, "measure_end": system.end,

@@ -1247,7 +1247,7 @@ def _kept_warnings(previous: List, result) -> List[Dict]:
         verse, voice = w.get("verse") or 1, w.get("voice") or 1
         # One warning can name several staves (the same range, kind and counts are
         # said once); only the staves this import rewrote are answered.
-        if w.get("kind") in ("part_rests", "unknown_part"):
+        if w.get("kind") in ("part_rests", "unknown_part", "two_lines"):
             # About a source line, not a staff (#482): answered once this import sent
             # that line again, corrected or not (if not, its own warning says it again).
             if not set(w.get("lines") or ()) & set(getattr(result, "lines", ()) or ()):

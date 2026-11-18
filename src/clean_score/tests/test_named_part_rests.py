@@ -7,7 +7,8 @@ next system would hide that, so the line is left out and said.
 
 from lxml import etree
 
-from src.clean_score.lyric_txt import PART_RESTS, UNKNOWN_PART, _block_lines, place_lyrics
+from src.clean_score.lyric_txt import (
+    PART_RESTS, TWO_LINES, UNKNOWN_PART, _block_lines, place_lyrics)
 
 from .scorebuilder import build_score, placed_lyrics
 
@@ -214,17 +215,27 @@ def test_a_staff_id_the_score_has_not_is_said_as_unknown():
     assert '"99"' in result.mismatches[0].message
 
 
-def test_a_staff_number_line_for_a_resting_part_is_placed_beside_a_named_one():
-    """A named entry and a staff_number entry for one resting part stay two lines: the
-    named one warns and is left out, the other runs on as it always did."""
+def test_a_named_line_wins_over_a_staff_number_line_for_the_same_resting_part():
+    """A named entry and a staff_number entry landing on one part are not combined:
+    the named one is used (here it warns, T2 rests) and the other is said (#482)."""
     root = _score()
     result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
         {"staff_number": 2, "text": "nel-jä"},
         {"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
-    warnings = [m for m in result.mismatches if m.kind == PART_RESTS]
-    assert len(warnings) == 1
-    assert warnings[0].lines == ("m2 verse 1 voice 1 staff 1",)
-    assert placed_lyrics(root) == {2: "nel-jä"}
+    kinds = sorted(m.kind for m in result.mismatches)
+    assert kinds == sorted([PART_RESTS, TWO_LINES])
+    two = next(m for m in result.mismatches if m.kind == TWO_LINES)
+    assert two.lines == ("m2 verse 1 voice 1 staff 2",)
+    assert placed_lyrics(root) == {}
+
+
+def test_a_named_blank_line_beside_a_staff_number_line_does_not_crash():
+    """Round 5's crash: a named "_" line and a staff_number line for a resting part."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 2, "text": "la"},
+        {"staff_number": 1, "text": "_", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [TWO_LINES]
 
 
 def test_a_line_is_named_by_the_printed_staff_it_stands_on():
@@ -249,20 +260,26 @@ def _bars_of(root, staff):
     return bars
 
 
-def test_a_staff_number_line_joined_by_a_named_one_still_runs_on():
-    """Each source line keeps its own way of running on, even when another line for
-    the same part starts in the same bar: the staff_number line still reaches system
-    3 past the system T2 rests in, and the named one stops where T2 rests (#482)."""
+def test_a_named_line_stays_in_its_own_system():
+    """A named line fills only its own printed system and never runs on (#482): the
+    two syllables past system 1 are crammed there and said as too many."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    assert bars[1] == ["a", "b", "c", "d"]
+    assert all(t == "_" for t in bars.get(3, []))
+    assert "too_many" in [m.kind for m in result.mismatches]
+
+
+def test_a_named_line_and_a_staff_number_line_are_not_joined():
     root = _score()
     result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
         {"staff_number": 2, "text": "a b c d"},
         {"staff_number": 2, "text": "e f", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
     bars = _bars_of(root, 2)
-    # The named line found its own system full, so its words sit on that system's
-    # last note (and say so as too many) rather than following the other into system 3.
-    assert bars[1] == ["a", "b", "e", "f"]
-    assert bars[3] == ["c", "d"]
-    assert PART_RESTS not in [m.kind for m in result.mismatches]
+    assert bars[1] == ["e", "f"]
+    assert TWO_LINES in [m.kind for m in result.mismatches]
 
 
 def test_a_staff_number_line_alone_still_runs_on_like_before():

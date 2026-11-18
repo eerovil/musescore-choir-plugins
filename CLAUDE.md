@@ -1282,16 +1282,21 @@ state model are in `DESIGN.md`.
   `lyric_json_prompt.txt` asks for them in every line's `"parts"`; `staff_number` and
   `position` place a line whose `"parts"` is empty or names no part of the song. On a
   per-system score the printed staff numbering shifts where a part rests, and a name does
-  not. A name two parts share, or a part with no name, is listed by its staff id. A line whose
-  named part has **no notes** in its system (a note held over by a tie counts as a note) is
-  not placed and not run on into the next one, and a named line never runs on through a
-  system its part rests in: it comes back as a `part_rests` mismatch naming the part and
-  bars, since the name or the system is wrong. Without printed systems a named line ends,
-  and runs on, at the score's own line breaks. A name no part carries, or one two parts
+  not. A name two parts share, or a part with no name, is listed by its staff id. **A line
+  that names its part fills only its own printed system and never runs on** (owner's call on
+  #505): its end is cut at the next printed system (the caller's systems, else the score's
+  own line breaks), an end the source gave included, and syllables past it are crammed and
+  said as `too_many`. If its part has **no notes** there (a note held over by a tie counts)
+  it is not placed and comes back as a `part_rests` mismatch naming the part and bars, since
+  the name or the system is wrong. The by-system editor's boxes also name a part by staff
+  id, but carry `"box": true` and keep running on into an empty next system (#393). A
+  `staff_number` line runs on as before. A named entry and a `staff_number` entry landing on
+  one part, voice and verse in one block are not joined: the named one is used and the other
+  is a `two_lines` mismatch (`_block_lines`). A name no part carries, or one two parts
   share, is an `unknown_part` mismatch and the line falls back to `staff_number`, or is not
   placed (and says so) when it has none that is a staff of the score; a staff id in
   `"parts"` the score has not is unknown too (not checked under `--split`); names are read like `lyric_parts` reads them (the instrument's
-  name when the part has none). Both warnings are about a source line, named in their
+  name when the part has none). These three warnings are about a source line, named in their
   `lines` (one warning per source line, even where two lines name the same part;
   `lyric_txt._line_ids`: the bar, verse, voice and the **printed place**, a staff and its
   side only where two parts share it; a line with only `"parts"` is where those parts are
@@ -1300,13 +1305,7 @@ state model are in `DESIGN.md`.
   a warning only when it sends that line again, its name corrected or not
   (`server._kept_warnings`), so pasting another part into the same system keeps it. Since
   the place is the line, typing that staff's box in **Type by system** answers a pasted
-  line's warning too, and the song can move on to Review. A named entry and a
-  `staff_number`-only entry for one part in one block stay two lines through placement
-  (`_lines_to_by_measure`): each keeps its own way of running on, and their words follow
-  one another in block order, each within its own bars. A named line fills the printed
-  systems from its start while its part sings there (`sung_systems`, which cuts an end
-  the source gave at every system boundary too) and warns when the first has no notes;
-  a `staff_number` line runs on as before.
+  line's warning too, and the song can move on to Review.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are
@@ -2679,7 +2678,8 @@ sniff). **Diagnostics are returned, never printed**: `LyricImport.mismatches` is
 list of `Mismatch(kind, message, measure_start, measure_end, staff_ids, syllables,
 slots, verse, voice)` — kinds `too_many` / `too_few` / `no_systems` / `no_system_for_line` /
 `block_count` / `part_rests` (a line naming a part with no notes in its system, #482) /
-`unknown_part` (a `"parts"` name no part, or more than one, carries)
+`unknown_part` (a `"parts"` name no part, or more than one, carries) / `two_lines` (a
+named line and a `staff_number` line on one part; the named one is used)
 — plus `filled_measure_starts` for nulls inferred from the printed
 systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prints
 `Warning: <message>` itself, so terminal output is unchanged.
