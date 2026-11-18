@@ -1301,9 +1301,12 @@ state model are in `DESIGN.md`.
   (`server._kept_warnings`), so pasting another part into the same system keeps it. Since
   the place is the line, typing that staff's box in **Type by system** answers a pasted
   line's warning too, and the song can move on to Review. A named entry and a
-  `staff_number`-only entry for one part in one block stay two lines until placement:
-  only the named one is checked for a resting part, and the other is placed (running on)
-  as before.
+  `staff_number`-only entry for one part in one block stay two lines through placement
+  (`_lines_to_by_measure`): each keeps its own way of running on, and their words follow
+  one another in block order, each within its own bars. A named line fills the printed
+  systems from its start while its part sings there (`sung_systems`, which cuts an end
+  the source gave at every system boundary too) and warns when the first has no notes;
+  a `staff_number` line runs on as before.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are

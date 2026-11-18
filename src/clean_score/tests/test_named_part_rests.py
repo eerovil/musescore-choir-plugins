@@ -236,3 +236,60 @@ def test_a_line_is_named_by_the_printed_staff_it_stands_on():
     typed = place_lyrics(root, [{"measure_start": 2, "measure_end": 2, "lyrics": [
         {"parts": [1], "text": "yk-si"}]}], systems=SYSTEMS)
     assert set(pasted.mismatches[0].lines) & set(typed.lines)
+
+
+def _bars_of(root, staff):
+    from src.clean_score.lyric_txt import export_lyrics
+    bars, measure = {}, None
+    for line in export_lyrics(root).splitlines():
+        if line.startswith("# Measure"):
+            measure = int(line.split()[-1])
+        elif line.strip().startswith(str(staff)):
+            bars[measure] = line.split(":", 1)[1].split()
+    return bars
+
+
+def test_a_staff_number_line_joined_by_a_named_one_still_runs_on():
+    """Each source line keeps its own way of running on, even when another line for
+    the same part starts in the same bar: the staff_number line still reaches system
+    3 past the system T2 rests in, and the named one stops where T2 rests (#482)."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d"},
+        {"staff_number": 2, "text": "e f", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    # The named line found its own system full, so its words sit on that system's
+    # last note (and say so as too many) rather than following the other into system 3.
+    assert bars[1] == ["a", "b", "e", "f"]
+    assert bars[3] == ["c", "d"]
+    assert PART_RESTS not in [m.kind for m in result.mismatches]
+
+
+def test_a_staff_number_line_alone_still_runs_on_like_before():
+    """The staff_number route alone is unchanged: four syllables reach system 3."""
+    root = _score()
+    place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d"}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    assert bars[1] == ["a", "b"] and bars[3] == ["c", "d"]
+
+
+def test_a_named_line_with_an_end_given_warns_when_its_first_system_rests():
+    """An end the source gives is cut at each printed system too: a named line from
+    the system T2 rests in to the next one warns and is not placed (#482)."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "measure_end": 3, "lyrics": [
+        {"staff_number": 2, "text": "kol-me", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    warnings = [m for m in result.mismatches if m.kind == PART_RESTS]
+    assert len(warnings) == 1
+    assert (warnings[0].measure_start, warnings[0].measure_end) == (2, 2)
+    assert placed_lyrics(root).get(2, "") == ""
+
+
+def test_a_named_line_with_an_end_given_stops_where_its_part_rests():
+    root = _score()
+    place_lyrics(root, [{"measure_start": 1, "measure_end": 3, "lyrics": [
+        {"staff_number": 2, "text": "a b c d", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    assert bars[1] == ["a", "b", "c", "d"]
+    assert all(t == "_" for t in bars.get(3, []))
