@@ -184,7 +184,8 @@ def _halves(staff: etree._Element) -> List[Tuple[etree._Element, etree._Element,
 def trim_long_bars(root: etree._Element) -> List[Dict]:
     """Cut every bar longer than its signature back to it. Returns one record per bar.
 
-    A record is `{measure, was, meter, staves: [{staff, part, removed, shortened}]}`,
+    A record is `{measure, was, meter, staves: [{staff, part, removed, shortened,
+    voices}]}`, `voices` being the 1-based voices that lost or shortened a note,
     with `measure` and `staff` 1-based and `staves` naming only staves whose notes
     changed. A bar that prints its own signature, the first bar (an anacrusis), and a
     bar shorter than its signature are left alone.
@@ -219,7 +220,9 @@ def trim_long_bars(root: etree._Element) -> List[Dict]:
             shortened = [n for c in cuts.values() for n in c["shortened"]]
             if removed or shortened:
                 changed.append({"staff": si + 1, "part": names.get(si + 1),
-                                "removed": removed, "shortened": shortened})
+                                "removed": removed, "shortened": shortened,
+                                "voices": [vi + 1 for vi, c in sorted(cuts.items())
+                                           if c["removed"] or c["shortened"]]})
         for m in measures:
             if "len" in m[mi].attrib:
                 del m[mi].attrib["len"]
@@ -232,7 +235,12 @@ def trim_long_bars(root: etree._Element) -> List[Dict]:
                 what.append("removed " + " ".join(one["removed"]))
             if one["shortened"]:
                 what.append("shortened " + " ".join(one["shortened"]))
+            # Which voices lost music is said in the mark, so a fix that writes only
+            # one voice can tell whether it answered the mark (#482).
+            voices = one.get("voices") or []
+            where = (f" in voice {voices[0]}" if len(voices) == 1 else
+                     f" in voices {', '.join(map(str, voices))}" if voices else "")
             mark_bar(measures[one["staff"] - 1][mi],
-                     f"was {record['was']}, cut to {shown}"
+                     f"was {record['was']}, cut to {shown}{where}"
                      + (f"; {', '.join(what)}" if what else ""))
     return records
