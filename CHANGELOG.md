@@ -10,6 +10,8 @@ developers are listed under *Behind the scenes*.
 - *Find systems* (the quick finder, not *Ask homr*) now finds the systems on a scan with grey
   paper; before, it found none on any page of such a scan. The lyric editor's staff pictures
   and the Fix panel's bar box read such a scan too. (#494)
+- A new fix kind, `rehearsal`, puts a rehearsal mark the scan could not read on a bar, and
+  it reaches the published score. (#493)
 - A song's language is saved with it: choose it on the New song form or the song's Start panel,
   or with the first `sing_song.py --lang`. A song with no language whose words do not look
   Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"

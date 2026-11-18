@@ -542,16 +542,19 @@ def silent_parts(root: etree._Element) -> List[str]:
         return []
 
     music = {staff.get("id"): staff for staff in score.findall("Staff")}
-    silent = []
-    for index, part in enumerate(score.findall("Part")):
-        percussion = (part.find(".//Instrument[@id='drumset']") is not None
-                      or (part.findtext(".//useDrumset") or "").strip() == "1")
-        ids = _staff_ids(part)
-        has_notes = any(music[i].find(".//Chord") is not None
-                        for i in ids if i in music)
-        if percussion or not has_notes:
-            silent.append(_part_name(part, index))
-    return silent
+    return [_part_name(part, index) for index, part in enumerate(score.findall("Part"))
+            if part_is_silent(part, music)]
+
+
+def part_is_silent(part: etree._Element, music: Dict[str, etree._Element]) -> bool:
+    """Whether the publish copy drops this part: percussion, or only rests.
+    ``music`` maps staff id to its ``Staff``. The `rehearsal` fix asks the same
+    question, so a mark is never put on a staff publishing takes away (#480)."""
+    percussion = (part.find(".//Instrument[@id='drumset']") is not None
+                  or (part.findtext(".//useDrumset") or "").strip() == "1")
+    has_notes = any(music[i].find(".//Chord") is not None
+                    for i in _staff_ids(part) if i in music)
+    return percussion or not has_notes
 
 
 def drop_parts(root: etree._Element, names: List[str]) -> int:
