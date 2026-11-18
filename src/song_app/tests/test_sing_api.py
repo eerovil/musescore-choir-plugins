@@ -7,6 +7,7 @@ import stat
 import sys
 
 import pytest
+from lxml import etree
 
 pytest.importorskip("httpx")
 
@@ -71,6 +72,7 @@ def client(tmp_path, monkeypatch):
     snaps = []
     monkeypatch.setattr(sing_run, "_snapshot", lambda sha: snaps.append(sha) or str(tmp_path / "code" / sha))
     monkeypatch.setattr(publish.Config, "from_env", classmethod(lambda cls: object()))
+    monkeypatch.setattr(publish, "choirs", lambda *a: {"error": "", "choirs": [{"id": "testi"}]})
     c = TestClient(server.app)
     c.tmp, c.dir, c.snaps = tmp_path, dest, snaps
     return c
@@ -151,6 +153,16 @@ def test_bad_input_and_a_failed_start(client, monkeypatch):
     r = client.post(f"/api/songs/{SLUG}/sing", json={"choir": "testi"})
     assert r.status_code == 502 and "Unit already exists" in r.text
     assert not os.path.exists(os.path.join(progress.state_dir(SLUG), "app.json"))
+    assert client.get(f"/api/songs/{SLUG}/sing").json() == {"state": "none"}
+
+
+def test_sing_checks_the_choir_on_the_site_before_starting(client, monkeypatch):
+    r = client.post(f"/api/songs/{SLUG}/sing", json={"choir": "jm"})   # not on the site
+    assert r.status_code == 400 and "testi" in r.text
+    monkeypatch.setattr(publish, "choirs", lambda *a: {"error": "offline", "choirs": []})
+    r = client.post(f"/api/songs/{SLUG}/sing", json={"choir": "testi"})
+    assert r.status_code == 502 and "offline" in r.text
+    assert calls(client, "systemd-run") == []
     assert client.get(f"/api/songs/{SLUG}/sing").json() == {"state": "none"}
 
 
@@ -260,6 +272,19 @@ def test_the_pronunciation_reply_lists_the_parts(client, monkeypatch):
     parts = client.get(f"/api/songs/{SLUG}/pronunciation").json()["parts"]
     assert parts == [{"n": 1, "name": "T1", "staves": ["1"]}, {"n": 2, "name": "T2", "staves": ["2"]},
                      {"n": 3, "name": "B1", "staves": ["3"]}, {"n": 4, "name": "B2", "staves": ["4"]}]
+
+
+def test_parts_keep_their_staves_in_a_musescore_4_score(client, monkeypatch):
+    monkeypatch.setattr(server, "_readings", lambda words: {})
+    monkeypatch.setattr(server, "_pack_sounds", lambda: None)
+    cleaned = state.load(SLUG).cleaned_path()
+    tree = etree.parse(cleaned)
+    for stub in tree.getroot().find("Score").iter("Part"):   # MuseScore 4 writes no id here
+        for staff in stub.findall("Staff"):
+            staff.attrib.pop("id", None)
+    tree.write(cleaned)
+    parts = client.get(f"/api/songs/{SLUG}/pronunciation").json()["parts"]
+    assert [p["staves"] for p in parts] == [["1"], ["2"], ["3"], ["4"]]
 
 
 def test_try_is_refused_while_a_job_or_a_full_run_holds_the_song(client):

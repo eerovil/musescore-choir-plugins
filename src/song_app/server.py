@@ -32,6 +32,7 @@ from src.sing_song import language_check
 from src.sing_song import progress
 from src.clean_score import lyric_txt
 from src.clean_score.utils.score_fixes import FixError
+from src.clean_score.utils.utils import part_staff_ids
 from src.score_export.score import START as START_TEMPO
 from src.score_export import staff_groups
 
@@ -2273,9 +2274,13 @@ def _sung_parts(song: state.Song, cleaned: str) -> List[Dict]:
     music = {staff.get("id"): staff for staff in sc.findall("Staff")}
     names = _publish_parts(song, cleaned)["names"]
     kept = [p for p in sc.findall("Part") if not score_copy.part_is_silent(p, music)]
+    parts = sc.findall("Part")
+    ids = part_staff_ids(sc)
     out = []
     for n, part in enumerate(kept, 1):
-        staves = [st.get("id") for st in part.findall("Staff")]
+        # MuseScore 4 writes a part's own staves with no id; part_staff_ids then numbers
+        # them by position, as the score's staves of music are numbered.
+        staves = [str(i) for i in ids[parts.index(part)]]
         name = names[n - 1] if n <= len(names) else (part.findtext("trackName") or f"Part {n}")
         out.append({"n": n, "name": name, "staves": staves})
     return out
@@ -2329,11 +2334,19 @@ def api_sing(slug: str, body: Dict = None) -> Dict:
     choir = str((body or {}).get("choir") or "")
     if not re.fullmatch(r"[\w-]+", choir):
         raise HTTPException(400, "Choose a choir first.")
-    if publish.Config.from_env() is None:
+    config = publish.Config.from_env()
+    if config is None:
         raise HTTPException(400, publish.MISSING_CONFIG)
     _cleaned_or_400(song)
     if _publish_busy(song):
         raise HTTPException(409, "A job is working on this song; sing once it is done.")
+    # The choir must be one the site has, as Publish checks, before a unit is started.
+    listing = publish.choirs(config, state.SONGS_DIR)
+    if listing["error"]:
+        raise HTTPException(502, f"Could not read the site's choirs: {listing['error']}")
+    known = [c["id"] for c in listing["choirs"]]
+    if choir not in known:
+        raise HTTPException(400, f"Choose a choir: {', '.join(known) or 'the site has none'}")
     reason = sing_run.busy_reason(slug)
     if reason:
         raise HTTPException(409, reason)
