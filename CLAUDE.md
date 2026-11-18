@@ -2221,6 +2221,21 @@ state model are in `DESIGN.md`.
   `scripts/finder_vs_hand.py` counts the systems found on every hand-drawn page in `songs/`
   against the bands drawn there (run it before and after a change to the finder). The
   lyric editor's staff finder and `bar_box` use the same `_ink`.
+  **What joins two staves is stricter** (#480, `_joined`): pages over-split when a tight
+  crop put the systemic barline within the old 3% edge margin, and under-split when a
+  scan's printed border ran down the side through every gap. Now the outer **1%** is
+  ignored; a joining column must also run through the half of each staff next to the
+  gap; it must be darker than halfway between the paper and the page's darkest ink (a
+  grey shadow along the binding is not, nor a faint scan line where the staves start); and a **border column** never joins (`_border_columns`): one inked
+  through the page's top or bottom margin, or, within 3% of a side, one inked down every
+  staff of the page **and** through the two staff heights above the first or below the
+  last, read with the ink smeared 10 px sideways so a frame on a tilted scan is still
+  one line, plus 8 px either side. A tall system's own barline stops at its system and
+  so is not a border. The owner chose the 1%, the run into both staves and
+  the margin rule; the shadow and the near-side reach rule were added when the host's
+  pages showed them. `scripts/finder_vs_hand.py` on this host's hand-drawn pages: 42
+  pages read a different system count from the hand-drawn one before, 12 after, and none
+  got worse.
 - The **Scan panel** is added by this pull request (#116), replacing the holding one that
   #115 left. Its whole job is to stop a tidy-looking parse becoming a practice track, and
   every piece of it follows from that.
