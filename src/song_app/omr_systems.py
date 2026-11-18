@@ -618,7 +618,7 @@ def assemble(scans: Sequence[SystemScan], out_path: str,
 
     width = max(scan.width for scan in scans)
     divisions = _common_divisions(scans)
-    meters = _meter_plan(scans, divisions)
+    meters = _meter_plan(scans, divisions, log or _noop)
 
     score = etree.Element("score-partwise", version="4.0")
     part_list = etree.SubElement(score, "part-list")
@@ -1308,7 +1308,7 @@ class _BarMeter:
 
 
 def _meter_plan(
-    scans: Sequence[SystemScan], divisions: int
+    scans: Sequence[SystemScan], divisions: int, log: Logger = _noop
 ) -> List[List[_BarMeter]]:
     """The meter in force at every bar, and where it is written down.
 
@@ -1338,6 +1338,13 @@ def _meter_plan(
       given.
     * A whole-measure rest is not a sample. homr writes one a whole note long
       whatever the meter, so counting it would drag every span towards 4/4.
+
+    One signature it does throw away (#480): one that **fewer than half** of the
+    system's staves carry, on a bar whose staves agree it is as long as the meter
+    already in force. A meter change the page prints is printed on every staff;
+    homr wrote a 1/1 on one staff of five over a bar three quarters long, and
+    since a one-bar change can never gather :data:`_MIN_BARS` of evidence, that
+    1/1 went onto every part. It is dropped and ``log`` says so.
     """
     plan: List[List[Optional[_BarMeter]]] = [
         [None] * scan.bars for scan in scans
@@ -1349,6 +1356,10 @@ def _meter_plan(
         if bar == 0 or _declared_time(scan, bar) is not None
     ]
 
+    starts = [0]
+    for scan in scans:
+        starts.append(starts[-1] + scan.bars)
+
     running: Optional[_Meter] = None
     for n, (system, bar, declared) in enumerate(points):
         following = points[n + 1] if n + 1 < len(points) else None
@@ -1356,10 +1367,21 @@ def _meter_plan(
                 else scans[system].bars)
         lengths = [_bar_length_agreed(scans[system], over, divisions)
                    for over in range(bar, stop)]
-        meter = _reconcile(declared, running,
-                           [length for length in lengths if length], divisions,
-                           seam=bar == 0 and system > 0
-                           and _time_is_guessed(scans[system], bar))
+        carried = (_staves_declaring_time(scans[system], bar, declared)
+                   if declared is not None else (0, 0))
+        if (running is not None and declared is not None and declared != running
+                and carried[0] * 2 < carried[1]
+                and lengths[0] == running.ticks(divisions)):
+            log(f"Bar {starts[system] + bar + 1}: dropped a "
+                f"{declared.beats}/{declared.beat_type} time signature only "
+                f"{carried[0]} of {carried[1]} staves read; the bar is "
+                f"{running.beats}/{running.beat_type} long, as before it.")
+            meter = running
+        else:
+            meter = _reconcile(declared, running,
+                               [length for length in lengths if length], divisions,
+                               seam=bar == 0 and system > 0
+                               and _time_is_guessed(scans[system], bar))
         ticks = meter.ticks(divisions)
         plan[system][bar] = _BarMeter(meter, running is None or meter != running, ticks)
         for over in range(bar + 1, stop):
@@ -1445,7 +1467,21 @@ def _time_is_guessed(scan: SystemScan, bar: int) -> bool:
 
 
 def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:
-    """The signature this system's bar declares, if any staff declares one."""
+    """The signature this system's bar declares: the one most of its staves read.
+
+    Staves that disagree are settled by count, the first read winning a tie, so
+    a stray on the top staff does not outvote the staves restating the meter
+    (#480).
+    """
+    read = _times_read(scan, bar)
+    if not read:
+        return None
+    return max(dict.fromkeys(read), key=read.count)
+
+
+def _times_read(scan: SystemScan, bar: int) -> List[_Meter]:
+    """The signature each staff declares in this bar, top staff first."""
+    read = []
     for staff in scan.staves:
         if bar >= staff.bars:
             continue
@@ -1456,8 +1492,15 @@ def _declared_time(scan: SystemScan, bar: int) -> Optional[_Meter]:
             beats = _int(time.findtext("beats"))
             beat_type = _int(time.findtext("beat-type"))
             if beats and beat_type:
-                return _Meter(beats, beat_type)
-    return None
+                read.append(_Meter(beats, beat_type))
+                break
+    return read
+
+
+def _staves_declaring_time(scan: SystemScan, bar: int, meter: _Meter) -> Tuple[int, int]:
+    """How many of the staves that have this bar read ``meter`` in it, of how many."""
+    having = sum(1 for staff in scan.staves if bar < staff.bars)
+    return _times_read(scan, bar).count(meter), having
 
 
 def _bar_length_agreed(scan: SystemScan, bar: int, divisions: int) -> Optional[int]:
