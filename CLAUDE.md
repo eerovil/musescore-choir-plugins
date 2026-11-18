@@ -2727,7 +2727,7 @@ timing are the same parts on the same clock.
   that steps back to the beat (`_place_at`, which MuseScore plays on time); a mark with no beat left is logged and
   played as written. The spellings are in `_GRADUAL` (rit., ritard., riten., rall.,
   accel. and their long forms, also inside "dim. e rit."); "ritmico" is not one. The
-  Publish panel lists the marks, each with where its ramp stops and why ("by bar 42
+  Publish panel lists the marks, each with where its ramp stops and why ("eases until bar 42
   (fermata)", `gradual_marks`' `until`/`until_why`, counting the panel's saved tempo
   changes), and saves `publish.gradual`
   (`[{"measure", "bpm", "off"}]`, matched to the first mark in that bar; a second mark in

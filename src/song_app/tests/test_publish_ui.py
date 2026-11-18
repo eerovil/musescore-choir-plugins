@@ -537,6 +537,15 @@ def test_publishing_over_a_sung_version_asks_first(live, page, tmp_path, recorde
     section.locator("button.publish-btn").click()
 
     expect(note).to_be_visible(timeout=15000)
+    # #500: one red line and the button; the way to keep it sung is folded away
+    expect(note.locator("p.hint.err")).to_have_css("color", "rgb(224, 106, 106)")
+    expect(note.locator("button.publish-piano-only")).to_be_visible()
+    keep = note.locator("details.publish-keep-sung")
+    expect(keep.locator("summary")).to_have_text("Keep it sung instead")
+    expect(note.locator("input.publish-sing-cmd")).to_be_hidden()
+    note.scroll_into_view_if_needed()
+    _shot(page, f"publish-sung-{'recorded' if recorded else 'site'}-folded-1280.png")
+    keep.locator("summary").click()
     expect(note.locator("input.publish-sing-cmd")).to_have_value(
         f".venv/bin/python sing_song.py {slug} --publish jm")
     expect(note).to_contain_text("The Joensuun Mieslaulajat (jm) list has a sung version of this song.")
@@ -581,9 +590,15 @@ def test_the_scores_rit_is_listed_and_its_setting_saved(live, page, size):
 
     rows = page.locator("[data-gradual] .gradual-row")
     expect(rows).to_have_count(1)
-    expect(rows.first).to_contain_text("Bar 1: “poco rit.”")
+    # #500: the sentence on its own line, the controls on the next
+    expect(rows.first.locator(".gradual-head")).to_have_text(
+        "Bar 1: “poco rit.” — eases until bar 1 beat 4 (fermata)")
     # the fixture's bar 1 holds a fermata on its last beat, which ends the ramp
-    expect(page.locator("[data-gradual-until='1']")).to_have_text("by bar 1 beat 4 (fermata)")
+    expect(page.locator("[data-gradual-until='1']")).to_have_text("eases until bar 1 beat 4 (fermata)")
+    head = rows.first.locator(".gradual-head").bounding_box()
+    controls = rows.first.locator(".gradual-controls").bounding_box()
+    assert head and controls, "the rit. row is not laid out"
+    assert controls["y"] >= head["y"] + head["height"] - 1
     expect(page.locator("[data-gradual-stale='7']")).to_contain_text("no rit. or accel.")
     page.locator("[data-gradual-bpm='1']").fill("50")
     expect(page.locator("[data-save-note]")).to_have_text("Unsaved changes")

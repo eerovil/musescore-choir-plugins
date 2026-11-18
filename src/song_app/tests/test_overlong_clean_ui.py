@@ -104,7 +104,9 @@ def test_the_clean_panel_lists_the_long_bars_on_first_view_and_after_a_reload(li
         expect(page.locator(".sysblock")).to_have_count(1)
         listed = page.locator(".overlong li")
         expect(listed).to_have_count(1)
-        expect(listed).to_contain_text("measure 2, staff 1, voice 2")
+        expect(listed).to_have_text("Bar 2, staff 1, voice 2: notes add up to 4/1 in a 3/1 bar")
+        expect(page.locator(".overlong")).to_contain_text("MuseScore will not open them")
+        expect(page.locator(".overlong")).not_to_contain_text("MuseScore 4")
         page.reload()
     _evidence(page, "overlong-clean-desktop.png")
     assert not errors, f"the panel raised: {errors}"
@@ -115,7 +117,30 @@ def test_the_list_fits_a_phone(live, page):
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(f"{base}/#/song/{song.slug}")
     listed = page.locator(".overlong li")
-    expect(listed).to_contain_text("measure 2, staff 1, voice 2")
+    expect(listed).to_contain_text("Bar 2, staff 1, voice 2")
     box = page.locator(".overlong").bounding_box()
     assert box and box["x"] >= 0 and box["x"] + box["width"] <= 390
     _evidence(page, "overlong-clean-phone.png")
+
+
+def test_once_cleaned_the_list_folds_into_one_line(live, page):
+    """#500: after a clean the bars were already cut or reset, so the list is kept
+    but folded, and the panel opens on the grid rather than on old news."""
+    base, song = live
+    cleaned = state.load(song.slug)
+    # the song stays on Clean, so the panel opens there
+    with open(cleaned.path("in_cleaned.mscx"), "wb") as fh:
+        fh.write(etree.tostring(_score([FULL, FULL], [FULL, FULL])))
+    with state.song_lock(song.slug):
+        cleaned = state.load(song.slug)
+        cleaned.data["cleaned"] = "in_cleaned.mscx"
+        cleaned.save()
+    page.goto(f"{base}/#/song/{song.slug}")
+    folded = page.locator("details.overlong")
+    expect(folded).to_have_count(1)
+    expect(folded.locator("summary")).to_have_text(
+        "1 bar in the scan ran past its barline — cleaning cut or reset it")
+    expect(folded.locator("li")).to_be_hidden()
+    _evidence(page, "overlong-clean-folded.png")
+    folded.locator("summary").click()
+    expect(folded.locator("li")).to_have_text("Bar 2, staff 1, voice 2: notes add up to 4/1 in a 3/1 bar")
