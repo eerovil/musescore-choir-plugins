@@ -377,20 +377,44 @@ def label(bounds: List[SystemBounds], mscx_path: str) -> List[SystemBounds]:
             for b, r in zip(bounds, ranges)]
 
 
-def save_bounds(song_dir: str, bounds: List[SystemBounds]) -> str:
+def save_bounds(song_dir: str, bounds: List[SystemBounds],
+                skipped: Optional[List[int]] = None) -> str:
+    """Write the bands, and the pages left out (#480).
+
+    ``skipped`` None keeps the pages already recorded as left out, so a caller that
+    only relabels the bands cannot put a page back in by accident.
+    """
+    if skipped is None:
+        skipped = load_skipped(song_dir)
+    data = {"systems": [b.to_dict() for b in bounds]}
+    if skipped:
+        data["skipped_pages"] = sorted(set(skipped))
     path = os.path.join(song_dir, BOUNDS_FILE)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"systems": [b.to_dict() for b in bounds]}, f, indent=2)
+        json.dump(data, f, indent=2)
     return path
 
 
-def load_bounds(song_dir: str) -> List[SystemBounds]:
+def _bounds_data(song_dir: str) -> Dict:
     path = os.path.join(song_dir, BOUNDS_FILE)
     if not os.path.exists(path):
-        return []
+        return {}
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_bounds(song_dir: str) -> List[SystemBounds]:
+    return [SystemBounds(**s) for s in _bounds_data(song_dir).get("systems", [])]
+
+
+def load_skipped(song_dir: str) -> List[int]:
+    """Pages a person said hold no music to scan (a title page, a piano-only page)."""
+    stored = _bounds_data(song_dir).get("skipped_pages") or []
+    if not isinstance(stored, list):
         return []
-    return [SystemBounds(**s) for s in data.get("systems", [])]
+    return sorted({int(p) for p in stored
+                   if isinstance(p, (int, float)) and not isinstance(p, bool)})
