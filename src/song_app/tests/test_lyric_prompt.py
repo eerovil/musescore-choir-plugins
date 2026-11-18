@@ -107,6 +107,20 @@ def test_a_part_rests_warning_stays_until_its_own_line_is_sent_again():
     assert [m.kind for m in again.mismatches] == ["part_rests"]
 
 
+def test_a_two_lines_warning_stays_until_the_dropped_line_is_sent_again():
+    """A staff_number line set aside for a named one on the same part (#482) is said
+    until that line is pasted again."""
+    root = _two_tenors_t2_resting_in_bar_2()
+    first = _paste(root, {"staff_number": 1, "text": "yk-si"},
+                   {"staff_number": 2, "text": "kak-si", "parts": ["T1"]})
+    old = [m.to_dict() for m in first.mismatches]
+    assert [w["kind"] for w in old] == ["two_lines"]
+    other = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T1"]})
+    assert server._kept_warnings(old, other) == old
+    resent = _paste(root, {"staff_number": 1, "text": "yk-si"})
+    assert server._kept_warnings(old, resent) == []
+
+
 def test_correcting_one_of_two_lines_keeps_the_others_warning():
     root = _two_tenors_t2_resting_in_bar_2()
     first = _paste(root,
