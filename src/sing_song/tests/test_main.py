@@ -1184,6 +1184,27 @@ def test_sing_with_a_trial_sings_that_phrase_into_try_only(tmp_path, monkeypatch
     assert not (bundle / "words.json").exists()
 
 
+def test_a_trial_past_the_songs_last_bar_is_refused(tmp_path, monkeypatch):
+    # a two-bar song: --try B1:1-999 stops before anything is sung, rather than singing bars 1-2
+    from src.sing_song.tests.test_fold import chord, score
+    cleaned = score(tmp_path / "cleaned.mscx",
+                    [("T1", [chord(60, syl="la") * 4, chord(62, syl="lu") * 4]),
+                     ("B1", [chord(48, syl="do") * 4, chord(50, syl="re") * 4])])
+    bundle, work = tmp_path / "bundle", tmp_path / "work"
+    bundle.mkdir()
+    work.mkdir()
+    (bundle / "timing.json").write_text(json.dumps(
+        {"points": [[0, 0, 0], [4, 1, 0], [8, 1, 4]], "duration": 8, "measures": 2}))
+    ran = []
+    monkeypatch.setattr(publish_song, "run", lambda cmd, **kw: ran.append(cmd))
+    mp3 = tmp_path / "try" / "2-B1-bars-1-999.mp3"
+    manifest = {"duration": 8, "parts": [{"name": "T1"}, {"name": "B1"}]}
+    with pytest.raises(SystemExit, match="bars 1-999 run past the song, which has 2 bars"):
+        publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "fi",
+                          sys.executable, "/ufr", False, trial=(2, 1, 999, str(mp3)))
+    assert ran == [] and not mp3.exists()
+
+
 def test_a_trial_says_how_long_its_music_is_and_how_long_singing_it_took():
     assert publish_song.trial_said("/o/try/2-Solo-bars-1-4.mp3", 8.04, 31.26) == \
         "Trial: /o/try/2-Solo-bars-1-4.mp3 (8.0 s of music, sung in 31.3 s)"

@@ -582,6 +582,8 @@ def test_the_scores_rit_is_listed_and_its_setting_saved(live, page, size):
     rows = page.locator("[data-gradual] .gradual-row")
     expect(rows).to_have_count(1)
     expect(rows.first).to_contain_text("Bar 1: “poco rit.”")
+    # the fixture's bar 1 holds a fermata on its last beat, which ends the ramp
+    expect(page.locator("[data-gradual-until='1']")).to_have_text("by bar 1 beat 4 (fermata)")
     expect(page.locator("[data-gradual-stale='7']")).to_contain_text("no rit. or accel.")
     page.locator("[data-gradual-bpm='1']").fill("50")
     expect(page.locator("[data-save-note]")).to_have_text("Unsaved changes")

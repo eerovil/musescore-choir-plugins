@@ -171,7 +171,10 @@ def _derived(song: state.Song) -> Dict:
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
         "needs_initial_bpm": needs_initial_bpm,
         # the score's printed rit./accel. marks, for the Publish panel (#483)
-        "gradual_marks": pipeline.gradual_marks(cleaned) if cleaned and os.path.exists(cleaned) else [],
+        "gradual_marks": pipeline.gradual_marks(
+            cleaned, (song.data.get("publish") or {}).get("tempo_changes"),
+            (song.data.get("publish") or {}).get("bpm"))
+        if cleaned and os.path.exists(cleaned) else [],
         # Printed-system bounds, labelled with the measures they cover: what lets
         # the viewer show one system and the lyric editor ask per system.
         "systems": systems,

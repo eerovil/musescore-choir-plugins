@@ -463,6 +463,8 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     bars = len(etree.parse(cleaned).getroot().find("Score").find(f"Staff[@id='{staves[0]}']").findall("Measure"))
     if played != bars:
         sys.exit(f"timing.json has {played} bars, the score {bars}")
+    if trial and trial[2] > bars:
+        sys.exit(f"--try: bars {trial[1]}-{trial[2]} run past the song, which has {bars} bars")
     midi = os.path.join(bundle_dir, "score.mid")
     env = singer_env(python, ufr_dir, lang, gpu)
     os.makedirs(os.path.join(bundle_dir, "parts"), exist_ok=True)

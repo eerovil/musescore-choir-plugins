@@ -398,9 +398,10 @@ def test_the_panel_is_offered_the_scores_rit_and_accel_marks(client, song):
     assert client.get(f"/api/songs/{song.slug}").json()["gradual_marks"] == []
     _mark(song, 30, "poco rit.")
     _mark(song, 12, "accel.")
-    assert client.get(f"/api/songs/{song.slug}").json()["gradual_marks"] == [
-        {"measure": 12, "kind": "accel", "text": "accel."},
-        {"measure": 30, "kind": "rit", "text": "poco rit."}]
+    marks = client.get(f"/api/songs/{song.slug}").json()["gradual_marks"]
+    assert [(m["measure"], m["kind"], m["text"], m["until_why"]) for m in marks] == [
+        (12, "accel", "accel.", "next rit."), (30, "rit", "poco rit.", marks[1]["until_why"])]
+    assert marks[0]["until"]["measure"] == 30
 
 
 def test_a_rit_setting_is_kept_and_handed_to_the_publish(client, song, monkeypatch, tmp_path):
@@ -430,3 +431,22 @@ def test_a_rit_setting_that_points_at_nothing_or_cannot_play_is_refused(client, 
     reply = client.post(f"/api/songs/{song.slug}/publish-settings", json={"gradual": bad})
     assert reply.status_code == 400 and message in reply.json()["detail"]
     assert "gradual" not in _saved(song)
+
+
+def test_a_saved_tempo_change_shows_as_where_a_rit_stops(tmp_path):
+    """#483: the panel lists where each rit. eases to; a tempo change saved on the
+    panel ends the ramp in the publish copy, so the listing counts it too, and a
+    list the score refuses is left out rather than failing the page."""
+    from lxml import etree
+    from src.score_export.tests.test_gradual import _quarters, _score
+    from src.song_app import pipeline
+    path = tmp_path / "rit.mscx"
+    path.write_bytes(etree.tostring(_score(_quarters(b1q2="rit."))))
+
+    def until(changes):
+        mark, = pipeline.gradual_marks(str(path), changes)
+        return mark["until"], mark["until_why"]
+
+    assert until(None) == ({"measure": 4, "beat": None}, "end")
+    assert until([{"measure": 3, "bpm": 90}]) == ({"measure": 3, "beat": 1}, "tempo change")
+    assert until([{"measure": 99, "bpm": 90}]) == ({"measure": 4, "beat": None}, "end")

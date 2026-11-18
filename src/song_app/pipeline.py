@@ -1485,11 +1485,24 @@ def bar_count(mscx_path: str) -> int:
     return len(staff.findall("Measure")) if staff is not None else 0
 
 
-def gradual_marks(mscx_path: str) -> List[Dict]:
-    """The score's printed rit. and accel. marks, a bar each (#483)."""
-    from src.score_export.score import gradual_marks as score_gradual_marks
+def gradual_marks(mscx_path: str, tempo_changes=None, initial_bpm=None) -> List[Dict]:
+    """The score's printed rit. and accel. marks, each with where its ramp stops
+    (#483). The Publish panel's tempo changes end a ramp too, so they are written
+    into the parsed copy first, as the publish copy has them; a list the score
+    refuses is left out rather than failing the page."""
+    from src.score_export.score import (add_opening_tempo, add_tempo_changes,
+                                        gradual_marks as score_gradual_marks,
+                                        has_opening_tempo)
     from lxml import etree
-    return score_gradual_marks(etree.parse(mscx_path).getroot())
+    root = etree.parse(mscx_path).getroot()
+    if tempo_changes:
+        try:
+            if initial_bpm and not has_opening_tempo(root):
+                add_opening_tempo(root, float(initial_bpm))
+            add_tempo_changes(root, tempo_changes)
+        except (ValueError, TypeError):
+            root = etree.parse(mscx_path).getroot()
+    return score_gradual_marks(root)
 
 
 def has_opening_tempo(mscx_path: str) -> bool:

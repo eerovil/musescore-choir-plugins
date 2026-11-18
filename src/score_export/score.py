@@ -336,12 +336,53 @@ def _timeline(root: etree._Element):
     return bars, events, starts
 
 
+def _ramp_end(events, number, bars):
+    """What ends the ramp of the mark `events[number]`: the first event at a later
+    place, or None for the end of the song; and that place."""
+    where = events[number][0]
+    end = next((e for e in events[number + 1:] if e[0] > where), None)
+    return end, (end[0] if end else (len(bars), Fraction(0)))
+
+
+def _why(end) -> str:
+    """The Publish panel's word for what ends a ramp."""
+    if end is None:
+        return "end"
+    kind, payload = end[1], end[2]
+    if kind == "a tempo":
+        return "Tempo I" if payload["first"] else "a tempo"
+    if kind == "gradual":
+        return f"next {payload['kind']}."
+    return {"tempo": "tempo change", "fermata": "fermata"}[kind]
+
+
 def gradual_marks(root: etree._Element) -> List[Dict]:
     """Every rit./rall./accel. the score prints, one per place, in score order:
-    `{"measure": n, "kind": "rit" | "accel", "text": "poco rit."}`, bars from 1."""
-    _bars, events, _starts = _timeline(root)
-    return [{"measure": where[0] + 1, **payload}
-            for where, kind, payload in events if kind == "gradual"]
+    `{"measure": n, "beat": b, "kind": "rit" | "accel", "text": "poco rit.",
+    "until": {"measure": n, "beat": b}, "until_why": "fermata"}`, bars and beats from
+    1. `until` is where the ramp stops (the place of what ends it, or the last bar's
+    end for "end"), and `until_why` one of "a tempo", "Tempo I", "tempo change",
+    "fermata", "next rit.", "next accel." or "end"."""
+    bars, events, _starts = _timeline(root)
+    out = []
+    for number, (where, kind, payload) in enumerate(events):
+        if kind != "gradual":
+            continue
+        end, end_at = _ramp_end(events, number, bars)
+        if end is None:
+            until = {"measure": len(bars), "beat": None}
+        else:
+            until = {"measure": end_at[0] + 1, "beat": _beat_number(bars, end_at)}
+        out.append({"measure": where[0] + 1, "beat": _beat_number(bars, where), **payload,
+                    "until": until, "until_why": _why(end)})
+    return out
+
+
+def _beat_number(bars, where) -> float:
+    """Which beat of its bar `where` falls on, from 1 (2.5 between beats 2 and 3)."""
+    bar, at = where
+    number = 1 + at / bars[bar][1] if bar < len(bars) else Fraction(1)
+    return int(number) if number == int(number) else round(float(number), 2)
 
 
 def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
@@ -381,8 +422,7 @@ def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
             say(f"{payload['text']} at bar {measure}: switched off on the Publish panel")
             continue
         base = _speed_at(where, events, plan, opening)  # a mark in its own place counts
-        end = next((e for e in events[number + 1:] if e[0] > where), None)
-        end_at = end[0] if end else (len(bars), Fraction(0))
+        end, end_at = _ramp_end(events, number, bars)
         beats = _beats_between(bars, where, end_at)
         if not beats:
             say(f"{payload['text']} at bar {measure}: no beat left before what ends it; "

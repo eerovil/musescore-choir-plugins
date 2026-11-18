@@ -2999,6 +2999,14 @@ function panelPublish(panel, song, P, refresh, actions) {
   // The score's printed rit. and accel. marks (#483): each eases the speed beat by
   // beat to three quarters (rit.) or five quarters (accel.) unless a target BPM is
   // given here, or it is switched off and played as written.
+  // Where the ramp stops, so a director can tell whether it is the span they meant:
+  // "by bar 42 (fermata)", "to the end".
+  const gradualUntil = (mark) => {
+    const until = mark.until || {};
+    if (mark.until_why === "end") return "to the end";
+    const place = `bar ${until.measure}${until.beat > 1 ? ` beat ${until.beat}` : ""}`;
+    return `by ${place} (${mark.until_why})`;
+  };
   const savedGradual = Object.fromEntries((pub.gradual || []).map((g) => [g.measure, g]));
   // A setting is kept per bar and applies to the bar's first mark, so only that one
   // gets controls; a later mark in the same bar is listed and eases by the default.
@@ -3016,7 +3024,9 @@ function panelPublish(panel, song, P, refresh, actions) {
       off.addEventListener("input", () => { speed.disabled = off.checked; });
       for (const control of [speed, off]) control.addEventListener("input", changed);
       return [el("div", { className: "row gradual-row" },
-        el("span", {}, `Bar ${mark.measure}: “${mark.text}”, ease to`), speed,
+        el("span", {}, `Bar ${mark.measure}${mark.beat > 1 ? ` beat ${mark.beat}` : ""}: “${mark.text}”,`),
+        el("span", { className: "hint", "data-gradual-until": mark.measure }, gradualUntil(mark)),
+        el("span", {}, "ease to"), speed,
         el("span", { className: "hint" }, "BPM"),
         el("label", {}, off, " play as written")),
       ...sameBar.filter((m) => m.measure === mark.measure).map((m) =>

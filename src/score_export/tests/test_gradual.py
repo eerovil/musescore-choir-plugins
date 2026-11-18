@@ -67,8 +67,35 @@ def test_the_marks_the_score_prints_are_listed_once_each():
     root.find("./Score/Staff[2]/Measure[2]/voice").insert(
         0, etree.fromstring("<StaffText><text>poco rit.</text></StaffText>"))
     assert gradual_marks(root) == [
-        {"measure": 2, "kind": "rit", "text": "poco rit."},
-        {"measure": 4, "kind": "accel", "text": "accel."}]
+        {"measure": 2, "beat": 1, "kind": "rit", "text": "poco rit.",
+         "until": {"measure": 3, "beat": 3}, "until_why": "a tempo"},
+        {"measure": 4, "beat": 1, "kind": "accel", "text": "accel.",
+         "until": {"measure": 4, "beat": None}, "until_why": "end"}]
+
+
+def _ends(root):
+    return [(m["measure"], m["beat"], m["until"], m["until_why"]) for m in gradual_marks(root)]
+
+
+def test_each_mark_says_where_its_ramp_stops_and_why():
+    # a fermata on bar 2 beat 3; a tempo change at bar 4; a second rit. ends the first
+    bars = _quarters(count=6, b1q2="rit.", b2q4="accel.", b5q1="rit.", b5q3="Tempo I")
+    bars[1][2] = (1, None, True)
+    root = _score(bars)
+    root.find("./Score/Staff/Measure[3]/voice").insert(
+        0, etree.fromstring("<StaffText><text>rall.</text></StaffText>"))
+    add_tempo_changes(root, [{"measure": 4, "bpm": 90}])
+    assert _ends(root) == [
+        (1, 2, {"measure": 2, "beat": 3}, "fermata"),
+        (2, 4, {"measure": 3, "beat": 1}, "next rit."),
+        (3, 1, {"measure": 4, "beat": 1}, "tempo change"),
+        (5, 1, {"measure": 5, "beat": 3}, "Tempo I")]
+
+
+def test_a_rit_to_the_end_and_one_ended_by_an_accel_say_so():
+    root = _score(_quarters(count=3, b1q1="rit.", b2q3="accel."))
+    assert _ends(root) == [(1, 1, {"measure": 2, "beat": 3}, "next accel."),
+                           (2, 3, {"measure": 3, "beat": None}, "end")]
 
 
 @pytest.mark.parametrize("text", ["rit.", "ritard.", "rall.", "ritardando", "Rit.",
