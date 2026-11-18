@@ -25,6 +25,7 @@ from .utils.cross_voice_slurs import drop_cross_voice_slurs, store_removed
 from .utils.long_bars import trim_long_bars
 from .utils.measure_rests import centre_measure_rests, fit_measure_rests
 from .utils.staff_display import fix_staff_display
+from .utils.voice_instruments import set_voice_instruments
 from .utils.missing_tuplets import fix_missing_tuplets
 from .utils.spurious_timesigs import fix_spurious_timesigs
 from .utils.interactive import resolve_voice_anomalies
@@ -85,6 +86,13 @@ def _fix_staff_display(root: etree._Element) -> None:
         logger.info("Staff display: %s hidden rest(s) shown, %s barline(s) moved to the "
                     "bar end, %s plain final barline(s) dropped, %s barline(s) shared",
                     changed["rests"], changed["moved"], changed["dropped"], changed["shared"])
+
+
+def _set_voice_instruments(root: etree._Element) -> None:
+    """Singing parts get a voice instrument, so MuseScore 4 puts dynamics above (#481)."""
+    changed = set_voice_instruments(root)
+    if changed:
+        logger.info("Gave %s singing part(s) a voice instrument", changed)
 
 
 def handle_staff(staff: etree._Element, direction: Optional[str]) -> None:
@@ -289,6 +297,7 @@ def main(
         mark_scan_damage(root)
         _centre_measure_rests(root)
         _fix_staff_display(root)
+        _set_voice_instruments(root)
         output_content = etree.tostring(
             root, pretty_print=True, encoding="UTF-8"
         ).decode("UTF-8")
@@ -600,6 +609,7 @@ def main(
     mark_scan_damage(root)
     _centre_measure_rests(root)
     _fix_staff_display(root)
+    _set_voice_instruments(root)
 
     # Serialize the output XML
     output_content: str = etree.tostring(
