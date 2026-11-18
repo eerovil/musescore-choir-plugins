@@ -1204,6 +1204,37 @@ def _strike(root: etree._Element, staff: int, measure: int, words) -> List[str]:
     return struck
 
 
+def _strike_cut(bar: etree._Element) -> List[str]:
+    """Take cleaning's "was 9/8, cut to 4/4 in voice 1" mark off this staff's bar (#482).
+
+    `long_bars` writes it on the staff whose notes it cut and names the voices that
+    lost music; it says nothing a `?` word could answer, so `_strike_words` leaves
+    it. A `bar` fix writes voice 1 only, so it answers a mark that names voice 1
+    alone, once voice 1 fills the bar (`_replace_bar` may keep a short voice short).
+    A mark naming another voice, or written before marks named voices, stays for an
+    `unmark`: what that voice lost has not been put back.
+    """
+    if not _fills_bar(bar):
+        return []
+    struck: List[str] = []
+    for el in list(bar.iter("StaffText")):
+        text = el.findtext("text") or ""
+        head = text.split(";")[0]
+        if text.startswith("⚠ was ") and head.endswith(" in voice 1") and ", cut to " in head:
+            el.getparent().remove(el)
+            struck.append(head[2:])
+    return struck
+
+
+def _fills_bar(measure: etree._Element) -> bool:
+    """True when voice 1 of this staff's bar is exactly as long as the bar."""
+    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+    staff = measure.getparent()
+    length = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
+    total = sum((part for _, _, part in _timeline(_voice(measure))), Fraction(0))
+    return total == length
+
+
 def _answered(struck: List[str]) -> str:
     return f" and took {' '.join(struck)} off the red mark" if struck else ""
 
@@ -2765,6 +2796,10 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             raise FixError(f"staff {staff} m{measure} ({kind}): {exc}") from None
         if kind in _KIND_WORDS:
             what += _answered(_strike(root, staff, measure, _KIND_WORDS[kind]))
+        if kind == "bar":
+            cut = _strike_cut(_measure(root, staff, measure))
+            if cut:
+                what += f" and took the mark off ({'; '.join(cut)})"
         if _settle(root, staff, measure):
             what += " and turned its red notes black"
         line = f"staff {staff} m{measure}: {what} — {fix.get('why', 'no reason recorded')}"

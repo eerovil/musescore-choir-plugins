@@ -69,7 +69,7 @@ def test_the_mark_names_the_notes_taken_out():
     trim_long_bars(root)
     [mark] = marks(root)
     assert (mark["staff"], mark["measure"]) == (1, 2)
-    assert mark["text"].startswith("was 9/8, cut to 4/4; removed ")
+    assert mark["text"].startswith("was 9/8, cut to 4/4 in voice 1; removed ")
     assert len(mark["text"].split("removed ")[1].split(".")[0].split()) == 1
 
 
@@ -147,3 +147,24 @@ def test_the_neighbouring_bars_are_untouched_and_a_second_run_finds_nothing():
     after = etree.tostring(root)
     assert trim_long_bars(root) == []
     assert etree.tostring(root) == after
+
+
+def test_the_mark_names_each_voice_that_lost_music():
+    # #482: a fix writing one voice must be able to tell whether it answered the mark.
+    root = _score("C2 C2")
+    measure = _bar(root)
+    second = etree.SubElement(measure, "voice")
+    for token in "R1 C8".split():
+        second.append(etree.fromstring(_item(token)))
+    trim_long_bars(root)
+    [mark] = marks(root)
+    assert mark["text"].startswith("was 9/8, cut to 4/4 in voice 2; removed ")
+
+
+def test_the_mark_names_both_voices_when_both_lost_music():
+    root = _score("C4. C8 C4 C8 C8 C8")
+    second = etree.SubElement(_bar(root), "voice")
+    for token in "R1 C8".split():
+        second.append(etree.fromstring(_item(token)))
+    trim_long_bars(root)
+    assert marks(root)[0]["text"].startswith("was 9/8, cut to 4/4 in voices 1, 2; removed ")
