@@ -64,10 +64,13 @@ def _page_from_homr(
     timeout: int = DEFAULT_TIMEOUT,
 ) -> List[SystemBounds]:
     """Ask homr for one page's proposal."""
-    command = _engine_command(engine) + [
+    with omr.on_card(engine, log, what="page") as gpu:
+        return _ask_homr(pdf_path, page, engine, dpi, log, timeout, gpu)
+
+
+def _ask_homr(pdf_path, page, engine, dpi, log, timeout, gpu) -> List[SystemBounds]:
+    command = _engine_command(engine) + ["--gpu", gpu] + [
         pdf_path,
-        "--gpu",
-        engine.gpu,
         "--find-system-bounds",
         "--system-page",
         str(page),

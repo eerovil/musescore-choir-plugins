@@ -64,6 +64,7 @@ class Reader:
         self.read = []
         self.engines = []
         self.bar_lengths = []
+        self.waits = []
         self.fail = {}
         self.staves, self.bars = staves, bars
         # What `read_page` would stamp the parse with when the caller named no
@@ -82,8 +83,9 @@ class Reader:
         return images
 
     def read_system(self, image, out_dir, log=None, queue=True, engine=None,
-                    bar_length=None):
+                    bar_length=None, wait_for_card=False):
         self.read.append(image.index)
+        self.waits.append(wait_for_card)
         self.engines.append(engine)
         self.bar_lengths.append(bar_length)
         boom = self.fail.get(image.index)
@@ -997,7 +999,8 @@ def _moved(reader, **by_system):
     """Make the stub report moved rests for the named systems."""
     original = reader.read_system
 
-    def read_system(image, out_dir, log=None, queue=True, engine=None, bar_length=None):
+    def read_system(image, out_dir, log=None, queue=True, engine=None, bar_length=None,
+                    wait_for_card=False):
         produced = original(image, out_dir, log=log, queue=queue, engine=engine)
         produced.moved_rests = [
             omr.MovedRest(measure=str(bar), staff="2", was="5", now="7")
@@ -1314,3 +1317,14 @@ def test_no_bar_length_without_a_readable_previous_fragment(songs, reader):
     fresh = _reload(song)
     os.remove(fresh.path(fresh.data["scan"]["systems"]["1"]["musicxml"]))
     assert scan.bar_length_before(fresh, 2) is None
+
+
+def test_only_a_re_read_waits_for_the_graphics_card(songs, reader):
+    """#510: a first read never waits for a singer to finish with the card (it reads on the
+    processor); re-reading a system that already has a reading waits for the card instead."""
+    song = _song(songs)
+    scan.run(song)
+    assert reader.waits and not any(reader.waits)
+    reader.waits.clear()
+    scan.run(_reload(song), only=[2])
+    assert reader.waits == [True]

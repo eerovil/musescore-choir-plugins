@@ -693,7 +693,10 @@ def run(
                 and not current.get("error"):
             log(f"System {band.index}: already read.")
             continue
-        _read_one(song, pdf, band, stamp, out_dir, pad, dpi, len(bands), log, engine)
+        # a re-read of a system that has a reading waits for the graphics card when a
+        # singer has it, rather than read on the processor (#510): nobody is waiting on it
+        _read_one(song, pdf, band, stamp, out_dir, pad, dpi, len(bands), log, engine,
+                  wait_for_card=bool(current.get("musicxml")))
         song.save()
 
     # Everything downstream of a fragment that just changed goes here, through
@@ -705,7 +708,7 @@ def run(
 
 def _read_one(song: state.Song, pdf: str, band: SystemBounds, stamp: str,
               out_dir: str, pad: float, dpi: int, total: int, log: Logger,
-              engine: Optional[omr.Engine] = None) -> None:
+              engine: Optional[omr.Engine] = None, wait_for_card: bool = False) -> None:
     """Read one band, and record either its fragment or its hole.
 
     A lost lease is a hole like any other: each band takes its own slot, so band
@@ -721,7 +724,7 @@ def _read_one(song: state.Song, pdf: str, band: SystemBounds, stamp: str,
         image = pdf_systems.crop_systems(pdf, [padded(band, pad)], out_dir, dpi=dpi)[0]
         produced = omr_systems.read_system(
             image, out_dir, log=log, engine=engine,
-            bar_length=bar_length_before(song, band.index))
+            bar_length=bar_length_before(song, band.index), wait_for_card=wait_for_card)
         entry.update(
             musicxml=os.path.relpath(produced.musicxml, song.dir),
             content=content_stamp(produced.musicxml),

@@ -8,7 +8,13 @@ songs/<slug>/.sing-run.json, written whole (by rename) at every step. The song l
      "choirs": [...], "remote": true when only the remote runner sings (--remote-only),
      "sing": false for a piano-only run (--no-sing), which is no re-sing,
      "part": i, "parts": n, "part_name": "T2", "choir": "jm", "error": "...",
-     "choir_outcomes": {"jm": "published" | "refused-sung" | "failed" | "not-tried"}}
+     "choir_outcomes": {"jm": "published" | "refused-sung" | "failed" | "not-tried"},
+     "run_id": the app's id for a run it started (SING_RUN_ID, #510),
+     "for": "graphics card" while a started run waits for the card}
+
+A full run holds a lock on the song (run_lock()) from before its first write to the end, so
+two runs never sing or publish one song at once (#510); the lock and the app's own files for a
+run live outside songs/, in state_dir(slug).
 
 A piano-only run does not replace a sung version on the site without --piano-over-sung
 (#483), so one choir of several may be refused while the others are published;
@@ -17,8 +23,10 @@ A piano-only run does not replace a sung version on the site without --piano-ove
 Stdlib only: the app imports it too.
 """
 import ast
+import fcntl
 import json
 import os
+import pwd
 import re
 import tempfile
 import threading
@@ -28,6 +36,40 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SINGER = os.path.join(HERE, "sing_ufr.py")
 RUN_FILE = ".sing-run.json"
 RUNNING = ("bundle", "singing", "publishing")   # states a live process holds
+
+
+def state_dir(slug):
+    """~/.local/state/musescore-choir-plugins/sing/<slug>/: the song lock and the app's files for
+    the runs it starts (#510). The home is read from the password file, not $HOME, like the song
+    locks, so the app's service and a shell agree."""
+    base = os.environ.get("SING_STATE_DIR")
+    if not base:
+        home = pwd.getpwuid(os.getuid()).pw_dir
+        base = os.path.join(home, ".local", "state", "musescore-choir-plugins", "sing")
+    return os.path.join(base, slug)
+
+
+def run_lock(slug):
+    """Take the song's run lock without waiting: an open file descriptor that holds it until it
+    is closed (or the process ends), or None when another run holds it."""
+    folder = state_dir(slug)
+    os.makedirs(folder, exist_ok=True)
+    fd = os.open(os.path.join(folder, "run.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def run_locked(slug):
+    """True when a run holds the song's lock now."""
+    fd = run_lock(slug)
+    if fd is None:
+        return True
+    os.close(fd)
+    return False
 
 
 def singer_version(path=SINGER):
@@ -107,7 +149,10 @@ def read(song_dir):
         return None
     if not isinstance(record, dict):
         return None
-    if record.get("state") in RUNNING and not alive(record.get("pid")):
+    # a "waiting" record with a pid is a started run waiting for the card (#510); one without
+    # is --waiting's, before any run started, and keeps its meaning
+    gone = record.get("state") in RUNNING or (record.get("state") == "waiting" and "pid" in record)
+    if gone and not alive(record.get("pid")):
         record = dict(record, state="failed", finished=record.get("updated"),
                       error="the run stopped without finishing (killed, or the machine restarted)")
     return record
@@ -123,6 +168,8 @@ class Run:
         self.record = {"state": "bundle", "started": time.time(), "pid": os.getpid(),
                        "version": version, "choirs": list(choirs), "remote": bool(remote),
                        "sing": bool(sing)}
+        if os.environ.get("SING_RUN_ID"):
+            self.record["run_id"] = os.environ["SING_RUN_ID"]   # the app's run (#510)
         self.finished = False
 
     def choir_outcome(self, choir, outcome):

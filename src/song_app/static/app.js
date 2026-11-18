@@ -185,10 +185,10 @@ function when(t) {
 function runText(run) {
   const choirs = run.choirs?.length ? ` (${run.choirs.join(", ")})` : "";
   switch (run.state) {
-    case "waiting": return ["Re-sing waiting" + choirs, ""];
+    case "waiting": return [(run.for === "graphics card" ? "Waiting for the graphics card" : "Re-sing waiting") + choirs, ""];
     case "bundle": return ["Re-sing: building the score", ""];
-    case "singing": return [`Singing part ${run.part} of ${run.parts}${run.part_name ? ` (${run.part_name})` : ""}` +
-      (run.remote ? " on the remote GPU" : ""), ""];
+    case "singing": return [(run.part ? `Singing part ${run.part} of ${run.parts}${run.part_name ? ` (${run.part_name})` : ""}`
+      : "Singing: checking the parts") + (run.remote ? " on the remote GPU" : ""), ""];
     case "publishing": return [`Publishing to ${run.choir}` +
       (run.choir_count > 1 ? ` (${run.choir_index} of ${run.choir_count})` : ""), ""];
     case "done":
