@@ -39,6 +39,9 @@ stage at any time; redoing one clears only what depended on it.
    MuseScore — on this machine, or download the score, fix it anywhere and upload
    it back. Recorded fixes (for example a slur the scan missed) are kept in
    `fixes.json` and applied again every time the song is cleaned.
+   The score you download names each singing part as a voice (soprano, alto,
+   tenor, bass), so MuseScore 4 puts a dynamic you add above the staff rather than
+   on the words. Dynamics already in an older score stay where they were written.
 5. **Lyrics** — either paste lyrics from your own AI chat (copy the prompt, give it
    the PDF, paste the answer back; no API key needed) or type them one printed
    system at a time, each staff of the page with its parts' boxes under it, verse

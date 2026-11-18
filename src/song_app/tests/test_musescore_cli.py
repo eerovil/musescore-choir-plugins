@@ -269,7 +269,7 @@ def test_run_musescore_gets_past_the_crash(fake, tmp_path):
 def test_run_musescore_still_fails_when_nothing_was_written(fake, tmp_path):
     from src.score_export import musescore
     fake("crash_nofile")
-    with pytest.raises(RuntimeError, match="MuseScore CLI failed writing"):
+    with pytest.raises(RuntimeError, match="MuseScore failed writing"):
         musescore.run_musescore(_mscx(tmp_path), str(tmp_path / "score.musicxml"),
                                 timeout=60)
 
@@ -297,7 +297,7 @@ def test_convert_to_mscx_still_fails_when_nothing_was_written(fake, tmp_path):
     fake("crash_nofile")
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    with pytest.raises(RuntimeError, match="MuseScore CLI conversion failed"):
+    with pytest.raises(RuntimeError, match="MuseScore conversion failed"):
         pipeline.convert_to_mscx(_musicxml(tmp_path), str(out_dir))
 
 
@@ -312,7 +312,7 @@ def test_render_score_pdf_gets_past_the_crash(fake, tmp_path):
 def test_render_score_pdf_still_fails_when_nothing_was_written(fake, tmp_path):
     from src.song_app import pipeline
     fake("crash_nofile")
-    with pytest.raises(RuntimeError, match="MuseScore CLI render failed"):
+    with pytest.raises(RuntimeError, match="MuseScore render failed"):
         pipeline.render_score_pdf(_mscx(tmp_path))
 
 

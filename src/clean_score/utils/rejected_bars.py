@@ -26,6 +26,7 @@ _DUR = {
     "whole": Fraction(1), "half": Fraction(1, 2), "quarter": Fraction(1, 4),
     "eighth": Fraction(1, 8), "16th": Fraction(1, 16), "32nd": Fraction(1, 32),
     "64th": Fraction(1, 64), "128th": Fraction(1, 128), "256th": Fraction(1, 256),
+    "breve": Fraction(2), "long": Fraction(4),
 }
 _DOT = {0: Fraction(1), 1: Fraction(3, 2), 2: Fraction(7, 4), 3: Fraction(15, 8)}
 # What a cleared bar keeps: the things that are about the staff, not the music in it.
