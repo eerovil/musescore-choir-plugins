@@ -205,3 +205,33 @@ def test_a_two_lines_warning_where_the_part_sings_is_answered_by_the_named_line_
     assert [w["kind"] for w in old] == ["two_lines"]
     fixed = _paste(root, {"staff_number": 2, "text": "c d", "parts": ["T1"]})
     assert server._kept_warnings(old, fixed) == []
+
+
+def test_a_two_lines_warning_is_answered_through_the_api_and_the_song_reaches_review(song):
+    """The review's request: post both clashing lines, then the named line alone; no
+    warning is kept and the song moves on to Review (#482)."""
+    api, slug, dest = song
+    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
+    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
+    for name in os.listdir(dest):
+        if name.endswith(".systems.json"):
+            os.remove(dest / name)
+    pasted = api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
+        {"measure_start": 1, "lyrics": [{"staff_number": 1, "text": "ou-ou", "parts": ["T1"]},
+                                        {"staff_number": 2, "text": "ii-ii", "parts": ["T2"]}]},
+        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "a b"},
+                                        {"staff_number": 2, "text": "c d", "parts": ["T1"]}]},
+        {"measure_start": 3, "lyrics": [{"staff_number": 1, "text": "aa-aa", "parts": ["T1"]},
+                                        {"staff_number": 2, "text": "ee-ee", "parts": ["T2"]}]},
+    ])})
+    assert pasted.status_code == 200, pasted.text
+    assert [w["kind"] for w in pasted.json()["mismatches"]] == ["two_lines"]
+    assert json.loads((dest / ".song.json").read_text())["stage"] == "lyrics"
+    fixed = api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
+        {"measure_start": 2, "lyrics": [{"staff_number": 2, "text": "c d", "parts": ["T1"]}]},
+    ])})
+    assert fixed.status_code == 200, fixed.text
+    assert fixed.json()["mismatches"] == []
+    data = json.loads((dest / ".song.json").read_text())
+    assert data["stage"] == "review"
+    assert data["lyrics"]["warnings"] == []

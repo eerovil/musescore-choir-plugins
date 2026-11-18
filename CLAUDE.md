@@ -1288,14 +1288,17 @@ state model are in `DESIGN.md`.
   own line breaks), an end the source gave included, and syllables past it are crammed and
   said as `too_many`. If its part has **no notes** there (a note held over by a tie counts)
   it is not placed and comes back as a `part_rests` mismatch naming the part and bars, since
-  the name or the system is wrong. The by-system editor's boxes also name a part by staff
-  id, but carry `"box": true` and keep running on into an empty next system (#393). A
+  the name or the system is wrong. The by-system editor's boxes (by staff
+  id) and the older cells editor (by name) also name their part, but carry `"box": true`
+  and keep running on into an empty next system (#393). A
   `staff_number` line runs on as before. A named entry and a `staff_number` entry landing on
   one part, voice and verse in one block are not joined: the named one is used and the other
   is a `two_lines` mismatch (`_block_lines`), which names both lines, so pasting either again (the named one alone, the usual correction) answers it. A name no part carries, or one two parts
   share, is an `unknown_part` mismatch and the line falls back to `staff_number`, or is not
   placed (and says so) when it has none that is a staff of the score; a staff id in
-  `"parts"` the score has not is unknown too (not checked under `--split`); names are read like `lyric_parts` reads them (the instrument's
+  `"parts"` the score has not is unknown too (not checked under `--split`), and so is a
+  number in quotes that is one part's name and another staff's id (a bare number is always
+  a staff id, and a quoted number a part is named is that part); names are read like `lyric_parts` reads them (the instrument's
   name when the part has none). These three warnings are about a source line, named in their
   `lines` (one warning per source line, even where two lines name the same part;
   `lyric_txt._line_ids`: the bar, verse, voice and the **printed place**, a staff and its

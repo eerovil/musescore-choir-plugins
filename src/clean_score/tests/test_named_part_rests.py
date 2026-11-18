@@ -311,3 +311,46 @@ def test_a_named_line_with_an_end_given_stops_where_its_part_rests():
     bars = _bars_of(root, 2)
     assert bars[1] == ["a", "b", "c", "d"]
     assert all(t == "_" for t in bars.get(3, []))
+
+
+def test_a_quoted_number_that_is_one_parts_name_and_anothers_staff_id_is_said():
+    """The review's case: staff 1 is named "2" and staff 2 exists. "2" in quotes could
+    be either, so the line is not given to staff 2 in silence (#482)."""
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    unknown = [m for m in result.mismatches if m.kind == UNKNOWN_PART]
+    assert len(unknown) == 1 and "without quotes" in unknown[0].message
+    assert placed_lyrics(root) == {1: "la la"}          # by its staff_number
+
+
+def test_a_bare_number_is_a_staff_id_and_a_quoted_unique_number_name_is_the_part():
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": [1], "text": "la la"}]}], replace=True)
+    assert result.mismatches == [] and placed_lyrics(root) == {1: "la la"}
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "7", 2: "T2"})
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["7"], "text": "la la"}]}], replace=True)
+    assert result.mismatches == [] and placed_lyrics(root) == {1: "la la"}
+
+
+def test_the_older_cells_editor_still_runs_a_long_line_into_an_empty_next_system():
+    """The cells route types a part by name; like the by-system boxes it runs on into
+    an empty next system (#393), rather than stopping like a pasted named line."""
+    from src.clean_score.lyric_txt import blocks_from_cells, editor_grid
+    root = build_score(staff_ids=(1, 2), measures=3, chords=2, names=NAMES,
+                       line_breaks=(1, 2))
+    blocks = blocks_from_cells(editor_grid(root), {0: {"T1": "a b c d"}})
+    result = place_lyrics(root, blocks, replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 1)
+    assert bars[1] == ["a", "b"] and bars[2] == ["c", "d"]
+    assert "too_many" not in [m.kind for m in result.mismatches]
+
+
+def test_the_cells_editor_types_a_number_named_part_by_its_staff_id():
+    from src.clean_score.lyric_txt import blocks_from_cells, editor_grid
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    blocks = blocks_from_cells(editor_grid(root), {0: {"2": "la la"}})
+    result = place_lyrics(root, blocks, replace=True)
+    assert result.mismatches == [] and placed_lyrics(root) == {1: "la la"}

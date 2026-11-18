@@ -592,7 +592,9 @@ def _resolve_targets(values: List[Any], name_map: Dict[str, int],
     """Turn a parts list of ints and/or part-name strings into output staff ids.
 
     A name no part carries, or one two parts share, goes into `unresolved` (#482),
-    and so does a staff id not in `valid` (the score's staves) when it is given.
+    and so does a staff id not in `valid` (the score's staves) when it is given. A
+    quoted number is a part's name when a part is named so, and is unresolved when it
+    is also another staff's id; a bare JSON number is always a staff id.
     """
     targets: List[int] = []
 
@@ -609,7 +611,17 @@ def _resolve_targets(values: List[Any], name_map: Dict[str, int],
             staff_id(v, str(v))
         elif isinstance(v, str):
             s = v.strip()
-            if s.isdigit():
+            if s.isdigit() and s.upper() in name_map:
+                # A number written in quotes that is also a part's name (#482): the
+                # name, unless the number is another staff of the song too, which no
+                # rule can settle, so it is said rather than guessed.
+                other = int(s) != name_map[s.upper()] and (valid is None or int(s) in valid)
+                if s.upper() in (repeated or ()) or other:
+                    if unresolved is not None:
+                        unresolved.append(s)
+                else:
+                    targets.append(name_map[s.upper()])
+            elif s.isdigit():
                 staff_id(int(s), s)
             elif s.upper() in name_map and s.upper() not in (repeated or ()):
                 targets.append(name_map[s.upper()])
@@ -796,6 +808,10 @@ def _block_lines(
             where = f", verse {verse}" if verse > 1 else ""
             where += f", voice {voice}" if voice > 1 else ""
             said = ", ".join(f'"{n}"' for n in unresolved)
+            numbers = (" (a number in quotes that is one part's name and another's "
+                       "staff id: write the staff id without quotes)"
+                       if any(n.isdigit() and n.upper() in name_map for n in unresolved)
+                       else "")
             if by_name:
                 outcome = "the other parts named got the words."
             elif targets:
@@ -806,13 +822,13 @@ def _block_lines(
             notes.append(Mismatch(
                 kind=UNKNOWN_PART,
                 message=(f"Measure {measure_start}{where}: \"parts\" names {said}, "
-                         f"which is not one part of this song; {outcome}"),
+                         f"which is not one part of this song{numbers}; {outcome}"),
                 measure_start=measure_start,
                 measure_end=measure_end or measure_start,
                 verse=verse, voice=voice, lines=line_id))
-        # A line naming its part stays in its own system (#482). The by-system
-        # editor's boxes name theirs by staff id too, and still run on into an empty
-        # next system (#393), so a box is not "named" here.
+        # A line naming its part stays in its own system (#482). The editors' boxes
+        # and cells name theirs too, and still run on into an empty next system
+        # (#393), so a box is not "named" here.
         named = by_name and not lyric.get("box")
         for staff in targets:
             k = (staff, voice, verse, named)
@@ -1906,8 +1922,12 @@ def blocks_from_cells(
     blocks: List[Dict[str, Any]] = []
     for system in grid.systems:
         typed = cells.get(system.index, cells.get(str(system.index), {})) or {}
+        # "box": a typed line runs on into an empty next system like the by-system
+        # editor's (#393), not cut at its own like a pasted named line (#482). A part
+        # named by a number goes by its staff id, which cannot be read as another's.
         lyrics = [
-            {"parts": [part.name], "text": typed[part.name].strip()}
+            {"parts": [part.id if part.name.isdigit() else part.name], "box": True,
+             "text": typed[part.name].strip()}
             for part in grid.parts
             if isinstance(typed.get(part.name), str) and typed[part.name].strip()
         ]
