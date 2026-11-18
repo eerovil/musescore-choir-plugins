@@ -58,6 +58,7 @@ TOO_FEW = "too_few"            # fewer syllables than eligible chords
 NO_SYSTEMS = "no_systems"      # null measure_start, but the score has no system breaks
 NO_SYSTEM_FOR_LINE = "no_system_for_line"   # more null lines than printed systems
 BLOCK_COUNT = "block_count"    # lines vs systems disagree, so the fill may be off
+PART_RESTS = "part_rests"      # a line names a part with no notes in its system (#482)
 
 
 @dataclass(frozen=True)
@@ -624,6 +625,7 @@ class _Line:
     voice: int
     verse: int
     text: str
+    named: bool = False     # the part came from the line's own "parts", not a staff number
 
     @property
     def key(self) -> Tuple[int, int, int]:
@@ -675,6 +677,7 @@ def _block_lines(
             positions.setdefault((sn, _int_or(lyric.get("verse"), 1)), set()).add(
                 lyric.get("position"))
     texts: Dict[Tuple[int, int, int], List[str]] = {}
+    named: set = set()
     for lyric in block_lyrics:
         verse = _int_or(lyric.get("verse"), 1)
         voice = _int_or(lyric.get("voice"), 1)
@@ -697,6 +700,8 @@ def _block_lines(
             )
         for staff in targets:
             texts.setdefault((staff, voice, verse), []).append(text)
+            if parts:
+                named.add((staff, voice, verse))
     for base, followers in _follow_for_measure(system_map, measure_start).items():
         for (staff, voice, verse), words in list(texts.items()):
             if staff != base:
@@ -704,7 +709,7 @@ def _block_lines(
             for child in followers:
                 texts.setdefault((child, voice, verse), list(words))
     return [_Line(measure_start, measure_end, staff, voice, verse,
-                  " ".join(t for t in words if t))
+                  " ".join(t for t in words if t), (staff, voice, verse) in named)
             for (staff, voice, verse), words in sorted(texts.items())]
 
 
@@ -796,6 +801,8 @@ def _lines_to_by_measure(
     by_measure: Dict[int, Dict[Tuple[int, int, int], List[str]]] = {}
     found: List[Tuple[int, int, Tuple[int, int, int], str, int, int]] = []
     written: List[Written] = []
+    resting: List[Mismatch] = []
+    names: Optional[Dict[int, str]] = None
 
     by_key: Dict[Tuple[int, int, int], List[_Line]] = {}
     for ln in lines:
@@ -833,6 +840,23 @@ def _lines_to_by_measure(
             if not has_words(ln):
                 continue
             tokens = tokens_of[id(ln)]
+            if ln.named and not any(counts.get(m, 0) for m in range(ln.start, own_end(ln) + 1)):
+                # A part named for a system it rests through: the name or the system is
+                # wrong, and running the words on into the next system would hide it.
+                if names is None:
+                    names = {p.id: p.name for p in lyric_parts(score)}
+                end = own_end(ln)
+                where = f", verse {verse}" if verse > 1 else ""
+                where += f", voice {voice}" if voice > 1 else ""
+                resting.append(Mismatch(
+                    kind=PART_RESTS,
+                    message=(f"Measures {ln.start}-{end}: {names.get(staff, f'staff {staff}')}"
+                             f"{where} has no notes here, so its words were not placed; "
+                             f"check the part named in \"parts\"."),
+                    measure_start=ln.start, measure_end=end, staff_ids=(staff,),
+                    syllables=len(_tokens_to_syllables(tokens)), slots=0,
+                    verse=verse, voice=voice))
+                continue
             syllables = _tokens_to_syllables(tokens, first_syllabic_continuation=prev_trailing_hyphen)
             prev_trailing_hyphen = _last_token_ends_with_hyphen(tokens)
             # The systems this line may fill: its own, then each next one whose box is empty.
@@ -906,7 +930,7 @@ def _lines_to_by_measure(
             measure_start=m_start, measure_end=m_end,
             staff_ids=ids, syllables=n_syl, slots=slots, verse=verse, voice=voice,
         ))
-    return by_measure, mismatches, written
+    return by_measure, resting + mismatches, written
 
 
 def _lyrics_by_measure_staff(

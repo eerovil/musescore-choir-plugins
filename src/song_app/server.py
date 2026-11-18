@@ -1168,10 +1168,14 @@ def api_approve_review(slug: str, body: Dict = None) -> Dict:
 # Lyrics stage
 # --------------------------------------------------------------------------
 @app.get("/api/prompt")
-def api_prompt() -> Dict:
+def api_prompt(slug: str = "") -> Dict:
+    """The AI lyric prompt; given a song, it lists that song's part names (#482)."""
     path = os.path.join(SCRIPT_DIR, "lyric_json_prompt.txt")
     with open(path, "r", encoding="utf-8") as f:
-        return {"prompt": f.read()}
+        prompt = f.read()
+    if not slug:
+        return {"prompt": prompt}
+    return {"prompt": pipeline.lyric_prompt(prompt, _require(slug).cleaned_path() or "")}
 
 
 @app.get("/api/songs/{slug}/lyric-grid")

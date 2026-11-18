@@ -1277,10 +1277,22 @@ state model are in `DESIGN.md`.
   line may say `"verse": n` and `"voice": 2`, one paste carries every verse, and it
   changes only what its lines name (an empty `text` clears that line). It is no longer
   a full replace of verse 1 (`run_lyric_import(replace=False)`).
+  **The prompt names the song's parts** (#482): `GET /api/prompt?slug=` appends the cleaned
+  score's part names, top staff first (`pipeline.lyric_prompt`, off `lyric_parts`), and
+  `lyric_json_prompt.txt` asks for them in every line's `"parts"`, with `staff_number` kept
+  as a cross-check. On a per-system score the printed staff numbering shifts where a part
+  rests, and a name does not. A line whose named part has **no notes** in its system is
+  not placed and not run on into the next one: it comes back as a `part_rests` mismatch
+  naming the part and bars, since the name or the system is wrong. Only lines with explicit
+  `parts` are checked; a line placed by `staff_number` behaves as before.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are
   flagged `unset` and listed in the "will be DROPPED" confirm before cleaning.
+  A printed system where every staff rests has no staves to name; the grid shows it as
+  one line, "Every staff rests here; names carry on to the next system" (#482), rather
+  than an empty block that read as a missing system. The owner chose not to number its
+  resting staves off the scan.
 - **Heavy slots** (`heavy_slot.py`). A homr read or a homr install is every core the
   machine has, and so is an agent's test suite — several at once is all of them slow
   rather than any finishing sooner. AgentDeck owns that queue (a small pool of
@@ -2644,7 +2656,8 @@ now needs to offer a person a list of parts to point at.
 sniff). **Diagnostics are returned, never printed**: `LyricImport.mismatches` is a
 list of `Mismatch(kind, message, measure_start, measure_end, staff_ids, syllables,
 slots, verse, voice)` — kinds `too_many` / `too_few` / `no_systems` / `no_system_for_line` /
-`block_count` — plus `filled_measure_starts` for nulls inferred from the printed
+`block_count` / `part_rests` (a line naming a part with no notes in its system, #482)
+— plus `filled_measure_starts` for nulls inferred from the printed
 systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prints
 `Warning: <message>` itself, so terminal output is unchanged.
 

@@ -2111,6 +2111,13 @@ async function panelClean(panel, song, slug, P, refresh) {
 }
 
 function sysBlock(sys) {
+  if (!sys.staves.length) {
+    // Nothing to name: the clean fills every part with rests and the names go on (#482).
+    return el("div", { className: "sysblock allrest" },
+      el("div", { className: "row syshead" },
+        el("h4", {}, `System ${sys.system + 1} — measures ${sys.measure_start}–${sys.measure_end}`)),
+      el("p", { className: "hint" }, "Every staff rests here; names carry on to the next system."));
+  }
   const rows = sys.staves.map((st) =>
     el("tr", {},
       el("td", {}, "staff " + st.staff_id),
@@ -2710,7 +2717,7 @@ async function lyricsPaste(panel, song, P, refresh) {
   panel.append(
     el("div", { className: "row" },
       el("button", { onclick: async () => {
-        const { prompt } = await getJSON("/api/prompt");
+        const { prompt } = await getJSON(`/api/prompt?slug=${encodeURIComponent(song.slug)}`);
         await navigator.clipboard.writeText(prompt);
         appendLog("Prompt copied — paste it into your AI chat with the PDF.");
       }}, "1. Copy prompt"),

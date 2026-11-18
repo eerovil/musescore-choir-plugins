@@ -763,6 +763,23 @@ def _reset_as_scanned(root: etree._Element, song_dir: str, staff: int,
     return None
 
 
+def lyric_prompt(prompt: str, cleaned_path: str = "") -> str:
+    """The AI lyric prompt, ending with this song's part names when it has a score (#482).
+
+    The prompt asks for the singing parts by name in every line's "parts", which places
+    the words without the printed-staff numbering a resting staff shifts. Without a
+    cleaned score there are no names to list, and the prompt says to leave "parts" empty.
+    """
+    if not cleaned_path or not os.path.exists(cleaned_path):
+        return prompt
+    names = [p.name for p in lyric_txt.lyric_parts(etree.parse(cleaned_path).getroot())]
+    if not names:
+        return prompt
+    listed = ", ".join(f'"{n}"' for n in names)
+    return (prompt.rstrip("\n") + "\n\nTHIS SONG'S PARTS, top staff first: " + listed
+            + ".\nUse these exact names in \"parts\".\n")
+
+
 def score_parts_and_measures(cleaned_path: str) -> Tuple[List[Dict], int]:
     """The singing parts of the cleaned score and how many bars it has.
 
