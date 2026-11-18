@@ -559,8 +559,13 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
     # An answer is about the staves of one scanned system, so it is derived from
     # that system's fragment and has to say which one, or a re-scan cannot know
     # it has invalidated it.
-    scan.stamp_answers(song, list(parsed))
-    song.save()
+    # On the state as it is now: a scan saving its bands meanwhile writes the
+    # same `scan` record, and this copy was loaded before the slow conversion.
+    with state.song_lock(slug):
+        fresh = state.load(slug) or song
+        scan.stamp_answers(fresh, list(parsed))
+        fresh.save()
+    song.adopt(fresh)
     return {"ok": True}
 
 
@@ -614,13 +619,17 @@ def _run_clean(slug: str) -> None:
         }
         # Run the health check.
         found = _health_scan(song, cleaned)
-        prev = song.data.get("health", {}).get("issues", [])
-        song.data["health"] = {
-            "checked_against": song.data["cleaned_fingerprint"],
-            "issues": health.merge_issues(found, prev),
-        }
-        song.set_stage("fix")
-        song.save()
+        # The issues as they are now, not as this clean found them minutes ago,
+        # so a row dismissed while it ran stays dismissed (#498).
+        with state.song_lock(slug):
+            now = state.load(slug) or song
+            prev = now.data.get("health", {}).get("issues", [])
+            song.data["health"] = {
+                "checked_against": song.data["cleaned_fingerprint"],
+                "issues": health.merge_issues(found, prev),
+            }
+            song.set_stage("fix")
+            song.save()
         # Findings, not rows: a collapsed meter row stands for many, and this line is
         # the first number anyone sees about a score. See health.finding_count.
         open_issues = _derived(song)["open_issues"]
@@ -980,10 +989,15 @@ def api_pick_problem(slug: str, body: Dict) -> Dict:
 @app.post("/api/songs/{slug}/issues/{issue_id}/dismiss")
 def api_dismiss(slug: str, issue_id: str) -> Dict:
     song = _require(slug)
-    for i in song.data.get("health", {}).get("issues", []):
-        if i["id"] == issue_id:
-            i["status"] = "dismissed"
-    song.save()
+    # Read and written in one step, so a clean or check finishing in between
+    # does not get its health record replaced by the one read here (#498).
+    with state.song_lock(slug):
+        fresh = state.load(slug) or song
+        for i in fresh.data.get("health", {}).get("issues", []):
+            if i["id"] == issue_id:
+                i["status"] = "dismissed"
+        fresh.save()
+    song.adopt(fresh)
     return _derived(song)
 
 

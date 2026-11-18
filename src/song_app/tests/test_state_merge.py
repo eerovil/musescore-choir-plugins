@@ -291,3 +291,53 @@ def test_moving_publish_records_waits_for_the_lock_and_keeps_a_clean(songs):
     assert disk["cleaned"] == "kettu_cleaned.mscx"
     assert disk["publish"]["sites"]["jm"]["prefix"] == "new"
     assert lines
+
+
+# --- health dismissed while a job ran -----------------------------------------
+
+
+def test_a_row_dismissed_while_a_clean_ran_stays_dismissed(songs, monkeypatch):
+    song = state.create("Kettu", per_system=False)
+    song.data["health"] = {"checked_against": "A",
+                           "issues": [{"id": "x", "status": "open"}]}
+    song.save()
+    slug = song.slug
+
+    def fake_clean(xml, song_dir, per_system=False, log=None, voicing=None, check=None):
+        server.api_dismiss(slug, "x")      # the person dismisses it meanwhile
+        cleaned = os.path.join(song_dir, "kettu_cleaned.mscx")
+        source = os.path.join(song_dir, "kettu.mscx")
+        for path in (cleaned, source):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("<museScore/>")
+        return cleaned, source
+
+    monkeypatch.setattr(pipeline, "run_clean", fake_clean)
+    monkeypatch.setattr(clean_backup, "stash", lambda song: None)
+    monkeypatch.setattr(verification, "compare_notes", lambda a, b: {"ok": True})
+    monkeypatch.setattr(server, "_health_scan", lambda song, cleaned: [{"id": "x"}])
+    monkeypatch.setattr(server, "_label_bounds", lambda song, path: None)
+
+    server._run_clean(slug)
+
+    issues = _disk(song)["health"]["issues"]
+    assert issues == [{"id": "x", "status": "dismissed"}]
+
+
+def test_dismiss_works_on_the_record_as_it_is_now(songs, monkeypatch):
+    song = state.create("Kettu", per_system=False)
+    song.data["health"] = {"checked_against": "A", "issues": [{"id": "x", "status": "open"}]}
+    song.save()
+    stale = state.load(song.slug)
+    monkeypatch.setattr(server, "_require", lambda slug: stale)
+
+    checker = state.load(song.slug)        # a check finished after the route loaded
+    checker.data["health"] = {"checked_against": "B", "issues": [
+        {"id": "x", "status": "open"}, {"id": "y", "status": "open"}]}
+    checker.save()
+
+    server.api_dismiss(song.slug, "x")
+    health = _disk(song)["health"]
+    assert health["checked_against"] == "B"
+    assert health["issues"] == [{"id": "x", "status": "dismissed"},
+                                {"id": "y", "status": "open"}]

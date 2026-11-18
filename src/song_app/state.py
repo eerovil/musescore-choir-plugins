@@ -341,14 +341,16 @@ class _SongLock:
             raise
 
     def release(self) -> None:
-        self._depth -= 1
-        if self._depth == 0 and self._fd is not None:
-            fd, self._fd = self._fd, None
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
-        self._thread.release()
+        try:
+            self._depth -= 1
+            if self._depth == 0 and self._fd is not None:
+                fd, self._fd = self._fd, None
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)    # closing drops the flock too
+        finally:
+            self._thread.release()
 
     def __enter__(self) -> "_SongLock":
         self.acquire()
@@ -386,9 +388,10 @@ def song_lock(slug: str, songs_dir: Optional[str] = None) -> _SongLock:
 
 def load(slug: str) -> Optional[Song]:
     path = os.path.join(song_dir(slug), STATE_FILE)
-    raw = _read_raw(path)
-    if raw is None:
+    if not os.path.exists(path):
         return None
+    with open(path, encoding="utf-8") as f:
+        raw = f.read()
     song = Song(slug, _upgrade(json.loads(raw)))
     song._loaded(raw)
     return song
