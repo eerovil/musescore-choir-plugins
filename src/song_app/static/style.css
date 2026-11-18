@@ -199,6 +199,10 @@ table.grid { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
 table.grid th, table.grid td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
 table.grid th { background: var(--panel2); color: var(--muted); font-weight: 600; }
 table.grid input { width: 100%; }
+/* A staff's notes are one comma list with no spaces; let it wrap so the
+   Part names box keeps its room inside the panel. */
+table.grid td.stsum { overflow-wrap: anywhere; }
+table.grid td:has(> input) { min-width: 8em; }
 table.grid input.unset { border-color: var(--warn); }
 table.grid input.undernamed { border-color: var(--warn); }
 table.grid .undernote { color: var(--warn); font-size: 12px; }
