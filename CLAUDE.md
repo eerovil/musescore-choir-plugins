@@ -1336,6 +1336,7 @@ state model are in `DESIGN.md`.
   switched off and saved as `{"*": "rest"}` beside whatever was typed there
   (`per_system.ALL_REST`, read back by `per_system.parse_answers`), so unticking gives
   the names back. The clean rests every part through it and the names carry past it.
+  The terminal prompt (`per_system_prompt`) keeps such a system and does not ask about it.
 - **Heavy slots** (`heavy_slot.py`). A homr read or a homr install is every core the
   machine has, and so is an agent's test suite — several at once is all of them slow
   rather than any finishing sooner. AgentDeck owns that queue (a small pool of
@@ -2764,7 +2765,9 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
   start of a line) is auto-filled by `_fill_missing_measure_starts` (reported as `filled_measure_starts`): blocks are one
   per printed system in order, so each null block takes the start measure of the
   system at its position (`per_system.system_ranges`), skipping a system the map marks
-  `rest` (#482: it prints no words); explicit values are left alone, and a
+  `rest` (#482: it prints no words) unless there is one block for every printed system,
+  rest ones included; a `staff_number` line in a `rest` system is not placed and comes
+  back as `part_rests`; explicit values are left alone, and a
   block-count vs system-count mismatch is warned (so the user verifies alignment).
 - Import is in-place on the tree and **changes only what it names** (#392, #397):
   a JSON line is one part, voice and verse from its block's `measure_start`, and fills

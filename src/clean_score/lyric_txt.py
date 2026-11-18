@@ -578,6 +578,16 @@ def _map_for_measure(
     return {}
 
 
+def _rest_for_measure(
+    system_map: Optional[List[Dict[str, Any]]], measure_start: int
+) -> bool:
+    """Whether the system covering measure_start is one nobody sings in (#482)."""
+    for entry in system_map or []:
+        if entry["start"] <= measure_start <= entry["end"]:
+            return bool(entry.get("rest"))
+    return False
+
+
 def _follow_for_measure(
     system_map: Optional[List[Dict[str, Any]]], measure_start: int
 ) -> Dict[int, List[int]]:
@@ -815,6 +825,23 @@ def _block_lines(
         if parts:
             targets = _resolve_targets(parts, name_map, unresolved, repeated, valid)
         by_name = bool(targets)
+        if not by_name and _rest_for_measure(system_map, measure_start):
+            # A "No voices here" system has no staves to number (#482): the line is
+            # not placed, and said, rather than read as a raw output staff id.
+            line_id = _line_ids(measure_start, verse, voice, lyric, parts)
+            if seen is not None:
+                seen.extend(line_id)
+            if notes is not None and text:
+                notes.append(Mismatch(
+                    kind=PART_RESTS,
+                    message=(f"Measure {measure_start}: this system is marked \"No "
+                             f"voices here\", so the line for staff "
+                             f"{lyric.get('staff_number')} was not placed; name its "
+                             f"part in \"parts\" or give the bar it starts on."),
+                    measure_start=measure_start,
+                    measure_end=measure_end or measure_start,
+                    verse=verse, voice=voice, lines=line_id))
+            continue
         if not by_name:
             sn = lyric.get("staff_number")
             targets = _derive_target_staves(
@@ -1591,10 +1618,14 @@ def _fill_missing_measure_starts(
     # line breaks this would otherwise read them off.
     starts = starts or [r.start for r in system_ranges(score_root)]
     # A system nobody sings in ("No voices here", #482) prints no words, so the
-    # JSON has no line for it: the lines go to the systems after it.
+    # JSON usually has no line for it and the lines go to the systems after it. When
+    # there is one block for every printed system, rest ones included, the blocks
+    # are read one to a system as before.
     rest = [(e["start"], e["end"]) for e in (_read_lyrics_system_map(score_root) or [])
             if e.get("rest")]
-    starts = [s for s in starts if not any(a <= s <= b for a, b in rest)]
+    sung = [s for s in starts if not any(a <= s <= b for a, b in rest)]
+    if len(blocks) != len(starts):
+        starts = sung
     if not starts:
         return json_str, [Mismatch(
             kind=NO_SYSTEMS,

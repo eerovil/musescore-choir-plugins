@@ -867,3 +867,45 @@ def test_lines_with_no_bar_number_skip_the_rest_system():
     assert 7 not in result.filled_measure_starts
     assert result.filled_measure_starts[:2] == [1, 12]
     assert not [m for m in result.mismatches if m.kind == "no_system_for_line"]
+
+
+def test_one_null_block_per_printed_system_reads_one_to_a_system():
+    # The prompt asks for a block per printed system; an AI that writes one for the
+    # piano-only system too must not push every later line a system on.
+    from src.clean_score.lyric_txt import place_lyrics
+    from src.clean_score.utils.per_system import system_ranges
+    _, root, _ = _rebuilt(RESTING)
+    starts = [r.start for r in system_ranges(root)]
+    blocks = [{"measure_start": None, "lyrics": [{"text": "la", "parts": ["B"]}]}
+              for _ in starts]
+    result = place_lyrics(root, blocks, fmt="json")
+    assert result.filled_measure_starts == starts
+    assert not [m for m in result.mismatches
+                if m.kind in ("no_system_for_line", "block_count")]
+
+
+def test_a_numbered_line_in_a_rest_system_is_not_placed_and_said():
+    from src.clean_score.lyric_txt import place_lyrics
+    _, root, staves = _rebuilt(RESTING)
+    blocks = [{"measure_start": 8, "lyrics": [
+        {"text": "la la", "staff_number": 1, "position": "above"}]}]
+    result = place_lyrics(root, blocks, fmt="json")
+    said = [m for m in result.mismatches if m.kind == "part_rests"]
+    assert len(said) == 1 and "No voices here" in said[0].message
+    assert said[0].lines and not [m for m in result.mismatches if m.kind == "too_few"]
+    assert not root.findall(".//Lyrics")
+
+
+def test_the_prompt_keeps_a_rest_system_and_does_not_ask_about_it():
+    save_answers(FIXTURE, RESTING)
+    layouts = layout_for_file(FIXTURE)
+    asked = []
+
+    def ask(prompt):
+        asked.append(prompt)
+        return ""
+
+    answers = prompt_for_answers(layouts, ask=ask, out=open(os.devnull, "w"))
+    assert answers[1] == {ALL_REST: REST}
+    rest_rows = len(next(l for l in layouts if l.index == 1).staves)
+    assert len(asked) == sum(len(l.staves) for l in layouts) - rest_rows

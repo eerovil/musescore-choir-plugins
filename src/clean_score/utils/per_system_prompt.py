@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from typing import Callable, Dict, List, Optional
 
-from .per_system import CLEARED, Answers, SystemLayout
+from .per_system import ALL_REST, CLEARED, REST, Answers, SystemLayout
 
 
 def prompt_for_answers(
@@ -41,6 +41,11 @@ def prompt_for_answers(
     )
     for layout in layouts:
         print(f"\n— System {layout.index + 1}: measures {layout.start}-{layout.end} —", file=out)
+        if layout.rest:
+            # Ticked "No voices here" in the app (#482): kept, not asked again.
+            print("   marked \"No voices here\" (every part rests); kept", file=out)
+            answers[layout.index] = {ALL_REST: REST}
+            continue
         for row in layout.staves:
             print(f"   staff {row.staff_id}: {row.voices} voice(s) — {row.summary}", file=out)
         for row in layout.staves:
