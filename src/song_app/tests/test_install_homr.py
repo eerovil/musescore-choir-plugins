@@ -50,7 +50,7 @@ def install(tmp_path: Path):
                 "HOMR_LOG": str(homr_log),
             }
         )
-        for key in ("HOMR_SOURCE", "HOMR_VENV", "HOMR_ORT_WHEEL", "HOMR_GPU"):
+        for key in ("HOMR_SOURCE", "HOMR_VENV", "HOMR_ORT_WHEEL", "HOMR_GPU", "HOMR_BIN"):
             env.pop(key, None)
         for key, value in overrides.items():
             if value is not None:
@@ -150,6 +150,66 @@ def test_status_reports_both_commits_and_installs_nothing(tmp_path: Path) -> Non
 
     assert out == ["installed=" + "a" * 40, f"latest={head}"]
     assert not (tmp_path / "home").exists()
+
+
+def _venv_with_commit(venv: Path, commit: str) -> None:
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    info = venv / "lib/python3.12/site-packages/homr-0.7.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "direct_url.json").write_text(
+        '{"url": "x", "vcs_info": {"vcs": "git", "commit_id": "' + commit + '"}}')
+
+
+def _status(script: str, tmp_path: Path, **env: str) -> subprocess.CompletedProcess:
+    remote = tmp_path / "remote"
+    if not remote.exists():
+        subprocess.run(["git", "init", "-q", "-b", "main", str(remote)], check=True)
+        subprocess.run(["git", "-C", str(remote), "-c", "user.name=t", "-c", "user.email=t@t",
+                        "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    full = dict(os.environ, HOMR_REPO=str(remote), PATH="/usr/bin:/bin",
+                HOME=str(tmp_path / "home"))
+    for key in ("HOMR_VENV", "HOMR_BIN"):
+        full.pop(key, None)
+    full.update(env)
+    return subprocess.run([script, "--status"], check=True, env=full, text=True,
+                          capture_output=True)
+
+
+def test_status_reads_the_venv_homr_bin_points_into(tmp_path: Path) -> None:
+    """#483: the app reads homr from HOMR_BIN, so --status looks at that venv."""
+    venv = tmp_path / "elsewhere/venv"
+    _venv_with_commit(venv, "b" * 40)
+    out = _status("scripts/install-homr.sh", tmp_path, HOMR_BIN=str(venv / "bin/homr"))
+    assert out.stdout.splitlines()[0] == "installed=" + "b" * 40
+
+
+def test_status_reads_homr_bin_from_the_repos_env_file(tmp_path: Path) -> None:
+    venv = tmp_path / "elsewhere/venv"
+    _venv_with_commit(venv, "c" * 40)
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    script = repo / "scripts/install-homr.sh"
+    script.write_text(Path("scripts/install-homr.sh").read_text())
+    script.chmod(0o755)
+    (repo / ".env").write_text(f'OTHER=1\nHOMR_BIN="{venv}/bin/homr"\n')
+    out = _status(str(script), tmp_path)
+    assert out.stdout.splitlines()[0] == "installed=" + "c" * 40
+
+
+def test_a_homr_bin_outside_a_venv_is_said_and_the_default_kept(tmp_path: Path) -> None:
+    out = _status("scripts/install-homr.sh", tmp_path, HOMR_BIN="/usr/local/bin/homr")
+    assert "not inside a venv this script can manage" in out.stderr
+    assert out.stdout.splitlines()[0] == "installed=none"
+
+
+def test_homr_venv_still_wins_over_homr_bin(tmp_path: Path) -> None:
+    chosen, other = tmp_path / "chosen", tmp_path / "other"
+    _venv_with_commit(chosen, "d" * 40)
+    _venv_with_commit(other, "e" * 40)
+    out = _status("scripts/install-homr.sh", tmp_path, HOMR_VENV=str(chosen),
+                  HOMR_BIN=str(other / "bin/homr"))
+    assert out.stdout.splitlines()[0] == "installed=" + "d" * 40
 
 
 def test_a_gpu_wheel_replaces_the_cpu_onnxruntime(install, tmp_path: Path) -> None:
