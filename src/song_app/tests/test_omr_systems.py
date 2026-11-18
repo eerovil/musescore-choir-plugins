@@ -1420,6 +1420,43 @@ def test_a_tie_over_the_break_comes_back_as_a_tie(tmp_path):
     assert _marks(out) == []
 
 
+def _dash(scan_):
+    for staff in scan_.staves:
+        for measure in staff.measures:
+            for slur in measure.iter("slur"):
+                slur.set("line-type", "dashed")
+    return scan_
+
+
+def test_a_dashed_half_makes_the_tie_over_the_break_dashed(tmp_path):
+    """#482: a later verse's tie is printed dashed and homr says so on the half it
+    saw dashed; the tie written over the line is dashed at both ends."""
+    out = omr_systems.assemble(
+        [_dash(_held_over_system(1, 1, {(1, 1, 4): "start"}, "G")),
+         _held_over_system(2, 1, {(1, 1, 1): "stop"}, "G")],
+        str(tmp_path / "a.musicxml"))
+    root = etree.parse(out).getroot()
+    assert [t.get("line-type") for t in root.iter("tied")] == ["dashed", "dashed"]
+
+
+def test_a_solid_tie_over_the_break_stays_solid(tmp_path):
+    out = omr_systems.assemble(
+        [_held_over_system(1, 1, {(1, 1, 4): "start"}, "G"),
+         _held_over_system(2, 1, {(1, 1, 1): "stop"}, "G")],
+        str(tmp_path / "a.musicxml"))
+    root = etree.parse(out).getroot()
+    assert [t.get("line-type") for t in root.iter("tied")] == [None, None]
+
+
+def test_a_dashed_half_makes_the_joined_slur_dashed(tmp_path):
+    out = omr_systems.assemble(
+        [_slurred_system(1, 1, {(1, 1, 4): "start"}),
+         _dash(_slurred_system(2, 1, {(1, 1, 1): "stop"}))],
+        str(tmp_path / "a.musicxml"))
+    root = etree.parse(out).getroot()
+    assert [s.get("line-type") for s in root.iter("slur")] == ["dashed", "dashed"]
+
+
 def test_a_half_that_cannot_be_joined_is_marked_even_beside_a_held_note(tmp_path):
     """The staff count changes at the break, so the halves cannot be joined. The
     same pitch opening the next system says nothing about which staff or voice
@@ -1538,6 +1575,19 @@ def test_a_slur_and_a_tie_ending_on_one_note_share_its_stop(tmp_path):
     root = etree.parse(out).getroot()
     assert [t.get("type") for t in root.iter("tied")] == ["start", "stop"]
 
+
+
+def test_a_dashed_slur_sharing_a_tie_s_stop_stays_dashed(tmp_path):
+    """The same shape with the slur drawn dashed (#482): the stop written for
+    it is dashed too, so the slur reads dashed at both ends."""
+    first = _slurred_system(1, 1, {(1, 1, 2): "start", (1, 1, 4): "start"})
+    _steps(first, 1, 1, "CAGA")
+    _slur_at(first, 1, 2).set("line-type", "dashed")
+    second = _slurred_system(2, 1, {(1, 1, 1): "stop"})
+    _steps(second, 1, 1, "ADEF")
+    out = omr_systems.assemble([first, second], str(tmp_path / "a.musicxml"))
+    root = etree.parse(out).getroot()
+    assert [s.get("line-type") for s in root.iter("slur")] == ["dashed", "dashed"]
 
 def _slur_at(scan_, bar, note):
     """The slur element on one note (staff 1) of a `_slurred_system`."""
