@@ -213,6 +213,7 @@ _EDGE = 0.01             # page edges ignored for joins (#480: 3% lost tight cro
 _BORDER_ZONE = 0.03      # where a scan's border line may stand, from each side
 _BORDER_FILL = 0.9       # share of a margin (or of its reach) a border column covers
 _BORDER_REACH = 2.0      # staff heights a border runs past the first or last staff
+_BORDER_DRIFT = 10       # pixels a border on a tilted scan wanders sideways
 _BORDER_ROOM = 8         # pixels either side of a border column that cannot join
 
 
@@ -268,6 +269,15 @@ def _lean(a):
     return out
 
 
+def _smear(a, n: int):
+    """Ink in a column or any of the `n` either side of it."""
+    out = a.copy()
+    for k in range(1, n + 1):
+        out[:, k:] |= a[:, :-k]
+        out[:, :-k] |= a[:, k:]
+    return out
+
+
 def _widen(cols, n: int):
     out = cols.copy()
     for k in range(1, n + 1):
@@ -290,14 +300,20 @@ def _border_columns(ink, staves: List[tuple]):
     for band in (ink[:max(top - 2, 0)], ink[bottom + 3:]):
         if band.shape[0] >= 10:
             cols |= _lean(band).mean(axis=0) >= _BORDER_FILL
-    reach = _BORDER_REACH * max(s[1] - s[0] for s in staves)
-    near = np.zeros(width, bool)
-    for lo, hi in ((max(0, int(top - reach)), bottom), (top, min(ink.shape[0], int(bottom + reach)))):
-        if hi - lo > bottom - top:
-            near |= _lean(ink[lo:hi]).mean(axis=0) >= _BORDER_FILL
-    near = _widen(near, 2)
+    reach = int(_BORDER_REACH * max(s[1] - s[0] for s in staves))
     zone = int(width * _BORDER_ZONE)
-    near[zone:width - zone] = False
+    near = np.zeros(width, bool)
+    for side in (slice(0, zone), slice(width - zone, width)):
+        # Smeared sideways: a frame on a tilted scan drifts across columns (#480).
+        strip = _smear(ink[:, side], _BORDER_DRIFT)
+        staffed = strip[top:bottom].mean(axis=0) >= _BORDER_FILL
+        above = strip[max(0, top - reach):top]
+        below = strip[bottom:bottom + reach]
+        past = np.zeros(strip.shape[1], bool)
+        for part in (above, below):
+            if part.shape[0] >= reach // 2 > 0:
+                past |= part.mean(axis=0) >= _BORDER_FILL
+        near[side] = staffed & past
     return _widen(_widen(cols, 2) | near, _BORDER_ROOM)
 
 

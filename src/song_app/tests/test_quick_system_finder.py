@@ -95,7 +95,7 @@ def test_a_printed_border_does_not_join_systems():
 def test_a_faint_edge_shadow_does_not_join_systems():
     """A grey shadow beside the binding is paler than any print, so it joins nothing."""
     page = draw_page([2, 2, 2])
-    ImageDraw.Draw(page).line([(60, 150), (60, 1400)], fill=215, width=4)
+    ImageDraw.Draw(page).line([(30, 150), (30, 1400)], fill=215, width=4)
     assert len(system_finder.page_systems(page)) == 3
 
 
@@ -107,6 +107,20 @@ def test_a_line_only_in_the_gap_does_not_join():
     for top in (150 + 2 * (4 * SPACE + 90) - 90 + 30, 150 + 4 * (4 * SPACE + 90) + 150 - 90 + 30):
         pen.line([(700, top), (700, top + 200)], fill=0, width=3)
     assert len(system_finder.page_systems(page)) == 3
+
+
+def test_a_border_on_a_tilted_scan_does_not_join_systems():
+    """A frame on a scan turned half a degree wanders 16 px down the page."""
+    page = draw_page([2, 2, 2])
+    ImageDraw.Draw(page).line([(18, 40), (34, HEIGHT - 40)], fill=0, width=3)
+    assert len(system_finder.page_systems(page)) == 3
+
+
+def test_a_tall_system_cropped_tight_is_one_system():
+    """The barline of one eight-staff system near the edge is not a border: it stops
+    where the system does."""
+    page = draw_page([8], gap=0).crop((85, 0, WIDTH, HEIGHT))
+    assert len(system_finder.page_systems(page)) == 1
 
 
 def _scan(page, paper, lines, dark=40, grain=0.0, seed=4):
