@@ -13,7 +13,8 @@ developers are listed under *Behind the scenes*.
   rit. or accel. reads as one sentence with its controls on the next line; and the Clean
   panel lists a scan's too-long voices bar by bar ("Bar 81, staff 4, voice 2: notes add up to
   3/4 in a 1/2 bar"), folded into one line once the song is cleaned. (#501)
-
+- A new fix kind, `rehearsal`, puts a rehearsal mark the scan could not read on a bar, and
+  it reaches the published score. (#493)
 - A song's language is saved with it: choose it on the New song form or the song's Start panel,
   or with the first `sing_song.py --lang`. A song with no language whose words do not look
   Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"

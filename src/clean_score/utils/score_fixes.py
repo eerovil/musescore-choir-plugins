@@ -114,6 +114,13 @@ bar too, or the song page asks where the repeat starts.
     {"kind": "repeat", "measure": 1, "why": "three verses, no repeat printed"}
     {"kind": "endrepeat", "measure": 32, "times": 3, "why": "three verses, no repeat printed"}
 
+`rehearsal` (#480) puts a rehearsal mark (a letter or number in a box, which
+singers count bars from) on the top staff at the start of bar `measure`. homr reads
+none, so a scanned score has none. A bar that already carries one, on any staff,
+refuses it. Publishing keeps it.
+
+    {"kind": "rehearsal", "measure": 17, "text": "B", "why": "the page prints B at bar 17"}
+
 `volta` (#319) puts the "1." and "2." brackets over an end repeat: "1." over the
 `bars` bars ending at `measure`, which must carry the end repeat, and "2." over the
 `second` bars after it (default 1). Only the "1." length changes what is played --
@@ -1999,6 +2006,45 @@ def _end_repeat(root: etree._Element, measure_no: int, times: int) -> str:
     return f"repeat ends here, played {times} times, on all {len(bars)} staves"
 
 
+def _add_rehearsal(root: etree._Element, measure_no: int, text) -> str:
+    """Put a rehearsal mark reading ``text`` at the start of bar ``measure_no`` on
+    the top staff of a part the publish copy keeps, where MuseScore writes one: in
+    the first voice, just ahead of the bar's first note or rest. A part publishing
+    drops (a click track of rests, or percussion) is passed over, by the same rule
+    ``score_export.score.part_is_silent``, or the mark would go with it."""
+    text = str(text if text is not None else "").strip()
+    if not text:
+        raise FixError("give the mark's 'text', the letter or number the page prints")
+    staves = _all_staves(root)
+    for staff in staves:
+        measures = staff.findall("Measure")
+        if measure_no < 1 or measure_no > len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        there = measures[measure_no - 1].find(".//RehearsalMark")
+        if there is not None:
+            raise FixError(f"staff {staff.get('id')} already has rehearsal mark "
+                           f"{there.findtext('text') or ''!r} here")
+    # Imported here: score_export reads clean_score, not the other way round at load.
+    from src.score_export.score import _staff_ids, part_is_silent
+    score = root.find("Score")
+    music = {staff.get("id"): staff for staff in staves}
+    kept = {sid for part in (score.findall("Part") if score is not None else [])
+            if not part_is_silent(part, music) for sid in _staff_ids(part)}
+    target = next((staff for staff in staves if staff.get("id") in kept), staves[0])
+    voice = target.findall("Measure")[measure_no - 1].find("voice")
+    if voice is None:
+        raise FixError(f"staff {target.get('id')} has no voice in measure {measure_no}")
+    at = len(voice)
+    for index, child in enumerate(voice):
+        if child.tag in ("Chord", "Rest", "Tuplet", "location"):
+            at = index
+            break
+    mark = etree.Element("RehearsalMark")
+    etree.SubElement(mark, "text").text = text
+    voice.insert(at, mark)
+    return f"rehearsal mark {text!r} on staff {target.get('id')}"
+
+
 def volta_spans(staff: etree._Element) -> List[Tuple[int, int]]:
     """Each volta on a staff as ``(first bar, last bar)``, bars numbered from 1."""
     spans = []
@@ -2695,6 +2741,14 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 what = _end_repeat(root, measure, int(fix.get("times", 2)))
             except FixError as exc:
                 raise FixError(f"m{measure} (endrepeat): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind == "rehearsal":
+            measure = int(fix["measure"])
+            try:
+                what = _add_rehearsal(root, measure, fix.get("text"))
+            except FixError as exc:
+                raise FixError(f"m{measure} (rehearsal): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         if kind == "insbar":
