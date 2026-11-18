@@ -16,6 +16,7 @@ A piano-only run does not replace a sung version on the site without --piano-ove
 
 Stdlib only: the app imports it too.
 """
+import ast
 import json
 import os
 import re
@@ -37,6 +38,32 @@ def singer_version(path=SINGER):
     if not m:
         raise ValueError(f"no SINGER_VERSION line in {path}")
     return int(m.group(1))
+
+
+def singer_changes(path=SINGER):
+    """SINGER_CHANGES in sing_ufr.py, read as text: {version: "*" or a language code or a list of
+    them}, every version up to SINGER_VERSION. A version the line does not name, or a line that
+    cannot be read, counts as "*" (it changed every song), so a mistake re-sings too much rather
+    than too little (#484)."""
+    version = singer_version(path)
+    changes = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(r"^SINGER_CHANGES\s*=\s*(\{.*\})\s*$", f.read(), re.M)
+        read = ast.literal_eval(m.group(1)) if m else {}
+        if isinstance(read, dict):
+            changes = read
+    except (OSError, ValueError, SyntaxError, TypeError):
+        changes = {}
+    out = {}
+    for v in range(1, version + 1):
+        said = changes.get(v, "*")
+        if isinstance(said, str):
+            said = [said]
+        if not isinstance(said, (list, tuple)) or not said or not all(isinstance(c, str) for c in said):
+            said = ["*"]
+        out[v] = "*" if "*" in said else sorted(said)
+    return out
 
 
 def write(song_dir, record):
