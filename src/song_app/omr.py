@@ -97,6 +97,30 @@ class HomrError(RuntimeError):
     """homr could not read the image, or could not be run at all."""
 
 
+# How a process killed by SIGABRT comes back: -6 from Popen, 134 through a shell.
+ABORT_CODES = (-6, 134)
+
+
+class HomrAborted(HomrError):
+    """homr was killed by SIGABRT; whether its page is usable is the caller's call."""
+
+    def __init__(self, code: int, lines: List[str]):
+        super().__init__(f"homr exited {code}.\n" + _tail(lines))
+        self.code = code
+        self.lines = lines
+
+
+def _whole_musicxml(path: str) -> bool:
+    """The file is MusicXML that parses and holds at least one measure."""
+    if not os.path.exists(path):
+        return False
+    try:
+        root = etree.parse(path).getroot()
+    except (etree.XMLSyntaxError, OSError):
+        return False
+    return root.find(".//measure") is not None
+
+
 class HomrMissing(HomrError):
     """homr is not installed on this host."""
 
@@ -695,8 +719,18 @@ def read_page(
                 # that is where the lease is checked (heavy_slot.Slot.guard).
                 watched = slot.guard(log)
                 watched(f"Reading {os.path.basename(image_path)} with homr")
-                output = _run(list(engine.command) + flags + [scratch_image],
-                              watched, timeout, engine.env)
+                try:
+                    output = _run(list(engine.command) + flags + [scratch_image],
+                                  watched, timeout, engine.env)
+                except HomrAborted as aborted:
+                    # onnxruntime can abort while homr exits, after the page is
+                    # written (seen on macOS, #483). A whole result is kept; an
+                    # empty or broken one is still the failure it was.
+                    if not _whole_musicxml(produced):
+                        raise
+                    watched(f"homr crashed while exiting (code {aborted.code}) after "
+                            "writing a whole result; using it")
+                    output = aborted.lines
                 slot.check()
 
         if not os.path.exists(produced):
@@ -1045,6 +1079,8 @@ def _run(command: List[str], log: Logger, timeout: int,
 
     if expired.is_set():
         raise HomrError(f"homr did not finish within {timeout}s.\n" + _tail(lines))
+    if returncode in ABORT_CODES:
+        raise HomrAborted(returncode, lines)
     if returncode != 0:
         raise HomrError(f"homr exited {returncode}.\n" + _tail(lines))
     return lines

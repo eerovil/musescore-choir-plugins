@@ -127,8 +127,10 @@ Or press **Install homr** in the *homr* box on a song's **Scan** stage, which ru
 the same script and shows its log. The box also says when a newer homr is out. If
 `uv` is missing, the script installs it into `~/.local/bin` first.
 
-It goes into `~/.local/share/musescore-choir-plugins/homr-venv`. Set `HOMR_VENV`
-to put it elsewhere, and then `HOMR_BIN` in `.env` so the app can find it.
+It goes into `~/.local/share/musescore-choir-plugins/homr-venv`. To put it elsewhere,
+set `HOMR_BIN` in `.env` to `<venv>/bin/homr`: the app finds it there, and the script
+then installs into (and `--status` reports on) that venv too. `HOMR_VENV` still wins
+when it is set.
 `HOMR_SOURCE` is where it is installed from: it follows `main` of
 [eerovil/homr](https://github.com/eerovil/homr), so a later install may read
 scores differently. Set it to a commit to get a particular version back.
@@ -152,6 +154,12 @@ HOMR_ORT_WHEEL=/a/disk/with/room/dist/onnxruntime_gpu-1.29.0-cp312-cp312-linux_x
 ```
 
 The venv remembers the wheel, so the Scan stage's Update button keeps it.
+
+On some machines homr crashes as it exits (an abort, exit code 134) after it has
+written its result. The scan then uses the result if the MusicXML is whole, and says
+so in its log; a crash with no whole result is still a failure. If it happens on every
+read, update onnxruntime in the homr venv first (`VIRTUAL_ENV=<venv> uv pip install -U
+onnxruntime`), as the crash is in its shutdown.
 
 A branch of homr needs no install: clone the fork to `~/homr` (or set
 `HOMR_CHECKOUT`), and the Scan panel's **Read with** picker offers it and each of

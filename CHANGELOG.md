@@ -15,6 +15,18 @@ developers are listed under *Behind the scenes*.
   one part to listen to, and publishing piano only asks before it replaces a sung version on
   the site. (#483)
 
+- Lines can be sung on another machine over plain SSH: `REMOTE_RUNNER=scripts/ssh-runner.sh`
+  with `SSH_RUNNER_HOST`, and that machine's singer and voices. (#483)
+
+- `SING_PROVIDER` picks how the singer runs: `cpu`, `cuda` or `coreml` (tried, with the processor
+  as the fallback); the log names each model's provider. (#483)
+
+- A scan keeps a page when homr crashes as it exits after writing a whole result, and says so in
+  the log. (#483)
+
+- `scripts/install-homr.sh` installs into and reports on the venv `HOMR_BIN` in `.env` points
+  at, so `--status` no longer says homr is missing when it is installed elsewhere. (#483)
+
 - MuseScore 4 can now read a scan where a voice runs past its barline. Before, it refused the
   whole file and the staff list failed with an error blaming `MUSESCORE_CLI_PATH`. The raw scan
   is now converted with `-f`, the Clean panel lists each over-long bar, the clean's log names
