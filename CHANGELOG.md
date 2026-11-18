@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- **Publish**: a big song handed over with one part to a staff now gets its shared staves
+  guessed from the part names (and says so) instead of being told the page prints every
+  part on its own staff; a b-part that only borrows its main part's notes now shares that
+  part's staff, as the page prints it. (#482)
 - The Clean grid has a **No voices here (piano or instruments only)** tick under each
   system: every part rests there, the part names carry on past it, and pasted lines with
   no bar number skip it. (#482)

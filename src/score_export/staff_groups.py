@@ -81,8 +81,16 @@ def _pairs(staves: Sequence[int]) -> List[List[int]]:
 
 
 def _from_staff_map(recorded: str, singing: List[int]) -> Optional[List[List[int]]]:
+    """Pairs off the printed staves the clean recorded, or None when the record
+    says nothing about the page.
+
+    A map where every printed staff became exactly one staff is what a clean
+    writes when it split nothing: a score handed over one part to a staff. That is
+    a fact about the file, not the page, so it is no reading (#482).
+    """
     groups = []
     listed = set()
+    one_to_one = True
     for entry in recorded.split(";"):
         if ":" not in entry:
             return None
@@ -91,13 +99,23 @@ def _from_staff_map(recorded: str, singing: List[int]) -> Optional[List[List[int
         except ValueError:
             return None
         listed.update(ids)
+        one_to_one = one_to_one and len(ids) == 1
         groups += _pairs([s for s in ids if s in singing])
+    if one_to_one:
+        return None
     # A map that leaves a singing staff out does not describe this score.
     return groups if listed >= set(singing) else None
 
 
 def _from_system_map(recorded: str, singing: List[int]) -> Optional[List[List[int]]]:
-    """Pairs that share a printed staff in the most bars, each part used once."""
+    """Pairs that share a printed staff in the most bars, each part used once.
+
+    A part that only borrows another's notes in a system (`follow`, a b-part the
+    page prints in unison with its main part) sits on its main part's printed
+    staff there, so it is listed and shares that staff (#482). A map where no
+    printed staff ever holds two parts is, like a 1:1 `lyricsStaffMap`, the file's
+    one part to a staff and no reading of the page.
+    """
     try:
         systems = json.loads(recorded)
         shared: Dict[Tuple[int, int], int] = {}
@@ -105,8 +123,12 @@ def _from_system_map(recorded: str, singing: List[int]) -> Optional[List[List[in
         for system in systems:
             bars = int(system["end"]) - int(system["start"]) + 1
             positions: Dict[str, List[int]] = {}
+            follow = {int(base): [int(s) for s in children]
+                      for base, children in (system.get("follow") or {}).items()}
             for position, staves in system["map"].items():
-                positions.setdefault(str(position), []).extend(int(s) for s in staves)
+                staves = [int(s) for s in staves]
+                positions.setdefault(str(position), []).extend(
+                    staves + [c for s in staves for c in follow.get(s, [])])
             for staves in positions.values():
                 staves = sorted({s for s in staves if s in singing})
                 listed.update(staves)
@@ -115,7 +137,7 @@ def _from_system_map(recorded: str, singing: List[int]) -> Optional[List[List[in
                         shared[(upper, lower)] = shared.get((upper, lower), 0) + bars
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
-    if not listed >= set(singing):
+    if not listed >= set(singing) or not shared:
         return None
     used: set = set()
     groups = []
