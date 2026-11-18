@@ -271,6 +271,7 @@ table.grid .undernote:empty { display: none; }
 .tempo-row input[type=number] { min-width: 0; }
 .tempo-row label.tempo-start { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--text); white-space: nowrap; }
 .hint.err { color: var(--bad); }
+p.err { color: var(--bad); }
 .publish-keep-sung { margin-top: 8px; }
 .publish-keep-sung summary { cursor: pointer; color: var(--muted); }
 .publish-keep-sung .hint { margin: 6px 0; }

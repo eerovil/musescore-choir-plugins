@@ -1854,7 +1854,7 @@ function deleteSongBox(song, P) {
 // Once the song is cleaned they were already cut or reset, so the list folds away.
 function overlongLine(o) {
   if (o.found && o.expected) {
-    return `Bar ${o.measure}, staff ${o.staff}, voice ${o.voice}: ${o.found} of notes in a ${o.expected} bar`;
+    return `Bar ${o.measure}, staff ${o.staff}, voice ${o.voice}: notes add up to ${o.found} in a ${o.expected} bar`;
   }
   return o.message;
 }

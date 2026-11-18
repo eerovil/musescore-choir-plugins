@@ -597,6 +597,7 @@ def test_the_scores_rit_is_listed_and_its_setting_saved(live, page, size):
     expect(page.locator("[data-gradual-until='1']")).to_have_text("eases until bar 1 beat 4 (fermata)")
     head = rows.first.locator(".gradual-head").bounding_box()
     controls = rows.first.locator(".gradual-controls").bounding_box()
+    assert head and controls, "the rit. row is not laid out"
     assert controls["y"] >= head["y"] + head["height"] - 1
     expect(page.locator("[data-gradual-stale='7']")).to_contain_text("no rit. or accel.")
     page.locator("[data-gradual-bpm='1']").fill("50")
