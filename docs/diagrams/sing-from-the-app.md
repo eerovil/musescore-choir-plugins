@@ -54,7 +54,7 @@ flowchart TD
 
 ## Boxes
 
-- **systemd-run --user<br/>sing-slug -yksikkö**: `server.py` käynnistää `sing_song.py`:n omana systemd-yksikkönään (`sing-<slug>`), jotta automaattinen deploy-uudelleenkäynnistys ei katkaise laulua. Pysäytä = `systemctl --user stop`, jonka SIGTERM `sing_song` jo käsittelee.
-- **Näytönohjain<br/>vapaa?**: uusi `flock` `sing_song`:ssa (`~/.local/state/musescore-choir-plugins/sing-card.lock`), sama agentin komentoriviajoille ja sovelluksen ajoille. Lukko vapautuu vasta 60 s ajon jälkeen.
-- **GET /sing<br/>lukee .sing-run.json**: sama edistymistiedosto (`progress.py`), jota kirjastonäkymä jo näyttää.
-- **Kirjoittaa try/…mp3**: `--try PART:A-B --out songs/<slug>/.sing-try`, käyttää tallennettuja ääntämisiä.
+- **systemd-run --user<br/>sing-slug -yksikkö**: `sing_run.py` käynnistää `sing_song.py`:n omana systemd-yksikkönään (`sing-<slug>`, kokeilu `sing-<slug>-try`, `RuntimeMaxSec=3h`) HEADin kopiosta hakemistossa `/var/tmp/sing-code/<sha>/`, jotta deploy-uudelleenkäynnistys tai merge kesken ajon ei muuta mitään. Pysäytä = `systemctl --user stop`, jonka SIGTERM `sing_song` jo käsittelee.
+- **Näytönohjain<br/>vapaa?**: `src/gpu_card.py`, `flock` tiedostoon `~/.local/state/musescore-choir-plugins/card.lock`, sama agentin komentoriviajoille ja sovelluksen ajoille. Seuraava laulaja odottaa 60 s edellisen jälkeen; homr-luku ei odota vaan lukee prosessorilla.
+- **GET /sing<br/>lukee .sing-run.json**: sama edistymistiedosto (`progress.py`), jota kirjastonäkymä jo näyttää; sovelluksen ajo tunnistetaan `run_id`:stä (`SING_RUN_ID`).
+- **Kirjoittaa try/…mp3**: `--try PART:A-B`, tulos hakemistoon `~/.local/state/musescore-choir-plugins/sing/<slug>/try/<id>/` (kolme viimeisintä säilyy), käyttää tallennettuja ääntämisiä. Sovellus ei kirjoita `songs/`-kansioon mitään.
