@@ -2320,7 +2320,8 @@ def api_sing(slug: str, body: Dict = None) -> Dict:
     except sing_run.StartError as exc:
         raise HTTPException(502, f"Could not start singing: {exc}")
     hub.emit(slug, {"type": "state"})
-    return record
+    # The panel reads the reply as a status (state, choir, run), like GET /sing.
+    return {**record, **sing_run.status(slug, song.dir)}
 
 
 @app.get("/api/songs/{slug}/sing")
@@ -2517,6 +2518,9 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     if _publish_busy(song):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
+    singing = sing_run.busy_reason(slug)   # a sung run publishes when it is done (#510)
+    if singing:
+        raise HTTPException(409, f"{singing} Publish once it is done, or stop it first.")
     listing = await asyncio.get_running_loop().run_in_executor(
         None, publish.choirs, config, state.SONGS_DIR)
     if listing["error"]:

@@ -97,7 +97,10 @@ def test_sing_starts_a_unit_off_the_snapshot_and_writes_app_json_after(client):
     assert "--setenv=DISPLAY=:0" in argv and "--setenv=XAUTHORITY=/run/user/1000/xauth" in argv
     assert not any(a.startswith("--setenv=HOME") for a in argv)
     run_id = r.json()["run_id"]
+    assert r.json()["state"] == "starting" and r.json()["choir"] == "testi"   # read as a status
     assert f"--setenv=SING_RUN_ID={run_id}" in argv
+    # the unit reads the same song lock and state files as the app
+    assert f"--setenv=SING_STATE_DIR={client.tmp / 'state'}" in argv
     tail = argv[argv.index("--") + 1:]
     assert tail[2:] == [os.path.join(snap, "sing_song.py"), SLUG, "--publish", "testi"]
     log = os.path.join(progress.state_dir(SLUG), "run.log")
@@ -109,6 +112,9 @@ def test_sing_starts_a_unit_off_the_snapshot_and_writes_app_json_after(client):
 
 
 def test_a_second_start_a_cli_run_and_a_busy_job_are_409(client):
+    song = state.load(SLUG)
+    song.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    song.save()
     assert client.post(f"/api/songs/{SLUG}/sing", json={"choir": "testi"}).status_code == 200
     r = client.post(f"/api/songs/{SLUG}/sing", json={"choir": "testi"})
     assert r.status_code == 409 and "already singing" in r.text
@@ -126,6 +132,16 @@ def test_a_second_start_a_cli_run_and_a_busy_job_are_409(client):
     finally:
         job_state.finish(song.dir, "clean")
     assert len(calls(client, "systemd-run")) == 1
+
+
+def test_publish_is_refused_while_the_song_sings(client, monkeypatch):
+    monkeypatch.setattr(publish, "choirs", lambda *a: {"error": "", "choirs": [{"id": "testi"}]})
+    song = state.load(SLUG)
+    song.data["review"] = {"approved_against": state.file_fingerprint(song.cleaned_path())}
+    song.save()
+    assert client.post(f"/api/songs/{SLUG}/sing", json={"choir": "testi"}).status_code == 200
+    r = client.post(f"/api/songs/{SLUG}/publish", json={"choir": "testi", "settings": {}})
+    assert r.status_code == 409 and "already singing" in r.text
 
 
 def test_bad_input_and_a_failed_start(client, monkeypatch):
@@ -260,3 +276,10 @@ def test_the_snapshot_is_the_commit_with_songs_and_env_linked(tmp_path, monkeypa
     assert os.path.realpath(os.path.join(path, "songs")) == os.path.realpath(songs)
     assert not old.exists()
     assert sing_run._snapshot(sha) == path   # reused
+    # gitignored host files are linked even before they exist, and again on reuse
+    choirs = os.path.join(path, "choirs")
+    assert os.path.islink(choirs) and os.readlink(choirs) == os.path.join(sing_run.CHECKOUT, "choirs")
+    os.remove(choirs)
+    sing_run._snapshot(sha)
+    assert os.path.islink(choirs)
+    assert os.readlink(os.path.join(path, ".env")) == os.path.join(sing_run.CHECKOUT, ".env")

@@ -118,13 +118,11 @@ def _snapshot(sha: str) -> str:
             if archive.wait(timeout=60) or untar.returncode:
                 raise StartError((err or untar.stderr.decode(errors="replace")).strip()
                                  or "git archive failed")
-            for name, target in (("songs", state.SONGS_DIR), (".env", os.path.join(CHECKOUT, ".env"))):
-                if os.path.exists(target):
-                    os.symlink(os.path.realpath(target), os.path.join(tmp, name))
             os.rename(tmp, path)
         except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)
             raise
+    _link_host_files(path)
     now = time.time()
     for name in os.listdir(CODE_DIR):
         other = os.path.join(CODE_DIR, name)
@@ -136,6 +134,25 @@ def _snapshot(sha: str) -> str:
         except OSError:
             pass
     return path
+
+
+# Gitignored host files a run reads, which `git archive` leaves out: linked into the snapshot
+# even before they exist (a dangling link reads as missing), and on every start, so a file
+# made after the snapshot is still read.
+def _host_files() -> List[tuple]:
+    return [("songs", state.SONGS_DIR), (".env", os.path.join(CHECKOUT, ".env")),
+            ("choirs", os.path.join(CHECKOUT, "choirs"))]
+
+
+def _link_host_files(snapshot: str) -> None:
+    for name, target in _host_files():
+        link = os.path.join(snapshot, name)
+        if not os.path.lexists(link):
+            os.symlink(os.path.abspath(target), link)
+
+
+# What the app reads its own locks and state from; the unit must read the same files.
+FORWARDED = ("SING_STATE_DIR", "GPU_CARD_LOCK")
 
 
 def _remote_runner(snapshot: str) -> Optional[str]:
@@ -176,7 +193,7 @@ def _start(name: str, args: List[str], log: str, env: Dict[str, str]) -> str:
         fcntl.flock(lock, fcntl.LOCK_EX)   # held until systemd-run returns: no removal meanwhile
         sha = head()
         snapshot = _snapshot(sha)
-        env = {**_desktop_env(), **env}
+        env = {**_desktop_env(), **{k: os.environ[k] for k in FORWARDED if k in os.environ}, **env}
         runner = _remote_runner(snapshot)
         if runner:
             env["REMOTE_RUNNER"] = runner
