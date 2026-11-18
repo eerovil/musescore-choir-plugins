@@ -149,10 +149,10 @@ minutes on a graphics card, much longer on the processor. MuseScore needs a scre
 export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` set.
 
 - The language of the words is saved with the song, in `songs/<slug>/language.json` (#484): set
-  it on the New song form or the song's Start panel, or give `--lang en|de|sv|la|et|fi` once and
+  it on the New song form or the song's Start panel, or give `--lang en|de|sv|la|et|no|fi` once and
   the run saves it. Later runs sing in the saved language; a `--lang` that differs stops the run
   unless `--change-lang` is given too. A song with no saved language is sung as Finnish only if
-  its words look Finnish: when more than 15% of them (at least 3) do not, the run stops and asks
+  its words look Finnish: when 15% or more of its distinct words (at least 3) do not, the run stops and asks
   for `--lang`. Estonian and some Swedish words look Finnish to that check, so save their
   language. English "I", "ow" and "oy" sounds (child, now, boy) are sung as two vowels;
   `DIPH` (default 0.5) is the share of the note the first one takes.
