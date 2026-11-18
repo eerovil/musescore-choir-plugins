@@ -46,7 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from .utils.per_system import system_ranges
+from .utils.per_system import read_system_map, system_ranges
 from .utils.utils import part_staff_ids
 
 # --------------------------------------------------------------------------- #
@@ -497,35 +497,29 @@ def _read_lyrics_system_map(
     --per-system in the 'lyricsSystemMap' metaTag (JSON: a list of
     {"start", "end", "map": {printed: [output_ids]}} with 1-based measure ranges).
     Returns None if absent/unparseable (callers then fall back to lyricsStaffMap).
+    The ranges are the score's bars today (`per_system.read_system_map`, #482).
     """
-    score = score_root if score_root.tag == "Score" else score_root.find(".//Score")
-    if score is None:
+    read = read_system_map(score_root)
+    if read is None:
         return None
-    for m in score.findall("metaTag"):
-        if m.get("name") == "lyricsSystemMap" and (m.text or "").strip():
-            try:
-                raw = json.loads(m.text)
-            except ValueError:
-                return None
-            result: List[Dict[str, Any]] = []
-            for entry in raw:
-                try:
-                    pmap = {
-                        int(k): [int(x) for x in v]
-                        for k, v in (entry.get("map") or {}).items()
-                    }
-                    follow = {
-                        int(k): [int(x) for x in v]
-                        for k, v in (entry.get("follow") or {}).items()
-                    }
-                    result.append(
-                        {"start": int(entry["start"]), "end": int(entry["end"]),
-                         "map": pmap, "follow": follow}
-                    )
-                except (KeyError, TypeError, ValueError):
-                    continue
-            return result or None
-    return None
+    result: List[Dict[str, Any]] = []
+    for entry in read.entries:
+        try:
+            pmap = {
+                int(k): [int(x) for x in v]
+                for k, v in (entry.get("map") or {}).items()
+            }
+            follow = {
+                int(k): [int(x) for x in v]
+                for k, v in (entry.get("follow") or {}).items()
+            }
+            result.append(
+                {"start": int(entry["start"]), "end": int(entry["end"]),
+                 "map": pmap, "follow": follow}
+            )
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    return result or None
 
 
 def _map_for_measure(

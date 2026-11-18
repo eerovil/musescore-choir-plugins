@@ -106,7 +106,8 @@ def _marked_row(song, *meta):
         tag = etree.SubElement(score, "metaTag", name=name)
         tag.text = text
     etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
-    [row] = problems.problems(song)
+    # A map that does not reach bar 3 also makes a stale-map row about no bar (#482).
+    [row] = [r for r in problems.problems(song) if r["measure"] is not None]
     return (row["staff_in_system"], row["staves_in_system"],
             row["voice_on_staff"], row["voices_on_staff"])
 
@@ -140,7 +141,8 @@ def test_a_row_says_which_staff_and_voice_of_the_system_it_is(make_song, meta, p
 
 @pytest.mark.parametrize("meta", [
     [],                                                       # a score from before the maps
-    [("lyricsSystemMap", _systems((1, 2, {"1": [1]}, 1)))],  # bar 3 not covered
+    # Bar 3 not covered: two systems, and no line break to re-read them off (#482).
+    [("lyricsSystemMap", _systems((1, 1, {"1": [1]}, 1), (2, 2, {"1": [1]}, 1)))],
     [("lyricsSystemMap", json.dumps([{"start": 1, "end": 6, "map": {"1": [1]}}]))],  # cleaned before "source"
     [("lyricsStaffMap", "1:2;2:3")],                         # B1 not printed anywhere
 ])
@@ -420,3 +422,29 @@ def test_a_slur_answer_still_counts_after_a_bar_is_put_in_after_it(tmp_path, mon
     assert again["decision"] == {"picked": "d"}
     with pytest.raises(FixError):
         problems.record_slur_choice(song, again["id"], "b")
+
+
+def _with_system_map(song, entries):
+    root = etree.parse(song.cleaned_path()).getroot()
+    tag = etree.SubElement(root.find("Score"), "metaTag", name="lyricsSystemMap")
+    tag.text = _systems(*entries)
+    etree.ElementTree(root).write(song.cleaned_path(), encoding="UTF-8")
+
+
+def test_a_words_map_bars_no_longer_fit_is_one_row(make_song):
+    # The map counts 2 bars; the score has 3 and no line breaks to re-read it off
+    # (#482): a bar was added in MuseScore after Clean.
+    song = make_song()
+    _with_system_map(song, [(1, 1, {"1": [1]}, 1), (2, 2, {"1": [1]}, 1)])
+    rows = [r for r in problems.problems(song)
+            if any(n["kind"] == "stale-map" for n in r["notes"])]
+    assert len(rows) == 1
+    assert rows[0]["notes"][0]["text"] == problems.STALE_MAP
+    assert rows[0]["measure"] is None
+
+
+def test_a_words_map_that_fits_says_nothing(make_song):
+    song = make_song()
+    _with_system_map(song, [(1, 1, {"1": [1]}, 1), (2, 3, {"1": [1]}, 1)])
+    assert not [r for r in problems.problems(song)
+                if any(n["kind"] == "stale-map" for n in r["notes"])]

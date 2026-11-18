@@ -35,6 +35,10 @@ Where each part comes from, and why:
 
 Nothing here decides anything about the music: the rows are what is already known,
 put side by side.
+
+- **A words map that no longer fits** (#482): bars added or taken out in MuseScore after
+  a per-system clean, with the line breaks no longer giving as many systems as the map
+  has (`per_system.MAP_STALE`), so the words cannot be sent to the right parts.
 """
 import json
 import os
@@ -43,7 +47,7 @@ from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from src.clean_score.utils import score_fixes
+from src.clean_score.utils import per_system, score_fixes
 from src.clean_score.utils.cross_voice_slurs import removed_slurs
 from src.clean_score.utils.problem_marks import marks
 from src.clean_score.utils.rejected_bars import staff_names
@@ -51,6 +55,9 @@ from src.clean_score.utils.score_fixes import FixError
 
 from . import bar_readings, pdf_systems, pipeline, state
 
+#: The row for a words map that no longer fits the score's bars (#482).
+STALE_MAP = ("Bars were added or removed in MuseScore after Clean; the words map still "
+             "counts the old bars. Clean again, or record the change as `insbar`/`delbar`.")
 #: What marks a `fixes.json` entry as a slur choice made here.
 SLUR_SOURCE = "slur-choice"
 #: ...and as a repeat choice.
@@ -349,6 +356,10 @@ def problems(song: state.Song) -> List[Dict]:
         part = names.get(fix.get("staff"), "") if fix.get("staff") else ""
         system = fix.get("system") if measure is None else None
         note(row(measure, part, system), text, fix.get("source") or "fixes.json")
+
+    read = per_system.read_system_map(root)
+    if read is not None and read.state == per_system.MAP_STALE:
+        note(row(None, ""), STALE_MAP, "stale-map")
 
     for offer in bar_readings.offers(song, cleaned):
         target = row(offer["measure"], offer["part"] or "")

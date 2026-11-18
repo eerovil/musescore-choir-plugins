@@ -170,7 +170,7 @@ def proposal(root: etree._Element) -> Tuple[List[Group], str]:
         return [], ""
 
     groups, source = None, ""
-    recorded = implode._meta(root, "lyricsSystemMap")
+    recorded = implode.system_map_text(root)
     if recorded:
         groups, source = _from_system_map(recorded, singing), PAGE_PER_SYSTEM
     if groups is None:

@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 
 from lxml import etree
 
+from .utils.per_system import read_system_map
+
 #: Elements that belong to the staff rather than to a voice, so only the first
 #: voice of a merged staff may keep them.
 STAFF_LEVEL = ("Clef", "KeySig", "TimeSig")
@@ -81,6 +83,12 @@ def _meta(root: etree._Element, name: str) -> str:
         if tag.get("name") == name:
             return (tag.text or "").strip()
     return ""
+
+
+def system_map_text(root: etree._Element) -> str:
+    """`lyricsSystemMap` as JSON, its bar ranges those of the score today (#482)."""
+    read = read_system_map(root)
+    return json.dumps(read.entries) if read else ""
 
 
 def staff_names(root: etree._Element) -> dict[int, str]:
@@ -245,7 +253,7 @@ def grouping(root: etree._Element, override: list[list[str]] | None = None) -> G
     ids = [int(staff.get("id", "0")) for staff in score.findall("Staff")]
     singing = [staff for staff in ids if staff not in silent_staves(root)]
 
-    recorded = _meta(root, "lyricsSystemMap")
+    recorded = system_map_text(root)
     systems = _from_system_map(recorded, names) if recorded else None
     system_ids = _system_staff_ids(systems) if systems else set()
     if systems and system_ids >= set(singing) and system_ids <= set(ids):

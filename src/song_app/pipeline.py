@@ -1273,7 +1273,7 @@ def render_score_pdf(mscx_path: str, breaks: Optional[List[int]] = None,
     return out
 
 
-def _printed_systems(song_dir: str) -> Optional[List[Tuple[int, int]]]:
+def _printed_systems(song_dir: str, root=None) -> Optional[List[Tuple[int, int]]]:
     """Measure ranges of the printed systems, from the bounds read off the scan.
 
     Normal-mode cleaning strips layout breaks, so the cleaned score has no systems
@@ -1281,11 +1281,13 @@ def _printed_systems(song_dir: str) -> Optional[List[Tuple[int, int]]]:
     piece. The printed systems still exist on the page; these are them, in the
     cleaned score's bar numbering (#446).
     """
-    systems = [r for _, r in _printed_system_bounds(song_dir) if r]
+    systems = [r for _, r in _printed_system_bounds(song_dir, root) if r]
     return systems or None
 
 
-def _printed_system_bounds(song_dir: str) -> List[Tuple[object, Optional[Tuple[int, int]]]]:
+def _printed_system_bounds(
+    song_dir: str, root=None
+) -> List[Tuple[object, Optional[Tuple[int, int]]]]:
     """Each labelled printed system's bounds and its bars in the cleaned numbering.
 
     The stored labels count the bars of the scan, so a bar a ``delbar`` took out or
@@ -1301,8 +1303,31 @@ def _printed_system_bounds(song_dir: str) -> List[Tuple[object, Optional[Tuple[i
         moves = bar_moves(_recorded_fixes(song_dir))
     except RuntimeError:
         moves = []
-    return [(b, moved_system(b.measure_start, b.measure_end or b.measure_start, moves))
-            for b in bounds]
+    out = [(b, moved_system(b.measure_start, b.measure_end or b.measure_start, moves))
+           for b in bounds]
+    return _recounted(out, root)
+
+
+def _recounted(bounds, root):
+    """``bounds`` with the bars the cleaned score's own line breaks give them (#482).
+
+    Bars added by hand in MuseScore after a per-system clean are in no ``insbar``,
+    so the labels still count the old bars. When the words map was re-read off the
+    score's breaks (``per_system.MAP_RECOUNTED``) and has as many systems as there
+    are labelled ones, its ranges are the systems.
+    """
+    if root is None:
+        return bounds
+    read = per_system.read_system_map(root)
+    if read is None or read.state != per_system.MAP_RECOUNTED:
+        return bounds
+    kept = [i for i, (_, r) in enumerate(bounds) if r]
+    if len(kept) != len(read.entries):
+        return bounds
+    out = list(bounds)
+    for i, entry in zip(kept, read.entries):
+        out[i] = (bounds[i][0], (int(entry["start"]), int(entry["end"])))
+    return out
 
 
 def moved_system(start: int, end: int, moves) -> Optional[Tuple[int, int]]:
@@ -1340,8 +1365,8 @@ def lyric_grid(mscx_path: str, song_dir: str = "") -> Dict:
     the song has no marked systems and the systems are the score's own line breaks.
     """
     root = etree.parse(mscx_path).getroot()
-    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir)).to_dict()
-    crops = [b.index for b, r in _printed_system_bounds(song_dir) if r]
+    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir, root)).to_dict()
+    crops = [b.index for b, r in _printed_system_bounds(song_dir, root) if r]
     for system in grid["systems"]:
         i = system["index"]
         system["crop"] = crops[i] if len(crops) == len(grid["systems"]) else None
@@ -1351,14 +1376,14 @@ def lyric_grid(mscx_path: str, song_dir: str = "") -> Dict:
 def lyric_blocks(mscx_path: str, cells: Dict, song_dir: str = "") -> List[Dict]:
     """The editor's typed cells as lyric JSON blocks, addressed by part name."""
     root = etree.parse(mscx_path).getroot()
-    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir))
+    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir, root))
     return lyric_txt.blocks_from_cells(grid, cells)
 
 
 def lyric_box_blocks(mscx_path: str, verse: int, boxes: Dict, song_dir: str = "") -> List[Dict]:
     """The by-system editor's changed boxes of one verse as lyric JSON blocks (#397)."""
     root = etree.parse(mscx_path).getroot()
-    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir))
+    grid = lyric_txt.editor_grid(root, systems=_printed_systems(song_dir, root))
     return lyric_txt.blocks_from_boxes(grid, verse, boxes)
 
 
@@ -1557,5 +1582,6 @@ def run_lyric_import(
     Not a full replace any more (#397): only the parts, voices, verses and systems the
     JSON names change. The printed systems decide how far a line may run on.
     """
+    root = etree.parse(cleaned_path).getroot() if song_dir else None
     return import_file(json_path, cleaned_path, cleaned_path, replace=replace,
-                       systems=_printed_systems(song_dir))
+                       systems=_printed_systems(song_dir, root))

@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Words typed for a part now land on the right bars after bars were added to a cleaned
+  score in MuseScore: the systems are counted again from the score's own line breaks. When
+  they cannot be, the Fix panel says the words map is out of date and asks for a clean. (#482)
 - A clean, scan or other long job no longer erases what was saved to the song while it ran,
   such as the publish record `sing_song.py --publish` writes: a save now writes only what that
   job changed, and the app and the command-line tools take turns with the song's file. Reading
