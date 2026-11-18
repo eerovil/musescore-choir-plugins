@@ -61,6 +61,27 @@ def test_a_top_staff_of_only_rests_is_passed_over():
     assert "on staff 2" in done[0]
 
 
+def test_a_drum_staff_on_top_is_passed_over_though_it_has_notes():
+    """Publishing drops percussion even with notes in it, so the mark goes on the
+    first singer (the review's case on #480: a drumset part above the choir)."""
+    root = _score()
+    root.find("Score/Part").append(etree.fromstring(
+        "<Instrument id='drumset'><useDrumset>1</useDrumset></Instrument>"))
+    done = apply_fixes(root, [MARK])
+    assert _marks(root) == [("2", 2, "B")]
+    assert "on staff 2" in done[0]
+
+
+def test_it_follows_the_publish_rule():
+    """The fix and the publish copy read one rule: the staff marked is a kept part's."""
+    from src.score_export.score import silent_parts
+    root = _score()
+    root.find("Score/Part").append(etree.fromstring("<Instrument id='drumset'/>"))
+    assert silent_parts(root) == ["S"]
+    apply_fixes(root, [MARK])
+    assert _marks(root) == [("2", 2, "B")]
+
+
 def test_it_goes_after_a_signature_at_the_head_of_the_bar():
     root = _score()
     apply_fixes(root, [{**MARK, "measure": 1, "text": "A"}])

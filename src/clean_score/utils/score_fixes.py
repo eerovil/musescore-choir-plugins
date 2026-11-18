@@ -2008,10 +2008,10 @@ def _end_repeat(root: etree._Element, measure_no: int, times: int) -> str:
 
 def _add_rehearsal(root: etree._Element, measure_no: int, text) -> str:
     """Put a rehearsal mark reading ``text`` at the start of bar ``measure_no`` on
-    the top staff that sings anywhere in the song, where MuseScore writes one: in
-    the first voice, just ahead of the bar's first note or rest. A staff of only
-    rests (a click track) is passed over, since the publish copy drops it and the
-    mark with it."""
+    the top staff of a part the publish copy keeps, where MuseScore writes one: in
+    the first voice, just ahead of the bar's first note or rest. A part publishing
+    drops (a click track of rests, or percussion) is passed over, by the same rule
+    ``score_export.score.part_is_silent``, or the mark would go with it."""
     text = str(text if text is not None else "").strip()
     if not text:
         raise FixError("give the mark's 'text', the letter or number the page prints")
@@ -2024,7 +2024,13 @@ def _add_rehearsal(root: etree._Element, measure_no: int, text) -> str:
         if there is not None:
             raise FixError(f"staff {staff.get('id')} already has rehearsal mark "
                            f"{there.findtext('text') or ''!r} here")
-    target = next((staff for staff in staves if staff.find(".//Chord") is not None), staves[0])
+    # Imported here: score_export reads clean_score, not the other way round at load.
+    from src.score_export.score import _staff_ids, part_is_silent
+    score = root.find("Score")
+    music = {staff.get("id"): staff for staff in staves}
+    kept = {sid for part in (score.findall("Part") if score is not None else [])
+            if not part_is_silent(part, music) for sid in _staff_ids(part)}
+    target = next((staff for staff in staves if staff.get("id") in kept), staves[0])
     voice = target.findall("Measure")[measure_no - 1].find("voice")
     if voice is None:
         raise FixError(f"staff {target.get('id')} has no voice in measure {measure_no}")
