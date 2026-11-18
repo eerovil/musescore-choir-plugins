@@ -18,6 +18,8 @@ playlists.txt
 
 # per-system answer cache (local testing convenience)
 .persystem_cache.json
+.persystem_cache.json.lock
+.persystem_cache.*.tmp
 
 # Agent worktrees (the poller checks an issue out into .worktrees/issue-N).
 # Untracked, they made `git status --porcelain` non-empty, and the unattended

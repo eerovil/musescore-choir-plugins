@@ -576,23 +576,76 @@ def api_systems(slug: str) -> Dict:
     # The bars whose voices run past the barline, read off the converted file on
     # every load, so the Clean panel shows them on its first view and after a
     # reload alike (#481). The clean's own log names them again as it runs.
-    return {"grid": pipeline.system_grid(mscx), "overlong": pipeline.overlong_in(mscx)}
+    grid = pipeline.system_grid(mscx)
+    # Which reading of each system this grid shows. The panel sends them back
+    # with its answers, so answers typed against a system read again since the
+    # grid was loaded are refused rather than stamped onto the new reading (#498).
+    stamps = scan.system_stamps(song, range(len(grid)))
+    return {"grid": grid, "overlong": pipeline.overlong_in(mscx),
+            "stamps": {str(i): stamp for i, stamp in stamps.items()}}
 
 
 @app.put("/api/songs/{slug}/systems")
 def api_save_systems(slug: str, answers: Dict = None) -> Dict:
-    """Persist grid answers: {system_index: {staff_id: 'T1,T2'}}."""
+    """Persist grid answers.
+
+    The body is `{"answers": {system_index: {staff_id: 'T1,T2'}}, "stamps":
+    {system_index: reading}}`, the stamps being what `GET /systems` said the grid
+    showed. A bare answers mapping is still taken, checked against the readings
+    as this request found them.
+    """
     song = _require(slug)
+    body = answers or {}
+    client_stamps = body.get("stamps") if isinstance(body.get("answers"), dict) else None
+    if isinstance(body.get("answers"), dict):
+        body = body["answers"]
+    parsed = {int(si): {int(sid): v for sid, v in staves.items()}
+              for si, staves in body.items()}
+    # The readings these answers are about: the ones the grid showed when the
+    # panel loaded it, or failing that the fragments as this request found them,
+    # before the slow conversion below.
+    if isinstance(client_stamps, dict):
+        answered = {i: client_stamps.get(str(i)) for i in parsed}
+    else:
+        answered = scan.system_stamps(song, list(parsed))
     xml = song.source_path("xml")
     mscx = pipeline.convert_to_mscx(xml, song.dir)
-    parsed = {int(si): {int(sid): v for sid, v in staves.items()}
-              for si, staves in (answers or {}).items()}
-    pipeline.save_system_answers(mscx, parsed)
     # An answer is about the staves of one scanned system, so it is derived from
     # that system's fragment and has to say which one, or a re-scan cannot know
-    # it has invalidated it.
-    scan.stamp_answers(song, list(parsed))
-    song.save()
+    # it has invalidated it. Checked and written on the state as it is now, under
+    # the lock: a system read again meanwhile has other staves, and stamping the
+    # new reading onto answers about the old one would make them look current
+    # (#498).
+    with state.song_lock(slug):
+        fresh = state.load(slug) or song
+        changed = sorted(i for i, stamp in scan.system_stamps(fresh, list(parsed)).items()
+                         if stamp != answered[i])
+        if changed:
+            raise HTTPException(
+                409, "System " + ", ".join(str(i + 1) for i in changed)
+                + " was read again while these answers were saved. "
+                "Reload the grid and answer it again.")
+        # A band read again since the score was put together: the grid still
+        # shows the old reading, and answers about it would be stamped with a
+        # reading they are not about. After a crash no scan is running to finish
+        # it, so the sentence says to press Scan rather than to wait.
+        unassembled = scan.unassembled_rows(fresh, list(parsed))
+        if unassembled:
+            raise HTTPException(
+                409, "System " + ", ".join(str(i + 1) for i in unassembled)
+                + " was read again since the score was put together. Press Scan "
+                "on the Scan stage to finish it, then reload the grid.")
+        # The stamp is saved before the answers: a crash between the two leaves
+        # a stamp with no new answers, which is harmless. The other order could
+        # leave answers no stamp ties to a reading, which a re-read never drops.
+        # Both stay inside this one lock, so no re-read lands between them.
+        scan.stamp_answers(fresh, list(parsed))
+        fresh.save()
+        try:
+            pipeline.save_system_answers(mscx, parsed)
+        except (OSError, pipeline.per_system.AnswerFileError) as exc:
+            raise HTTPException(500, f"Could not save the answers: {exc}")
+    song.adopt(fresh)
     return {"ok": True}
 
 
@@ -646,13 +699,17 @@ def _run_clean(slug: str) -> None:
         }
         # Run the health check.
         found = _health_scan(song, cleaned)
-        prev = song.data.get("health", {}).get("issues", [])
-        song.data["health"] = {
-            "checked_against": song.data["cleaned_fingerprint"],
-            "issues": health.merge_issues(found, prev),
-        }
-        song.set_stage("fix")
-        song.save()
+        # The issues as they are now, not as this clean found them minutes ago,
+        # so a row dismissed while it ran stays dismissed (#498).
+        with state.song_lock(slug):
+            now = state.load(slug) or song
+            prev = now.data.get("health", {}).get("issues", [])
+            song.data["health"] = {
+                "checked_against": song.data["cleaned_fingerprint"],
+                "issues": health.merge_issues(found, prev),
+            }
+            song.set_stage("fix")
+            song.save()
         # Findings, not rows: a collapsed meter row stands for many, and this line is
         # the first number anyone sees about a score. See health.finding_count.
         open_issues = _derived(song)["open_issues"]
@@ -698,7 +755,7 @@ def api_undo_clean(slug: str) -> Dict:
         # The restored fingerprint is in the state before the watcher sees the file
         # change, so it is read as our own write and not checked a second time.
         fresh.save()
-    song.data = fresh.data
+    song.adopt(fresh)
     hub.emit(slug, {"type": "log", "line": "Undid the last clean: the previous cleaned score is back."})
     hub.emit(slug, {"type": "state"})
     return _derived(song)
@@ -831,7 +888,7 @@ def _rescan(song: state.Song) -> None:
                 "issues": health.merge_issues(found, current.get("issues", [])),
             }
             fresh.save()
-    song.data = fresh.data
+    song.adopt(fresh)
 
 
 @app.post("/api/songs/{slug}/rescan")
@@ -1012,10 +1069,15 @@ def api_pick_problem(slug: str, body: Dict) -> Dict:
 @app.post("/api/songs/{slug}/issues/{issue_id}/dismiss")
 def api_dismiss(slug: str, issue_id: str) -> Dict:
     song = _require(slug)
-    for i in song.data.get("health", {}).get("issues", []):
-        if i["id"] == issue_id:
-            i["status"] = "dismissed"
-    song.save()
+    # Read and written in one step, so a clean or check finishing in between
+    # does not get its health record replaced by the one read here (#498).
+    with state.song_lock(slug):
+        fresh = state.load(slug) or song
+        for i in fresh.data.get("health", {}).get("issues", []):
+            if i["id"] == issue_id:
+                i["status"] = "dismissed"
+        fresh.save()
+    song.adopt(fresh)
     return _derived(song)
 
 
