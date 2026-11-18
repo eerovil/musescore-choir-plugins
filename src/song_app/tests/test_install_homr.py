@@ -8,6 +8,7 @@ has to get right is where homr comes from and how the one install is labelled.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -30,9 +31,24 @@ fi
 """
 
 
+def _copied_script(tmp_path: Path) -> Path:
+    """The installer, copied into this test's own folder with no .env beside it.
+
+    Run from the working copy, the script reads that copy's .env for HOMR_BIN, which
+    can name the real homr venv; a test that installs must never reach it.
+    """
+    scripts = tmp_path / "repo" / "scripts"
+    scripts.mkdir(parents=True)
+    script = scripts / "install-homr.sh"
+    shutil.copy2("scripts/install-homr.sh", script)
+    shutil.copytree("scripts/onnxruntime-sm52", scripts / "onnxruntime-sm52")
+    return script
+
+
 @pytest.fixture()
 def install(tmp_path: Path):
     """Run the installer against a fake uv, and hand back what it did."""
+    script = _copied_script(tmp_path)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_uv = fake_bin / "uv"
@@ -55,12 +71,24 @@ def install(tmp_path: Path):
         for key, value in overrides.items():
             if value is not None:
                 env[key] = value
-        subprocess.run(["scripts/install-homr.sh"], check=True, env=env, text=True)
+        subprocess.run([str(script)], check=True, env=env, text=True)
         return (uv_log.read_text(encoding="utf-8").splitlines(),
                 homr_log.read_text(encoding="utf-8").splitlines())
 
     run.home = tmp_path / "home"
+    run.script = script
     return run
+
+
+def test_the_installer_tests_run_a_copy_with_no_env_beside_it(install, tmp_path: Path) -> None:
+    """A working copy's .env can name the real homr (HOMR_BIN), and the script reads it.
+
+    Run from the working copy, the fake uv then writes its stand-in over that real
+    bin/homr. The tests run a copy in their own folder instead, with no .env beside it.
+    """
+    script = Path(install.script)
+    assert tmp_path in script.parents
+    assert not (script.parent.parent / ".env").exists()
 
 
 @pytest.mark.parametrize(
@@ -122,7 +150,7 @@ def test_a_host_without_uv_gets_one(tmp_path: Path) -> None:
         "CURL_LOG": str(tmp_path / "curl.log"),
         "FAKE_UV_SOURCE": str(uv_source),
     }
-    out = subprocess.run(["scripts/install-homr.sh"], check=True, env=env, text=True,
+    out = subprocess.run([str(_copied_script(tmp_path))], check=True, env=env, text=True,
                          capture_output=True).stdout
 
     assert "uv not found" in out
