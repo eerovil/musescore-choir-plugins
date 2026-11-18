@@ -9,6 +9,11 @@ developers are listed under *Behind the scenes*.
 
 - A new fix kind, `rehearsal`, puts a rehearsal mark the scan could not read on a bar, and
   it reaches the published score. (#493)
+- A song's language is saved with it: choose it on the New song form or the song's Start panel,
+  or with the first `sing_song.py --lang`. A song with no language whose words do not look
+  Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"
+  sounds (child, now, boy) are sung as two vowels, and only songs sung in English wait for a
+  re-sing because of it. (#484)
 - A `delbar` fix refused by a repeat sign in the bar now says how to take the sign off first: an
   `unrepeat` entry before it, written out with the bar and which sign. (#492)
 - A page with no music to sing, such as a title page, can be left out of a scan with a

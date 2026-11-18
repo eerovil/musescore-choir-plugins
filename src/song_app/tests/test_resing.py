@@ -75,12 +75,25 @@ def test_the_site_is_read_saved_and_reused_then_used_when_out_of_reach(tmp_path)
     assert nothing["songs"] == [] and nothing["error"] == "no network"
 
 
-def make_song(tmp_path, monkeypatch, slug, sites=None):
+FINNISH = "Virta venhettä vie, aallot laulaa, ilta saapuu rantaan hiljaa"
+ENGLISH = "For unto us a child is born, unto us a son is given, wonderful counsellor"
+
+
+def score(words):
+    """A cleaned score whose one staff sings `words`, a word a note."""
+    chords = "".join(f"<Chord><Lyrics><text>{w}</text></Lyrics></Chord>" for w in words.split())
+    return f"<museScore><Score><Staff id='1'><Measure><voice>{chords}</voice></Measure></Staff></Score></museScore>"
+
+
+def make_song(tmp_path, monkeypatch, slug, sites=None, words=FINNISH):
     monkeypatch.setattr(state, "SONGS_DIR", str(tmp_path))
     folder = tmp_path / slug
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / state.STATE_FILE).write_text(json.dumps(
-        {"name": slug, "stage": "publish", "publish": {"sites": sites or {}}}))
+    data = {"name": slug, "stage": "publish", "publish": {"sites": sites or {}}}
+    if words is not None:
+        (folder / "s_cleaned.mscx").write_text(score(words))
+        data["cleaned"] = "s_cleaned.mscx"
+    (folder / state.STATE_FILE).write_text(json.dumps(data))
     return state.load(slug), folder
 
 
@@ -128,3 +141,109 @@ def test_a_finished_re_sing_shows_up_to_date_on_the_list_before_the_site_is_read
     o = resing.overview([state.load("a")], listed, 1)
     assert o["songs"]["a"]["pending"] == [] and o["songs"]["a"]["current"] == ["jm"]
     assert o["pending"] == 0 and o["running"] == 0
+
+
+# ---- #484: a singer change that touched some languages, and the song's language ----
+CHANGES = {1: "*", 2: "*", 3: ["en"]}
+
+
+def test_a_change_to_english_leaves_finnish_songs_up_to_date():
+    rows = [row("jm")]
+    fi = {"jm": dict(record("jm", 2), language="fi")}
+    en = {"jm": dict(record("jm", 2), language="en")}
+    assert resing.song_status(rows, fi, 3, changes=CHANGES)["current"] == ["jm"]
+    assert resing.song_status(rows, en, 3, changes=CHANGES)["pending"] == ["jm"]
+    # a change to every song still re-sings it, and without the table every version is one
+    assert resing.song_status(rows, fi, 2, changes=CHANGES)["current"] == ["jm"]
+    assert resing.song_status(rows, {"jm": dict(record("jm", 1), language="fi")}, 3,
+                              changes=CHANGES)["pending"] == ["jm"]
+    assert resing.song_status(rows, fi, 3)["pending"] == ["jm"]
+
+
+def test_a_record_with_no_language_was_sung_as_finnish():
+    rows = [row("jm")]
+    old = {"jm": record("jm", 2)}
+    assert resing.song_status(rows, old, 3, changes=CHANGES,
+                              words_look_finnish=lambda: True)["current"] == ["jm"]
+    # the words say otherwise: sung before languages were kept, maybe in the wrong one
+    assert resing.song_status(rows, old, 3, changes=CHANGES,
+                              words_look_finnish=lambda: False)["pending"] == ["jm"]
+    # saved English, sung as Finnish (no language on the record): pending, words not read
+    asked = []
+    status = resing.song_status(rows, old, 3, changes=CHANGES, saved_language="en",
+                                words_look_finnish=lambda: asked.append(1) or True)
+    assert status["pending"] == ["jm"] and asked == []
+
+
+def test_a_saved_language_that_differs_from_the_one_sung_is_pending():
+    rows = [row("jm")]
+    sung_fi = {"jm": dict(record("jm", 3), language="fi")}
+    assert resing.song_status(rows, sung_fi, 3, changes=CHANGES, saved_language="en")["pending"] == ["jm"]
+    assert resing.song_status(rows, sung_fi, 3, changes=CHANGES, saved_language="fi")["current"] == ["jm"]
+    # a record that says its language is not second-guessed by the words
+    assert resing.song_status(rows, sung_fi, 3, changes=CHANGES,
+                              words_look_finnish=lambda: False)["current"] == ["jm"]
+
+
+def test_the_overview_reads_the_words_once_per_score(tmp_path, monkeypatch):
+    fi, _ = make_song(tmp_path, monkeypatch, "fi", {"jm": record("jm", 2, slug="fi")})
+    en, en_dir = make_song(tmp_path, monkeypatch, "en", {"jm": record("jm", 2, slug="en")}, ENGLISH)
+    none, _ = make_song(tmp_path, monkeypatch, "none", {"jm": record("jm", 2, slug="none")}, None)
+    listed = {"songs": [row("jm", s) for s in ("fi", "en", "none")], "staging": [], "error": None, "at": 1}
+    o = resing.overview([fi, en, none], listed, 3, CHANGES, str(tmp_path))
+    assert o["songs"]["fi"]["current"] == ["jm"]
+    assert o["songs"]["en"]["pending"] == ["jm"]       # English words, sung as Finnish
+    assert o["songs"]["none"]["pending"] == ["jm"]     # no score to read: not known to be Finnish
+    cache = json.loads((tmp_path / resing.LANGUAGE_FILE).read_text())
+    assert cache["fi"]["finnish"] is True and cache["en"]["finnish"] is False
+    # kept: a second overview does not read the scores again
+    monkeypatch.setattr(resing.language_check, "score_words", lambda p: 1 / 0)
+    assert resing.overview([fi, en, none], listed, 3, CHANGES, str(tmp_path))["songs"]["en"]["pending"] == ["jm"]
+    # the song's language saved as English: pending until sung in English
+    resing.language_check.save(str(en_dir), "en", "app")
+    assert resing.overview([state.load("en")], listed, 3, CHANGES, str(tmp_path))["songs"]["en"]["pending"] == ["jm"]
+
+
+def test_a_cache_that_cannot_be_read_is_started_afresh_and_old_temp_files_go(tmp_path, monkeypatch):
+    fi, _ = make_song(tmp_path, monkeypatch, "fi", {"jm": record("jm", 2, slug="fi")})
+    (tmp_path / resing.LANGUAGE_FILE).write_text("{not json")
+    stale = tmp_path / (resing.LANGUAGE_FILE + ".abc.tmp")
+    fresh = tmp_path / (resing.LANGUAGE_FILE + ".def.tmp")
+    stale.write_text("{}")
+    fresh.write_text("{}")
+    os.utime(stale, (1, 1))
+    listed = {"songs": [row("jm", "fi")], "staging": [], "error": None, "at": 1}
+    assert resing.overview([fi], listed, 3, CHANGES, str(tmp_path))["songs"]["fi"]["current"] == ["jm"]
+    assert json.loads((tmp_path / resing.LANGUAGE_FILE).read_text())["fi"]["finnish"] is True
+    assert not stale.exists() and fresh.exists()
+
+
+def test_the_cache_is_read_again_once_the_score_changes(tmp_path, monkeypatch):
+    song, folder = make_song(tmp_path, monkeypatch, "s", {"jm": record("jm", 2, slug="s")})
+    listed = {"songs": [row("jm", "s")], "staging": [], "error": None, "at": 1}
+    assert resing.overview([song], listed, 3, CHANGES, str(tmp_path))["songs"]["s"]["current"] == ["jm"]
+    (folder / "s_cleaned.mscx").write_text(score(ENGLISH))
+    assert resing.overview([song], listed, 3, CHANGES, str(tmp_path))["songs"]["s"]["pending"] == ["jm"]
+
+
+def test_two_writers_at_once_leave_one_whole_cache(tmp_path):
+    import threading
+    def write(n):
+        for i in range(30):
+            resing._write_json(str(tmp_path), resing.LANGUAGE_FILE, {"writer": n, "i": i, "pad": "x" * 5000})
+    threads = [threading.Thread(target=write, args=(n,)) for n in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert json.loads((tmp_path / resing.LANGUAGE_FILE).read_text())["i"] == 29
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_singer_changes_covers_every_version_and_a_bad_line_means_every_song(tmp_path):
+    ok = tmp_path / "ok.py"
+    ok.write_text('SINGER_VERSION = 4\nSINGER_CHANGES = {1: "*", 3: "en", 4: ["la", "en"]}\n')
+    assert progress.singer_changes(str(ok)) == {1: "*", 2: "*", 3: ["en"], 4: ["en", "la"]}
+    bad = tmp_path / "bad.py"
+    bad.write_text("SINGER_VERSION = 2\nSINGER_CHANGES = {1: open('x')}\n")
+    assert progress.singer_changes(str(bad)) == {1: "*", 2: "*"}
+    real = progress.singer_changes()
+    assert sorted(real) == list(range(1, progress.singer_version() + 1))
