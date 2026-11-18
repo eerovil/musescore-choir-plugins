@@ -2230,9 +2230,12 @@ state model are in `DESIGN.md`.
   check is the app's copy of that rule, `clean_score/utils/overlong_voices.py` (a voice
   running past its bar), and the record says which ran (`verification.musescore.by`).
   The raw scan is converted and rendered with `-f` so MuseScore 4 lets it in, and the
-  conversion names those bars in the song's log; the cleaned check and publish never
-  use `-f`. When a MuseScore 4 run fails, `musescore_cli.failed_load_reason` reads the
-  reason off its log (lines stamped during the run only) and the error names the bar
+  Clean panel lists those bars off `GET /systems`'s `overlong` (read off the converted
+  file on every load, so a reload shows them too) and the clean's log names them; the
+  cleaned check and publish never use `-f`. When a MuseScore 4 run fails,
+  `musescore_cli.failed_load_reason` reads the reason off its log (lines stamped during
+  the run, and only a refusal of the file this run passed, since two songs may convert
+  at once) and the error names the bar
   instead of blaming `MUSESCORE_CLI_PATH`. Without any MuseScore the song records
   "not checked". Note MuseScore fills *gaps* with rests while reading, so a
   short voice passes; what fails is a voice that runs past the bar, typically a

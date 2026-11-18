@@ -1838,8 +1838,13 @@ async function panelClean(panel, song, slug, P, refresh) {
     const holder = el("div", {}, el("p", { className: "hint" }, "Loading systems…"));
     panel.append(holder);
     try {
-      const { grid } = await getJSON(`${P}/systems`);
+      const { grid, overlong = [] } = await getJSON(`${P}/systems`);
       holder.replaceChildren(
+        ...(overlong.length ? [el("div", { className: "overlong" },
+          el("p", { className: "sub" },
+            "These voices run past their barline. MuseScore 4 will not open the score " +
+            "like this, so cleaning cuts or resets these bars:"),
+          el("ul", { className: "warnlist" }, overlong.map((o) => el("li", {}, o.message))))] : []),
         el("p", { className: "hint fallbackhint" },
           "S1b sings S1's notes wherever it has none of its own; the same goes for any part name plus one small letter."),
         ...grid.map((sys) => sysBlock(sys)));

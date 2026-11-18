@@ -11,7 +11,7 @@ flowchart TD
     scan[Scanned MusicXML] --> conv[Convert to .mscx with --force]
     conv --> rule1[Find voices past the barline]
     rule1 --> any1{Any found?}
-    any1 -- Yes --> log1[Log each bar, staff and voice]
+    any1 -- Yes --> log1[Clean panel lists each bar, staff and voice]
     any1 -- No --> grid
     log1 --> grid[Staff list and grid load]
     grid --> clean[Clean: split voices, cut long bars]
@@ -49,9 +49,9 @@ flowchart TD
 
 - **Convert to .mscx with --force**: `pipeline.convert_to_mscx` passes `-f` so MuseScore 4 keeps an over-long voice instead of refusing the whole file. MuseScore 3 accepts the flag too.
 - **Find voices past the barline**: new `clean_score/utils/overlong_voices.py`, the rule MuseScore 4 refuses by: a voice whose notes run past the bar's length. A short voice passes (MuseScore fills it with rests).
-- **Log each bar, staff and voice**: `pipeline.log_overlong_voices`, written to the song's log when the input is converted, so the bar is named before Fix.
+- **Clean panel lists each bar, staff and voice**: `GET /systems` returns `overlong` (`pipeline.overlong_in`, read off the converted file on every load, so a reload shows it too) and the Clean panel lists it above the grid; the clean's log names the bars again (`pipeline.log_overlong_voices`).
 - **Same rule, run by the app**: `pipeline.musescore_check` uses the rule when the CLI is MuseScore 4, which writes no `.mlog`. Same `{measure, staff, voice, message}` shape, so the reset and the Fix panel work unchanged.
 - **Reset bar to a rest, red mark**: `reset_rejected_bars`, as for MuseScore 3 today; the mark says MuseScore 4.
 - **Singing parts get voice instruments**: new `clean_score/utils/voice_instruments.py`: `voice.soprano`, `voice.alto`, … on each singing part, so MuseScore 4 puts a new dynamic above the staff. The sound (program) is left alone. Comes in the second pull request of #481.
-- **Read MuseScore 4's log for the reason**: `musescore_cli.failed_load_reason` reads the newest MuseScore 4 log written during the run (Linux and macOS folders) for its "failed load notation" lines; `musescore_cli.explain` builds the error from them for the conversion, the renders and `export`.
+- **Read MuseScore 4's log for the reason**: `musescore_cli.failed_load_reason` reads the MuseScore 4 logs written during the run (Linux and macOS folders) for a "failed load notation" line stamped during the run and naming the file this run passed; `musescore_cli.explain` builds the error from them for the conversion, the renders and `export`.
 - **Error names the bar, not MUSESCORE_CLI_PATH**: the path is blamed only when MuseScore said nothing and logged nothing. `GET /systems` answers 422 with the error.

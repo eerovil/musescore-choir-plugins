@@ -85,6 +85,9 @@ class Outcome:
     before: Optional[Tuple[int, int]]
     #: When the run began (``time.time()``), so its own MuseScore 4 log can be found.
     started: float = 0.0
+    #: The file MuseScore was asked to read (the argument before ``-o``), so its
+    #: refusal can be told apart from another run's in the shared MuseScore 4 log.
+    source: Optional[str] = None
 
     @property
     def said(self) -> str:
@@ -112,8 +115,10 @@ def run(argv: Sequence[str], output_path: str,
     started = time.time()
     result = subprocess.run(list(argv), capture_output=True, text=True,
                             errors="replace", timeout=timeout)
+    args = list(argv)
+    source = args[args.index("-o") - 1] if "-o" in args[2:] else None
     return Outcome(result.returncode, result.stdout or "", result.stderr or "",
-                   output_path, before, started)
+                   output_path, before, started, source)
 
 
 def crashed_on_exit(outcome: Outcome) -> bool:
@@ -307,14 +312,28 @@ def _stamp(line: str) -> Optional[float]:
         return None
 
 
-def failed_load_reason(since: float, log_dirs: Sequence[str] = LOG_DIRS) -> Optional[str]:
+def _same_file(logged: str, source: str) -> bool:
+    """Whether the path a refusal names is ``source``, as given or relative to it."""
+    logged = logged.strip()
+    if not logged:
+        return True
+    if os.path.isabs(logged):
+        return os.path.abspath(logged) == os.path.abspath(source)
+    whole = os.path.abspath(source)
+    return whole == os.path.abspath(logged) or whole.endswith(os.sep + os.path.normpath(logged))
+
+
+def failed_load_reason(since: float, log_dirs: Sequence[str] = LOG_DIRS,
+                       source: Optional[str] = None) -> Optional[str]:
     """Why MuseScore 4 refused to open a score, read off its log; None if it did not say.
 
     Only a refusal written at or after ``since`` counts: a log file written to after
     it is read, and in it a refusal line stamped before it is skipped, so an old
     refusal of some other file is never handed back as this run's reason. The
     refusal may carry on over following lines without a time stamp (one per bar), up
-    to the `, path:` that ends it; the next stamped line ends it too.
+    to the `, path:` that ends it; the next stamped line ends it too. Given
+    ``source``, a refusal naming another file is skipped: two songs' runs at once
+    write into the same day's log.
     """
     logs = []
     for folder in log_dirs:
@@ -343,7 +362,9 @@ def failed_load_reason(since: float, log_dirs: Sequence[str] = LOG_DIRS) -> Opti
                 if ", path:" in parts[-1] or _stamp(more) is not None:
                     break
                 parts.append(more)
-            text = "\n".join(parts).split(", path:", 1)[0]
+            text, _, named = "\n".join(parts).partition(", path:")
+            if source and named and not _same_file(named.splitlines()[0], source):
+                continue
             said = [html.unescape(_TAG.sub("", one)).strip() for one in text.splitlines()]
             reason = "\n".join(one for one in said if one) or reason
         if reason:
@@ -358,7 +379,8 @@ def explain(outcome: Outcome, what: str) -> str:
     kept for when MuseScore said nothing at all and its log has no refusal, which is
     what a wrong path looks like.
     """
-    reason = failed_load_reason(outcome.started) if outcome.started else None
+    reason = (failed_load_reason(outcome.started, source=outcome.source)
+              if outcome.started else None)
     if reason:
         return f"MuseScore {what}: MuseScore refused to open the score.\n{reason}"
     if outcome.said.strip():

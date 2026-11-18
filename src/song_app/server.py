@@ -531,14 +531,14 @@ def api_systems(slug: str) -> Dict:
     if not xml:
         raise HTTPException(400, "No source file")
     try:
-        # The song's log hears which bars run past their barline, here where the
-        # raw scan is first converted, before any clean (#481).
-        mscx = pipeline.convert_to_mscx(
-            xml, song.dir, log=lambda m: hub.emit(slug, {"type": "log", "line": m}))
+        mscx = pipeline.convert_to_mscx(xml, song.dir)
     except RuntimeError as exc:
         # MuseScore refused the input; say why rather than a bare 500 (#481).
         raise HTTPException(422, str(exc))
-    return {"grid": pipeline.system_grid(mscx)}
+    # The bars whose voices run past the barline, read off the converted file on
+    # every load, so the Clean panel shows them on its first view and after a
+    # reload alike (#481). The clean's own log names them again as it runs.
+    return {"grid": pipeline.system_grid(mscx), "overlong": pipeline.overlong_in(mscx)}
 
 
 @app.put("/api/songs/{slug}/systems")

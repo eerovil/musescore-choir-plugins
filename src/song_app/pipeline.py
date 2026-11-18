@@ -94,16 +94,21 @@ def convert_to_mscx(input_path: str, out_dir: str, log: Logger = _noop) -> str:
     return target
 
 
+def overlong_in(mscx_path: str) -> List[Dict]:
+    """Each voice of the file that runs past its barline; [] for a file not readable."""
+    try:
+        return overlong_voices(etree.parse(mscx_path).getroot())
+    except (OSError, etree.XMLSyntaxError):
+        return []
+
+
 def log_overlong_voices(mscx_path: str, log: Logger = _noop) -> List[Dict]:
     """Say in the log each voice that runs past its barline. Returns them.
 
     MuseScore 4 will not open such a score without `-f`; cleaning cuts a bar longer
     than its time signature and resets what is left (`check_opens_in_musescore`).
     """
-    try:
-        found = overlong_voices(etree.parse(mscx_path).getroot())
-    except (OSError, etree.XMLSyntaxError):
-        return []
+    found = overlong_in(mscx_path)
     if found:
         log(f"{len(found)} voice(s) run past their barline; MuseScore 4 refuses to open "
             "a score like this, so cleaning will cut or reset these bars:")

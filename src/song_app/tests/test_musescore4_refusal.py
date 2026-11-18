@@ -75,6 +75,27 @@ def test_a_refusal_with_no_path_stops_at_the_next_log_line(tmp_path):
     assert musescore_cli.failed_load_reason(now - 5, [str(tmp_path)]) == "Voice too long: measure 2"
 
 
+def test_another_songs_refusal_at_the_same_time_is_not_this_runs_reason(tmp_path):
+    # Two conversions at once write into one day's log; each gets its own bar.
+    now = time.time()
+    mine = tmp_path / "songs" / "a" / "in.musicxml"
+    text = (f"{_at(now)} | ERROR | main | x | failed load notation, err: [2009] Voice too long: "
+            f"measure 2, path: {mine}\n"
+            f"{_at(now)} | ERROR | main | x | failed load notation, err: [2009] Voice too long: "
+            f"measure 33, path: {tmp_path / 'songs' / 'b' / 'in.musicxml'}\n")
+    _log(str(tmp_path), "MuseScore_261118_090000.log", text)
+    assert musescore_cli.failed_load_reason(now - 5, [str(tmp_path)], source=str(mine)) == \
+        "Voice too long: measure 2"
+    other = str(tmp_path / "songs" / "c" / "in.musicxml")
+    assert musescore_cli.failed_load_reason(now - 5, [str(tmp_path)], source=other) is None
+
+
+def test_a_run_knows_the_file_it_was_asked_to_read(tmp_path):
+    out = musescore_cli.run(["true", "-f", "/x/in.musicxml", "-o", str(tmp_path / "o.mscx")],
+                            str(tmp_path / "o.mscx"))
+    assert out.source == "/x/in.musicxml"
+
+
 @pytest.mark.parametrize("said, major", [
     ("MuseScore4 4.7.5", 4),
     ("MuseScore3 3.6.2", 3),
@@ -114,7 +135,7 @@ def _outcome(stderr="", started=0.0):
 
 
 def test_the_error_gives_musescores_reason_when_its_log_has_one(monkeypatch):
-    monkeypatch.setattr(musescore_cli, "failed_load_reason", lambda since, *a: "Voice too long: measure 2")
+    monkeypatch.setattr(musescore_cli, "failed_load_reason", lambda since, *a, **k: "Voice too long: measure 2")
     said = musescore_cli.explain(_outcome(started=time.time()), "conversion failed")
     assert said == ("MuseScore conversion failed: MuseScore refused to open the score.\n"
                     "Voice too long: measure 2")
@@ -122,13 +143,13 @@ def test_the_error_gives_musescores_reason_when_its_log_has_one(monkeypatch):
 
 
 def test_the_error_gives_what_musescore_printed(monkeypatch):
-    monkeypatch.setattr(musescore_cli, "failed_load_reason", lambda since, *a: None)
+    monkeypatch.setattr(musescore_cli, "failed_load_reason", lambda since, *a, **k: None)
     said = musescore_cli.explain(_outcome("cannot read file", time.time()), "render failed")
     assert said == "MuseScore render failed.\ncannot read file"
 
 
 def test_only_a_silent_run_with_no_log_points_at_the_path(monkeypatch):
-    monkeypatch.setattr(musescore_cli, "failed_load_reason", lambda since, *a: None)
+    monkeypatch.setattr(musescore_cli, "failed_load_reason", lambda since, *a, **k: None)
     said = musescore_cli.explain(_outcome(started=time.time()), "conversion failed")
     assert said == "MuseScore conversion failed and said nothing. Check MUSESCORE_CLI_PATH."
 
@@ -191,7 +212,9 @@ def _song_with_scan(tmp_path, monkeypatch):
     return song
 
 
-def test_the_staff_list_names_the_long_bars_in_the_song_log_every_time(tmp_path, monkeypatch):
+def test_the_staff_list_names_the_long_bars_on_every_load(tmp_path, monkeypatch):
+    # Read off the converted file, not said once to a log: the first load and a
+    # reload that reuses the conversion carry the same bars (#481).
     pytest.importorskip("httpx")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
@@ -212,15 +235,13 @@ def test_the_staff_list_names_the_long_bars_in_the_song_log_every_time(tmp_path,
 
     monkeypatch.setattr(musescore_cli, "run", fake_run)
     monkeypatch.setattr(pipeline, "system_grid", lambda mscx: [])
-    said = []
-    monkeypatch.setattr(server.hub, "emit", lambda slug, msg: said.append(msg.get("line", "")))
     client = TestClient(server.app)
-    assert client.get(f"/api/songs/{song.slug}/systems").status_code == 200
-    first = [line for line in said if "measure 2, staff 1, voice 2" in line]
-    said.clear()
-    assert client.get(f"/api/songs/{song.slug}/systems").status_code == 200  # reused
-    again = [line for line in said if "measure 2, staff 1, voice 2" in line]
-    assert len(runs) == 1 and first and again
+    first = client.get(f"/api/songs/{song.slug}/systems")
+    again = client.get(f"/api/songs/{song.slug}/systems")  # reuses the conversion
+    assert first.status_code == again.status_code == 200
+    assert len(runs) == 1 and "-f" in runs[0]
+    for reply in (first, again):
+        assert [(o["measure"], o["staff"], o["voice"]) for o in reply.json()["overlong"]] == [(2, 1, 2)]
 
 
 def test_a_musescore_that_will_not_start_points_at_the_path(tmp_path, monkeypatch):
