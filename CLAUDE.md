@@ -229,8 +229,9 @@ Kun poijat ne raitilla's scan put an empty bar between the "1." and "2." endings
 the "1." bracket covered two bars and the track played a bar of silence. A volta, slur
 or tie reaching across the bar is shortened by one, both halves, a "1." bracket that
 ends on the barline before it keeps its length, the removed-slur records (`removedSlurs`) move up with their bars, and a per-system lyric map loses the
-bar too; a spanner starting or ending in it, any volta starting in it, a repeat sign,
-or a clef/key/meter change refuses. Fixes apply **in file order**: an entry before a
+bar too; a spanner starting or ending in it, any volta starting in it, a repeat sign
+(the refusal names the `unrepeat` entry to put first, #480: a scan can read a double bar as a
+repeat), or a clef/key/meter change refuses. Fixes apply **in file order**: an entry before a
 `delbar` counts bars with the invented one still there, an entry after it without, so
 neither has to be renumbered; a Fix-panel pick is relocated (`relocate_picks`) in that numbering too, and the bars homr offered readings of are numbered off the scan, so `offers` maps them past the moved bars (`score_fixes.after_moves`). The printed-system bar labels (`.systems.json`) and the
 line breaks the previews take off the converted input still count the invented bar; the

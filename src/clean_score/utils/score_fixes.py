@@ -2470,8 +2470,25 @@ def _delete_bar(root: etree._Element, measure_no: int, expect) -> str:
         if found != want:
             raise FixError(f"staff {staff.get('id')} reads {found} now, but the fix was "
                            f"recorded against {want}")
-        for tag, what in (("startRepeat", "a repeat starts"), ("endRepeat", "a repeat ends"),
-                          ("Clef", "the clef changes"), ("KeySig", "the key changes"),
+        # #480: a scan can read a double bar as a repeat, and the repeat is then
+        # what keeps an invented bar in. Say how to take it off, and leave that to
+        # a person: a real repeat taken off quietly is lost. `unrepeat` takes the
+        # signs MuseScore keeps on the bar itself, so only those are offered it.
+        signs = [which for tag, which in (("startRepeat", "start"), ("endRepeat", "end"))
+                 if bar.find(tag) is not None]
+        if signs:
+            entries = ", ".join(f'{{"kind": "unrepeat", "measure": {measure_no}, '
+                                f'"which": "{which}", "why": "..."}}' for which in signs)
+            raise FixError(
+                f"a repeat {' and a repeat '.join(w + 's' for w in signs)} in this bar on "
+                f"staff {staff.get('id')}; if the page prints none, take "
+                f"{'it' if len(signs) == 1 else 'them'} off first with "
+                f"{'an `unrepeat` entry' if len(signs) == 1 else '`unrepeat` entries'} "
+                f"before this one: {entries}")
+        for tag in ("startRepeat", "endRepeat"):
+            if bar.find(f".//{tag}") is not None:
+                raise FixError(f"a repeat sign stands inside this bar on staff {staff.get('id')}")
+        for tag, what in (("Clef", "the clef changes"), ("KeySig", "the key changes"),
                           ("TimeSig", "the meter changes")):
             if bar.find(f".//{tag}") is not None:
                 raise FixError(f"{what} in this bar on staff {staff.get('id')}")
