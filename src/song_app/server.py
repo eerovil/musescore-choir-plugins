@@ -530,8 +530,15 @@ def api_systems(slug: str) -> Dict:
     xml = song.source_path("xml")
     if not xml:
         raise HTTPException(400, "No source file")
-    mscx = pipeline.convert_to_mscx(xml, song.dir)
-    return {"grid": pipeline.system_grid(mscx)}
+    try:
+        mscx = pipeline.convert_to_mscx(xml, song.dir)
+    except RuntimeError as exc:
+        # MuseScore refused the input; say why rather than a bare 500 (#481).
+        raise HTTPException(422, str(exc))
+    # The bars whose voices run past the barline, read off the converted file on
+    # every load, so the Clean panel shows them on its first view and after a
+    # reload alike (#481). The clean's own log names them again as it runs.
+    return {"grid": pipeline.system_grid(mscx), "overlong": pipeline.overlong_in(mscx)}
 
 
 @app.put("/api/songs/{slug}/systems")
@@ -662,7 +669,7 @@ def api_undo_clean(slug: str) -> Dict:
 def _run_check(slug: str) -> None:
     """Run the clean's checks again on the cleaned score as it is now (#391).
 
-    A clean compares the notes against the scan and asks MuseScore 3 whether it would
+    A clean compares the notes against the scan and asks MuseScore whether it would
     open the result, and those answers hold only for the file they were made on. A
     score fixed in MuseScore, uploaded, or changed by a recorded fix showed both as
     stale, and the only way to refresh them was a re-clean, which throws the score
@@ -681,21 +688,21 @@ def _run_check(slug: str) -> None:
         log("Comparing the notes with the scan…")
         notes = verification.compare_notes(source_mscx, cleaned)
         log(notes.get("detail") or "Notes compared.")
-        log("Asking MuseScore 3 whether it opens the score…")
+        name = pipeline.checker()
+        log(f"Asking {name} whether it opens the score…")
         found = pipeline.musescore_check(cleaned)
         if found is None:
-            opens = {"status": "not_checked", "reset": [], "rejected": []}
-            log("Not checked: no MuseScore 3 answered (MUSESCORE_CLI_PATH). "
-                "MuseScore 4 does not run this check.")
+            opens = {"status": "not_checked", "reset": [], "rejected": [], "by": name}
+            log("Not checked: no MuseScore answered (MUSESCORE_CLI_PATH).")
         elif found:
-            opens = {"status": "rejected", "reset": [], "rejected": found}
-            log(f"MuseScore 3 calls this score corrupted ({len(found)} problem(s)); "
+            opens = {"status": "rejected", "reset": [], "rejected": found, "by": name}
+            log(f"{name} calls this score corrupted ({len(found)} problem(s)); "
                 "listed in the Fix panel:")
             for one in found:
                 log("  " + one["message"])
         else:
-            opens = {"status": "passed", "reset": [], "rejected": []}
-            log("MuseScore 3 opens it without calling it corrupted.")
+            opens = {"status": "passed", "reset": [], "rejected": [], "by": name}
+            log(f"{name} opens it without calling it corrupted.")
         with state.song_lock(song.slug):
             fresh = state.load(song.slug) or song
             if state.file_fingerprint(cleaned) != fingerprint:
@@ -1504,7 +1511,8 @@ def api_render(slug: str, doc: str = "cleaned"):
                 breaks = pipeline.cleaned_line_breaks(
                     song.dir, pipeline.convert_to_mscx(xml, song.dir)) or None
             tidy = True
-        rendered = pipeline.render_score_pdf(mscx, breaks, tidy=tidy)
+        rendered = pipeline.render_score_pdf(mscx, breaks, tidy=tidy,
+                                             force=doc == "original")
     except HTTPException:
         raise
     except Exception as exc:

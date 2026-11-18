@@ -2218,16 +2218,27 @@ state model are in `DESIGN.md`.
   redrawing reloads every crop; a system read while it is open therefore appears in it.
   On a phone it is the existing pane switcher and the compare rows, both already built
   for 390px.
-- **Every clean asks MuseScore 3 whether it would open the result** (#235). MuseScore
+- **Every clean asks MuseScore whether it would open the result** (#235). MuseScore
   checks a score as it opens it (`Score::sanityCheck`: voice 1 of each staff must fill
   the bar exactly, no other voice may run past it) and calls one that fails
-  "corrupted" -- on Sangerhilsen the app crashed instead. **MuseScore 3 only**: with
-  MuseScore 4 as `MUSESCORE_CLI_PATH` the check answers `None` and the song records
-  "not checked" (#416). Only the app runs that check;
+  "corrupted" -- on Sangerhilsen the app crashed instead. Only the app runs that check;
   a command-line export does not, which is why every render went through and nobody
-  heard of it until a person opened the file. The one export that does run it is
-  `-o x.mlog`, so `pipeline.musescore_check` asks MuseScore itself rather than keeping
-  a copy of its rule here. Note MuseScore fills *gaps* with rests while reading, so a
+  heard of it until a person opened the file. The one MuseScore 3 export that does run
+  it is `-o x.mlog`, so with MuseScore 3 `pipeline.musescore_check` asks MuseScore
+  itself. **MuseScore 4 writes no `.mlog`** and refuses such a file outright when it
+  loads it, writing the reason only to its own log file (#481). So with MuseScore 4 the
+  check is the app's copy of that rule, `clean_score/utils/overlong_voices.py` (a voice
+  running past its bar), and the record says which ran (`verification.musescore.by`).
+  The raw scan is converted and rendered with `-f` so MuseScore 4 lets it in, and the
+  Clean panel lists those bars off `GET /systems`'s `overlong` (read off the converted
+  file on every load, so a reload shows them too) and the clean's log names them; the
+  cleaned check and publish never use `-f`. When a MuseScore 4 run fails,
+  `musescore_cli.failed_load_reason` reads the reason off its log (lines stamped during
+  the run, and only a refusal naming the file this run passed, since two songs may convert
+  at once) and the error names the bar
+  instead of blaming `MUSESCORE_CLI_PATH`; a MuseScore that does not start at all is
+  named once, in `musescore_cli.run`, so every render and export says so. Without any MuseScore the song records
+  "not checked". Note MuseScore fills *gaps* with rests while reading, so a
   short voice passes; what fails is a voice that runs past the bar, typically a
   misread triplet. `check_opens_in_musescore` runs after the recorded fixes: each
   staff-bar MuseScore rejects is reset to a whole-bar rest (`rejected_bars.clear_bar`,
@@ -2241,7 +2252,7 @@ state model are in `DESIGN.md`.
   page left in such a bar, and a file that will not open blocks the one route a person
   has for putting the right notes back.
 - **Check again and Undo last clean** (#391). `POST /recheck` (job `check`) runs the
-  clean's note comparison, MuseScore 3's check and health on the cleaned score as it
+  clean's note comparison, MuseScore's check (3 or 4) and health on the cleaned score as it
   is, and records them against its fingerprint. It **only reports**: unlike a clean it
   resets no bar MuseScore refuses (those become `musescore-corrupt` health rows), since
   the score may be a person's own edit. Before a clean replaces the score,
