@@ -424,33 +424,143 @@ def test_grid_answers_are_refused_when_their_system_was_read_again_after_the_gri
     assert "System 2" in err.value.detail
     assert saved == []
 
-    # A grid loaded again shows the new reading, and its answers are taken.
+    # The grid's score is the one assembled before the re-read, so a grid loaded
+    # again still shows that reading, and its answers are refused until a Scan
+    # puts the score together again (#498).
     stamps = server.api_systems(song.slug)["stamps"]
+    assert stamps["1"] == systems["2"]["content"]
+    with pytest.raises(server.HTTPException) as err:
+        server.api_save_systems(song.slug, {"answers": {"1": {"1": "B1"}}, "stamps": stamps})
+    assert err.value.status_code == 409
+    assert "Press Scan" in err.value.detail
+    assert saved == []
+
+    scan.run(state.load(song.slug))         # assembles the new reading
+    stamps = server.api_systems(song.slug)["stamps"]
+    assert stamps["1"] == "new"
     server.api_save_systems(song.slug, {"answers": {"1": {"1": "B1"}}, "stamps": stamps})
     assert saved == [{1: {1: "B1"}}]
     assert _disk(song)["scan"]["answered_against"] == {"2": "new"}
 
 
 def test_a_scan_band_save_keeps_grid_answers_stamped_meanwhile(songs, monkeypatch):
-    reader = Reader()
-    monkeypatch.setattr(pdf_systems, "crop_systems", reader.crop)
-    song = _song(songs)
+    song = _scanned(songs, monkeypatch)
     saved = []
     _grid_patches(monkeypatch, saved)
+    read = omr_systems.read_system
 
     def read_and_answer(image, *args, **kwargs):
-        if image.index == 2:  # system 1 is saved; answer it while 2 is read
-            # (what GET /systems would show; the song has no score to grid yet)
-            stamps = {str(i): s for i, s in
-                      scan.system_stamps(state.load(song.slug), [0]).items()}
-            server.api_save_systems(song.slug, {"answers": {"0": {"1": "T1"}},
-                                                "stamps": stamps})
-        return reader.read_system(image, *args, **kwargs)
+        # System 2 is read again; grid row 0 (band 1) is answered meanwhile.
+        stamps = server.api_systems(song.slug)["stamps"]
+        server.api_save_systems(song.slug, {"answers": {"0": {"1": "T1"}},
+                                            "stamps": stamps})
+        return read(image, *args, **kwargs)
 
     monkeypatch.setattr(omr_systems, "read_system", read_and_answer)
-    scan.run(song)
+    scan.run(state.load(song.slug), only=[2])
 
     disk = _disk(song)
     assert sorted(disk["scan"]["systems"]) == ["1", "2", "3"]
     assert saved == [{0: {1: "T1"}}]
     assert disk["scan"]["answered_against"] == {"1": disk["scan"]["systems"]["1"]["content"]}
+
+
+def test_a_scan_that_died_before_saving_its_order_is_finished_by_the_next(
+        songs, monkeypatch):
+    """The score is written, then the order with it: a crash between the two (#498).
+
+    The song then still holds the old order and the old revision, so the scan is
+    not complete, the grid's save says to press Scan, and the next Scan assembles
+    again and saves the order, after which the answers are taken.
+    """
+    song = _scanned(songs, monkeypatch)
+    saved = []
+    _grid_patches(monkeypatch, saved)
+    real = omr_systems.assemble
+
+    def assemble_and_die(*args, **kwargs):
+        real(*args, **kwargs)
+        raise RuntimeError("the process was killed")
+
+    _set_content(song.slug, 2, "new")       # a re-read, saved
+    monkeypatch.setattr(omr_systems, "assemble", assemble_and_die)
+    with pytest.raises(RuntimeError):
+        scan.run(state.load(song.slug))
+    monkeypatch.setattr(omr_systems, "assemble", real)
+
+    fresh = state.load(song.slug)
+    assert not scan.status(fresh)["complete"]
+    stamps = server.api_systems(song.slug)["stamps"]
+    with pytest.raises(server.HTTPException) as err:
+        server.api_save_systems(song.slug, {"answers": {"1": {"1": "B1"}}, "stamps": stamps})
+    assert err.value.status_code == 409 and "Press Scan" in err.value.detail
+    assert saved == []
+
+    assert scan.run(state.load(song.slug))["complete"]
+    stamps = server.api_systems(song.slug)["stamps"]
+    server.api_save_systems(song.slug, {"answers": {"1": {"1": "B1"}}, "stamps": stamps})
+    assert saved == [{1: {1: "B1"}}]
+
+
+def test_an_answer_write_that_fails_keeps_the_answers_already_saved(
+        songs, monkeypatch, tmp_path):
+    """The stamp is saved first; a failed write of the answers changes no answer."""
+    from src.clean_score.utils import per_system
+    song = _scanned(songs, monkeypatch)
+    saved = []
+    _grid_patches(monkeypatch, saved)
+    monkeypatch.setattr(pipeline, "save_system_answers", _real_save_system_answers)
+    with per_system.use_answer_file(str(tmp_path / "answers.json")):
+        stamps = server.api_systems(song.slug)["stamps"]
+        server.api_save_systems(song.slug, {"answers": {"0": {"1": "T1"}}, "stamps": stamps})
+        before = per_system.saved_answers("x.mscx")
+        assert before == {0: {1: "T1"}}
+
+        def no_room(*args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        class FullDisk:            # `os` as the answer module sees it, disk full
+            def __getattr__(self, name):
+                return no_room if name == "replace" else getattr(os, name)
+
+        with monkeypatch.context() as m:
+            m.setattr(per_system, "os", FullDisk())
+            with pytest.raises(server.HTTPException) as err:
+                server.api_save_systems(song.slug, {"answers": {"0": {"1": "B1"}},
+                                                    "stamps": stamps})
+        assert err.value.status_code == 500
+        assert per_system.saved_answers("x.mscx") == before
+        assert not [n for n in os.listdir(tmp_path) if n.endswith(".tmp")]
+
+
+_real_save_system_answers = pipeline.save_system_answers
+
+
+def test_two_songs_answering_at_once_both_keep_their_answers(tmp_path):
+    """The answer file holds every song: two writers must not lose each other's."""
+    from src.clean_score.utils import per_system
+    with per_system.use_answer_file(str(tmp_path / "answers.json")):
+        def answer(name):
+            for n in range(30):
+                per_system.update_answers(
+                    str(tmp_path / name / f"{name}.mscx"),
+                    lambda old, n=n: {**(old or {}), n: {1: name}})
+
+        threads = [threading.Thread(target=answer, args=(name,)) for name in ("a", "b")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        for name in ("a", "b"):
+            got = per_system.saved_answers(str(tmp_path / name / f"{name}.mscx"))
+            assert sorted(got) == list(range(30))
+
+
+def test_a_damaged_answer_file_is_refused_not_overwritten(tmp_path):
+    from src.clean_score.utils import per_system
+    path = tmp_path / "answers.json"
+    path.write_text("{ not json", encoding="utf-8")
+    with per_system.use_answer_file(str(path)):
+        with pytest.raises(per_system.AnswerFileError):
+            per_system.update_answers(str(tmp_path / "x.mscx"), lambda old: {0: {1: "T1"}})
+    assert path.read_text(encoding="utf-8") == "{ not json"

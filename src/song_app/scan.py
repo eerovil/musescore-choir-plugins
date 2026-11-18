@@ -71,6 +71,7 @@ from __future__ import annotations
 import dataclasses
 from fractions import Fraction
 import hashlib
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
@@ -82,6 +83,8 @@ from src.clean_score.utils import per_system
 
 from . import health, heavy_slot, omr, omr_systems, pdf_systems, state
 from .pdf_systems import SystemBounds
+
+logger = logging.getLogger(__name__)
 
 Logger = Callable[[str], None]
 
@@ -438,6 +441,12 @@ def reconcile(song: state.Song) -> List[str]:
     """
     if "scan" not in song.data:
         return []
+    # The grid rows' bands, before anything below drops a fragment: a song
+    # assembled before the list was saved gets it built here from the fragments
+    # as they still stand (#498).
+    backfilled = "assembled_order" not in song.data["scan"]
+    assembled_order(song)
+    backfilled = backfilled and "assembled_order" in song.data["scan"]
     bands = pdf_systems.load_bounds(song.dir)
     source = pdf_systems.crop_version(song.source_path("pdf") or "")
     dropped: List[str] = []
@@ -454,7 +463,7 @@ def reconcile(song: state.Song) -> List[str]:
         # past scanning. Said, because the app moving a song is not quiet.
         song.set_stage("clean")
         dropped.append(MOVED_ON)
-    if dropped or moved:
+    if dropped or moved or backfilled:
         song.save()
     return dropped
 
@@ -474,17 +483,50 @@ def _answered(song: state.Song) -> Dict[str, str]:
     return song.data.get("scan", {}).get("answered_against", {})
 
 
-def fragment_order(song: state.Song) -> List[int]:
-    """The scan fragment behind each Clean-grid system, grid system 0 first.
+def assembled_order(song: state.Song) -> List[Dict]:
+    """Which band each Clean-grid row came from, and the reading it was built from.
 
-    The grid counts the assembled score's systems from 0 (`per_system`), while a
-    fragment is filed under its band's index, which `.systems.json` counts from 1.
-    The assembly joins the fragments in band order, so grid system `g` is the
-    `g`-th band. Read off the bands rather than the fragments, so a band waiting to
-    be read again does not shift every system after it onto its neighbour's
-    reading. This is the one place the two numberings meet (#498): the grid's
-    readings, its answer stamps and the drop on a re-read all go through it.
+    One entry per row of the assembled score, grid row 0 first: ``{"band": <band
+    index, from 1>, "content": <that fragment's content stamp>}``. The grid counts
+    the assembled score's systems from 0 (`per_system`), while a fragment is filed
+    under its band's index, counted from 1 in `.systems.json`. `_assemble` saves
+    this list with the score it describes, so the grid's stamps, the answers'
+    stamps and the drop of a row's answers all read the order the score was
+    actually put together in, not the bands as they are now (#498): a band
+    re-read but not yet assembled, or two bands removed in one save, no longer
+    shift a row onto its neighbour.
+
+    A song assembled before the list was saved gets it built here from the
+    fragments as they stand: `_assemble` joined them in that order and a hole
+    stops it, so while no fragment has gone since, this is the row order. Their
+    readings are known only while nothing was re-read since (``content`` None
+    otherwise, which the grid's save refuses). A song with no assembled score
+    has no rows: an empty list, stored nowhere.
     """
+    scan = song.data.get("scan", {})
+    saved = scan.get("assembled_order")
+    if isinstance(saved, list):
+        return saved
+    if not scan.get("assembled"):
+        return []
+    fragments = _fragments(song)
+    known = scan.get("assembled_revision") == revision(song)
+    order = [{"band": index,
+              "content": fragments[index].get("content") if known else None}
+             for index in sorted(fragments)]
+    _scan(song)["assembled_order"] = order
+    return order
+
+
+def fragment_order(song: state.Song) -> List[int]:
+    """The band behind each Clean-grid row, grid row 0 first.
+
+    Off :func:`assembled_order`; a song that was never assembled from a scan has
+    no rows from one, and falls back to its bands (or fragments) in order.
+    """
+    order = assembled_order(song)
+    if order:
+        return [int(entry["band"]) for entry in order]
     bands = pdf_systems.load_bounds(song.dir)
     if bands:
         return sorted(b.index for b in bands)
@@ -492,34 +534,51 @@ def fragment_order(song: state.Song) -> List[int]:
 
 
 def fragment_of(song: state.Song, system: int) -> Optional[int]:
-    """The fragment index of grid system `system` (None: no such band)."""
+    """The fragment index of grid system `system` (None: no such row)."""
     order = fragment_order(song)
     return order[system] if 0 <= system < len(order) else None
 
 
 def system_stamps(song: state.Song, systems: Sequence[int]) -> Dict[int, Optional[str]]:
-    """The reading each named grid system shows now: its fragment's content stamp."""
-    fragments = _fragments(song)
-    order = fragment_order(song)
-    return {int(g): (fragments.get(order[int(g)], {}).get("content")
-                     if 0 <= int(g) < len(order) else None)
+    """The reading each named grid row was assembled from (None: unknown or no row)."""
+    order = assembled_order(song)
+    return {int(g): (order[int(g)].get("content") if 0 <= int(g) < len(order) else None)
             for g in systems}
 
 
+def unassembled_rows(song: state.Song, systems: Sequence[int]) -> List[int]:
+    """The named grid rows whose band was read again since the score was assembled.
+
+    Their answers would be about staves the grid's score does not show yet, so the
+    grid's save refuses them until a Scan puts the score together again. A row
+    whose reading is unknown (a list built for an older song after a re-read) is
+    one of them.
+    """
+    order = assembled_order(song)
+    fragments = _fragments(song)
+    stale = []
+    for g in systems:
+        if not 0 <= int(g) < len(order):
+            continue
+        entry = order[int(g)]
+        current = fragments.get(int(entry["band"]), {}).get("content")
+        if not entry.get("content") or entry.get("content") != current:
+            stale.append(int(g))
+    return sorted(stale)
+
+
 def stamp_answers(song: state.Song, systems: Sequence[int]) -> None:
-    """Record which fragment the named grid systems' answers were answered against."""
+    """Record which reading the named grid rows' answers were answered against."""
     if "scan" not in song.data:
         return
-    fragments = _fragments(song)
-    order = fragment_order(song)
+    order = assembled_order(song)
     against = _scan(song).setdefault("answered_against", {})
     for system in systems:
         if not 0 <= int(system) < len(order):
             continue
-        index = order[int(system)]
-        stamp = fragments.get(index, {}).get("content")
-        if stamp:
-            against[str(index)] = stamp
+        entry = order[int(system)]
+        if entry.get("content"):
+            against[str(int(entry["band"]))] = entry["content"]
 
 
 def _drop_fragment(song: state.Song, index: int) -> None:
@@ -541,13 +600,23 @@ def _drop_answers(song: state.Song, index: int) -> None:
     assembled = song.data.get("scan", {}).get("assembled")
     if not assembled:
         return
-    # The grid counts from 0, bands from 1. A band deleted since keeps the place
-    # it had among the others, which is the place its answers were filed under.
-    system = sorted(set(fragment_order(song)) | {index}).index(index)
-    answers = per_system.saved_answers(song.path(assembled))
-    if answers and system in answers:
-        del answers[system]
-        per_system.save_answers(song.path(assembled), answers)
+    # The row is the band's place in the saved order, which does not move until
+    # the next assembly, so several bands dropped at once each find their own.
+    bands = fragment_order(song)
+    if index not in bands:
+        return
+    system = bands.index(index)
+
+    def without(answers):
+        if not answers or system not in answers:
+            return answers
+        return {k: v for k, v in answers.items() if k != system}
+
+    try:
+        per_system.update_answers(song.path(assembled), without)
+    except (OSError, per_system.AnswerFileError) as exc:
+        logger.warning("Could not drop the grid answers of system %s of %s: %s",
+                       index, song.slug, exc)
 
 
 def _drop_assembled(song: state.Song) -> None:
@@ -771,6 +840,10 @@ def _assemble(song: state.Song, log: Logger) -> Dict:
     song.data.setdefault("sources", {})["xml"] = ASSEMBLED_NAME
     _scan(song)["assembled"] = ASSEMBLED_NAME
     _scan(song)["assembled_revision"] = revision(song)
+    # Which band each row of that score came from, saved with it (#498).
+    _scan(song)["assembled_order"] = [
+        {"band": index, "content": fragments[index].get("content")}
+        for index in sorted(fragments)]
     # A whole score is what being past scanning means (#281). A song further on
     # stays where it is: a re-read is an edit, not a reason to start over.
     if song.stage == "scan":

@@ -33,9 +33,11 @@ the song app can clean headless after the grid is submitted.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import logging
 import os
+import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
@@ -298,18 +300,93 @@ def has_answers(input_path: Optional[str]) -> bool:
 
 
 def save_answers(input_path: Optional[str], answers: Answers) -> None:
-    """Record answers for this input score so a later rebuild needs no prompting."""
+    """Record answers for this input score so a later rebuild needs no prompting.
+
+    A write that fails is logged and the file is left as it was, which is what the
+    terminal prompt has always done; the song app calls :func:`update_answers`
+    itself so a failure reaches the person who pressed Save.
+    """
+    try:
+        update_answers(input_path, lambda _old: answers)
+    except (OSError, AnswerFileError) as exc:
+        logger.warning("Could not write per-system answers: %s", exc)
+
+
+class AnswerFileError(RuntimeError):
+    """The answer file is there and cannot be read, so it is not written over."""
+
+
+@contextlib.contextmanager
+def _answer_lock() -> Iterator[None]:
+    """Hold the answer file for one read-change-write.
+
+    The file holds every song's answers, and a grid save, a re-scan dropping a
+    system's answers and a clean of another song all reach it (#498). `flock` is
+    taken on a lock file beside it, opened afresh by each caller, so two threads
+    of the app wait for each other as well as two processes do.
+    """
+    with open(_ANSWER_FILE + ".lock", "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def update_answers(input_path: Optional[str],
+                   change: Callable[[Optional[Answers]], Optional[Answers]]) -> None:
+    """Change one score's answers in place, under the answer file's lock.
+
+    `change` gets the answers recorded now (or None) and returns the new set, or
+    None to remove it. The file is re-read inside the lock and replaced whole by
+    rename, so a reader without the lock sees the old file or the new one and
+    never half of one. A file that is there and does not parse is refused rather
+    than written over with this one score's answers, which would erase every
+    other song's.
+    """
     key = _key_for(input_path)
     if not key:
         return
-    raw = _read_answer_file()
-    raw[key] = {str(sidx): {str(sid): ans for sid, ans in staves.items()}
-                for sidx, staves in answers.items()}
-    try:
-        with open(_ANSWER_FILE, "w", encoding="utf-8") as f:
-            json.dump(raw, f, indent=2, ensure_ascii=False)
-    except OSError as exc:
-        logger.warning("Could not write per-system answers: %s", exc)
+    with _answer_lock():
+        raw: Dict = {}
+        if os.path.exists(_ANSWER_FILE):
+            try:
+                with open(_ANSWER_FILE, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+            except ValueError as exc:
+                logger.error("The per-system answer file %s cannot be read: %s",
+                             _ANSWER_FILE, exc)
+                raise AnswerFileError(
+                    f"The answer file {_ANSWER_FILE} cannot be read ({exc}); "
+                    "it was left as it is.") from exc
+            if not isinstance(raw, dict):
+                raise AnswerFileError(
+                    f"The answer file {_ANSWER_FILE} is not a mapping; "
+                    "it was left as it is.")
+        entry = raw.get(key) or raw.get(_legacy_key_for(input_path))
+        current = ({int(sidx): {int(sid): ans for sid, ans in staves.items()}
+                    for sidx, staves in entry.items()} if entry else None)
+        new = change(current)
+        if new is None:
+            raw.pop(key, None)
+        else:
+            raw[key] = {str(sidx): {str(sid): ans for sid, ans in staves.items()}
+                        for sidx, staves in new.items()}
+        folder = os.path.dirname(_ANSWER_FILE) or "."
+        fd, tmp = tempfile.mkstemp(dir=folder, prefix=".persystem_cache.",
+                                   suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(raw, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, _ANSWER_FILE)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
 
 # --------------------------------------------------------------------------- #

@@ -10,7 +10,9 @@ developers are listed under *Behind the scenes*.
 - A clean, scan or other long job no longer erases what was saved to the song while it ran,
   such as the publish record `sing_song.py --publish` writes: a save now writes only what that
   job changed, and the app and the command-line tools take turns with the song's file. Reading
-  a system again now drops that system's Clean-grid answers, not the next system's. (#498)
+  a system again now drops that system's Clean-grid answers, not the next system's, and
+  removing several systems at once drops each one's. The Clean grid refuses answers for a
+  system read again until a Scan puts the score together again. (#498)
 - *Find systems* (the quick finder, not *Ask homr*) now finds the systems on a scan with grey
   paper; before, it found none on any page of such a scan. The lyric editor's staff pictures
   and the Fix panel's bar box read such a scan too. (#494)

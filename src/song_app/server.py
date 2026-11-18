@@ -625,9 +625,26 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
                 409, "System " + ", ".join(str(i + 1) for i in changed)
                 + " was read again while these answers were saved. "
                 "Reload the grid and answer it again.")
-        pipeline.save_system_answers(mscx, parsed)
+        # A band read again since the score was put together: the grid still
+        # shows the old reading, and answers about it would be stamped with a
+        # reading they are not about. After a crash no scan is running to finish
+        # it, so the sentence says to press Scan rather than to wait.
+        unassembled = scan.unassembled_rows(fresh, list(parsed))
+        if unassembled:
+            raise HTTPException(
+                409, "System " + ", ".join(str(i + 1) for i in unassembled)
+                + " was read again since the score was put together. Press Scan "
+                "on the Scan stage to finish it, then reload the grid.")
+        # The stamp is saved before the answers: a crash between the two leaves
+        # a stamp with no new answers, which is harmless. The other order could
+        # leave answers no stamp ties to a reading, which a re-read never drops.
+        # Both stay inside this one lock, so no re-read lands between them.
         scan.stamp_answers(fresh, list(parsed))
         fresh.save()
+        try:
+            pipeline.save_system_answers(mscx, parsed)
+        except (OSError, pipeline.per_system.AnswerFileError) as exc:
+            raise HTTPException(500, f"Could not save the answers: {exc}")
     song.adopt(fresh)
     return {"ok": True}
 

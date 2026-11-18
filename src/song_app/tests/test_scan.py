@@ -297,6 +297,37 @@ def test_a_deleted_last_band_drops_only_its_own_grid_answers(songs, reader, tmp_
     assert sorted(remaining) == [0, 1]
 
 
+@pytest.mark.parametrize("saved_order", [True, False])
+def test_removing_the_last_two_bands_at_once_drops_both_rows_answers(
+        songs, reader, tmp_path, saved_order):
+    """Both rows lose their answers, whichever band is dropped first (#498).
+
+    Counting rows off today's bands, the second drop looked for band 3 among two
+    bands, found no row and left grid row 2's answers behind. The row now comes
+    off the order the score was assembled in. ``saved_order=False`` is a song
+    assembled before that order was saved: it is built on the first read.
+    """
+    with per_system.use_answer_file(str(tmp_path / "answers.json")):
+        song = _song(songs, bands=4)
+        scan.run(song)
+        song = _reload(song)
+        _answer(song, 1, 2, 3, 4)
+        if not saved_order:
+            song.data["scan"].pop("assembled_order")
+            song.save()
+            song = _reload(song)
+            assert "assembled_order" not in song.data["scan"]
+
+        pdf_systems.save_bounds(song.dir, pdf_systems.load_bounds(song.dir)[:2])
+        dropped = scan.reconcile(song)
+        remaining = per_system.saved_answers(song.path(scan.ASSEMBLED_NAME)) or {}
+
+    assert "the grid answers for system 3" in dropped
+    assert "the grid answers for system 4" in dropped
+    assert sorted(remaining) == [0, 1]
+    assert sorted(_reload(song).data["scan"]["answered_against"]) == ["1", "2"]
+
+
 def test_grid_systems_count_from_0_and_bands_from_1(songs, reader):
     """The one mapping between the two numberings (#498)."""
     song = _song(songs)
