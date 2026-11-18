@@ -3227,7 +3227,10 @@ function panelPublish(panel, song, P, refresh, actions) {
     sharedNote.textContent = shared.message || (sharedAuto
       ? (shared.source === "part names"
         ? "guessed from the part names — check against the PDF"
-        : shared.groups?.length ? "as the page prints them" : "the page prints every part on its own staff")
+        : shared.groups?.length ? "as the page prints them"
+        // Only a record of the page may say the page prints no shared staff (#482).
+        : ["page", "page, per system"].includes(shared.source)
+          ? "the page prints every part on its own staff" : "no pairing proposed — check against the PDF")
       : "set by hand");
     sharedReset.hidden = sharedAuto;
   };

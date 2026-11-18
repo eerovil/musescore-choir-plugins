@@ -2808,7 +2808,11 @@ timing are the same parts on the same clock.
   them, not just enough to reach five). The pairs come from `lyricsStaffMap`, or for
   a per-system song the pairs sharing a printed staff in the most bars (a part
   cannot move between staves on the site), or failing both a guess from the names
-  (a b-part with its main part, then S1+S2). The upper part takes voices 1 and 3
+  (a b-part with its main part, then S1+S2). A `lyricsStaffMap` that is 1:1 (a score
+  handed over one part to a staff, so the clean split nothing) says nothing about the page
+  and goes to the name guess, and a b-part that only borrows its main part's notes
+  (`follow`) sits on that part's printed staff (#482). The panel says "the page prints
+  every part on its own staff" only when a record of the page found no pairs. The upper part takes voices 1 and 3
   and the lower 2 and 4, since MuseScore stems 1/3 up and 2/4 down and a unison
   then shares a notehead; a pair needing more is left apart and logged. Only
   `score.musicxml` is merged: the MIDI and the timing come off the unmerged copy,

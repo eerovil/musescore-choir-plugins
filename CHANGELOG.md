@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- **Publish**: a big song handed over with one part to a staff now gets its shared staves
+  guessed from the part names (and says so) instead of being told the page prints every
+  part on its own staff; a b-part that only borrows its main part's notes now shares that
+  part's staff, as the page prints it. (#482)
 - The **Clean** grid's Part names box no longer slides off the panel when a staff's
   note list is long; the list wraps instead (#500).
 - The prompt for **Paste from AI** now lists the song's part names and asks for them on

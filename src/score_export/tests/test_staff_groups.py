@@ -96,3 +96,27 @@ def test_a_pairing_the_score_cannot_have_is_refused(groups, message):
 def test_three_parts_joined_by_plus_are_refused():
     with pytest.raises(ValueError, match="at most two parts"):
         staff_groups.parse_groups("S1+S2+S3")
+
+
+def test_a_one_to_one_record_says_nothing_about_the_page_so_the_names_guess():
+    # A score handed over one part to a staff: the clean split nothing, so its
+    # record is 1:1 and the page may well print the parts two to a staff (#482).
+    root = _score(["S1", "S2", "A1", "A2", "T", "B"],
+                  staff_map="1:1;2:2;3:3;4:4;5:5;6:6")
+    assert staff_groups.proposal(root) == (
+        [("S1", "S2"), ("A1", "A2")], "part names")
+
+
+def test_a_b_part_that_only_follows_its_main_part_is_read_off_the_page():
+    # S1b has no notes of its own: it borrows S1's in every system (#293), so the
+    # map lists it only under "follow". It shares S1's printed staff (#482).
+    names = ["S1", "S1b", "S2", "A1", "A2", "T"]
+    system_map = [
+        {"start": 1, "end": 4, "map": {"1": [1, 3], "2": [4, 5], "3": [6]},
+         "follow": {"1": [2]}},
+        {"start": 5, "end": 8, "map": {"1": [1], "2": [3], "3": [4, 5], "4": [6]},
+         "follow": {"1": [2]}},
+    ]
+    root = _score(names, system_map=system_map)
+    assert staff_groups.proposal(root) == (
+        [("S1", "S1b"), ("A1", "A2")], "page, per system")
