@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Behind the scenes: the homr installer tests run a copy of `scripts/install-homr.sh` with no
+  `.env` beside it, so a `HOMR_BIN` in the working copy's `.env` can no longer send the fake
+  install over the real homr; and the MuseScore-check tests expect the wording of the MuseScore
+  installed, 3 or 4. (#512)
 - **Clean** marks a bar whose tie or slur the page prints **dashed** (`⚠ dashed tie?`,
   `⚠ dashed slur?`): such an arc usually belongs to a later verse only, so check whether
   verse 1 sings it and take it out with an `untie` or `unslur` fix if not. Needs a homr

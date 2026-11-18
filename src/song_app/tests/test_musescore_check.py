@@ -175,7 +175,9 @@ def test_musescore_names_the_bar_it_refuses_and_accepts_it_once_reset(tmp_path, 
 
     found = pipeline.musescore_check(str(score))
     assert [(f["measure"], f["staff"]) for f in found] == [(2, 1)]
-    assert "incomplete" in found[0]["message"]
+    # MuseScore 3 answers in its .mlog; for MuseScore 4 the app's own rule answers (#481).
+    wording = "Voice too long" if pipeline.checker() == "MuseScore 4" else "incomplete"
+    assert wording in found[0]["message"]
 
     outcome = pipeline.check_opens_in_musescore(str(score), str(tmp_path))
     assert outcome["status"] == "repaired"
@@ -220,7 +222,7 @@ def test_a_rejected_bar_is_reset_and_written_down_once(tmp_path, monkeypatch):
 
     written = [f for f in _fixes(tmp_path) if f.get("source") == pipeline.MUSESCORE_CHECK_SOURCE]
     assert len(written) == 1
-    assert written[0]["what"].startswith("Bar 2, T1: MuseScore 3 called this bar corrupted")
+    assert written[0]["what"].startswith(f"Bar 2, T1: {pipeline.checker()} called this bar corrupted")
     assert "Taken out: C4 D4 E4 F4 G3" in written[0]["what"]
     assert any(f["what"] == "typed by a person" for f in _fixes(tmp_path))
     # Free text, so the Fix panel lists it as outstanding.
@@ -244,7 +246,7 @@ def test_what_is_still_refused_becomes_a_health_finding(tmp_path, monkeypatch):
     rows = pipeline.musescore_findings(score, outcome["rejected"])
     assert rows == [{
         "id": "musescore-corrupt-m2-s1-v1", "kind": "musescore-corrupt", "measure": 2,
-        "staff": "T1", "detail": "MuseScore 3 calls this corrupted: " + REJECTED["message"],
+        "staff": "T1", "detail": f"{pipeline.checker()} calls this corrupted: " + REJECTED["message"],
     }]
 
 
