@@ -10,7 +10,7 @@ The id comes from the part's name, the names cleaning gives (`S1`, `A2b`, `T`,
 Only the id is written: the `Channel` and its `program` stay as they are, so the
 sound of the score and of its MIDI does not change. Percussion and parts with only
 rests (the click staff) are left alone, and so is a part named as an instrument
-(`Piano RH`, `Violin`, `Urut`). Only a part with no id is given one, or a part with
+(`Piano RH`, `Violin`, `Urut`, `Alto Sax`). Only a part with no id is given one, or a part with
 a piano id: MuseScore 3 gives an imported MusicXML part `piano`, and MuseScore 4
 saves a part with no id as `grand-piano`. Any other id is someone's choice and is kept.
 
@@ -49,7 +49,9 @@ _PIANO = {"piano", "grand-piano", "keyboard.piano", "keyboard.piano.grand"}
 _INSTRUMENT = re.compile(
     r"piano|organ|urut|viol|viulu|cello|sello|kontrabass|contrabass|flute|huilu"
     r"|guitar|kitara|harp|clarinet|klarinetti|trumpet|horn|torvi|oboe|fagot|bassoon"
-    r"|keyboard|synth|strings|jouset|accomp|säestys|drum|rumpu|perc",
+    r"|keyboard|synth|strings|jouset|accomp|säestys|drum|rumpu|perc"
+    r"|trombon|pasuuna|tuba|tuuba|sax|timpan|cembal|harpsi|harmon|celest|accordion"
+    r"|haitari|continuo|double bass|kontrabasso|fagott",
     re.IGNORECASE,
 )
 
@@ -71,8 +73,8 @@ def needs_voice_instruments(root: etree._Element) -> bool:
 
 
 def set_voice_instruments(root: etree._Element) -> int:
-    """Write a voice instrument id onto every singing part. Returns how many changed."""
-    changed = 0
+    """Write a voice instrument id onto every singing part. Returns how many parts changed."""
+    parts = set()
     for instrument, (ident, instrument_id) in _plan(root):
         instrument.set("id", ident)
         node = instrument.find("instrumentId")
@@ -88,22 +90,27 @@ def set_voice_instruments(root: etree._Element) -> int:
             else:
                 instrument.insert(0, node)
         node.text = instrument_id
-        changed += 1
-    return changed
+        parts.add(instrument.getparent())
+    return len(parts)
 
 
 def _plan(root: etree._Element):
     # Imported here: score_export reads clean_score, not the other way round at load.
-    from src.score_export.score import silent_parts, _part_name
+    from src.score_export.score import _part_name, _staff_ids
 
     score = root.find("Score")
     if score is None:
         return []
-    silent = set(silent_parts(root))
+    music = {staff.get("id"): staff for staff in score.findall("Staff")}
     out = []
     for index, part in enumerate(score.findall("Part")):
         name = _part_name(part, index)
-        if name in silent:
+        # Silent as `score_export.score.silent_parts` says, but judged per part:
+        # two parts may share a name, and only the one that rests is left alone.
+        percussion = (part.find(".//Instrument[@id='drumset']") is not None
+                      or (part.findtext(".//useDrumset") or "").strip() == "1")
+        if percussion or not any(music[i].find(".//Chord") is not None
+                                 for i in _staff_ids(part) if i in music):
             continue
         if _INSTRUMENT.search(name):
             continue

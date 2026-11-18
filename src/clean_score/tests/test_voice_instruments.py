@@ -97,12 +97,30 @@ def test_a_singing_part_left_as_a_piano_gets_its_voice(ident, instrument_id):
     assert len(root.findall(".//instrumentId")) == 2
 
 
-def test_a_part_named_as_an_instrument_is_left_alone():
-    root = _score([_part("S1", 1), _part("Piano RH", 2), _part("Violin 1", 3),
-                   _part("Urut", 4)], [NOTE, NOTE, NOTE, NOTE])
+@pytest.mark.parametrize("name", ["Piano RH", "Violin 1", "Urut", "Alto Sax", "Tenor Sax",
+                                  "Bass Trombone", "Tuba", "Timpani", "Cembalo",
+                                  "Basso continuo", "Double Bass", "Harmonium"])
+def test_a_part_named_as_an_instrument_is_left_alone(name):
+    root = _score([_part("S1", 1), _part(name, 2)], [NOTE, NOTE])
 
     assert set_voice_instruments(root) == 1
-    assert _ids(root)[1:] == [(None, None)] * 3
+    assert _ids(root)[1] == (None, None)
+
+
+def test_a_part_resting_is_left_alone_but_not_a_singing_one_of_the_same_name():
+    root = _score([_part("T", 1), _part("T", 2)], [NOTE, REST])
+
+    assert set_voice_instruments(root) == 1
+    assert _ids(root) == [("tenor", "voice.tenor"), (None, None)]
+
+
+def test_the_count_is_of_parts_not_instruments():
+    two = ("<Instrument><longName>{n}</longName><trackName>{n}</trackName></Instrument>"
+           "<Instrument><longName>{n}</longName><trackName>{n}</trackName></Instrument>")
+    root = _score([_part("A1", 1, two)], [NOTE])
+
+    assert set_voice_instruments(root) == 1
+    assert _ids(root) == [("alto", "voice.alto")] * 2
 
 
 def test_a_second_run_changes_nothing():
@@ -142,8 +160,11 @@ def _placement(cli, mscx, tmp_path, tag):
     work = tmp_path / tag
     work.mkdir()
     saved = work / "saved.mscx"
-    subprocess.run([cli, str(mscx), "-o", str(saved)], env=env, timeout=180,
-                   capture_output=True)
+    run = subprocess.run([cli, str(mscx), "-o", str(saved)], env=env, timeout=180,
+                         capture_output=True, text=True)
+    if not saved.exists():
+        pytest.skip(f"MuseScore 4 did not run here (exit {run.returncode}): "
+                    f"{(run.stderr or run.stdout)[-300:]}")
     text = saved.read_text(encoding="utf-8")
     # A dynamic added in MuseScore 4 carries no side; one converted from 3.x does.
     text = re.sub(r"<direction>\w+</direction>", "", text)
@@ -157,9 +178,10 @@ def _placement(cli, mscx, tmp_path, tag):
 
 
 @pytest.mark.skipif(not _musescore_4(), reason="needs MuseScore 4")
-def test_musescore_4_puts_a_new_dynamic_above_a_voice_and_below_a_piano(tmp_path):
+@pytest.mark.parametrize("name", ["S1", "Bar"])
+def test_musescore_4_puts_a_new_dynamic_above_a_voice_and_below_a_piano(tmp_path, name):
     # Program 0, as cleaned scores carry: with no id MuseScore 4 guesses from it.
-    root = _score([_part("S1", 1)], [
+    root = _score([_part(name, 1)], [
         "<TimeSig><sigN>4</sigN><sigD>4</sigD></TimeSig>"
         "<Dynamic><subtype>mf</subtype></Dynamic>" + NOTE])
     root.set("version", "3.02")
