@@ -72,6 +72,7 @@ def test_mismatch_survives_serialization_for_the_browser():
     assert d == {
         "kind": TOO_FEW, "message": d["message"], "measure_start": 1, "measure_end": 1,
         "staff_ids": [1], "syllables": 2, "slots": 8, "verse": 1, "voice": 1,
+        "lines": [],
     }
 
 
@@ -175,9 +176,9 @@ def test_editor_cells_round_trip_through_import_and_back():
     grid = editor_grid(root)
     blocks = blocks_from_cells(grid, typed)
     assert blocks == [
-        {"measure_start": 1, "lyrics": [{"parts": ["S"], "text": "en-sim mäi"},
-                                        {"parts": ["A"], "text": "al-to yk"}]},
-        {"measure_start": 3, "lyrics": [{"parts": ["S"], "text": "toi-nen ri"}]},
+        {"measure_start": 1, "lyrics": [{"parts": ["S"], "box": True, "text": "en-sim mäi"},
+                                        {"parts": ["A"], "box": True, "text": "al-to yk"}]},
+        {"measure_start": 3, "lyrics": [{"parts": ["S"], "box": True, "text": "toi-nen ri"}]},
     ]
     place_lyrics(root, blocks, replace=True)
     # Each system holds 6 slots and each line fills 3, so the editor comes back
@@ -188,9 +189,9 @@ def test_editor_cells_round_trip_through_import_and_back():
         1: {"S": "toi-nen ri _ _ _"},
     }
     assert blocks_from_cells(editor_grid(root), editor_grid(root).cells) == [
-        {"measure_start": 1, "lyrics": [{"parts": ["S"], "text": "en-sim mäi _ _ _"},
-                                        {"parts": ["A"], "text": "al-to yk _ _ _"}]},
-        {"measure_start": 3, "lyrics": [{"parts": ["S"], "text": "toi-nen ri _ _ _"}]},
+        {"measure_start": 1, "lyrics": [{"parts": ["S"], "box": True, "text": "en-sim mäi _ _ _"},
+                                        {"parts": ["A"], "box": True, "text": "al-to yk _ _ _"}]},
+        {"measure_start": 3, "lyrics": [{"parts": ["S"], "box": True, "text": "toi-nen ri _ _ _"}]},
     ]
 
 
@@ -199,7 +200,7 @@ def test_blank_editor_cells_are_left_out_rather_than_clearing_a_part():
     grid = editor_grid(root)
     assert blocks_from_cells(grid, {0: {"S": "  ", "A": ""}}) == []
     assert blocks_from_cells(grid, {"0": {"S": "yk-si kak"}}) == [
-        {"measure_start": 1, "lyrics": [{"parts": ["S"], "text": "yk-si kak"}]}
+        {"measure_start": 1, "lyrics": [{"parts": ["S"], "box": True, "text": "yk-si kak"}]}
     ]
 
 

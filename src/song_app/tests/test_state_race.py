@@ -9,6 +9,7 @@ it had loaded — after the import. Nothing said the import had been undone.
 These drive that interleaving on purpose rather than hoping a thread loses a race.
 """
 import os
+import shutil
 import types
 
 import pytest
@@ -46,14 +47,22 @@ def client(tmp_path, monkeypatch):
     song.set_stage("fix")
     song.save()
 
-    def fake_import(json_path, cleaned, replace=False, song_dir=""):
-        # The real import writes the words into the score in place; that write is
-        # what wakes the watcher. Its content is not under test here.
-        _edit(cleaned, "<!-- lyrics -->")
+    def fake_import(json_path, cleaned, replace=False, song_dir="", out_path=""):
+        # The real import writes the words into a copy the route moves over the
+        # score (#482); that move is what wakes the watcher. Its content is not
+        # under test here.
+        _write_import(cleaned, out_path)
         return types.SimpleNamespace(mismatches=[], ok=True, written=[])
 
     monkeypatch.setattr(pipeline, "run_lyric_import", fake_import)
     return TestClient(server.app), song
+
+
+def _write_import(cleaned, out_path):
+    target = out_path or cleaned
+    if target != cleaned:
+        shutil.copyfile(cleaned, target)
+    _edit(target, "<!-- lyrics -->")
 
 
 def _edit(path, marker):
@@ -159,12 +168,14 @@ def test_the_import_reply_names_the_bars_that_did_not_take_their_words(client, m
     said = {"kind": "too_many", "measure_start": 9, "measure_end": 9, "staff_ids": [2],
             "syllables": 4, "slots": 3, "message": "m9: 4 syllables for 3 notes"}
 
-    def importing(json_path, cleaned, replace=False, song_dir=""):
-        _edit(cleaned, "<!-- lyrics -->")
+    def importing(json_path, cleaned, replace=False, song_dir="", out_path=""):
+        _write_import(cleaned, out_path)
         return types.SimpleNamespace(
             mismatches=[types.SimpleNamespace(to_dict=lambda: said)], ok=False, written=[])
 
     monkeypatch.setattr(pipeline, "run_lyric_import", importing)
     r = api.post(f"/api/songs/{song.slug}/lyrics", json={"json": LYRICS})
     assert r.status_code == 200, r.text
-    assert r.json()["mismatches"] == [said]
+    # Each warning carries the id Dismiss takes (#482).
+    [got] = r.json()["mismatches"]
+    assert got.pop("id") and got == said

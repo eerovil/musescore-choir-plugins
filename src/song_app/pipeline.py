@@ -763,6 +763,40 @@ def _reset_as_scanned(root: etree._Element, song_dir: str, staff: int,
     return None
 
 
+def lyric_prompt(prompt: str, cleaned_path: str = "") -> str:
+    """The AI lyric prompt, ending with this song's part names when it has a score (#482).
+
+    The prompt asks for the singing parts by name in every line's "parts", which places
+    the words without the printed-staff numbering a resting staff shifts. Without a
+    cleaned score there are no names to list, and the prompt says to leave "parts" empty.
+    """
+    if not cleaned_path or not os.path.exists(cleaned_path):
+        return prompt
+    try:
+        parts = lyric_txt.lyric_parts(etree.parse(cleaned_path).getroot())
+    except (etree.XMLSyntaxError, OSError):
+        return prompt
+    if not parts:
+        return prompt
+    # A name two parts share cannot pick one of them, and an unnamed part has none:
+    # those are listed by staff id, which "parts" also takes.
+    count: Dict[str, int] = {}
+    for p in parts:
+        count[p.name.upper()] = count.get(p.name.upper(), 0) + 1
+    listed, by_id = [], False
+    for p in parts:
+        if count[p.name.upper()] > 1 or p.name == f"staff {p.id}" or p.name.isdigit():
+            listed.append(f'{p.id} ("{p.name}")')
+            by_id = True
+        else:
+            listed.append(f'"{p.name}"')
+    note = ("\nA part listed as a number followed by its name in brackets is told apart "
+            "by that number, its staff id: put the number in \"parts\" without quotes."
+            if by_id else "")
+    return (prompt.rstrip("\n") + "\n\nTHIS SONG'S PARTS, top staff first: "
+            + ", ".join(listed) + ".\nUse these exact names in \"parts\"." + note + "\n")
+
+
 def score_parts_and_measures(cleaned_path: str) -> Tuple[List[Dict], int]:
     """The singing parts of the cleaned score and how many bars it has.
 
@@ -1575,13 +1609,17 @@ def has_opening_tempo(mscx_path: str) -> bool:
 
 
 def run_lyric_import(
-    json_path: str, cleaned_path: str, replace: bool = False, song_dir: str = ""
+    json_path: str, cleaned_path: str, replace: bool = False, song_dir: str = "",
+    out_path: str = "",
 ) -> LyricImport:
-    """Import lyric JSON in place into the cleaned score; return the placement result.
+    """Import lyric JSON into the cleaned score; return the placement result.
 
     Not a full replace any more (#397): only the parts, voices, verses and systems the
-    JSON names change. The printed systems decide how far a line may run on.
+    JSON names change. The printed systems decide how far a line may run on. The
+    result is written over the score, or to `out_path` when given: the app places
+    into a temp file and moves it over the score only once it knows the score did
+    not change meanwhile (#482).
     """
     root = etree.parse(cleaned_path).getroot() if song_dir else None
-    return import_file(json_path, cleaned_path, cleaned_path, replace=replace,
+    return import_file(json_path, cleaned_path, out_path or cleaned_path, replace=replace,
                        systems=_printed_systems(song_dir, root))

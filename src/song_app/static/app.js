@@ -2111,6 +2111,13 @@ async function panelClean(panel, song, slug, P, refresh) {
 }
 
 function sysBlock(sys) {
+  if (!sys.staves.length) {
+    // Nothing to name: the clean fills every part with rests and the names go on (#482).
+    return el("div", { className: "sysblock allrest" },
+      el("div", { className: "row syshead" },
+        el("h4", {}, `System ${sys.system + 1} — measures ${sys.measure_start}–${sys.measure_end}`)),
+      el("p", { className: "hint" }, "Every staff rests here; names carry on to the next system."));
+  }
   const rows = sys.staves.map((st) =>
     el("tr", {},
       el("td", {}, "staff " + st.staff_id),
@@ -2648,21 +2655,39 @@ async function panelLyrics(panel, song, P, refresh) {
 
 // Import mismatches come from the server as fields (kind, measure range, staff ids,
 // syllables, slots, message). Songs imported before that shipped hold the sentence as
-// a plain string; read the fields back out of it so those keep their cell markers too.
+// a plain string, which the server sends as {message, id} (#482); read the fields back
+// out of it so those keep their cell markers too, and keep the id for Dismiss.
 const LEGACY_WARN = /^Measures (\d+)-(\d+) \(staffs ([\d,\s]+)\): (too many|too few) tokens \((\d+) syllables, (\d+) slots\)/;
 
 function lyricMismatches(song) {
   return (song.lyrics?.warnings || []).map((w) => {
-    if (typeof w !== "string") return w;
-    const m = w.match(LEGACY_WARN);
-    if (!m) return { message: w, staff_ids: [] };
+    const text = typeof w === "string" ? w : (!w.kind && typeof w.message === "string" ? w.message : null);
+    if (text === null) return w;
+    const id = typeof w === "string" ? undefined : w.id;
+    const m = text.match(LEGACY_WARN);
+    if (!m) return { message: text, staff_ids: [], id };
     return {
-      kind: m[4] === "too many" ? "too_many" : "too_few", message: w,
+      id, kind: m[4] === "too many" ? "too_many" : "too_few", message: text,
       measure_start: +m[1], measure_end: +m[2],
       staff_ids: m[3].split(",").map((s) => +s.trim()).filter(Number.isFinite),
       syllables: +m[5], slots: +m[6],
     };
   });
+}
+
+// Dismiss: the person has answered a warning the app cannot see answered (#482) --
+// a corrected name, words checked against the page. Only warnings with an id (all of
+// them since #482; the server gives an old saved one an id on reading).
+function dismissButton(P, song, w, after) {
+  if (!w.id) return "";
+  return el("button", { className: "dismiss", title: "I have checked this; take it off the list",
+    onclick: async (ev) => {
+      ev.currentTarget.disabled = true;
+      try {
+        Object.assign(song, await postJSON(`${P}/lyrics/warnings/dismiss`, { id: w.id }));
+      } catch (e) { appendLog(e.message, true); }
+      after();
+    } }, "Dismiss");
 }
 
 function autoGrow(ta) {
@@ -2692,7 +2717,8 @@ async function lyricsPaste(panel, song, P, refresh) {
     const warns = lyricMismatches(song);
     warnBox.replaceChildren(...(warns.length ? [
       el("p", { className: "sub" }, "Mismatches (often a note problem — check the measure in MuseScore):"),
-      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w.message)))] : []));
+      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w.message, " ",
+        dismissButton(P, song, w, () => { drawWarns(); refresh(); }))))] : []));
   };
   drawWarns();
   panel.append(warnBox);
@@ -2710,7 +2736,7 @@ async function lyricsPaste(panel, song, P, refresh) {
   panel.append(
     el("div", { className: "row" },
       el("button", { onclick: async () => {
-        const { prompt } = await getJSON("/api/prompt");
+        const { prompt } = await getJSON(`/api/prompt?slug=${encodeURIComponent(song.slug)}`);
         await navigator.clipboard.writeText(prompt);
         appendLog("Prompt copied — paste it into your AI chat with the PDF.");
       }}, "1. Copy prompt"),
@@ -2799,11 +2825,32 @@ async function lyricsManual(panel, song, P, refresh) {
     && (w.staff_ids || []).includes(b.id)
     && w.measure_start >= sys().start && w.measure_start <= sys().end);
   const warnRows = [];
+  const afterDismiss = () => { drawWarns(); refresh(); };
   const warnLines = (b) => warnsFor(b).map((w) => el("div", { className: "lyerr" },
     `⚠ m${w.measure_start}–${w.measure_end}`
     + `${w.measure_end > sys().end ? " (runs into the next system)" : ""}: `
-    + `${w.message.split("): ").pop()}`));
-  const drawWarns = () => { for (const [box, b] of warnRows) box.replaceChildren(...warnLines(b)); };
+    + `${w.message.split("): ").pop()} `, dismissButton(P, song, w, afterDismiss)));
+  // A warning about this system that no box here shows: a pasted line naming a part
+  // that rests here has no box (#482).
+  const unboxed = el("div", { className: "lyerrs lyunboxed" });
+  const drawUnboxed = () => {
+    const s = sys();
+    // By id, not by object: a sentence saved before warnings had fields is parsed
+    // afresh on every call, so two reads of one warning are two objects.
+    const wkey = (w) => w.id ?? w.message;
+    const shown = new Set(boxesOf(S.n).flatMap((b) => warnsFor(b)).map(wkey));
+    const rest = lyricMismatches(song).filter((w) => !shown.has(wkey(w))
+      && (w.verse || 1) === S.verse
+      && w.measure_start >= s.start && w.measure_start <= s.end);
+    unboxed.replaceChildren(...(rest.length ? [
+      el("p", { className: "sub" }, "Not under any box here:"),
+      ...rest.map((w) => el("div", { className: "lyerr" },
+        `⚠ ${w.message} `, dismissButton(P, song, w, afterDismiss)))] : []));
+  };
+  const drawWarns = () => {
+    for (const [box, b] of warnRows) box.replaceChildren(...warnLines(b));
+    drawUnboxed();
+  };
 
   const statusEl = el("span", { className: "lyedstatus" });
   const showStatus = () => {
@@ -2895,6 +2942,7 @@ async function lyricsManual(panel, song, P, refresh) {
     nextBtn.disabled = S.n + 1 >= grid.systems.length;
     landedBtn.textContent = S.landed ? "Show the page" : "Show what landed";
     warnRows.length = 0;
+    drawUnboxed();
     const boxes = boxesOf(S.n);
     if (!boxes.length) {
       body.replaceChildren(...listView([], "No part sings in this system."));
@@ -2914,6 +2962,7 @@ async function lyricsManual(panel, song, P, refresh) {
       && boxes.every((b) => found.printed.includes(b.printed)));
     const focusKey = document.activeElement?.dataset?.box;
     warnRows.length = 0;
+    drawUnboxed();
     body.replaceChildren(...(matched ? staffView(boxes, found)
       : listView(boxes, s.crop != null && !S.landed
         ? "The staves in this picture could not be matched to the parts, so the boxes are listed under it." : "")));
@@ -2988,6 +3037,7 @@ async function lyricsManual(panel, song, P, refresh) {
       "_ is a note with no new syllable: after a word ending in - it holds that word "
       + "(e-lei- _ _ son). A word ending in - carries on into the next system. "
       + "Empty a box and import to take its words out."),
+    unboxed,
     body,
     el("div", { className: "lyedbar" }, prevBtn, importBtn, statusEl, landedBtn, nextBtn),
     makeLog());

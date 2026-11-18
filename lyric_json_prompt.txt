@@ -16,22 +16,22 @@ JSON format:
                 "verse": 1,               # Which verse (1, 2, 3 ...) this text is.
                 "voice": 1,               # 2 only for a small or spoken second line
                                           # sung by a voice inside one part's staff.
-                "parts": []               # LEAVE EMPTY. Only fill to override the
-                                          # mapping (see below).
+                "parts": ["T1"]           # The names of the parts that sing this
+                                          # text, from the list at the end.
             },
             {
                 "staff_number": 1,
                 "text": "the se-cond verse of the te-nors",
                 "verse": 2,
                 "voice": 1,
-                "parts": []
+                "parts": ["T1"]
             },
             {
                 "staff_number": 2,
                 "text": "ly-rics for the bass",
                 "verse": 1,
                 "voice": 1,
-                "parts": []
+                "parts": ["B1", "B2"]
             }
         ]
     }
@@ -39,9 +39,13 @@ JSON format:
 
 Notes:
 - It may like multiple pieces, but it's actually a single piece.
-- ALWAYS include "parts": [] (empty) in every lyric. Leave it empty by default — the
-  text is then mapped automatically to the right voice(s) from "staff_number" and
-  "position". Only put something in "parts" to correct a wrong mapping (see below).
+- Put in every lyric's "parts" the names of the parts that sing that text, from the
+  list of this song's parts at the end (e.g. ["T1", "T2"] when both tenors share the
+  words). Read the names off the staff labels on the page, counting a staff that rests
+  through a line as left out there. If no list is given at the end, leave "parts": []
+  and the text is placed by "staff_number" and "position".
+- Still give "staff_number" (and "position") for every lyric: the text is placed by
+  them when "parts" is empty or names no part of this song.
 - Give each line's text by "staff_number" (top staff = 1) and, for a staff shared by
   two divisi voices that sing different words, a "position" ("above"/"below"). If the
   two voices on a staff sing the SAME words, give one line and omit "position".
@@ -62,14 +66,12 @@ Notes:
 - Only what this JSON names is changed: every verse, voice and line it leaves out
   keeps the words it has. An entry with an empty "text" takes that line's words out.
 
-MANUAL OVERRIDE (when the automatic mapping is wrong — e.g. a part is omitted on some
-lines, or an extra voice like an ossia T3 is printed on top so the staff numbering
-doesn't match):
-- Fill the line's "parts" array to force exactly which voices get the text. It wins
-  over staff_number/position. You can use:
-    * part NAMES — "parts": ["T1", "T2"]  (matches the staff labels in the score;
-      robust even when staves are reordered) — PREFERRED for overrides.
-    * output staff IDs — "parts": [1, 2]   (the output staves sorted high-to-low:
-      1, 2, 3, …).
-- List several entries when staves differ; list several names/ids in one "parts" when
-  they share the SAME words.
+ABOUT "parts":
+- "parts" wins over staff_number/position. Names are robust where the staff numbering
+  is not: a part omitted on some lines, or an extra voice (an ossia T3) printed on top.
+- Output staff IDs work too — "parts": [1, 2], the output staves top to bottom — but
+  names are preferred.
+- List several entries when staves differ; list several names in one "parts" when they
+  share the SAME words.
+- A part named for a line where it has no notes is reported back as a warning, and
+  those words are not placed.

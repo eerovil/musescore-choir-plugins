@@ -1,0 +1,381 @@
+"""A lyric line naming a part that rests through its system is reported, not placed (#482).
+
+The AI prompt now asks for part names in every line. A name for a part with no notes
+in that system means the name or the system is wrong; running the words on into the
+next system would hide that, so the line is left out and said.
+"""
+
+from lxml import etree
+
+from src.clean_score.lyric_txt import (
+    PART_RESTS, TWO_LINES, UNKNOWN_PART, _block_lines, place_lyrics)
+
+from .scorebuilder import build_score, placed_lyrics
+
+NAMES = {1: "T1", 2: "T2"}
+# The app passes the printed systems (pipeline._printed_systems); a line fills its own.
+SYSTEMS = [(1, 1), (2, 2), (3, 3)]
+
+
+def _rest_through(root, staff_id, measure):
+    """Make one staff rest through one bar (1-based)."""
+    m = root.findall(f".//Score/Staff[@id='{staff_id}']/Measure")[measure - 1]
+    voice = m.find("voice")
+    for chord in voice.findall("Chord"):
+        voice.remove(chord)
+    rest = etree.SubElement(voice, "Rest")
+    etree.SubElement(rest, "durationType").text = "measure"
+    etree.SubElement(rest, "duration").text = "4/4"
+    return root
+
+
+def _score():
+    # Three one-bar systems; T2 rests through the second.
+    root = build_score(staff_ids=(1, 2), measures=3, chords=2, names=NAMES, line_breaks=(1, 2))
+    return _rest_through(root, 2, 2)
+
+
+def test_a_line_naming_a_resting_part_warns_and_places_nothing():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 1, "text": "la-la", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    kinds = [m.kind for m in result.mismatches]
+    assert kinds == [PART_RESTS]
+    warning = result.mismatches[0]
+    assert (warning.measure_start, warning.measure_end, warning.staff_ids) == (2, 2, (2,))
+    assert "T2" in warning.message and "no notes" in warning.message
+    # Not run on into system 3, where T2 sings again.
+    assert placed_lyrics(root).get(2, "") == ""
+
+
+def test_the_other_parts_in_the_block_are_still_placed():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 1, "text": "yk-si", "parts": ["T1"]},
+        {"staff_number": 2, "text": "kak-si", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [PART_RESTS]
+    assert placed_lyrics(root) == {1: "yk-si"}
+
+
+def test_a_named_part_that_sings_takes_its_words_without_a_warning():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"staff_number": 2, "text": "kol-me", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    assert result.mismatches == []
+    assert placed_lyrics(root) == {2: "kol-me"}
+
+
+def test_a_line_placed_by_staff_number_keeps_running_on_as_before():
+    """Only a named part is checked: the staff_number route is unchanged."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 2, "text": "nel-jä"}]}], replace=True, systems=SYSTEMS)
+    assert PART_RESTS not in [m.kind for m in result.mismatches]
+    assert placed_lyrics(root) == {2: "nel-jä"}
+
+
+def test_the_grid_keeps_a_system_where_every_staff_rests():
+    """The clean grid shows it as a line, not a gap in the numbering (#482)."""
+    from src.clean_score.utils import per_system
+
+    root = build_score(staff_ids=(1, 2), measures=3, chords=2, names=NAMES, line_breaks=(1, 2))
+    _rest_through(root, 1, 2)
+    _rest_through(root, 2, 2)
+    layouts = per_system.system_layout(root)
+    assert [(s.start, s.end) for s in layouts] == [(1, 1), (2, 2), (3, 3)]
+    assert layouts[1].staves == []
+    assert [len(s.staves) for s in (layouts[0], layouts[2])] == [2, 2]
+
+
+def _tie_whole_bar(root, staff_id, measure):
+    """Every chord of one bar is held over from the bar before: no syllable, still notes."""
+    for chord in root.findall(f".//Score/Staff[@id='{staff_id}']/Measure")[measure - 1].iter("Chord"):
+        note = chord.find("Note")
+        tie = etree.SubElement(note, "Spanner", type="Tie")
+        etree.SubElement(tie, "prev")
+    return root
+
+
+def test_a_system_the_part_only_holds_over_into_is_not_resting():
+    """A tied note is a note: the part sings there, it just takes no new syllable."""
+    root = build_score(staff_ids=(1, 2), measures=3, chords=2, names=NAMES, line_breaks=(1, 2))
+    _tie_whole_bar(root, 2, 2)
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 2, "text": "oo", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    assert PART_RESTS not in [m.kind for m in result.mismatches]
+
+
+def test_without_systems_the_check_stops_at_the_scores_own_break():
+    """No printed systems given: the rest check reads the score's line breaks, so a
+    part singing in a later system does not hide that it rests in this one."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 2, "text": "la", "parts": ["T2"]}]}], replace=True)
+    rests = [m for m in result.mismatches if m.kind == PART_RESTS]
+    assert [(m.measure_start, m.measure_end) for m in rests] == [(2, 2)]
+    assert placed_lyrics(root).get(2, "") == ""
+
+
+def test_a_named_line_does_not_run_on_through_a_system_its_part_rests_in():
+    root = _score()
+    place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    bars = {}
+    from src.clean_score.lyric_txt import export_lyrics
+    measure = None
+    for line in export_lyrics(root).splitlines():
+        if line.startswith("# Measure"):
+            measure = int(line.split()[-1])
+        elif line.strip().startswith("2"):
+            bars[measure] = line.split(":", 1)[1].split()
+    # The two extra syllables stay crammed in bar 1 rather than landing in system 3.
+    assert all(t == "_" for t in bars.get(3, []))
+
+
+def test_a_name_no_part_carries_falls_back_to_the_staff_number_and_says_so():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"staff_number": 2, "text": "kol-me", "parts": ["Tenori 2"]}]}],
+        replace=True, systems=SYSTEMS)
+    unknown = [m for m in result.mismatches if m.kind == UNKNOWN_PART]
+    assert len(unknown) == 1 and '"Tenori 2"' in unknown[0].message
+    assert placed_lyrics(root) == {2: "kol-me"}
+
+
+def test_a_bad_name_with_no_staff_number_says_the_line_was_not_placed():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"text": "kol-me", "parts": ["Typo"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
+    message = result.mismatches[0].message
+    assert "not placed" in message and "placed by staff_number" not in message
+    assert placed_lyrics(root) == {}
+
+
+def test_a_name_two_parts_share_falls_back_to_the_staff_number():
+    root = build_score(staff_ids=(1, 2), measures=3, chords=2, names={1: "T", 2: "T"},
+                       line_breaks=(1, 2))
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"staff_number": 2, "text": "kol-me", "parts": ["T"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
+    assert placed_lyrics(root) == {2: "kol-me"}
+
+
+def test_a_follower_of_a_named_line_is_checked_as_named():
+    """A b-part taking its base part's words is named by the same line."""
+    system_map = [{"start": 1, "end": 3, "map": {}, "follow": {1: [2]}}]
+    lines = _block_lines({"lyrics": [{"text": "la", "parts": ["T1"]}]}, 1, 3, {},
+                         system_map, {"T1": 1})
+    assert {(ln.staff, ln.named) for ln in lines} == {(1, True), (2, True)}
+
+
+def test_without_systems_a_long_named_line_does_not_skip_a_resting_system():
+    """No printed systems given and one line sent: the score's own breaks still end
+    each system, so T2's words do not jump over bar 2 into bar 3 (#482)."""
+    root = _score()
+    place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d", "parts": ["T2"]}]}], replace=True)
+    from src.clean_score.lyric_txt import export_lyrics
+    bars, measure = {}, None
+    for line in export_lyrics(root).splitlines():
+        if line.startswith("# Measure"):
+            measure = int(line.split()[-1])
+        elif line.strip().startswith("2"):
+            bars[measure] = line.split(":", 1)[1].split()
+    assert all(t == "_" for t in bars.get(3, []))
+
+
+def test_two_lines_naming_one_resting_part_are_one_line_and_one_warning():
+    """A line is known by what it says (#482): bar, verse, voice and the parts it
+    names. Two entries naming T2 in one block say the same and are joined."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 1, "position": "below", "text": "yk-si", "parts": ["T2"]},
+        {"staff_number": 2, "position": "below", "text": "kak-si", "parts": ["T2"]}]}],
+        replace=True, systems=SYSTEMS)
+    rests = [m for m in result.mismatches if m.kind == PART_RESTS]
+    assert [m.lines for m in rests] == [('{"m":2,"parts":["T2"],"verse":1,"voice":1}',)]
+
+
+def test_a_bad_name_whose_staff_number_is_no_staff_says_the_line_was_not_placed():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"staff_number": 99, "text": "la", "parts": ["Typo"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
+    message = result.mismatches[0].message
+    assert "not placed" in message and "placed by staff_number" not in message
+    assert placed_lyrics(root) == {}
+
+
+def test_a_staff_id_the_score_has_not_is_said_as_unknown():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 3, "lyrics": [
+        {"text": "la", "parts": [99]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [UNKNOWN_PART]
+    assert '"99"' in result.mismatches[0].message
+
+
+def test_a_named_line_wins_over_a_staff_number_line_for_the_same_resting_part():
+    """A named entry and a staff_number entry landing on one part are not combined:
+    the named one is used (here it warns, T2 rests) and the other is said (#482)."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 2, "text": "nel-jä"},
+        {"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    kinds = sorted(m.kind for m in result.mismatches)
+    assert kinds == sorted([PART_RESTS, TWO_LINES])
+    two = next(m for m in result.mismatches if m.kind == TWO_LINES)
+    # Either line sent again answers it: the set-aside one, or the named one alone.
+    assert two.lines == ('{"m":2,"position":null,"staff":2,"verse":1,"voice":1}',
+                         '{"m":2,"parts":["T2"],"verse":1,"voice":1}')
+    assert placed_lyrics(root) == {}
+
+
+def test_a_named_blank_line_beside_a_staff_number_line_does_not_crash():
+    """Round 5's crash: a named "_" line and a staff_number line for a resting part."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 2, "text": "la"},
+        {"staff_number": 1, "text": "_", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    assert [m.kind for m in result.mismatches] == [TWO_LINES]
+
+
+def test_a_box_typed_on_the_staff_is_another_line_than_the_named_paste():
+    """The by-system editor names a part by staff id; a paste that named another part
+    is not the same line, so typing the box does not answer its warning (#482)."""
+    root = _score()
+    pasted = place_lyrics(root, [{"measure_start": 2, "lyrics": [
+        {"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]}], systems=SYSTEMS)
+    typed = place_lyrics(root, [{"measure_start": 2, "measure_end": 2, "lyrics": [
+        {"parts": [1], "text": "yk-si"}]}], systems=SYSTEMS)
+    assert not set(pasted.mismatches[0].lines) & set(typed.lines)
+
+
+def _bars_of(root, staff):
+    from src.clean_score.lyric_txt import export_lyrics
+    bars, measure = {}, None
+    for line in export_lyrics(root).splitlines():
+        if line.startswith("# Measure"):
+            measure = int(line.split()[-1])
+        elif line.strip().startswith(str(staff)):
+            bars[measure] = line.split(":", 1)[1].split()
+    return bars
+
+
+def test_a_named_line_stays_in_its_own_system():
+    """A named line fills only its own printed system and never runs on (#482): the
+    two syllables past system 1 are crammed there and said as too many."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    assert bars[1] == ["a", "b", "c", "d"]
+    assert all(t == "_" for t in bars.get(3, []))
+    assert "too_many" in [m.kind for m in result.mismatches]
+
+
+def test_a_named_line_and_a_staff_number_line_are_not_joined():
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d"},
+        {"staff_number": 2, "text": "e f", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    assert bars[1] == ["e", "f"]
+    assert TWO_LINES in [m.kind for m in result.mismatches]
+
+
+def test_a_staff_number_line_alone_still_runs_on_like_before():
+    """The staff_number route alone is unchanged: four syllables reach system 3."""
+    root = _score()
+    place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"staff_number": 2, "text": "a b c d"}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    assert bars[1] == ["a", "b"] and bars[3] == ["c", "d"]
+
+
+def test_a_named_line_with_an_end_given_warns_when_its_first_system_rests():
+    """An end the source gives is cut at each printed system too: a named line from
+    the system T2 rests in to the next one warns and is not placed (#482)."""
+    root = _score()
+    result = place_lyrics(root, [{"measure_start": 2, "measure_end": 3, "lyrics": [
+        {"staff_number": 2, "text": "kol-me", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    warnings = [m for m in result.mismatches if m.kind == PART_RESTS]
+    assert len(warnings) == 1
+    assert (warnings[0].measure_start, warnings[0].measure_end) == (2, 2)
+    assert placed_lyrics(root).get(2, "") == ""
+
+
+def test_a_named_line_with_an_end_given_stops_where_its_part_rests():
+    root = _score()
+    place_lyrics(root, [{"measure_start": 1, "measure_end": 3, "lyrics": [
+        {"staff_number": 2, "text": "a b c d", "parts": ["T2"]}]}], replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 2)
+    assert bars[1] == ["a", "b", "c", "d"]
+    assert all(t == "_" for t in bars.get(3, []))
+
+
+def test_a_quoted_number_that_is_one_parts_name_and_anothers_staff_id_is_said():
+    """The review's case: staff 1 is named "2" and staff 2 exists. "2" in quotes could
+    be either, so the line is not given to staff 2 in silence (#482)."""
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    unknown = [m for m in result.mismatches if m.kind == UNKNOWN_PART]
+    assert len(unknown) == 1 and "without quotes" in unknown[0].message
+    assert placed_lyrics(root) == {1: "la la"}          # by its staff_number
+
+
+def test_a_bare_number_is_a_staff_id_and_a_quoted_unique_number_name_is_the_part():
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": [1], "text": "la la"}]}], replace=True)
+    assert result.mismatches == [] and placed_lyrics(root) == {1: "la la"}
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "7", 2: "T2"})
+    result = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["7"], "text": "la la"}]}], replace=True)
+    assert result.mismatches == [] and placed_lyrics(root) == {1: "la la"}
+
+
+def test_a_quoted_number_and_a_bare_number_are_two_lines():
+    """Review of #505: "2" in quotes is read as a part's name and 2 bare as a staff id,
+    so a paste of [2] is another line and does not answer the warning ["2"] raised."""
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    quoted = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    [warned] = [m for m in quoted.mismatches if m.kind == UNKNOWN_PART]
+    bare = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": [2], "text": "la la"}]}], replace=True)
+    assert not set(warned.lines) & set(bare.lines)
+    again = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    assert set(warned.lines) <= set(again.lines)
+
+
+def test_one_name_with_a_comma_and_two_names_are_two_lines():
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names=NAMES)
+    one = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["T1,T2"], "staff_number": 1, "text": "la la"}]}], replace=True)
+    two = place_lyrics(root, [{"measure_start": 1, "lyrics": [
+        {"parts": ["T1", "T2"], "text": "la la"}]}], replace=True)
+    assert one.lines and two.lines and not set(one.lines) & set(two.lines)
+
+
+def test_the_older_cells_editor_still_runs_a_long_line_into_an_empty_next_system():
+    """The cells route types a part by name; like the by-system boxes it runs on into
+    an empty next system (#393), rather than stopping like a pasted named line."""
+    from src.clean_score.lyric_txt import blocks_from_cells, editor_grid
+    root = build_score(staff_ids=(1, 2), measures=3, chords=2, names=NAMES,
+                       line_breaks=(1, 2))
+    blocks = blocks_from_cells(editor_grid(root), {0: {"T1": "a b c d"}})
+    result = place_lyrics(root, blocks, replace=True, systems=SYSTEMS)
+    bars = _bars_of(root, 1)
+    assert bars[1] == ["a", "b"] and bars[2] == ["c", "d"]
+    assert "too_many" not in [m.kind for m in result.mismatches]
+
+
+def test_the_cells_editor_types_a_number_named_part_by_its_staff_id():
+    from src.clean_score.lyric_txt import blocks_from_cells, editor_grid
+    root = build_score(staff_ids=(1, 2), measures=1, chords=2, names={1: "2", 2: "T2"})
+    blocks = blocks_from_cells(editor_grid(root), {0: {"2": "la la"}})
+    result = place_lyrics(root, blocks, replace=True)
+    assert result.mismatches == [] and placed_lyrics(root) == {1: "la la"}

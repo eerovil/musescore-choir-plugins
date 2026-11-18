@@ -557,3 +557,6 @@ p.err { color: var(--bad); }
 .pron-row { flex-wrap: wrap; gap: 4px 8px; margin: 6px 0; }
 .pron-place { font-variant-numeric: tabular-nums; min-width: 4.5em; }
 .pron-line { flex: 1 1 14em; }
+/* Dismiss on a lyric warning (#482) */
+.warnlist .dismiss, .lyerr .dismiss { padding: 1px 8px; font-size: 12px; margin-left: 4px; }
+.lyunboxed:empty { display: none; }
