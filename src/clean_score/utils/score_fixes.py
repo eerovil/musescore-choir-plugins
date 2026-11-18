@@ -249,11 +249,13 @@ same pitch class in the chord, else from the key in force. Each needs its `from`
 staff (`"to": null`), or writes another one in its place (`"to": "6/8"`). homr read a
 3/4 into a song printed in 6/8 throughout; the notes fit both, so the automatic
 `spurious_timesigs` pass cannot tell them apart and only the page can. `from` is the
-signature the bar carries now, on every staff, and is required. The bar keeps its
-length or the fix refuses: a signature that changes the length of the bars after it
-would leave every one of them wrong, so only a change between meters of one length
-(3/4 and 6/8, 2/2 and 4/4) is allowed, and a removal only where the meter already in
-force is that length. Bar 1's opening signature is never touched.
+signature the bar carries now, on every staff, and is required. A change between
+meters of one length (3/4 and 6/8, 2/2 and 4/4) only relabels. A change of length is
+allowed only where every bar the signature governs, up to the next one, already has
+the new length on every staff (a `len` override says so), and those overrides then
+come off (#480: homr put a 1/1 over a bar three quarters long). Otherwise it refuses:
+a signature that changed the length of bars holding other music would leave every
+one of them wrong. Bar 1's opening signature may be replaced, never removed.
 
     {"kind": "timesig", "measure": 22, "from": "3/4", "to": null,
      "why": "the page prints no meter change; 6/8 throughout"}
@@ -1200,6 +1202,37 @@ def _strike(root: etree._Element, staff: int, measure: int, words) -> List[str]:
     for bar in _sibling_bars(root, staff, measure):
         struck.extend(w for w in _strike_words(bar, words) if w not in struck)
     return struck
+
+
+def _strike_cut(bar: etree._Element) -> List[str]:
+    """Take cleaning's "was 9/8, cut to 4/4 in voice 1" mark off this staff's bar (#482).
+
+    `long_bars` writes it on the staff whose notes it cut and names the voices that
+    lost music; it says nothing a `?` word could answer, so `_strike_words` leaves
+    it. A `bar` fix writes voice 1 only, so it answers a mark that names voice 1
+    alone, once voice 1 fills the bar (`_replace_bar` may keep a short voice short).
+    A mark naming another voice, or written before marks named voices, stays for an
+    `unmark`: what that voice lost has not been put back.
+    """
+    if not _fills_bar(bar):
+        return []
+    struck: List[str] = []
+    for el in list(bar.iter("StaffText")):
+        text = el.findtext("text") or ""
+        head = text.split(";")[0]
+        if text.startswith("⚠ was ") and head.endswith(" in voice 1") and ", cut to " in head:
+            el.getparent().remove(el)
+            struck.append(head[2:])
+    return struck
+
+
+def _fills_bar(measure: etree._Element) -> bool:
+    """True when voice 1 of this staff's bar is exactly as long as the bar."""
+    from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
+    staff = measure.getparent()
+    length = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
+    total = sum((part for _, _, part in _timeline(_voice(measure))), Fraction(0))
+    return total == length
 
 
 def _answered(struck: List[str]) -> str:
@@ -2476,9 +2509,12 @@ def _parse_meter(text, what: str) -> Tuple[int, int]:
 def _set_timesig(root: etree._Element, measure_no: int, expect, to) -> str:
     """Take the time signature off bar ``measure_no`` of every staff, or replace it.
 
-    Only where the bar keeps its length (see the module notes): the bars the
-    signature governs are not touched, so a change of length would leave them all
-    contradicting their meter.
+    Between meters of one length it only relabels. A change of length is allowed
+    only when every bar the signature governs, on every staff, is **already** the
+    new length (a ``len`` override says so): the notes never move, and the
+    overrides that said the bars disagreed with the old meter come off (#480: a
+    1/1 homr put over a 3/4 bar). At bar 1 the signature may be replaced, never
+    removed -- the score has to open with one.
     """
     staves = [s for s in root.findall(".//Score/Staff") if s.find("Measure") is not None]
     if not staves:
@@ -2486,8 +2522,9 @@ def _set_timesig(root: etree._Element, measure_no: int, expect, to) -> str:
     if not expect:
         raise FixError("give the signature's 'from', so one the page prints is never removed")
     was_n, was_d = _parse_meter(expect, "from")
-    if measure_no == 1:
-        raise FixError("bar 1 carries the opening time signature")
+    if measure_no == 1 and to is None:
+        raise FixError("bar 1 carries the opening time signature; it can be replaced "
+                       "with another (\"to\": \"3/4\"), not taken off")
     signs = []
     for staff in staves:
         measures = staff.findall("Measure")
@@ -2509,10 +2546,23 @@ def _set_timesig(root: etree._Element, measure_no: int, expect, to) -> str:
     else:
         new = _parse_meter(to, "to")
         length = Fraction(*new)
+    overridden = []
     if length != Fraction(was_n, was_d):
-        then = (f"{to}" if to is not None else f"the meter in force, {length},")
-        raise FixError(f"{was_n}/{was_d} and {then} give bars of different lengths; "
-                       f"this fix only changes how a bar of the same length is written")
+        governed = _governed_bars(staves, measure_no)
+        wrong = [(staff.get("id"), i + 1, _bar_length(staff, i))
+                 for staff, bars in governed for i in bars
+                 if _bar_length(staff, i) != length]
+        if wrong:
+            then = (f"{to}" if to is not None else f"the meter in force, {length},")
+            sid, bar_no, has = wrong[0]
+            raise FixError(f"{was_n}/{was_d} and {then} give bars of different lengths, "
+                           f"and bar {bar_no} on staff {sid} is {has} long, not {length}; "
+                           f"a change of length is only written where every bar it "
+                           f"governs already has the new length")
+        overridden = [staff.findall("Measure")[i] for staff, bars in governed
+                      for i in bars]
+    for bar in overridden:
+        bar.attrib.pop("len", None)
     for ts in signs:
         if new is None:
             ts.getparent().remove(ts)
@@ -2522,9 +2572,32 @@ def _set_timesig(root: etree._Element, measure_no: int, expect, to) -> str:
         for tag in ("subtype", "groups"):
             for el in ts.findall(tag):
                 ts.remove(el)
-    if new is None:
-        return f"took the {was_n}/{was_d} time signature off on all {len(signs)} staves"
-    return f"{was_n}/{was_d} became {new[0]}/{new[1]} on all {len(signs)} staves"
+    said = (f"took the {was_n}/{was_d} time signature off on all {len(signs)} staves"
+            if new is None else
+            f"{was_n}/{was_d} became {new[0]}/{new[1]} on all {len(signs)} staves")
+    if overridden:
+        said += f"; {len(overridden)} bar length override(s) it made unnecessary taken off"
+    return said
+
+
+def _governed_bars(staves, measure_no: int):
+    """Per staff, the bar indices from ``measure_no`` up to the next time signature."""
+    governed = []
+    for staff in staves:
+        measures = staff.findall("Measure")
+        bars = [measure_no - 1]
+        for i in range(measure_no, len(measures)):
+            if measures[i].find(".//TimeSig") is not None:
+                break
+            bars.append(i)
+        governed.append((staff, bars))
+    return governed
+
+
+def _bar_length(staff: etree._Element, mi: int) -> Fraction:
+    """How long bar ``mi`` is: its ``len`` override, else the meter in force."""
+    bar = staff.findall("Measure")[mi]
+    return _parse_len(bar.get("len")) if bar.get("len") else _meter(staff, mi)
 
 
 SWING_RATIO = 67  # percent of the beat the on-beat eighth takes: 2:1, a triplet feel
@@ -2723,6 +2796,10 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             raise FixError(f"staff {staff} m{measure} ({kind}): {exc}") from None
         if kind in _KIND_WORDS:
             what += _answered(_strike(root, staff, measure, _KIND_WORDS[kind]))
+        if kind == "bar":
+            cut = _strike_cut(_measure(root, staff, measure))
+            if cut:
+                what += f" and took the mark off ({'; '.join(cut)})"
         if _settle(root, staff, measure):
             what += " and turned its red notes black"
         line = f"staff {staff} m{measure}: {what} — {fix.get('why', 'no reason recorded')}"
