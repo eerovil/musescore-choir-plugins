@@ -2583,7 +2583,9 @@ ranges are re-read off the breaks, in memory only (`MAP_RECOUNTED`); otherwise t
 `MAP_STALE`, used as recorded, and the Fix panel shows one row (`problems.STALE_MAP`, kind
 `stale-map`) asking for a clean or an `insbar`/`delbar` entry. A map that still ends on the
 last bar is used as recorded, even when a break moved. On this host's songs: 6 stale, none
-recounted.
+recounted. The Fix rows read their printed systems through `pipeline._printed_system_bounds`
+too (`problems._bounds`), so a row's system and its staff come off one numbering, recorded
+`delbar`/`insbar` moves included.
 Caveat: the musical-rank ordering is wrong when an ossia/extra voice is *printed on top*
 (e.g. T3 above T1/T2) — then the PDF's printed numbering doesn't match rank order, so a
 staff_number-based JSON maps to the wrong voice. The robust fix is to address voices in
