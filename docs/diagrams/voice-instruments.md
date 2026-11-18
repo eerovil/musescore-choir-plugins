@@ -23,9 +23,6 @@ flowchart TD
     class inst,set,copy amber
     class ms4 teal
     class clean,tidy,stored,dl,pub,keep,old blue
-    classDef blue fill:#c5ddfb,stroke:#236ac7,color:#183862
-    classDef teal fill:#c5fbf6,stroke:#23c7b7,color:#18625b
-    classDef amber fill:#fbe6c5,stroke:#c78623,color:#624518
 ```
 
 ## Colours
