@@ -53,7 +53,7 @@ OVERLAPPING = (_chord("half") + _chord("whole", 1) + _back("-1/2") + _chord("who
 def test_a_voice_that_overlaps_itself_is_named_as_musescore_4_names_it():
     found = overlong_voices(_score([FULL, FULL], [FULL, OVERLAPPING]))
     assert found == [{
-        "measure": 2, "staff": 1, "voice": 2,
+        "measure": 2, "staff": 1, "voice": 2, "found": "4/1", "expected": "3/1",
         "message": "Voice too long: measure 2, staff 1, voice 2. Found: 4/1. Expected: 3/1.",
     }]
 

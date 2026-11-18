@@ -11,6 +11,12 @@ developers are listed under *Behind the scenes*.
   such as the publish record `sing_song.py --publish` writes: a save now writes only what that
   job changed, and the app and the command-line tools take turns with the song's file. Reading
   a system again now drops that system's Clean-grid answers, not the next system's. (#498)
+- Publish and Clean panels tidied after the day's new features: the note about a sung
+  version on the site is one red line and a *Replace with piano only* button, with the
+  sing command folded under *Keep it sung instead*; its error lines are shown in red; each
+  rit. or accel. reads as one sentence with its controls on the next line; and the Clean
+  panel lists a scan's too-long voices bar by bar ("Bar 81, staff 4, voice 2: notes add up to
+  3/4 in a 1/2 bar"), folded into one line once the song is cleaned. (#501)
 - A new fix kind, `rehearsal`, puts a rehearsal mark the scan could not read on a bar, and
   it reaches the published score. (#493)
 - A song's language is saved with it: choose it on the New song form or the song's Start panel,

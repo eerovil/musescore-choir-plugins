@@ -1894,6 +1894,29 @@ function deleteSongBox(song, P) {
     el("div", { className: "row" }, btn));
 }
 
+// The scan's voices that run past their barline (#481), said bar by bar (#500).
+// Once the song is cleaned they were already cut or reset, so the list folds away.
+function overlongLine(o) {
+  if (o.found && o.expected) {
+    return `Bar ${o.measure}, staff ${o.staff}, voice ${o.voice}: notes add up to ${o.found} in a ${o.expected} bar`;
+  }
+  return o.message;
+}
+function overlongList(overlong, cleaned) {
+  const list = el("ul", { className: "warnlist" }, overlong.map((o) => el("li", {}, overlongLine(o))));
+  if (cleaned) {
+    const n = new Set(overlong.map((o) => o.measure)).size;
+    return el("details", { className: "overlong" },
+      el("summary", {}, `${n} bar${n === 1 ? "" : "s"} in the scan ran past ${n === 1 ? "its" : "their"} barline — cleaning cut or reset ${n === 1 ? "it" : "them"}`),
+      list);
+  }
+  return el("div", { className: "overlong" },
+    el("p", { className: "sub" },
+      "These voices in the scan run past their barline. MuseScore will not open them " +
+      "like this, so cleaning cuts or resets these bars:"),
+    list);
+}
+
 async function panelClean(panel, song, slug, P, refresh) {
   const cleanJob = song.jobs?.clean;
   panel.append(el("h2", {}, "Clean"),
@@ -1919,11 +1942,7 @@ async function panelClean(panel, song, slug, P, refresh) {
     try {
       const { grid, overlong = [], stamps = {} } = await getJSON(`${P}/systems`);
       holder.replaceChildren(
-        ...(overlong.length ? [el("div", { className: "overlong" },
-          el("p", { className: "sub" },
-            "These voices run past their barline. MuseScore 4 will not open the score " +
-            "like this, so cleaning cuts or resets these bars:"),
-          el("ul", { className: "warnlist" }, overlong.map((o) => el("li", {}, o.message))))] : []),
+        ...(overlong.length ? [overlongList(overlong, song.has_cleaned)] : []),
         el("p", { className: "hint fallbackhint" },
           "S1b sings S1's notes wherever it has none of its own; the same goes for any part name plus one small letter."),
         ...grid.map((sys) => sysBlock(sys)));
@@ -3074,12 +3093,12 @@ function panelPublish(panel, song, P, refresh, actions) {
   // beat to three quarters (rit.) or five quarters (accel.) unless a target BPM is
   // given here, or it is switched off and played as written.
   // Where the ramp stops, so a director can tell whether it is the span they meant:
-  // "by bar 42 (fermata)", "to the end".
+  // "eases until bar 42 (fermata)", "eases to the end".
   const gradualUntil = (mark) => {
     const until = mark.until || {};
-    if (mark.until_why === "end") return "to the end";
+    if (mark.until_why === "end") return "eases to the end";
     const place = `bar ${until.measure}${until.beat > 1 ? ` beat ${until.beat}` : ""}`;
-    return `by ${place} (${mark.until_why})`;
+    return `eases until ${place} (${mark.until_why})`;
   };
   const savedGradual = Object.fromEntries((pub.gradual || []).map((g) => [g.measure, g]));
   // A setting is kept per bar and applies to the bar's first mark, so only that one
@@ -3097,12 +3116,16 @@ function panelPublish(panel, song, P, refresh, actions) {
       const off = el("input", { type: "checkbox", checked: !!saved.off, "data-gradual-off": mark.measure });
       off.addEventListener("input", () => { speed.disabled = off.checked; });
       for (const control of [speed, off]) control.addEventListener("input", changed);
-      return [el("div", { className: "row gradual-row" },
-        el("span", {}, `Bar ${mark.measure}${mark.beat > 1 ? ` beat ${mark.beat}` : ""}: “${mark.text}”,`),
-        el("span", { className: "hint", "data-gradual-until": mark.measure }, gradualUntil(mark)),
-        el("span", {}, "ease to"), speed,
-        el("span", { className: "hint" }, "BPM"),
-        el("label", {}, off, " play as written")),
+      // Two lines (#500): what the score says and where the ramp stops, then the
+      // controls, so the sentence is not broken up by the inputs on a narrow panel.
+      return [el("div", { className: "gradual-row" },
+        el("div", { className: "gradual-head" },
+          el("span", {}, `Bar ${mark.measure}${mark.beat > 1 ? ` beat ${mark.beat}` : ""}: “${mark.text}” — `),
+          el("span", { className: "hint", "data-gradual-until": mark.measure }, gradualUntil(mark))),
+        el("div", { className: "row gradual-controls" },
+          el("span", {}, "ease to"), speed,
+          el("span", { className: "hint" }, "BPM"),
+          el("label", {}, off, " play as written"))),
       ...sameBar.filter((m) => m.measure === mark.measure).map((m) =>
         el("div", { className: "hint", "data-gradual-same-bar": m.measure },
           `Bar ${m.measure}: a second mark, “${m.text}”, eases to ${m.kind === "rit" ? "¾" : "1¼"} speed; `
@@ -3421,11 +3444,15 @@ function publishSection(P, song, refresh, settings, saveNote) {
   const offerPianoOnly = (detail) => {
     const cmd = el("input", { type: "text", readOnly: true, className: "publish-sing-cmd",
       value: singCommand(detail.choir), style: "width:100%", onfocus: (e) => e.target.select() });
+    // One red line and the button; how to keep it sung is folded away (#500),
+    // since nearly every live song is sung and this shows for most of them.
     sungNote.replaceChildren(el("p", { className: "hint err" }),
       el("button", { className: "publish-piano-only", onclick: () => go(detail.choir, true) },
         "Replace with piano only"),
-      el("p", { className: "hint" }, "Or keep it sung: publish by singing again, on the host:"),
-      cmd);
+      el("details", { className: "publish-keep-sung" },
+        el("summary", {}, "Keep it sung instead"),
+        el("p", { className: "hint" }, "Publish by singing it again, on the host:"),
+        cmd));
     sungNote.dataset.choir = detail.choir;
     sungText(detail.choir);
     sungNote.hidden = false;
