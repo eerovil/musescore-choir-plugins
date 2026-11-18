@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unicodedata
 
 from lxml import etree
@@ -115,7 +116,7 @@ def part_clefs(cleaned, count):
     default, else "G" (MuseScore's own default). A list of `count` Nones when the score's singing
     parts are not `count`, since then they cannot be paired with the bundle's."""
     try:
-        from src.score_export.score import _part_name, silent_parts
+        from src.score_export.score import _part_name, _staff_ids, silent_parts
         root = etree.parse(cleaned).getroot()
     except (OSError, etree.XMLSyntaxError, ImportError):
         return [None] * count
@@ -129,7 +130,8 @@ def part_clefs(cleaned, count):
             continue
         clef = None
         own = part.find("Staff")
-        staff = score.find(f"Staff[@id='{own.get('id')}']") if own is not None else None
+        ids = _staff_ids(part)   # by number, or by position for a MuseScore 4 save
+        staff = score.find(f"Staff[@id='{ids[0]}']") if ids else None
         if staff is not None:
             clef = staff.findtext(".//Clef/concertClefType")
         if not clef and own is not None:
@@ -158,16 +160,45 @@ def parse_voices(given):
     return every, named
 
 
-def voices_for(parts, given, voicing, clefs):
-    """The (voice, credit) of each manifest part: a `--voice NAME=` for that part first, then
-    part_voice's own order. A NAME no part has stops the run, so a typo is not sung past."""
+def find_part(key, names):
+    """The part number (from 1) `key` names in `names`: its exact name, else its name in any case
+    when one part has it, else its number. None when it names no part; a name two parts share in
+    other cases is said and stops the run (#483)."""
+    for i, name in enumerate(names, 1):
+        if name == key:
+            return i
+    found = [i for i, name in enumerate(names, 1) if name.casefold() == key.casefold()]
+    if len(found) > 1:
+        sys.exit(f"{key!r} names parts {', '.join(f'{i} {names[i - 1]!r}' for i in found)}; "
+                 "give its exact name or its number")
+    if found:
+        return found[0]
+    if key.isdigit() and 1 <= int(key) <= len(names):
+        return int(key)
+    return None
+
+
+def voices_for(parts, given, voicing, clefs, only=None):
+    """The (voice, credit) of each manifest part: a `--voice NAME=` for that part first (NAME its
+    name in any case, or its number), then part_voice's own order. A NAME no part has stops the
+    run, so a typo is not sung past. With `only` (a part number), just that part's voice is worked
+    out and the others are None, so a --try does not stop on another part's voice (#483)."""
     every, named = given
     names = [p["name"] for p in parts]
-    unknown = [n for n in named if n not in names]
+    chosen, unknown = {}, []
+    for key, voice in named.items():
+        i = find_part(key, names)
+        if i is None:
+            unknown.append(key)
+        elif chosen.get(i, voice) != voice:
+            sys.exit(f"--voice gives part {i} {names[i - 1]!r} both {chosen[i]} and {voice}")
+        else:
+            chosen[i] = voice
     if unknown:
         sys.exit(f"--voice names {', '.join(map(repr, unknown))}, which the song has no part called; "
-                 f"its parts are {', '.join(map(repr, names))}")
-    return [part_voice(n, named.get(n) or every, voicing, clef) for n, clef in zip(names, clefs)]
+                 f"its parts are {', '.join(f'{i} {n}' for i, n in enumerate(names, 1))}")
+    return [part_voice(n, chosen.get(i) or every, voicing, clef) if only in (None, i) else None
+            for i, (n, clef) in enumerate(zip(names, clefs), 1)]
 
 
 def song_voicing(slug):
@@ -414,7 +445,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     - on_part(i, n, name) is told each part as one of its lines starts being sung (progress.py);
     - with trial (part number, first bar, last bar, mp3), only that part's first pass through
       those bars is sung, whole words (try_window()), into that mp3 and nowhere else: no
-      parts/, no words.json (#483)."""
+      parts/, no words.json (#483). Returns (seconds of music tried, seconds it took to sing)."""
     staves = sung_staves(cleaned)
     names = [p["name"] for p in manifest["parts"]]
     if groups:
@@ -436,7 +467,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     switches = lang_from or {}
     if switches and lang not in G2P | {"fi"}:
         sys.exit(f"--lang-from needs --lang fi or one of {', '.join(sorted(G2P))}, not {lang}")
-    plan, unmarked, words = [], [], []
+    plan, unmarked, words, music = [], [], [], None
     for i, (group, name) in enumerate(zip(groups, names), 1):
         if trial and i != trial[0]:
             continue
@@ -465,6 +496,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
             if window is None:
                 sys.exit(f"{name} sings no words in bars {trial[1]}-{trial[2]}")
             lines = {k: cut(v, *window) for k, v in lines.items()}
+            music = window[1] - window[0]
             log(f"trying {name}, bars {trial[1]}-{trial[2]}: {window[0]:.2f}-{window[1]:.2f} s")
         words.append(sung_words(lines.values()))
         two = len(lines) > 1
@@ -529,7 +561,9 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         mark_sung(work, i, line, voices[i - 1], version)
 
     runner = (os.environ.get("REMOTE_RUNNER") or "").strip()
+    began = time.monotonic()
     sing_lines(jobs, here, there, runner, remote_only)
+    took = time.monotonic() - began
     for i, name in enumerate(names, 1):
         lines = [p[3] for p in plan if p[0] == i]
         if not lines:
@@ -541,6 +575,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         log(r.stdout.strip())
         if trial:
             os.replace(mp3, trial[3])   # a listener never finds half a file
+    return (music, took) if trial else None
 
 
 def opens_word(n):
@@ -791,15 +826,22 @@ def parse_trial(text):
 def trial_part(trial, names):
     """(part number, first, last) for a --try: the part by its name (any case) or its number."""
     part, first, last = trial
-    for i, name in enumerate(names, 1):
-        if name == part:
-            return i, first, last
-    found = [i for i, name in enumerate(names, 1) if name.casefold() == part.casefold()]
-    if len(found) == 1:
-        return found[0], first, last
-    if part.isdigit() and 1 <= int(part) <= len(names):
-        return int(part), first, last
-    sys.exit(f"--try: no part {part!r}; the parts are " + ", ".join(f"{i} {n}" for i, n in enumerate(names, 1)))
+    index = find_part(part, names)
+    if index is None:
+        sys.exit(f"--try: no part {part!r}; the parts are " + ", ".join(f"{i} {n}" for i, n in enumerate(names, 1)))
+    return index, first, last
+
+
+def folded_path(out, slug, trial=None):
+    """Where --fold-divisi writes the folded score: under <out>/try/ for a trial, which writes
+    nothing else, so a full run's folded score stays as it was (#483)."""
+    return os.path.join(out, "try", f"{slug}_folded.mscx") if trial else os.path.join(out, f"{slug}_folded.mscx")
+
+
+def trial_said(mp3, music, took):
+    """A trial's last line: the music's length against the time singing it took, which is how
+    fast this machine (or the remote runner) sings (#483)."""
+    return f"Trial: {mp3} ({music:.1f} s of music, sung in {took:.1f} s)"
 
 
 def clear_bundle(out):
@@ -1086,7 +1128,7 @@ def sing_and_publish(a, run_record):
     bundle_dir = os.path.join(out, "try", "bundle") if a.trial else out
     os.makedirs(bundle_dir, exist_ok=True)
     clear_bundle(bundle_dir)   # a trial leaves an earlier full run's bundle and parts/ alone
-    folded = os.path.join(out, f"{a.slug}_folded.mscx") if a.fold_divisi else None
+    folded = folded_path(out, a.slug, a.trial) if a.fold_divisi else None
     manifest, cleaned, groups = build_bundle(ROOT, a.slug, bundle_dir, folded)
     log(f"bundle: {bundle_dir} ({manifest['duration']} s, parts {[p['name'] for p in manifest['parts']]})")
     sung_by = []
@@ -1096,27 +1138,28 @@ def sing_and_publish(a, run_record):
             log(f"pronunciation: the reading chosen for {c.get('word')!r} at bar {c.get('bar')} "
                 f"(time {c.get('n')} there) has no such word there any more; choose it again on the song page")
         voicing = song_voicing(a.slug)
-        sung_by = voices_for(manifest["parts"], a.voices, voicing,
-                             part_clefs(cleaned, len(manifest["parts"])))
         work = os.path.join(out, "try", "work") if a.trial else os.path.join(out, "work")
         os.makedirs(work, exist_ok=True)
         trial = None
         if a.trial:
+            # the part first: a trial needs only its own part's voice (#483)
             index, first, last = trial_part(a.trial, [p["name"] for p in manifest["parts"]])
             name = manifest["parts"][index - 1]["name"]
             mp3 = os.path.join(out, "try", os.path.basename(sung_file(index, name))[:-len(".mp3")]
                                + f"-bars-{first}-{last}.mp3")
             trial = (index, first, last, mp3)
+        sung_by = voices_for(manifest["parts"], a.voices, voicing,
+                             part_clefs(cleaned, len(manifest["parts"])), only=trial and trial[0])
         gpu = not a.cpu and nvidia_dir(python) is not None
         log("singing every line on the remote runner" if a.remote_only
             else f"singing on the {'graphics card' if gpu else 'processor'}")
-        sing(manifest, cleaned, bundle_dir, work, [v for v, _ in sung_by], a.lang, python, ufr_dir, gpu,
+        tried = sing(manifest, cleaned, bundle_dir, work, [v and v[0] for v in sung_by], a.lang, python, ufr_dir, gpu,
              parse_lang_from(a.lang_from), groups, a.resume, a.allow_silent,
              on_part=lambda i, n, name: run_record.step("singing", part=i, parts=n, part_name=name),
              version=run_record.record["version"], remote_only=a.remote_only,
              pronounce=pronounce, trial=trial)
         if trial:
-            log(f"try: {trial[3]}")
+            log(trial_said(trial[3], *tried))
             return
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):

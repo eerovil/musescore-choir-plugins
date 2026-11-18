@@ -318,12 +318,17 @@ def _timeline(root: etree._Element):
                                 seen.add((index, at))
                                 events.append(((index, at), "gradual",
                                                {"kind": kind, "text": text.strip()}))
+                        elif _A_TEMPO.search(text):
+                            # Before the tempo marks: a "Tempo I" MuseScore keeps as a
+                            # <Tempo> carries a number of its own, which may not be the
+                            # opening speed it means.
+                            numbered = element.tag == "Tempo" and element.findtext("tempo")
+                            events.append(((index, at), "a tempo",
+                                           {"first": bool(_TEMPO_I.search(text)),
+                                            "mark": element if numbered else None}))
                         elif element.tag == "Tempo" and element.findtext("tempo"):
                             events.append(((index, at), "tempo",
                                            float(element.findtext("tempo")) * 60))
-                        elif _A_TEMPO.search(text):
-                            events.append(((index, at), "a tempo",
-                                           {"first": bool(_TEMPO_I.search(text))}))
         length = _fraction(top.get("len")) if top.get("len") else Fraction(sig_n, sig_d)
         bars.append((length, _beat(sig_n, sig_d)))
         starts.append(here)
@@ -360,6 +365,10 @@ def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
     for item in settings or ():
         by_bar.setdefault(int(item["measure"]), item)
     opening = opening_bpm(root) or _DEFAULT_BPM
+    for _where, kind, payload in events:
+        # "Tempo I" is the opening speed, whatever number MuseScore stored with it.
+        if kind == "a tempo" and payload["first"] and payload["mark"] is not None:
+            _set_speed(payload["mark"], opening)
     used_bars = set()
     plan: List[Tuple[Tuple[int, Fraction], float]] = []
     for number, (where, kind, payload) in enumerate(events):
@@ -371,7 +380,7 @@ def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
         if setting and setting.get("off"):
             say(f"{payload['text']} at bar {measure}: switched off on the Publish panel")
             continue
-        base = _speed_at(where, events[:number], plan, opening)
+        base = _speed_at(where, events, plan, opening)  # a mark in its own place counts
         end = next((e for e in events[number + 1:] if e[0] > where), None)
         end_at = end[0] if end else (len(bars), Fraction(0))
         beats = _beats_between(bars, where, end_at)
@@ -385,7 +394,11 @@ def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
         for step, at in enumerate(beats, 1):
             plan.append((at, base + (target - base) * step / count))
         if end and end[1] == "a tempo":
-            plan.append((end[0], opening if end[2]["first"] else base))
+            back = opening if end[2]["first"] else base
+            if end[2]["mark"] is not None:
+                _set_speed(end[2]["mark"], back)   # a second mark there would fight it
+            else:
+                plan.append((end[0], back))
         elif end and end[1] == "fermata":
             after = _next_start(starts, end[0])
             following = next((e[0] for e in events[number + 1:] if e[0] > end[0]), None)
@@ -401,9 +414,16 @@ def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
     return written
 
 
+def _set_speed(mark: etree._Element, bpm: float) -> None:
+    """Make a <Tempo> MuseScore plays at `bpm` (its text is left as printed)."""
+    mark.find("tempo").text = format(round(bpm, 2) / 60, ".12g")
+
+
 def _speed_at(where, before, plan, opening) -> float:
     """The speed in force at `where`: the last tempo mark or eased beat before it."""
-    marks = [(at, value) for at, kind, value in before if kind == "tempo" and at <= where]
+    marks = [(at, value if kind == "tempo" else float(value["mark"].findtext("tempo")) * 60)
+             for at, kind, value in before if at <= where and
+             (kind == "tempo" or (kind == "a tempo" and value["mark"] is not None))]
     eased = [(at, value) for at, value in plan if at <= where]
     latest = max(marks[-1:] + eased, key=lambda item: item[0], default=None)
     if eased and latest is not None and eased[-1][0] >= latest[0]:

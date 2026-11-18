@@ -24,7 +24,7 @@ only after every file is there, so the site sees the old version or the whole
 new one, never half. That choir's previous version's files are deleted afterwards.
 
 ```
-songs/<choir>/<slug>/<version>/      version = UTC time, 20261009T120000Z
+songs/<choir>/<slug>/<version>/      version = UTC time + 6 hex, 20261009T120000Z-3fa9c1
   score.musicxml                     the score, exported by MuseScore 3
   score.mid                          the same score's MIDI, which the site plays
   timing.json                        playback time -> score position (below)
@@ -50,7 +50,7 @@ unread.
 
 ```json
 {"slug": "hanget-soi", "title": "Hanget soi", "choir": "jm",
- "version": "20261009T120000Z", "score": "score.musicxml", "timing": "timing.json",
+ "version": "20261009T120000Z-3fa9c1", "score": "score.musicxml", "timing": "timing.json",
  "midi": "score.mid", "parts": [{"name": "T1"}, {"name": "T2"}, ...],
  "duration": 96.375, "composer": "…", "lyricist": "…"}
 ```

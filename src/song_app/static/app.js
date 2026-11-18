@@ -2995,10 +2995,14 @@ function panelPublish(panel, song, P, refresh, actions) {
   // beat to three quarters (rit.) or five quarters (accel.) unless a target BPM is
   // given here, or it is switched off and played as written.
   const savedGradual = Object.fromEntries((pub.gradual || []).map((g) => [g.measure, g]));
-  const marks = song.gradual_marks || [];
+  // A setting is kept per bar and applies to the bar's first mark, so only that one
+  // gets controls; a later mark in the same bar is listed and eases by the default.
+  const allMarks = song.gradual_marks || [];
+  const marks = allMarks.filter((m, i) => allMarks.findIndex((o) => o.measure === m.measure) === i);
+  const sameBar = allMarks.filter((m) => !marks.includes(m));
   const markBars = new Set(marks.map((m) => m.measure));
   const gradualRows = el("div", { className: "gradual-marks", "data-gradual": "" },
-    ...(marks.length ? marks.map((mark) => {
+    ...(marks.length ? marks.flatMap((mark) => {
       const saved = savedGradual[mark.measure] || {};
       const speed = el("input", { type: "number", min: 20, max: 300, step: 1, value: saved.bpm ?? "",
         placeholder: mark.kind === "rit" ? "¾ speed" : "1¼ speed", style: "width:96px",
@@ -3006,10 +3010,14 @@ function panelPublish(panel, song, P, refresh, actions) {
       const off = el("input", { type: "checkbox", checked: !!saved.off, "data-gradual-off": mark.measure });
       off.addEventListener("input", () => { speed.disabled = off.checked; });
       for (const control of [speed, off]) control.addEventListener("input", changed);
-      return el("div", { className: "row gradual-row" },
+      return [el("div", { className: "row gradual-row" },
         el("span", {}, `Bar ${mark.measure}: “${mark.text}”, ease to`), speed,
         el("span", { className: "hint" }, "BPM"),
-        el("label", {}, off, " play as written"));
+        el("label", {}, off, " play as written")),
+      ...sameBar.filter((m) => m.measure === mark.measure).map((m) =>
+        el("div", { className: "hint", "data-gradual-same-bar": m.measure },
+          `Bar ${m.measure}: a second mark, “${m.text}”, eases to ${m.kind === "rit" ? "¾" : "1¼"} speed; `
+          + "the setting above is for the bar's first mark only."))];
     }) : [el("span", { className: "hint" }, "No rit. or accel. in the score.")]),
     ...(pub.gradual || []).filter((g) => !markBars.has(g.measure)).map((g) =>
       el("div", { className: "hint", "data-gradual-stale": g.measure },
@@ -3289,7 +3297,7 @@ function publishSection(P, song, refresh, settings, saveNote) {
   const choirName = (c) => names[c] ? `${names[c]} (${c})` : c;
   const choir = el("select", { className: "publish-choir" },
     el("option", { value: "" }, "— choir —"));
-  choir.addEventListener("change", () => { publishChoice[P] = choir.value; });
+  choir.addEventListener("change", () => { publishChoice[P] = choir.value; showSung(); });
   const choirNote = el("p", { className: "hint publish-choirs" });
   if (song.publish_configured) {
     getJSON("/api/choirs").then((reply) => {
@@ -3308,6 +3316,7 @@ function publishSection(P, song, refresh, settings, saveNote) {
       }
       if (site && !running && !pub.error) status.textContent = publishedText();
       if (sungNote.dataset.choir) sungText(sungNote.dataset.choir);
+      else showSung();
     }).catch((e) => { choirNote.className = "hint publish-choirs err"; choirNote.textContent = e.message; });
   }
   const status = el("p", { className: "hint publish-status" });
@@ -3318,13 +3327,26 @@ function publishSection(P, song, refresh, settings, saveNote) {
     sungNote.querySelector("p").textContent = `The ${choirName(c)} list has a sung version of this song. `
       + "Publishing from here sends piano only and would replace it.";
   };
+  // To keep the voices, sing it again instead: the command a person can copy.
+  const singCommand = (c) => `.venv/bin/python sing_song.py ${song.slug} --publish ${c}`;
   const offerPianoOnly = (detail) => {
+    const cmd = el("input", { type: "text", readOnly: true, className: "publish-sing-cmd",
+      value: singCommand(detail.choir), style: "width:100%", onfocus: (e) => e.target.select() });
     sungNote.replaceChildren(el("p", { className: "hint err" }),
       el("button", { className: "publish-piano-only", onclick: () => go(detail.choir, true) },
-        "Replace with piano only"));
+        "Replace with piano only"),
+      el("p", { className: "hint" }, "Or keep it sung: publish by singing again, on the host:"),
+      cmd);
     sungNote.dataset.choir = detail.choir;
     sungText(detail.choir);
     sungNote.hidden = false;
+  };
+  // A choir this app recorded as sung is said as soon as it is chosen, not only
+  // after a refused publish; the site's own row is still checked on Publish.
+  const showSung = () => {
+    const refused = pub.error?.kind === "sung_on_site" && pub.error.choir === choir.value;
+    if (choir.value && (sites[choir.value]?.sung || refused)) offerPianoOnly({ choir: choir.value });
+    else { sungNote.hidden = true; delete sungNote.dataset.choir; }
   };
   const publishedText = () => listed.map((c) => {
     const s = sites[c];

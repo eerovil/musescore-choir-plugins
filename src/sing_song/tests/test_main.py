@@ -366,6 +366,13 @@ def test_the_clefs_are_read_off_the_cleaned_score_by_singing_part(tmp_path):
     # parts that cannot be paired with the bundle's say nothing, and neither does a missing file
     assert publish_song.part_clefs(str(bass), 3) == [None, None, None]
     assert publish_song.part_clefs(str(tmp_path / "none.mscx"), 1) == [None]
+    # MuseScore 4 saves a part's staves without their number: they are found by position
+    ms4 = tmp_path / "ms4.mscx"
+    root = publish_song.etree.parse(str(bass)).getroot()
+    for staff in root.iterfind("Score/Part/Staff"):
+        del staff.attrib["id"]
+    root.getroottree().write(str(ms4))
+    assert publish_song.part_clefs(str(ms4), 2) == ["G", "F"]
 
 
 def test_voice_names_one_part_or_every_part():
@@ -383,6 +390,24 @@ def test_voice_names_one_part_or_every_part():
                                    [None, None]) == [publish_song.LOW, publish_song.HIGH]
     with pytest.raises(SystemExit, match="'Sooloo', which the song has no part called"):
         publish_song.voices_for(parts, (None, {"Sooloo": "REMY"}), None, ["G", "G", "G"])
+
+
+def test_voice_finds_its_part_in_any_case_or_by_number():
+    parts = [{"name": "Sopraano"}, {"name": "Solo"}, {"name": "Piano"}]
+    clefs = [None, "G", "G"]
+    assert publish_song.voices_for(parts, (None, {"solo": "REMY"}), None, clefs)[1] == publish_song.LOW
+    assert publish_song.voices_for(parts, (None, {"2": "REMY", "3": "LYSE"}), None, clefs) == [
+        publish_song.HIGH, publish_song.LOW, publish_song.HIGH]
+    with pytest.raises(SystemExit, match="both REMY and LYSE"):
+        publish_song.voices_for(parts, (None, {"Solo": "REMY", "2": "LYSE"}), None, clefs)
+    with pytest.raises(SystemExit, match="'4', which the song has no part called"):
+        publish_song.voices_for(parts, (None, {"4": "REMY"}), None, clefs)
+    # two parts that differ only in case: the name must be exact, or the number given
+    twins = [{"name": "Solo"}, {"name": "SOLO"}]
+    with pytest.raises(SystemExit, match="names parts 1 'Solo', 2 'SOLO'"):
+        publish_song.voices_for(twins, (None, {"solo": "REMY"}), None, ["G", "G"])
+    assert publish_song.voices_for(twins, (None, {"SOLO": "REMY"}), None, ["G", "G"]) == [
+        publish_song.HIGH, publish_song.LOW]
 
 
 def test_a_wrong_voice_is_a_usage_error(tmp_path, monkeypatch):
@@ -1111,12 +1136,32 @@ def test_sing_with_a_trial_sings_that_phrase_into_try_only(tmp_path, monkeypatch
     mp3 = tmp_path / "try" / "2-B1-bars-2-2.mp3"
     mp3.parent.mkdir()
     manifest = {"duration": 8, "parts": [{"name": "T1"}, {"name": "B1"}]}
-    publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "fi",
-                      sys.executable, "/ufr", False, trial=(2, 2, 2, str(mp3)))
+    tried = publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "fi",
+                              sys.executable, "/ufr", False, trial=(2, 2, 2, str(mp3)))
+    assert tried[0] == pytest.approx(4.0) and tried[1] >= 0   # bar 2 is four seconds of music
     assert sung == [("p2-high.json", [(50, "re")] * 4)]
     assert mp3.read_text() == "mp3" and os.listdir(mp3.parent) == [mp3.name]
     assert not (bundle / "parts").exists() or not os.listdir(bundle / "parts")
     assert not (bundle / "words.json").exists()
+
+
+def test_a_trial_says_how_long_its_music_is_and_how_long_singing_it_took():
+    assert publish_song.trial_said("/o/try/2-Solo-bars-1-4.mp3", 8.04, 31.26) == \
+        "Trial: /o/try/2-Solo-bars-1-4.mp3 (8.0 s of music, sung in 31.3 s)"
+
+
+def test_a_trials_folded_score_stays_under_try():
+    # --try --fold-divisi must leave a full run's <out>/<slug>_folded.mscx as it was
+    assert publish_song.folded_path("/o", "laulu", ("Solo", 1, 4)) == "/o/try/laulu_folded.mscx"
+    assert publish_song.folded_path("/o", "laulu") == "/o/laulu_folded.mscx"
+
+
+def test_a_trial_needs_only_its_own_parts_voice():
+    # Piano says no voice and has no clef: a full run stops on it, a --try of Solo does not
+    parts = [{"name": "Piano"}, {"name": "Solo"}]
+    with pytest.raises(SystemExit, match="'Piano'"):
+        publish_song.voices_for(parts, (None, {}), None, [None, "F"])
+    assert publish_song.voices_for(parts, (None, {}), None, [None, "F"], only=2) == [None, publish_song.LOW]
 
 
 def test_a_trial_run_keeps_no_record_for_the_song_list(tmp_path):

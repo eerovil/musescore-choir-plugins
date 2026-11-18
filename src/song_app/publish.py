@@ -38,6 +38,7 @@ import io
 import json
 import os
 import re
+import secrets
 import time
 import urllib.error
 import urllib.parse
@@ -815,7 +816,9 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     staging = [c["id"] for c in listed if c.get("staging")]
     if choir not in known:
         raise PublishError(f"Unknown choir {choir!r}; the site has {', '.join(known) or 'none'}.")
-    version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    # The time alone is not unique: two publishes in one second would share a
+    # prefix, and one refused would then delete or overwrite the other's files.
+    version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + secrets.token_hex(3)
     prefix = f"songs/{choir}/{slug}/{version}/"
     parts = [{"name": name, **bundle.layout.get(name, {})} for name in bundle.parts]
     if bundle.sung and set(bundle.sung) != set(bundle.parts):
@@ -872,8 +875,7 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
         row = live_row(client, choir, slug)
         if row_is_sung(row):
             for key in files:
-                if not key.startswith(row.get("prefix") or files[0]):  # same second, same prefix
-                    client.delete(key)
+                client.delete(key)
             raise SungOnSite(choir)
 
     log(f"Registering the song for {choir}")

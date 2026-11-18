@@ -54,6 +54,23 @@ def test_a_piano_publish_over_a_sung_version_is_refused_and_leaves_nothing_behin
     assert cf.objects == before
 
 
+def test_a_refused_piano_publish_in_the_same_second_leaves_the_sung_files_alone(tmp_path, monkeypatch):
+    """The version is the second plus a random part: a piano publish refused in the
+    second the sung one was made must not write over or delete the sung version's files."""
+    import time
+    real = time.gmtime
+    monkeypatch.setattr(publish.time, "gmtime", lambda *a: real(1_800_000_000))
+    cf = FakeCloudflare()
+    sung = _publish_sung(tmp_path, cf)
+    before = dict(cf.objects)
+    with pytest.raises(publish.SungOnSite):
+        publish.publish(slug="laulu", title="Laulu", choir="jm", bundle=_bundle(tmp_path),
+                        client=publish.Cloudflare(CONFIG, cf), published={"jm": sung})
+    assert cf.objects == before
+    [(_slug, _title, prefix, _parts)] = cf.listed("jm")
+    assert prefix == sung["prefix"]
+
+
 def test_confirmed_a_piano_publish_replaces_the_sung_version(tmp_path):
     cf = FakeCloudflare()
     sung = _publish_sung(tmp_path, cf)

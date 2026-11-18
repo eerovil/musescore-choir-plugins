@@ -129,6 +129,14 @@ def test_the_panel_sets_the_speed_or_switches_a_mark_off():
                              (2, 1, 60)]
 
 
+def test_a_bars_setting_is_for_its_first_mark_only():
+    root = _score(_quarters(count=2, b1q1="rit.", b1q3="accel."))
+    add_gradual(root, [{"measure": 1, "bpm": 30, "off": False}])
+    # the rit. eases to 30 by beat 2; the accel. on beat 3 goes up by the default 1¼
+    assert _speeds(root)[:2] == [(1, 1, 60), (1, 2, 30)]
+    assert _speeds(root)[-1] == (2, 4, 37.5)
+
+
 def test_a_mark_with_no_beat_left_is_played_as_written_and_said():
     said = []
     root = _score(_quarters(count=1, b1q4="rit."))
@@ -141,6 +149,43 @@ def test_a_beat_where_nothing_starts_is_skipped_but_still_counted():
     add_gradual(root)
     # beat 3 of bar 2 is inside the half note: no mark, but beat 4 is still the last step
     assert _speeds(root) == [(1, 1, 60), (2, 2, 55), (2, 3, 45), (3, 1, 60)]
+
+
+def _tempo_text(root, bar, beat, text, bpm):
+    """Put a <Tempo> with `text` and a stored number before chord `beat` of `bar`."""
+    voice = root.find(f"./Score/Staff/Measure[{bar}]/voice")
+    chords = [e for e in voice if e.tag == "Chord"]
+    voice.insert(voice.index(chords[beat - 1]), etree.fromstring(
+        f"<Tempo><tempo>{bpm / 60}</tempo><followText>1</followText>"
+        f"<text>{text}</text></Tempo>"))
+
+
+def test_a_tempo_i_kept_as_a_tempo_mark_goes_back_to_the_opening_speed():
+    """MuseScore keeps a typed "Tempo I" as a <Tempo> with a number of its own: the
+    ramp ends there and the music goes back to the opening speed, not that number."""
+    root = _score(_quarters(b1q1="poco a poco rit.", b2q1="rit."))
+    _tempo_text(root, 3, 1, "Tempo I", 120)
+    add_gradual(root)
+    speeds = _speeds(root)
+    assert (3, 1, 60) in speeds and not any(bpm == 120 for _b, _q, bpm in speeds)
+    assert len([s for s in speeds if s[:2] == (3, 1)]) == 1
+
+
+def test_a_tempo_i_with_no_ramp_before_it_still_plays_the_opening_speed():
+    root = _score(_quarters())
+    _tempo_text(root, 2, 1, "Tempo I", 120)
+    add_gradual(root)
+    assert _speeds(root) == [(1, 1, 60), (2, 1, 60)]
+
+
+def test_an_a_tempo_kept_as_a_tempo_mark_goes_back_to_the_speed_before_the_rit():
+    root = _score(_quarters(b2q1="rit."))
+    add_tempo_changes(root, [{"measure": 2, "bpm": 80}])
+    _tempo_text(root, 3, 1, "a tempo", 120)
+    add_gradual(root)
+    speeds = _speeds(root)
+    assert (3, 1, 80) in speeds and (2, 4, 60) in speeds
+    assert not any(bpm == 120 for _b, _q, bpm in speeds)
 
 
 def test_prepare_eases_only_in_its_copy(tmp_path):

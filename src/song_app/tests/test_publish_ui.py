@@ -524,10 +524,21 @@ def test_publishing_over_a_sung_version_asks_first(live, page, tmp_path, recorde
     page.goto(f"{base}/#/song/{slug}")
     section = page.locator(".publish-section")
     section.locator("select.publish-choir").select_option("jm")
+    note = page.locator(".publish-section .publish-sung")
+    if recorded:
+        # the app's record says sung: said as soon as the choir is chosen
+        expect(note).to_be_visible()
+        section.locator("select.publish-choir").select_option("")
+        expect(note).to_be_hidden()
+        section.locator("select.publish-choir").select_option("jm")
+        expect(note).to_be_visible()
+    else:
+        expect(note).to_be_hidden()
     section.locator("button.publish-btn").click()
 
-    note = page.locator(".publish-section .publish-sung")
     expect(note).to_be_visible(timeout=15000)
+    expect(note.locator("input.publish-sing-cmd")).to_have_value(
+        f".venv/bin/python sing_song.py {slug} --publish jm")
     expect(note).to_contain_text("The Joensuun Mieslaulajat (jm) list has a sung version of this song.")
     expect(note).to_contain_text("would replace it")
     assert all(p["sung"] for p in __import__("json").loads(cf.listed("jm")[0][3]))
@@ -589,6 +600,31 @@ def test_the_scores_rit_is_listed_and_its_setting_saved(live, page, size):
     expect(page.locator("[data-save-note]")).to_have_text("Saved")
     assert state.load(slug).data["publish"]["gradual"] == [{"measure": 1, "bpm": 50, "off": True}]
     assert errors == []
+
+
+def test_a_second_mark_in_one_bar_is_listed_without_controls_of_its_own(live, page):
+    """#483: a setting is per bar and applies to the bar's first mark, so a second
+    mark in that bar is said, not given controls that would edit the first's."""
+    base, slug, _cf = live
+    song = state.load(slug)
+    root = etree.parse(song.cleaned_path()).getroot()
+    voice = root.find("./Score/Staff/Measure/voice")
+    chords = [i for i, e in enumerate(voice) if e.tag == "Chord"]
+    voice.insert(chords[2], etree.fromstring("<StaffText><text>accel.</text></StaffText>"))
+    voice.insert(chords[0], etree.fromstring("<StaffText><text>rit.</text></StaffText>"))
+    marked = song.path("hanget-two.mscx")
+    with open(marked, "wb") as fh:
+        fh.write(etree.tostring(root))
+    with state.song_lock(slug):
+        song = state.load(slug)
+        song.data["cleaned"] = os.path.basename(marked)
+        song.save()
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator("[data-gradual] .gradual-row")).to_have_count(1)
+    expect(page.locator("[data-gradual] .gradual-row")).to_contain_text("“rit.”")
+    expect(page.locator("[data-gradual-bpm='1']")).to_have_count(1)
+    expect(page.locator("[data-gradual-same-bar='1']")).to_contain_text("“accel.”")
 
 
 def test_a_score_with_no_rit_says_so(live, page):
