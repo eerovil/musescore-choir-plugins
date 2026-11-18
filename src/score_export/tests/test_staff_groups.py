@@ -120,3 +120,19 @@ def test_a_b_part_that_only_follows_its_main_part_is_read_off_the_page():
     root = _score(names, system_map=system_map)
     assert staff_groups.proposal(root) == (
         [("S1", "S1b"), ("A1", "A2")], "page, per system")
+
+
+def test_a_one_to_one_record_with_gapped_staff_numbers_is_still_no_reading():
+    # The record is keyed by the input's own staff ids, which may skip one.
+    root = _score(["S1", "S2", "A1", "A2", "T", "B"],
+                  staff_map="1:1;2:2;4:3;5:4;6:5;7:6")
+    assert staff_groups.proposal(root)[1] == "part names"
+
+
+def test_a_per_system_map_with_no_shared_staff_anywhere_is_no_reading():
+    names = ["S1", "S2", "A1", "A2", "T", "B"]
+    system_map = [{"start": 1, "end": 8,
+                   "map": {str(i): [i] for i in range(1, 7)}}]
+    root = _score(names, system_map=system_map)
+    assert staff_groups.proposal(root) == (
+        [("S1", "S2"), ("A1", "A2")], "part names")

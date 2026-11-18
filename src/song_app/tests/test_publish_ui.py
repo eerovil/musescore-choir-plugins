@@ -649,3 +649,32 @@ def test_a_score_with_no_rit_says_so(live, page):
     page.set_viewport_size({"width": 1280, "height": 900})
     page.goto(f"{base}/#/song/{slug}")
     expect(page.locator("[data-gradual]")).to_have_text("No rit. or accel. in the score.")
+
+
+@pytest.mark.parametrize("proposal,note", [
+    ({"groups": [], "source": "page", "parts": 6, "skipped": [["S1", "S2"]]},
+     "the page shares S1+S2, but they sing too many voices for one staff"),
+    ({"groups": [], "source": "page", "parts": 6, "skipped": []},
+     "the page prints every part on its own staff"),
+    ({"groups": [], "source": "part names", "parts": 6, "skipped": []},
+     "no pairs guessed from the part names"),
+], ids=["refused", "apart", "no-guess"])
+def test_shared_staves_note_says_only_what_was_read(live, page, monkeypatch, tmp_path,
+                                                      proposal, note):
+    """#482: 'every part on its own staff' only when a record of the page found no
+    pairs; refused pairs and an empty guess are said as such."""
+    base, slug, _cf = live
+    from src.song_app.tests.test_publish import _six_parts
+    song = state.load(slug)
+    with open(_six_parts(tmp_path), "rb") as src, open(song.cleaned_path(), "wb") as dst:
+        dst.write(src.read())
+    fingerprint = state.file_fingerprint(song.cleaned_path())
+    song.data.update(review={"approved_against": fingerprint}, cleaned_fingerprint=fingerprint)
+    song.save()
+    monkeypatch.setattr(publish, "staff_group_proposal", lambda *a, **k: dict(proposal))
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator(".staff-groups-note")).to_contain_text(note)
+    assert errors == []

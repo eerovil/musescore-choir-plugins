@@ -84,9 +84,9 @@ def _from_staff_map(recorded: str, singing: List[int]) -> Optional[List[List[int
     """Pairs off the printed staves the clean recorded, or None when the record
     says nothing about the page.
 
-    A map where every printed staff became the one staff of the same number is
-    what a clean writes when it split nothing: a score handed over one part to a
-    staff. That is a fact about the file, not the page, so it is no reading (#482).
+    A map where every printed staff became exactly one staff is what a clean
+    writes when it split nothing: a score handed over one part to a staff. That is
+    a fact about the file, not the page, so it is no reading (#482).
     """
     groups = []
     listed = set()
@@ -94,13 +94,12 @@ def _from_staff_map(recorded: str, singing: List[int]) -> Optional[List[List[int
     for entry in recorded.split(";"):
         if ":" not in entry:
             return None
-        printed, _, rest = entry.partition(":")
         try:
-            ids = [int(v) for v in rest.split(",") if v.strip()]
-            one_to_one = one_to_one and ids == [int(printed)]
+            ids = [int(v) for v in entry.split(":", 1)[1].split(",") if v.strip()]
         except ValueError:
             return None
         listed.update(ids)
+        one_to_one = one_to_one and len(ids) == 1
         groups += _pairs([s for s in ids if s in singing])
     if one_to_one:
         return None
@@ -113,7 +112,9 @@ def _from_system_map(recorded: str, singing: List[int]) -> Optional[List[List[in
 
     A part that only borrows another's notes in a system (`follow`, a b-part the
     page prints in unison with its main part) sits on its main part's printed
-    staff there, so it is listed and shares that staff (#482).
+    staff there, so it is listed and shares that staff (#482). A map where no
+    printed staff ever holds two parts is, like a 1:1 `lyricsStaffMap`, the file's
+    one part to a staff and no reading of the page.
     """
     try:
         systems = json.loads(recorded)
@@ -136,7 +137,7 @@ def _from_system_map(recorded: str, singing: List[int]) -> Optional[List[List[in
                         shared[(upper, lower)] = shared.get((upper, lower), 0) + bars
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
-    if not listed >= set(singing):
+    if not listed >= set(singing) or not shared:
         return None
     used: set = set()
     groups = []

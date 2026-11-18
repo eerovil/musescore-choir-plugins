@@ -3226,9 +3226,12 @@ function panelPublish(panel, song, P, refresh, actions) {
     sharedNote.className = `hint staff-groups-note${shared.message ? " err" : ""}`;
     sharedNote.textContent = shared.message || (sharedAuto
       ? (shared.source === "part names"
-        ? "guessed from the part names — check against the PDF"
+        ? (shared.groups?.length ? "guessed from the part names — check against the PDF"
+          : "no pairs guessed from the part names — check against the PDF")
         : shared.groups?.length ? "as the page prints them"
-        // Only a record of the page may say the page prints no shared staff (#482).
+        // Only a record of the page that found no pairs may say so (#482).
+        : shared.skipped?.length
+          ? `the page shares ${groupsText(shared.skipped)}, but they sing too many voices for one staff`
         : ["page", "page, per system"].includes(shared.source)
           ? "the page prints every part on its own staff" : "no pairing proposed — check against the PDF")
       : "set by hand");
