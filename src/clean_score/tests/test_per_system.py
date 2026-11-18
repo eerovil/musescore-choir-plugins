@@ -909,3 +909,16 @@ def test_the_prompt_keeps_a_rest_system_and_does_not_ask_about_it():
     assert answers[1] == {ALL_REST: REST}
     rest_rows = len(next(l for l in layouts if l.index == 1).staves)
     assert len(asked) == sum(len(l.staves) for l in layouts) - rest_rows
+
+
+def test_a_terminal_clean_keeps_the_names_saved_beside_the_tick():
+    # Web save (tick + names) -> terminal re-clean -> untick: the names are back.
+    ticked = dict(RESTING)
+    ticked[1] = {ALL_REST: REST, **ANSWERS[1]}
+    save_answers(FIXTURE, ticked)
+    answers = prompt_for_answers(layout_for_file(FIXTURE), ask=lambda _p: "",
+                                 out=open(os.devnull, "w"))
+    assert answers[1] == ticked[1]
+    save_answers(FIXTURE, answers)   # the clean saves what the prompt returned
+    untick = {k: v for k, v in saved_answers(FIXTURE)[1].items() if k != ALL_REST}
+    assert untick == ANSWERS[1]

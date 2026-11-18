@@ -1336,7 +1336,8 @@ state model are in `DESIGN.md`.
   switched off and saved as `{"*": "rest"}` beside whatever was typed there
   (`per_system.ALL_REST`, read back by `per_system.parse_answers`), so unticking gives
   the names back. The clean rests every part through it and the names carry past it.
-  The terminal prompt (`per_system_prompt`) keeps such a system and does not ask about it.
+  The terminal prompt (`per_system_prompt`) keeps such a system, and the names saved beside the
+  tick, and does not ask about it.
 - **Heavy slots** (`heavy_slot.py`). A homr read or a homr install is every core the
   machine has, and so is an agent's test suite — several at once is all of them slow
   rather than any finishing sooner. AgentDeck owns that queue (a small pool of
@@ -2589,7 +2590,7 @@ refuses to guess. **A system with no voices** (#482) is answered `{"*": "rest"}`
 it declares nothing, every part gets measure rests there, the next system inherits the
 names from the one before it, `dropped_voices` reports nothing in it, and its lyric map
 entry is `"map": {}` with `"rest": true` (also written for a system with no staves).
-refuses to guess. **A line left unnamed is said out loud** (#330): the rebuild takes one name per
+**A line left unnamed is said out loud** (#330): the rebuild takes one name per
 line, top first, so a two-voice staff answered with one name keeps the upper line and
 loses the rest — usually an answer typed once in system 1 and carried into a system
 where the page prints two lines there (Lemmen nosto lost ~150 alto notes that way).

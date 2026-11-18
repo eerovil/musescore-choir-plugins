@@ -42,9 +42,11 @@ def prompt_for_answers(
     for layout in layouts:
         print(f"\n— System {layout.index + 1}: measures {layout.start}-{layout.end} —", file=out)
         if layout.rest:
-            # Ticked "No voices here" in the app (#482): kept, not asked again.
+            # Ticked "No voices here" in the app (#482): kept, not asked again, and
+            # the names saved beside the tick kept too, so unticking gives them back.
             print("   marked \"No voices here\" (every part rests); kept", file=out)
-            answers[layout.index] = {ALL_REST: REST}
+            answers[layout.index] = {ALL_REST: REST, **{
+                row.staff_id: row.answer for row in layout.staves if row.answer}}
             continue
         for row in layout.staves:
             print(f"   staff {row.staff_id}: {row.voices} voice(s) — {row.summary}", file=out)
