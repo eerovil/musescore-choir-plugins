@@ -7,6 +7,8 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A `delbar` fix refused by a repeat sign in the bar now says how to take the sign off first: an
+  `unrepeat` entry before it, written out with the bar and which sign. (#492)
 - A page with no music to sing, such as a title page, can be left out of a scan with a
   *Leave this page out* switch in the Systems editor. Before, the Scan button stayed off until
   every page had a system drawn on it, so the page had to be cut from the PDF first. (#490)

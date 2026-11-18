@@ -143,6 +143,48 @@ def test_a_bar_with_music_in_it_refuses(root):
         apply_fixes(root, [fix])
 
 
+def _start_repeat_on_bar_4(root):
+    for staff in root.findall(".//Score/Staff"):
+        staff.findall("Measure")[3].insert(0, etree.Element("startRepeat"))
+
+
+def test_a_repeat_sign_refuses_naming_unrepeat(root):
+    """#480: a scan read a double bar as a repeat, and the repeat kept the bar in."""
+    _start_repeat_on_bar_4(root)
+    with pytest.raises(FixError, match=r'a repeat starts in this bar.*`unrepeat`.*'
+                                       r'"measure": 4, "which": "start"'):
+        apply_fixes(root, [DELBAR])
+    assert len(_staff(root, 1).findall("Measure")) == 5
+
+
+def test_unrepeat_then_delbar_in_file_order_takes_the_bar_out(root):
+    _start_repeat_on_bar_4(root)
+    apply_fixes(root, [{"kind": "unrepeat", "measure": 4, "which": "start", "why": "x"},
+                       DELBAR])
+    assert len(_staff(root, 1).findall("Measure")) == 4
+    assert root.find(".//startRepeat") is None
+
+
+def test_a_bar_with_both_repeat_signs_names_both_unrepeat_entries(root):
+    _start_repeat_on_bar_4(root)
+    for staff in root.findall(".//Score/Staff"):
+        staff.findall("Measure")[3].append(etree.Element("endRepeat"))
+    with pytest.raises(FixError) as refused:
+        apply_fixes(root, [DELBAR])
+    said = str(refused.value)
+    assert "a repeat starts and a repeat ends in this bar" in said
+    assert '"which": "start"' in said and '"which": "end"' in said
+
+
+def test_a_repeat_sign_unrepeat_cannot_reach_refuses_without_offering_it(root):
+    """`unrepeat` takes the signs on the bar itself; one nested deeper is not offered it."""
+    for staff in root.findall(".//Score/Staff"):
+        staff.findall("Measure")[3].find("voice").insert(0, etree.Element("startRepeat"))
+    with pytest.raises(FixError, match="a repeat sign stands inside this bar") as refused:
+        apply_fixes(root, [DELBAR])
+    assert "unrepeat" not in str(refused.value)
+
+
 def test_a_spanner_ending_in_the_bar_refuses():
     bars = _bars(False)
     bars[2] = _chord("half", 64) + _chord("half", 65, inside=SLUR_OUT.replace("2<", "1<"))
