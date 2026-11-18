@@ -7,6 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- Words typed for a part now land on the right bars after bars were added to a cleaned
+  score in MuseScore: the systems are counted again from the score's own line breaks. When
+  they cannot be, the Fix panel says the words map is out of date and asks for a clean. (#482)
 - A song can be sung in Latin the German way (soft c as "ts", h sounded, qu as "kv"): pick
   **Latin (German style)** as its language. The Pronunciation list now takes a reading in the
   voice's own sounds for a word in any language the singer reads (Latin, German, Swedish,

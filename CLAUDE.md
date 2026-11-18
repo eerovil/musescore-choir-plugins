@@ -2574,6 +2574,18 @@ by the OCR's source-staff order, which can be shuffled. `lyric_txt.py` import re
 (`_read_lyrics_system_map`) and resolves each JSON block via the map for the system
 covering its `measure_start`. Tested against `tests/test_files/laulun_aika.mscx` (a
 real converted score kept as a fixture).
+**Bars added in MuseScore after the clean** (#482): the map's bar ranges were written at
+the clean, so a bar added later shifted every later system's words. Every reader goes
+through `per_system.read_system_map(root)` (lyric import, the lyric editor's system labels,
+`bar_readings`, `implode` and `staff_groups`). When the map's last bar is not the score's
+bar count and the score's own line breaks give as many systems as the map has entries, the
+ranges are re-read off the breaks, in memory only (`MAP_RECOUNTED`); otherwise the map is
+`MAP_STALE`, used as recorded, and the Fix panel shows one row (`problems.STALE_MAP`, kind
+`stale-map`) asking for a clean or an `insbar`/`delbar` entry. A map that still ends on the
+last bar is used as recorded, even when a break moved. On this host's songs: 6 stale, none
+recounted. The Fix rows read their printed systems through `pipeline._printed_system_bounds`
+too (`problems._bounds`), so a row's system and its staff come off one numbering, recorded
+`delbar`/`insbar` moves included.
 Caveat: the musical-rank ordering is wrong when an ossia/extra voice is *printed on top*
 (e.g. T3 above T1/T2) — then the PDF's printed numbering doesn't match rank order, so a
 staff_number-based JSON maps to the wrong voice. The robust fix is to address voices in

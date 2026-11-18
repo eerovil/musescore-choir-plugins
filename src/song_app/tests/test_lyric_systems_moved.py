@@ -75,3 +75,24 @@ def test_the_import_stops_a_line_at_the_moved_system_end(tmp_path):
         {"measure_start": 3, "lyrics": [{"text": "e f g h", "parts": ["T1"]}]}]))
     result = pipeline.run_lyric_import(str(lyrics), str(score), song_dir=str(tmp_path))
     assert result.mismatches == []
+
+
+def test_bars_added_in_musescore_take_the_score_s_own_breaks(tmp_path):
+    # #482: a bar added by hand in system 1 is in no insbar, so the labels still
+    # say 1-2, 3, 4-5; the cleaned score's breaks say 1-3, 4, 5-6.
+    bounds(tmp_path, [(1, 2), (3, 3), (4, 5)])
+    root = build_score(staff_ids=(1, 2), measures=6, line_breaks=(3, 4, 6), system_map=[
+        {"start": 1, "end": 2, "map": {"1": [1]}},
+        {"start": 3, "end": 3, "map": {"1": [2]}},
+        {"start": 4, "end": 5, "map": {"1": [1]}}])
+    assert pipeline._printed_systems(str(tmp_path), root) == [(1, 3), (4, 4), (5, 6)]
+    assert pipeline._printed_systems(str(tmp_path)) == [(1, 2), (3, 3), (4, 5)]
+
+
+def test_a_stale_map_leaves_the_labels(tmp_path):
+    bounds(tmp_path, [(1, 2), (3, 3), (4, 5)])
+    root = build_score(staff_ids=(1, 2), measures=6, line_breaks=(3, 6), system_map=[
+        {"start": 1, "end": 2, "map": {"1": [1]}},
+        {"start": 3, "end": 3, "map": {"1": [2]}},
+        {"start": 4, "end": 5, "map": {"1": [1]}}])
+    assert pipeline._printed_systems(str(tmp_path), root) == [(1, 2), (3, 3), (4, 5)]

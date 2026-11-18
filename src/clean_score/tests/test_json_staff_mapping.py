@@ -142,3 +142,75 @@ def test_names_win_over_a_printed_map_that_disagrees():
     root = build_score(staff_ids=(1, 2, 3, 4), names=NAMES, staff_map="1:3;2:1;3:2;4:4")
     placed = _place(root, [{"parts": ["T3"], "staff_number": 2, "text": "mine"}])
     assert placed == {3: "mine"}
+
+
+# --------------------------------------------------------------------------- #
+# a map written at Clean, bars added by hand in MuseScore afterwards (#482)
+# --------------------------------------------------------------------------- #
+
+from src.clean_score.utils import per_system  # noqa: E402
+
+# Printed staff 1 is part 1 in systems 1 and 3 and part 2 in system 2.
+THREE_SYSTEMS = [
+    {"start": 1, "end": 2, "map": {"1": [1]}},
+    {"start": 3, "end": 4, "map": {"1": [2]}},
+    {"start": 5, "end": 6, "map": {"1": [1]}},
+]
+EIGHT = " ".join(f"s{i}" for i in range(8))
+
+
+def _bars_with_words(root, sid):
+    from src.clean_score.lyric_txt import export_lyrics
+    bars, measure = [], None
+    for line in export_lyrics(root).splitlines():
+        line = line.strip()
+        if line.startswith("# Measure"):
+            measure = int(line.split()[-1])
+        elif line and int(line.split("[")[0].split(":")[0]) == sid:
+            if any(t != "_" for t in line.partition(":")[2].split()):
+                bars.append(measure)
+    return bars
+
+
+def test_a_bar_added_in_system_1_moves_system_2s_words_with_it():
+    # System 2 is one bar. One bar added by hand in system 1, its line breaks kept:
+    # 6 bars, systems 1-3, 4, 5-6, while the map still says 1-2, 3, 4-5 — read as
+    # stored, bar 4 is system 3's and the words would go to part 1.
+    root = build_score(staff_ids=(1, 2), measures=6, system_map=[
+        {"start": 1, "end": 2, "map": {"1": [1]}},
+        {"start": 3, "end": 3, "map": {"1": [2]}},
+        {"start": 4, "end": 5, "map": {"1": [1]}},
+    ], line_breaks=(3, 4, 6))
+    read = per_system.read_system_map(root)
+    assert read.state == per_system.MAP_RECOUNTED
+    assert [(e["start"], e["end"]) for e in read.entries] == [(1, 3), (4, 4), (5, 6)]
+
+    result = place_lyrics(root, [{"measure_start": 4, "measure_end": 4, "lyrics": [
+        {"staff_number": 1, "position": "below", "text": EIGHT}]}])
+    assert _bars_with_words(root, 2) == [4]
+    assert _bars_with_words(root, 1) == []
+    assert not result.mismatches
+
+
+def test_a_bar_added_and_a_break_taken_out_is_stale():
+    root = build_score(staff_ids=(1, 2), measures=7, system_map=THREE_SYSTEMS,
+                       line_breaks=(3, 7))
+    read = per_system.read_system_map(root)
+    assert read.state == per_system.MAP_STALE
+    assert [(e["start"], e["end"]) for e in read.entries] == [(1, 2), (3, 4), (5, 6)]
+
+
+def test_a_break_moved_with_no_bar_added_is_left_alone():
+    root = build_score(staff_ids=(1, 2), measures=6, system_map=THREE_SYSTEMS,
+                       line_breaks=(3, 4, 6))
+    read = per_system.read_system_map(root)
+    assert read.state == per_system.MAP_AS_RECORDED
+    assert [(e["start"], e["end"]) for e in read.entries] == [(1, 2), (3, 4), (5, 6)]
+
+
+def test_the_score_itself_is_not_rewritten():
+    root = build_score(staff_ids=(1, 2), measures=7, system_map=THREE_SYSTEMS,
+                       line_breaks=(3, 5, 7))
+    per_system.read_system_map(root)
+    tag = root.find(".//metaTag[@name='lyricsSystemMap']")
+    assert '"start":3' in tag.text

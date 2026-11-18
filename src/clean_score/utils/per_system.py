@@ -1054,6 +1054,81 @@ def _write_lyric_metadata(
     score.insert(insert_at, meta)
 
 
+#: `read_system_map`'s answer about the bars the map counts.
+MAP_AS_RECORDED = ""
+#: Bars were added or removed after Clean, and the line breaks gave the new ranges.
+MAP_RECOUNTED = "recounted"
+#: Bars were added or removed after Clean, and the line breaks cannot say where.
+MAP_STALE = "stale"
+
+
+@dataclass
+class SystemMap:
+    """`lyricsSystemMap` as stored, each entry's `start`/`end` put in today's bars.
+
+    `entries` are the stored JSON objects (copies), so every reader keeps the fields
+    it uses; `state` is one of the `MAP_*` values.
+    """
+
+    entries: List[Dict]
+    state: str = MAP_AS_RECORDED
+
+
+def has_system_map(root: etree._Element) -> bool:
+    """Whether the score carries a `lyricsSystemMap`, readable or not."""
+    score = _score_of(root)
+    return score is not None and any(
+        tag.get("name") == "lyricsSystemMap" and (tag.text or "").strip()
+        for tag in score.findall("metaTag"))
+
+
+def read_system_map(root: etree._Element) -> Optional[SystemMap]:
+    """The score's per-system lyric map, its bar ranges checked against the score.
+
+    The one reader of `lyricsSystemMap` (#482). The map is written at Clean and
+    counts the bars as they were then. A bar a recorded `insbar`/`delbar` moves is
+    renumbered in the metaTag itself; one added or removed by hand in MuseScore is
+    not, and every later system's words then land on the wrong bars.
+
+    So when the map's last bar is no longer the score's last bar, its ranges are read
+    again off the top staff's line breaks (the rebuild puts the printed breaks there,
+    and MuseScore keeps a break on its bar) — in memory only, so a later save cannot
+    fight it — if the score has as many systems as the map. With another count the
+    map comes back as stored and `state` says it is stale. A map whose last bar is
+    still the score's is left alone: a line break moved or taken out in MuseScore
+    without a bar added is a layout choice, not a change to the page (two songs here
+    had one when this was written). None with no map, or one that does not parse.
+    """
+    score = _score_of(root)
+    if score is None:
+        return None
+    raw = None
+    for tag in score.findall("metaTag"):
+        if tag.get("name") == "lyricsSystemMap" and (tag.text or "").strip():
+            try:
+                raw = json.loads(tag.text)
+            except ValueError:
+                return None
+            break
+    if not isinstance(raw, list) or not raw:
+        return None
+    entries = [dict(e) for e in raw if isinstance(e, dict)]
+    try:
+        last = max(int(e["end"]) for e in entries)
+    except (KeyError, TypeError, ValueError):
+        return SystemMap(entries)
+    staff = score.find("Staff")
+    bars = len(staff.findall("Measure")) if staff is not None else 0
+    if not bars or last == bars:
+        return SystemMap(entries)
+    ranges = system_ranges(root)
+    if len(ranges) != len(entries):
+        return SystemMap(entries, MAP_STALE)
+    for entry, rng in zip(entries, ranges):
+        entry["start"], entry["end"] = rng.start, rng.end
+    return SystemMap(entries, MAP_RECOUNTED)
+
+
 # --------------------------------------------------------------------------- #
 # The one entry point
 # --------------------------------------------------------------------------- #

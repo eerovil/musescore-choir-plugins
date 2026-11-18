@@ -46,7 +46,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from lxml import etree
 
 from src.clean_score import lyric_txt
-from src.clean_score.utils import score_fixes
+from src.clean_score.utils import per_system, score_fixes
 from src.clean_score.utils.score_fixes import FixError
 
 from . import omr_systems, pipeline, state
@@ -215,18 +215,19 @@ def printed_staves(root: etree._Element) -> List[Tuple[int, int, Dict[int, List[
     says nothing, rather than a guess. An ordinary clean's lyricsStaffMap is keyed by
     the input staff, which is the page position already. Empty with no record.
     """
-    score = root.find(".//Score") if root.tag != "Score" else root
-    tags = {m.get("name"): m.text for m in (score.findall("metaTag") if score is not None else [])}
-    if (tags.get("lyricsSystemMap") or "").strip():
+    read = per_system.read_system_map(root)
+    if read is not None:
         try:
             out = []
-            for entry in json.loads(tags["lyricsSystemMap"]):
+            for entry in read.entries:
                 source = {int(k): [int(x) for x in v] for k, v in entry["source"].items()}
                 count = int(entry.get("staves") or max(source, default=0))
                 out.append((int(entry["start"]), int(entry["end"]), source, count))
             return out
         except (KeyError, TypeError, ValueError, AttributeError):
             return []
+    if per_system.has_system_map(root):
+        return []  # a map that does not parse says nothing, rather than a guess
     staves = lyric_txt._read_lyrics_staff_map(root)
     return [(1, 10 ** 9, staves, len(staves))] if staves else []
 
