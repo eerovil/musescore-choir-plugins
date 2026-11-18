@@ -357,6 +357,18 @@ def test_a_warning_is_dismissed_under_its_box_and_one_no_box_shows_is_listed(liv
     unboxed = page.locator(".lyunboxed .lyerr")
     expect(unboxed).to_contain_text("T3")
     _shot(page, "editor-dismiss.png")
+    # On a phone the button stays on screen beside its warning.
+    page.set_viewport_size(PHONE)
+    for button in (under.get_by_role("button", name="Dismiss"),
+                   unboxed.get_by_role("button", name="Dismiss")):
+        button.scroll_into_view_if_needed()
+        box = button.bounding_box()
+        assert box and box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"]
+    # The stage list slides off as the window narrows; let it go before the picture.
+    page.wait_for_function(
+        "() => document.querySelector('.ws > .stagebar').getBoundingClientRect().right <= 0")
+    _shot(page, "editor-dismiss-phone.png")
+    page.set_viewport_size(DESKTOP)
     under.get_by_role("button", name="Dismiss").click()
     expect(under).to_have_count(0, timeout=30_000)
     expect(unboxed).to_have_count(1)
