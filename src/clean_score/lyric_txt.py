@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
@@ -772,6 +772,8 @@ def _block_lines(
                 lyric.get("position"))
     texts: Dict[Tuple[int, int, int, bool], List[str]] = {}
     sources: Dict[Tuple[int, int, int, bool], List[Tuple[str, ...]]] = {}
+    placed_ids: set = set()      # the places this block's placed lines stand on
+    unplaced: List[Tuple[int, Mismatch]] = []  # unknown_part lines with no place
     for lyric in block_lyrics:
         verse = _int_or(lyric.get("verse"), 1)
         voice = _int_or(lyric.get("voice"), 1)
@@ -802,6 +804,8 @@ def _block_lines(
             seen.extend(line_id)
         if not by_name and valid is not None:
             targets = [t for t in targets if t in valid]
+        if targets:
+            placed_ids.update(line_id)
         if unresolved and notes is not None:
             # A name no part carries, or two parts share (#482): said, and the line
             # falls back to its staff_number, or is not placed when it has none.
@@ -819,13 +823,18 @@ def _block_lines(
             else:
                 outcome = ("the line was not placed, since it has no staff_number "
                            "of this song to place it by.")
-            notes.append(Mismatch(
+            note = Mismatch(
                 kind=UNKNOWN_PART,
                 message=(f"Measure {measure_start}{where}: \"parts\" names {said}, "
                          f"which is not one part of this song{numbers}; {outcome}"),
                 measure_start=measure_start,
                 measure_end=measure_end or measure_start,
-                verse=verse, voice=voice, lines=line_id))
+                verse=verse, voice=voice, lines=line_id)
+            if targets:
+                notes.append(note)
+            else:
+                unplaced.append((len(notes), note))
+                notes.append(note)
         # A line naming its part stays in its own system (#482). The editors' boxes
         # and cells name theirs too, and still run on into an empty next system
         # (#393), so a box is not "named" here.
@@ -834,6 +843,21 @@ def _block_lines(
             k = (staff, voice, verse, named)
             texts.setdefault(k, []).append(text)
             sources.setdefault(k, []).append(line_id)
+    # A line placed nowhere because its name is wrong has no place to be known by,
+    # and correcting the name gives it one (#482). It stands for the places of its
+    # system no other line of the block reached (any place, when every one was), so
+    # a correction sent to one of those answers its warning, while a line for a
+    # place the block had already given words to does not.
+    if unplaced and notes is not None:
+        if block_map:
+            every = [_place(t, block_map) for outs in block_map.values() for t in outs]
+        else:
+            every = [f"staff {t}" for t in sorted(valid or ())]
+        for at, note in unplaced:
+            head = f"m{measure_start} verse {note.verse} voice {note.voice}"
+            ids = [f"{head} {pl}" for pl in dict.fromkeys(every) if pl]
+            free = [i for i in ids if i not in placed_ids] or ids
+            notes[at] = replace(note, lines=tuple(dict.fromkeys(tuple(note.lines) + tuple(free))))
     # A named line and a staff_number line landing on one part, voice and verse are
     # not combined: the named one is used and the other is said (#482).
     for (staff, voice, verse, by_name) in list(texts):

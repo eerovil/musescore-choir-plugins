@@ -139,13 +139,15 @@ def test_correcting_one_of_two_lines_keeps_the_others_warning():
                                           if "staff 1" in w["lines"][0]]
 
 
-def test_an_unknown_part_warning_stays_until_its_own_line_is_sent_again():
+def test_an_unknown_part_warning_is_answered_by_its_line_sent_again_corrected_or_not():
+    """A name-only line placed nowhere stands for the places its paste left without
+    words, so its name corrected answers it, and so does the line sent again (#482)."""
     root = _two_tenors_t2_resting_in_bar_2()
     first = _paste(root, {"text": "yk-si", "parts": ["Typo"]})
     old = [m.to_dict() for m in first.mismatches]
     assert [w["kind"] for w in old] == ["unknown_part"]
-    other = _paste(root, {"text": "yk-si", "parts": ["T1"]})
-    assert server._kept_warnings(old, other) == old
+    corrected = _paste(root, {"text": "yk-si", "parts": ["T1"]})
+    assert server._kept_warnings(old, corrected) == []
     again = _paste(root, {"text": "yk-si", "parts": ["Typo"]})
     assert server._kept_warnings(old, again) == []
 
@@ -235,3 +237,54 @@ def test_a_two_lines_warning_is_answered_through_the_api_and_the_song_reaches_re
     data = json.loads((dest / ".song.json").read_text())
     assert data["stage"] == "review"
     assert data["lyrics"]["warnings"] == []
+
+
+def _post_blocks(api, slug, blocks):
+    r = api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps(blocks)})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_wrong_name_corrected_on_a_name_only_line_reaches_review(song):
+    """The review's case: a line with only "parts", the name misspelt, is pasted again
+    with the name corrected; its warning is answered and the song moves on (#482)."""
+    api, slug, dest = song
+    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
+    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
+    for name in os.listdir(dest):
+        if name.endswith(".systems.json"):
+            os.remove(dest / name)
+    first = _post_blocks(api, slug, [
+        {"measure_start": 1, "lyrics": [{"parts": ["T1"], "text": "ou-ou"},
+                                        {"parts": ["T2"], "text": "ii-ii"}]},
+        {"measure_start": 2, "lyrics": [{"parts": ["Typo"], "text": "a b"}]},
+        {"measure_start": 3, "lyrics": [{"parts": ["T1"], "text": "aa-aa"},
+                                        {"parts": ["T2"], "text": "ee-ee"}]},
+    ])
+    assert [w["kind"] for w in first["mismatches"]] == ["unknown_part"]
+    assert json.loads((dest / ".song.json").read_text())["stage"] == "lyrics"
+    fixed = _post_blocks(api, slug, [{"measure_start": 2, "lyrics": [{"parts": ["T1"], "text": "a b"}]}])
+    assert fixed["mismatches"] == []
+    data = json.loads((dest / ".song.json").read_text())
+    assert data["stage"] == "review"
+    assert data["lyrics"]["warnings"] == []
+
+
+def test_a_wrong_name_is_not_answered_by_a_line_for_a_part_the_paste_already_had(song):
+    """A misspelt name stands for the places its paste left without words, so sending
+    again a line the paste already placed keeps the warning (#482)."""
+    api, slug, dest = song
+    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
+    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
+    for name in os.listdir(dest):
+        if name.endswith(".systems.json"):
+            os.remove(dest / name)
+    first = _post_blocks(api, slug, [
+        {"measure_start": 2, "lyrics": [{"parts": ["T1"], "text": "a b"},
+                                        {"parts": ["Typo"], "text": "x"}]},
+    ])
+    assert [w["kind"] for w in first["mismatches"]] == ["unknown_part"]
+    again = _post_blocks(api, slug, [{"measure_start": 2, "lyrics": [{"parts": ["T1"], "text": "a b"}]}])
+    assert [w["kind"] for w in again["mismatches"]] == ["unknown_part"]
+    kept = json.loads((dest / ".song.json").read_text())["lyrics"]["warnings"]
+    assert [w["kind"] for w in kept] == ["unknown_part"]

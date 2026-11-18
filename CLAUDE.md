@@ -1303,7 +1303,9 @@ state model are in `DESIGN.md`.
   `lines` (one warning per source line, even where two lines name the same part;
   `lyric_txt._line_ids`: the bar, verse, voice and the **printed place**, a staff and its
   side only where two parts share it; a line with only `"parts"` is where those parts are
-  printed in that system, and only a line whose parts are printed nowhere is its parts),
+  printed in that system, and only a line whose parts are printed nowhere is its parts;
+  a line placed nowhere for a wrong name also stands for the places of its system no other
+  line of that paste reached, any place when all were, so its name corrected answers it),
   and every import lists the lines it read (`LyricImport.lines`); a later import drops such
   a warning only when it sends that line again, its name corrected or not
   (`server._kept_warnings`), so pasting another part into the same system keeps it. Since

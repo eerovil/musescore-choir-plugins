@@ -790,8 +790,9 @@ def lyric_prompt(prompt: str, cleaned_path: str = "") -> str:
             by_id = True
         else:
             listed.append(f'"{p.name}"')
-    note = ("\nA part listed as a number has no name of its own: put that number in "
-            "\"parts\" (a staff id, written without quotes)." if by_id else "")
+    note = ("\nA part listed as a number followed by its name in brackets is told apart "
+            "by that number, its staff id: put the number in \"parts\" without quotes."
+            if by_id else "")
     return (prompt.rstrip("\n") + "\n\nTHIS SONG'S PARTS, top staff first: "
             + ", ".join(listed) + ".\nUse these exact names in \"parts\"." + note + "\n")
 
