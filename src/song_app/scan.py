@@ -474,22 +474,52 @@ def _answered(song: state.Song) -> Dict[str, str]:
     return song.data.get("scan", {}).get("answered_against", {})
 
 
-def fragment_stamps(song: state.Song, indices: Sequence[int]) -> Dict[int, Optional[str]]:
-    """The content stamp of each named system's fragment now (None: no fragment)."""
+def fragment_order(song: state.Song) -> List[int]:
+    """The scan fragment behind each Clean-grid system, grid system 0 first.
+
+    The grid counts the assembled score's systems from 0 (`per_system`), while a
+    fragment is filed under its band's index, which `.systems.json` counts from 1.
+    The assembly joins the fragments in band order, so grid system `g` is the
+    `g`-th band. Read off the bands rather than the fragments, so a band waiting to
+    be read again does not shift every system after it onto its neighbour's
+    reading. This is the one place the two numberings meet (#498): the grid's
+    readings, its answer stamps and the drop on a re-read all go through it.
+    """
+    bands = pdf_systems.load_bounds(song.dir)
+    if bands:
+        return sorted(b.index for b in bands)
+    return sorted(_fragments(song))
+
+
+def fragment_of(song: state.Song, system: int) -> Optional[int]:
+    """The fragment index of grid system `system` (None: no such band)."""
+    order = fragment_order(song)
+    return order[system] if 0 <= system < len(order) else None
+
+
+def system_stamps(song: state.Song, systems: Sequence[int]) -> Dict[int, Optional[str]]:
+    """The reading each named grid system shows now: its fragment's content stamp."""
     fragments = _fragments(song)
-    return {int(i): fragments.get(int(i), {}).get("content") for i in indices}
+    order = fragment_order(song)
+    return {int(g): (fragments.get(order[int(g)], {}).get("content")
+                     if 0 <= int(g) < len(order) else None)
+            for g in systems}
 
 
-def stamp_answers(song: state.Song, indices: Sequence[int]) -> None:
-    """Record which fragment each system's grid answers were answered against."""
+def stamp_answers(song: state.Song, systems: Sequence[int]) -> None:
+    """Record which fragment the named grid systems' answers were answered against."""
     if "scan" not in song.data:
         return
     fragments = _fragments(song)
+    order = fragment_order(song)
     against = _scan(song).setdefault("answered_against", {})
-    for index in indices:
-        stamp = fragments.get(int(index), {}).get("content")
+    for system in systems:
+        if not 0 <= int(system) < len(order):
+            continue
+        index = order[int(system)]
+        stamp = fragments.get(index, {}).get("content")
         if stamp:
-            against[str(int(index))] = stamp
+            against[str(index)] = stamp
 
 
 def _drop_fragment(song: state.Song, index: int) -> None:
@@ -511,9 +541,12 @@ def _drop_answers(song: state.Song, index: int) -> None:
     assembled = song.data.get("scan", {}).get("assembled")
     if not assembled:
         return
+    # The grid counts from 0, bands from 1. A band deleted since keeps the place
+    # it had among the others, which is the place its answers were filed under.
+    system = sorted(set(fragment_order(song)) | {index}).index(index)
     answers = per_system.saved_answers(song.path(assembled))
-    if answers and index in answers:
-        del answers[index]
+    if answers and system in answers:
+        del answers[system]
         per_system.save_answers(song.path(assembled), answers)
 
 

@@ -245,10 +245,15 @@ def test_a_song_with_no_bounds_refuses_rather_than_guessing(songs, reader):
 
 
 def _answer(song, *indices):
-    """Answer the grid for the named systems, the way the route does."""
+    """Answer the grid for the named printed systems, the way the route does.
+
+    The indices are the scan's (bands, from 1); the grid files its answers from 0,
+    so system 1's answers are grid system 0's (#498).
+    """
     source = song.path(song.data["scan"]["assembled"])
-    per_system.save_answers(source, {i: {1: "T1", 2: "T2"} for i in indices})
-    scan.stamp_answers(song, indices)
+    grid = [i - 1 for i in indices]
+    per_system.save_answers(source, {g: {1: "T1", 2: "T2"} for g in grid})
+    scan.stamp_answers(song, grid)
     song.save()
 
 
@@ -265,13 +270,45 @@ def test_a_bounds_edit_discards_only_the_fragments_whose_band_moved(songs, reade
         pdf_systems.save_bounds(song.dir, moved)
 
         dropped = scan.reconcile(song)
+        remaining = per_system.saved_answers(song.path(scan.ASSEMBLED_NAME)) or {}
 
     assert "the scan of system 2" in dropped
     assert "the grid answers for system 2" in dropped
+    assert sorted(remaining) == [0, 2], "printed system 2 is grid system 1"
     assert "the scan of system 1" not in dropped
     assert "the grid answers for system 3" not in dropped
     assert scan.status(song)["holes"] == [2]
     assert song.stage == "scan", "the assembled score is short a system now"
+
+
+def test_a_deleted_last_band_drops_only_its_own_grid_answers(songs, reader, tmp_path):
+    """A band no longer drawn keeps the grid place it had (#498)."""
+    with per_system.use_answer_file(str(tmp_path / "answers.json")):
+        song = _song(songs)
+        scan.run(song)
+        song = _reload(song)
+        _answer(song, 1, 2, 3)
+
+        pdf_systems.save_bounds(song.dir, pdf_systems.load_bounds(song.dir)[:2])
+        dropped = scan.reconcile(song)
+        remaining = per_system.saved_answers(song.path(scan.ASSEMBLED_NAME)) or {}
+
+    assert "the grid answers for system 3" in dropped
+    assert sorted(remaining) == [0, 1]
+
+
+def test_grid_systems_count_from_0_and_bands_from_1(songs, reader):
+    """The one mapping between the two numberings (#498)."""
+    song = _song(songs)
+    scan.run(song)
+    song = _reload(song)
+    systems = song.data["scan"]["systems"]
+    assert scan.fragment_order(song) == [1, 2, 3]
+    assert scan.fragment_of(song, 0) == 1 and scan.fragment_of(song, 3) is None
+    assert scan.system_stamps(song, [0, 2, 3]) == {
+        0: systems["1"]["content"], 2: systems["3"]["content"], 3: None}
+    scan.stamp_answers(song, [0])
+    assert song.data["scan"]["answered_against"] == {"1": systems["1"]["content"]}
 
 
 def test_an_inserted_band_repoints_everything_after_it(songs, reader, tmp_path):
@@ -319,7 +356,7 @@ def test_re_reading_a_system_differently_drops_that_system_s_grid_answers(
         scan.run(song, only=[2])
         remaining = per_system.saved_answers(song.path(scan.ASSEMBLED_NAME)) or {}
 
-    assert sorted(remaining) == [1, 3]
+    assert sorted(remaining) == [0, 2], "grid system 1 is printed system 2"
     assert "2" not in _reload(song).data["scan"].get("answered_against", {})
 
 
@@ -344,7 +381,7 @@ def test_re_reading_a_system_to_the_same_answer_changes_nothing(songs, reader, t
         song = _reload(song)
         remaining = per_system.saved_answers(song.path(scan.ASSEMBLED_NAME)) or {}
 
-    assert sorted(remaining) == [1, 2, 3]
+    assert sorted(remaining) == [0, 1, 2]
     assert song.data["review"]["approved_against"] == "sha1:whatever"
 
 
@@ -845,8 +882,8 @@ def test_upgrading_homr_discards_nothing(songs, reader, monkeypatch, tmp_path):
         assert st["complete"] is True
         assert _reload(song).stage == "clean", "nobody is sent back to Scan for it"
         assert per_system.saved_answers(
-            song.path(song.data["scan"]["assembled"])) == {1: {1: "T1", 2: "T2"},
-                                                           2: {1: "T1", 2: "T2"}}
+            song.path(song.data["scan"]["assembled"])) == {0: {1: "T1", 2: "T2"},
+                                                           1: {1: "T1", 2: "T2"}}
 
 
 def test_another_homr_reading_the_same_music_costs_nothing(songs, reader, monkeypatch, tmp_path):
@@ -872,7 +909,7 @@ def test_another_homr_reading_the_same_music_costs_nothing(songs, reader, monkey
         assert entry["content"] == before, "the same music read again is the same reading"
         assert entry["homr"]["commit"] == "b" * 40, "but it says who read it this time"
         assert sorted(per_system.saved_answers(
-            fresh.path(fresh.data["scan"]["assembled"]))) == [1, 2]
+            fresh.path(fresh.data["scan"]["assembled"]))) == [0, 1]
         assert fresh.stage == "clean"
 
 
@@ -913,7 +950,7 @@ def test_a_different_reading_still_costs_what_it_always_did(songs, reader, tmp_p
 
         fresh = _reload(song)
         assert sorted(per_system.saved_answers(
-            fresh.path(fresh.data["scan"]["assembled"])) or {}) == [1]
+            fresh.path(fresh.data["scan"]["assembled"])) or {}) == [0]
         assert fresh.stage == "clean", "a different reading is an edit, not a hole"
 
 

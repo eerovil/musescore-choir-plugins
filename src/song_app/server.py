@@ -580,7 +580,7 @@ def api_systems(slug: str) -> Dict:
     # Which reading of each system this grid shows. The panel sends them back
     # with its answers, so answers typed against a system read again since the
     # grid was loaded are refused rather than stamped onto the new reading (#498).
-    stamps = scan.fragment_stamps(song, range(len(grid)))
+    stamps = scan.system_stamps(song, range(len(grid)))
     return {"grid": grid, "overlong": pipeline.overlong_in(mscx),
             "stamps": {str(i): stamp for i, stamp in stamps.items()}}
 
@@ -607,7 +607,7 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
     if isinstance(client_stamps, dict):
         answered = {i: client_stamps.get(str(i)) for i in parsed}
     else:
-        answered = scan.fragment_stamps(song, list(parsed))
+        answered = scan.system_stamps(song, list(parsed))
     xml = song.source_path("xml")
     mscx = pipeline.convert_to_mscx(xml, song.dir)
     # An answer is about the staves of one scanned system, so it is derived from
@@ -618,11 +618,11 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
     # (#498).
     with state.song_lock(slug):
         fresh = state.load(slug) or song
-        changed = sorted(i for i, stamp in scan.fragment_stamps(fresh, list(parsed)).items()
+        changed = sorted(i for i, stamp in scan.system_stamps(fresh, list(parsed)).items()
                          if stamp != answered[i])
         if changed:
             raise HTTPException(
-                409, "System " + ", ".join(str(i) for i in changed)
+                409, "System " + ", ".join(str(i + 1) for i in changed)
                 + " was read again while these answers were saved. "
                 "Reload the grid and answer it again.")
         pipeline.save_system_answers(mscx, parsed)

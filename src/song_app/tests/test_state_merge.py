@@ -344,6 +344,10 @@ def test_dismiss_works_on_the_record_as_it_is_now(songs, monkeypatch):
 
 
 # --- grid answers saved while a system is read again ---------------------------
+#
+# The grid counts systems from 0 and the scan's bands from 1, so grid system 0 is
+# fragment "1" and grid system 1 is fragment "2" (`scan.fragment_order`). These
+# send what the browser sends: grid numbers.
 
 
 def _scanned(songs, monkeypatch):
@@ -372,7 +376,7 @@ def test_grid_answers_are_refused_when_their_system_was_read_again(songs, monkey
     monkeypatch.setattr(pipeline, "save_system_answers", lambda m, a: saved.append(a))
 
     with pytest.raises(server.HTTPException) as err:
-        server.api_save_systems(song.slug, {"1": {"1": "T1"}, "2": {"1": "B1"}})
+        server.api_save_systems(song.slug, {"0": {"1": "T1"}, "1": {"1": "B1"}})
     assert err.value.status_code == 409
     assert "System 2" in err.value.detail
     assert saved == []                                   # no answers written
@@ -387,9 +391,9 @@ def test_grid_answers_are_stamped_with_the_reading_they_answer(songs, monkeypatc
                         lambda xml, d: _sing_publishes(song.slug) or "x.mscx")
     monkeypatch.setattr(pipeline, "save_system_answers", lambda m, a: saved.append(a))
 
-    server.api_save_systems(song.slug, {"1": {"1": "T1"}})
+    server.api_save_systems(song.slug, {"0": {"1": "T1"}})
     disk = _disk(song)
-    assert saved == [{1: {1: "T1"}}]
+    assert saved == [{0: {1: "T1"}}]
     assert disk["scan"]["answered_against"] == {"1": disk["scan"]["systems"]["1"]["content"]}
     assert disk["publish"]["sites"]["jm"] == RECORD      # saved meanwhile, kept
 
@@ -408,11 +412,13 @@ def test_grid_answers_are_refused_when_their_system_was_read_again_after_the_gri
     saved = []
     _grid_patches(monkeypatch, saved)
     stamps = server.api_systems(song.slug)["stamps"]
-    assert stamps["1"] == _disk(song)["scan"]["systems"]["1"]["content"]
+    systems = _disk(song)["scan"]["systems"]
+    assert stamps == {"0": systems["1"]["content"], "1": systems["2"]["content"],
+                      "2": systems["3"]["content"], "3": None}
 
     _set_content(song.slug, 2, "new")       # read again while the person typed
     with pytest.raises(server.HTTPException) as err:
-        server.api_save_systems(song.slug, {"answers": {"1": {"1": "T1"}, "2": {"1": "B1"}},
+        server.api_save_systems(song.slug, {"answers": {"0": {"1": "T1"}, "1": {"1": "B1"}},
                                             "stamps": stamps})
     assert err.value.status_code == 409
     assert "System 2" in err.value.detail
@@ -420,8 +426,8 @@ def test_grid_answers_are_refused_when_their_system_was_read_again_after_the_gri
 
     # A grid loaded again shows the new reading, and its answers are taken.
     stamps = server.api_systems(song.slug)["stamps"]
-    server.api_save_systems(song.slug, {"answers": {"2": {"1": "B1"}}, "stamps": stamps})
-    assert saved == [{2: {1: "B1"}}]
+    server.api_save_systems(song.slug, {"answers": {"1": {"1": "B1"}}, "stamps": stamps})
+    assert saved == [{1: {1: "B1"}}]
     assert _disk(song)["scan"]["answered_against"] == {"2": "new"}
 
 
@@ -436,8 +442,8 @@ def test_a_scan_band_save_keeps_grid_answers_stamped_meanwhile(songs, monkeypatc
         if image.index == 2:  # system 1 is saved; answer it while 2 is read
             # (what GET /systems would show; the song has no score to grid yet)
             stamps = {str(i): s for i, s in
-                      scan.fragment_stamps(state.load(song.slug), [1]).items()}
-            server.api_save_systems(song.slug, {"answers": {"1": {"1": "T1"}},
+                      scan.system_stamps(state.load(song.slug), [0]).items()}
+            server.api_save_systems(song.slug, {"answers": {"0": {"1": "T1"}},
                                                 "stamps": stamps})
         return reader.read_system(image, *args, **kwargs)
 
@@ -446,5 +452,5 @@ def test_a_scan_band_save_keeps_grid_answers_stamped_meanwhile(songs, monkeypatc
 
     disk = _disk(song)
     assert sorted(disk["scan"]["systems"]) == ["1", "2", "3"]
-    assert saved == [{1: {1: "T1"}}]
+    assert saved == [{0: {1: "T1"}}]
     assert disk["scan"]["answered_against"] == {"1": disk["scan"]["systems"]["1"]["content"]}

@@ -777,7 +777,7 @@ Key test modules:
   `scan.answered_against` (`state.MERGED`) are merged a key deeper, so the panel's settings and a
   CLI's choir record both survive, and a scan's band save keeps a grid answer stamped meanwhile.
   `GET /systems` returns each system's reading (`stamps`) and the grid's `PUT` sends them back:
-  answers about a system read again since the grid loaded are refused (409). Take another copy's
+  answers about a system read again since the grid loaded are refused (409). The grid counts systems from 0 and `.systems.json`'s bands from 1; `scan.fragment_order` is the one mapping between them (grid system `g` is the `g`-th band), used for the readings, the answer stamps and the drop on a re-read, which before this dropped the next system's answers. Take another copy's
   data with `song.adopt(fresh)`, never `song.data = fresh.data`, which drops the base and saves
   whole. `song_lock` is re-entrant and also takes an `flock` under
   `~/.local/state/musescore-choir-plugins/song-locks/` (the home from `pwd`, not `$HOME`), so
