@@ -64,6 +64,49 @@ def test_one_staff_systems_stay_one_staff():
     assert len(system_finder.page_systems(draw_page([1, 1, 1, 1]))) == 4
 
 
+def test_a_grey_page_is_read_by_its_own_threshold():
+    """#480: a scan on grey paper (here 215) read as all ink under the fixed 230,
+    and no system was found on any page."""
+    import numpy as np
+    page = np.asarray(draw_page([2, 2, 2]))
+    grey = Image.fromarray(np.where(page > 127, 215, 40).astype("uint8"))
+    assert len(system_finder.page_systems(grey)) == 3
+    assert system_finder.page_systems(draw_page([2, 2, 2])) == \
+        system_finder.page_systems(grey)              # same bands as on white paper
+
+
+def _scan(page, paper, lines, dark=40, grain=0.0, seed=4):
+    """`page` as a scan: paper at `paper`, staff lines at `lines`, barlines and words
+    at `dark`, with Gaussian grain of `grain` grey levels."""
+    import numpy as np
+    drawn = np.asarray(page)
+    staff = np.asarray(draw_page([2, 2, 2], joined=False))       # the lines alone
+    out = np.where(drawn > 127, paper, np.where(staff < 128, lines, dark)).astype(float)
+    out += np.random.default_rng(seed).normal(0, grain, out.shape)
+    return Image.fromarray(out.clip(0, 255).astype("uint8"))
+
+
+@pytest.mark.parametrize("paper,lines,grain", [
+    (236, 216, 0), (236, 216, 3), (240, 225, 3), (233, 213, 3),   # near-white, faint lines
+    (225, 205, 0), (215, 200, 2), (215, 40, 0), (200, 150, 5),    # grey paper
+])
+def test_faint_lines_on_tinted_paper_are_found(paper, lines, grain):
+    """The checks on #480's first try: paper a little off white with lines only 15-20
+    levels darker lost every system, and so did grey paper with faint lines."""
+    assert len(system_finder.page_systems(_scan(draw_page([2, 2, 2]), paper, lines, grain=grain))) == 3
+
+
+@pytest.mark.parametrize("paper,grain", [(215, 0), (215, 4), (215, 8), (236, 3), (200, 6)])
+def test_a_blank_grey_page_has_no_systems(paper, grain):
+    page = _scan(Image.new("L", (WIDTH, HEIGHT), 255), paper, paper, grain=grain)
+    assert system_finder.page_systems(page) == []
+
+
+def test_a_grey_crop_still_gets_its_bar_box():
+    crop = _scan(draw_page([2]), 215, 40).crop((0, 100, WIDTH, 420))
+    assert system_finder.bar_box(crop, 1, 2) is not None
+
+
 def test_a_page_with_no_music_has_no_systems():
     page = Image.new("L", (WIDTH, HEIGHT), 255)
     ImageDraw.Draw(page).text((400, 300), "Title page", fill=0)

@@ -203,6 +203,8 @@ def find_bands(
 
 QUICK_DPI = 150          # the dpi the Systems editor shows, so the render is shared
 _INK = 230               # grey up to this is ink; scans print faint staff lines
+_GREY_PAPER = 240        # a page whose median is this dark or darker is grey paper
+_PAPER_MARGIN = 10       # on grey paper, this far below the paper's level is ink
 _STRIPS = 24             # narrow enough that a skewed line stays in a few rows
 _LINE_FILL = 0.45        # share of a strip's width a staff line row has to cover
 _STRIP_AGREE = 0.25      # share of strips that must see a staff for it to count
@@ -268,11 +270,29 @@ def _joined(ink, upper: tuple, lower: tuple) -> bool:
     return bool(gap[:, margin:gap.shape[1] - margin].mean(axis=0).max() >= _JOIN_FILL)
 
 
+def _ink(grey):
+    """Which pixels are ink: anything clearly darker than the page's own paper.
+
+    White paper keeps the fixed `_INK`, which catches faint staff lines. On grey
+    paper (#480) that read the whole page as ink, so the threshold sits a little
+    below the paper's own level instead: `_PAPER_MARGIN` grey levels, or four times
+    the paper's grain when the scan is noisier, and never above `_INK`."""
+    import numpy as np
+
+    paper = float(np.median(grey))
+    if paper > _GREY_PAPER:
+        return grey < _INK
+    # The paper's grain, from the spread of the pixels round the median (most of a
+    # page is paper, so the ink does not move this).
+    grain = 1.4826 * float(np.median(np.abs(grey.astype(np.int16) - paper)))
+    return grey < min(_INK, paper - max(_PAPER_MARGIN, 4 * grain))
+
+
 def page_systems(image: "Image.Image") -> List[tuple]:
     """The printed systems of one page image, as (top, bottom) fractions of height."""
     import numpy as np
 
-    ink = np.asarray(image.convert("L")) < _INK
+    ink = _ink(np.asarray(image.convert("L")))
     height = ink.shape[0]
     staves = _staves(ink)
     if not staves:
@@ -423,7 +443,7 @@ def bar_box(image: "Image.Image", staff: int, staves: int,
     """
     import numpy as np
 
-    ink = np.asarray(image.convert("L")) < _INK
+    ink = _ink(np.asarray(image.convert("L")))
     height, width = ink.shape
     found = _staves(ink)
     if len(found) != staves or not 1 <= staff <= staves:

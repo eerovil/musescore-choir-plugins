@@ -1362,7 +1362,7 @@ def lyric_box_blocks(mscx_path: str, verse: int, boxes: Dict, song_dir: str = ""
 # is tuned there (`system_finder.QUICK_DPI`), and the positions are fractions anyway.
 LYRIC_STAFF_DPI = system_finder.QUICK_DPI
 # Found again when this changes, as when the crop does.
-LYRIC_STAFF_VERSION = 2
+LYRIC_STAFF_VERSION = 3
 
 
 def _cut_above(ink, upper: tuple, lower: tuple) -> float:
@@ -1417,7 +1417,7 @@ def _found_staves(song_dir: str, pdf_path: str, crop: int) -> Tuple[List[Dict], 
             and hit.get("version") == LYRIC_STAFF_VERSION):
         return hit.get("staves") or [], hit["aspect"]
     with Image.open(path) as image:
-        ink = np.asarray(image.convert("L")) < system_finder._INK
+        ink = system_finder._ink(np.asarray(image.convert("L")))
     height, width = ink.shape
     found = system_finder._staves(ink)
     staves = [{"top": t / height, "bottom": b / height, "space": s / height,
