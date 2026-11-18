@@ -21,6 +21,7 @@ song list shows (#453); --waiting only writes "waiting" there, for a run about t
 See docs/pdf-to-practice-track.md for the whole flow and what the machine needs.
 """
 import argparse
+import glob
 import json
 import os
 import queue
@@ -43,6 +44,7 @@ from src.sing_song import language_check  # noqa: E402
 from src.sing_song import progress  # noqa: E402
 from src.sing_song.fold import fold  # noqa: E402
 from src.sing_song import places as song_places  # noqa: E402
+from src.sing_song import languages  # noqa: E402
 from src.sing_song.spoken import split_spoken  # noqa: E402
 from src.sing_song.ufr_pack import is_download, is_ours  # noqa: E402
 from src.song_app.publish import sung_file  # noqa: E402
@@ -52,12 +54,7 @@ SINGER = os.path.join(HERE, "sing_ufr.py")
 # (sing_ufr.py voice, the name the site credits)
 HIGH, LOW = ("lyse_core", "LYSE"), ("remy_adult", "REMY")
 VOICES = {"LYSE": HIGH, "REMY": LOW}
-G2P = {"en", "de", "sv", "la", "et"}   # languages g2p.py gives sounds; the rest use the Finnish rules
-# a word that looks Finnish in a song in this language: letters or pairs its own words seldom have
-# (Latin's "y" is Kyrie's and German's "ä" its own; English "uu" and "wii" are scat). Checked by
-# unmarked_finnish(), #67. Estonian is too close to Finnish to tell.
-FINNISH_LOOK = {"la": r"[äöå]|aa|ee|oo|yy|kk", "de": r"y|aa|ii|uu|kk|å", "sv": r"aa|ee|ii|uu|yy|ää|öö|kk",
-                "en": r"[äöå]|yy|kk"}
+G2P = languages.sung_by_g2p()   # languages g2p.py gives sounds; the rest use the Finnish rules
 LEAD_IN_SAMPLES = 17408   # 34 frames x 512: the silence sing_ufr.py sings before time 0
 GPU_ENV = {"GPU": "1", "VOC_CHUNK": "1500", "AC_CHUNK": "6000"}   # chunks that fit a 4 GB card
 # scripts/install-singer.sh's venv: onnxruntime, numpy, soundfile, g2p_en, and the CUDA 11
@@ -427,12 +424,14 @@ def mark_languages(notes, lang, switches):
 
 
 def unmarked_finnish(notes, lang, switches):
-    """[(bar, word)] sung in a language other than Finnish that look Finnish (FINNISH_LOOK). A
+    """[(bar, word)] sung in a language other than Finnish that look Finnish: letters or pairs that
+    language's words seldom have (languages.py's "finnish_look"; Latin's "y" is Kyrie's and German's
+    "ä" its own; English "uu" and "wii" are scat; Estonian is too close to Finnish to tell; #67). A
     word --lang-from names in the language it is sung in is right as it is."""
     out = []
     for word, idx in words(notes):
         code = notes[idx[0]].get("lang", lang)
-        look = FINNISH_LOOK.get(code)
+        look = languages.get(code, "finnish_look")
         if look and re.search(look, word) and switches.get(word) != code:
             out.append((notes[idx[0]].get("bar"), word))
     return out
@@ -575,14 +574,18 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                  + "\n".join(f"  {name}, bar {bar}: {word}" for name, bar, word in dict.fromkeys(unmarked)))
     if not trial:
         write_words(os.path.join(bundle_dir, "words.json"), words)
-    jobs, quiet = [], []
+    jobs, quiet, used = [], [], []
+    pronounce = copy_pronounce(pronounce, work)
     for i, name, two, line, notes in plan:
         js = os.path.join(work, f"p{i}-{line}.json")
         with open(js, "w") as f:
             json.dump(notes, f, ensure_ascii=False)
+        for old in glob.glob(glob.escape(js) + ".*.used.json"):
+            os.remove(old)
         for code in sorted({n["lang"] for n in notes if n.get("syl")} & G2P):
             run([python, "-I", os.path.join(HERE, "g2p.py"), code, js],
                 env=dict(os.environ, UFR_DIR=ufr_dir, **(pronounce or {})))
+            used.append(f"{js}.{code}.used.json")
         quiet += [(name, n["bar"], n["syl"]) for n in silent_notes(python, js, voices[i - 1], env)]
         said = f"{name}{' ' + line + ' line' if two else ''}"
         if resume and sung_before(work, i, line, voices[i - 1], version):
@@ -591,6 +594,10 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
         forget_sung(work, i, line)
         jobs.append((i, said, line, len(notes)))
 
+    if not trial:
+        for c in unused_readings((pronounce or {}).get("SONG_PRONOUNCE"), used):
+            where = "everywhere" if c["bar"] is None else f"bar {c['bar']}, beat {c['beat']}"
+            log(f"a saved reading was not used: {c['word']!r} ({c['lang']}, {where})")
     if quiet:
         listed = "\n".join(f"  {name}, bar {bar}: {syl}" for name, bar, syl in quiet)
         if not allow_silent:
@@ -933,6 +940,45 @@ def pronounce_env(slug, choirs):
                  "publish to each in its own run")
     return {"SONG_PRONOUNCE": os.path.join(ROOT, "songs", slug, song_places.FILE),
             "CHOIR_WORDS": os.pathsep.join(p for p in paths if os.path.isfile(p))}
+
+
+def copy_pronounce(pronounce, work):
+    """pronounce with SONG_PRONOUNCE pointing at a copy in the work folder, taken once: g2p runs
+    once a line and language, and a reading saved in the app meanwhile must reach the next run,
+    never half of this one (#484). The app writes the file whole by rename."""
+    src = (pronounce or {}).get("SONG_PRONOUNCE")
+    if not src:
+        return pronounce
+    dst = os.path.join(work, song_places.FILE)
+    if os.path.isfile(src):
+        shutil.copyfile(src, dst)
+    elif os.path.exists(dst):
+        os.remove(dst)
+    return dict(pronounce, SONG_PRONOUNCE=dst)
+
+
+def unused_readings(path, used_files):
+    """The saved readings in pronounce.json at path that no g2p run of this sing used, as
+    [{"lang", "bar", "beat", "word"}] (bar and beat None for an everywhere reading). used_files
+    are the <notes>.<lang>.used.json this run's g2p calls wrote."""
+    if not path or not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        saved = song_places.normalise(json.load(f))
+
+    def k(lang, bar, beat, word):
+        return (lang, None if bar is None else int(bar), None if beat is None else round(float(beat), 3),
+                languages.word_key(word, lang))
+    got = set()
+    for u in used_files:
+        if os.path.isfile(u):
+            with open(u, encoding="utf-8") as f:
+                got |= {k(c["lang"], c["bar"], c["beat"], c["word"]) for c in json.load(f)}
+    out = [{"lang": c["lang"], "bar": c["bar"], "beat": c["beat"], "word": c["word"]}
+           for c in saved["places"] if k(c["lang"], c["bar"], c["beat"], c["word"]) not in got]
+    out += [{"lang": lang, "bar": None, "beat": None, "word": w}
+            for lang, m in saved["everywhere"].items() for w in m if k(lang, None, None, w) not in got]
+    return out
 
 
 def choir_words(path):

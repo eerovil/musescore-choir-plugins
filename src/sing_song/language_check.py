@@ -21,19 +21,16 @@ import re
 import tempfile
 import time
 
+try:
+    from . import languages
+except ImportError:   # run as a file
+    import languages
+
 FILE = "language.json"
 
-# The languages a song can be sung in today: Finnish, the ones g2p.py has rules for, and
-# Norwegian, which the voices sing from their own rules.
-LANGUAGES = {
-    "fi": "Finnish",
-    "en": "English",
-    "de": "German",
-    "sv": "Swedish",
-    "la": "Latin",
-    "et": "Estonian",
-    "no": "Norwegian",
-}
+# The languages a song can be sung in, {code: name}: languages.py's, so a variant added there
+# ("la-de", Latin as German choirs sing it) is offered everywhere with no second list (#484).
+LANGUAGES = languages.names()
 
 # A song with no saved language is refused when at least this share of its distinct words, and
 # at least MIN_WORDS of them, look foreign. Measured on the songs on this host (see the PR of #484).

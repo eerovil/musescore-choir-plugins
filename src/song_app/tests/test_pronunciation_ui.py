@@ -96,5 +96,45 @@ def test_a_reading_chosen_at_one_place_is_saved_for_it(live, page):
         page.locator(".pron-save").click()
     assert saved_reply.value.ok
     saved = json.loads((songs / song.slug / "pronounce.json").read_text())
-    assert saved == {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D"}], "everywhere": {}}
+    assert saved == {"places": [{"bar": 1, "beat": 1.0, "word": "wind", "sounds": "W IH1 N D", "lang": "en"}],
+                     "everywhere": {}}
+    assert not errors, errors
+
+
+def test_a_reading_in_voice_sounds_is_saved_for_its_language_and_removed(live, page, monkeypatch):
+    """#484: a word in any language g2p sings gets a reading in the voice's own sounds; the
+    pack's sounds for the chosen language are listed beside the box, the saved reading is shown
+    under its language, and its remove button takes it out on the next save."""
+    base, song, songs = live
+    monkeypatch.setattr(server, "_pack_sounds", lambda: {"it/h", "it/o", "it/d", "it/i", "it/e", "de/h", "en/w"})
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/#/song/{song.slug}")
+    page.wait_for_selector(".stagebar")
+    page.locator(".stagebar .step", has_text="Publish").first.click()
+    page.locator("[data-pronunciation] summary").click()
+    page.wait_for_selector("[data-pron-new-word]")
+    assert page.locator("[data-pronunciation] summary").inner_text() == "Pronunciation"
+    # the fixture song has no language, so the person must say which language the word is in
+    assert page.locator("[data-pron-new-lang]").input_value() == ""
+    page.locator("[data-pron-new-lang]").select_option("la-de")
+    sounds = page.locator("[data-pron-sounds]").inner_text()
+    assert "Latin (German style) sounds" in sounds and "de/h" in sounds and "it/o" in sounds and "en/w" not in sounds
+    page.locator("[data-pron-new-word]").fill("Hodie")
+    page.locator("[data-pron-new-sounds]").fill("de/h it/o it/d it/i it/e")
+    with page.expect_response(lambda r: r.url.endswith("/pronunciation") and r.request.method == "POST") as reply:
+        page.locator(".pron-save").click()
+    assert reply.value.ok
+    saved = json.loads((songs / song.slug / "pronounce.json").read_text())
+    assert saved == {"places": [], "everywhere": {"la-de": {"hodie": "de/h it/o it/d it/i it/e"}}}
+    row = page.locator('[data-pron-saved-row="la-de:hodie"]')
+    assert "de/h it/o" in row.inner_text()
+    assert "Saved for Latin (German style)" in page.locator("[data-pron-saved]").inner_text()
+    row.get_by_role("button", name="Remove").click()
+    with page.expect_response(lambda r: r.url.endswith("/pronunciation") and r.request.method == "POST") as reply:
+        page.locator(".pron-save").click()
+    assert reply.value.ok
+    saved = json.loads((songs / song.slug / "pronounce.json").read_text())
+    assert saved == {"places": [], "everywhere": {}}
+    assert page.locator("[data-pron-saved-row]").count() == 0
     assert not errors, errors

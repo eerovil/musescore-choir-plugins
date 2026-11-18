@@ -167,6 +167,15 @@ export: run it in the desktop's session, or with its `DISPLAY` and `XAUTHORITY` 
   (bar, the beat the word starts on, word), for every part singing the word there together and
   on every pass through the bar; a part entering later on the same word has a place of its own. After a score edit
   the list and the sing run name any choice whose word is no longer at its place.
+- A word in any language g2p sings (English, German, Swedish, Latin, German-style Latin,
+  Estonian) can be given a reading in the voice's own sounds (`it/k it/w it/a`), in the
+  Pronunciation list's "reading in voice sounds" box. Pick the language the word is **sung in**
+  (a Latin refrain in a Finnish song is Latin); the pack's sounds for it are listed beside the box.
+  English readings may also be ARPAbet (`R EH1 D`), never a mix of the two. A reading is used
+  only by the run of its own language; the sing run logs each saved reading no run used
+  ("a saved reading was not used: ...").
+- Latin sung the German way (soft c as "ts", h sounded, qu as "kv"): set the song's language to
+  **Latin (German style)**, `--lang la-de`, or `--lang-from la-de:Word` for a stretch.
 - A word a choir says its own way, in every song: `choirs/<choir>.json`, read for each
   `--publish <choir>`, as a sound-alike spelling: `{"pronounce": {"harvest": "har-vist"}}`.
   A place chosen on the song page wins over it. A spelling that gives a sound the voice lacks
@@ -238,6 +247,30 @@ A part name the site's voice tree does not know stops it; ask the person where i
 `--place "Name=<id>"`, `--place "Name=-"` (no place) or `--place "Name=^<parent>"` (a new place
 under one). Publishing again makes a new version and takes the old one away. Never publish
 piano-only (`--no-sing`) over a sung song.
+
+## Adding a language variant
+
+A variant is a language sung like another with a few sounds changed, as `la-de` is Latin with
+German consonants. Everything about it is one entry in `src/sing_song/languages.py`:
+
+```python
+"la-de": {"name": "Latin (German style)", "base": "la",
+          "rules": {"h": ["de/h"], "c+front": ["de/ts"], ...}, "words": {}},
+```
+
+- `base` is the language it follows. Every field it leaves out (`g2p`, `vowels`, `prefixes`,
+  `finnish_look`) is its base's, and its `rules` are laid over the base's table, so the base
+  itself sings as before.
+- A rule key may end in `+front`: it applies only before e, i, y, ä, ö, é, ae or oe.
+- `words` holds whole-syllable readings, used before any rule.
+- `prefixes` lists the sound prefixes a reading may use (`it/`, `de/`); give it only when the
+  variant's rules use a prefix the base does not have.
+
+Nothing else needs a list: the app's language selects, `--lang`, `--lang-from`, the Finnish-word
+check and the re-sing list all read `languages.py`. A later singer change naming the base (in
+`SINGER_CHANGES`) re-sings the variant's songs too. Run `src/sing_song/tests/test_main.py` and `test_g2p.py` (the first
+checks every rule sound has one of the language's prefixes), then sing a phrase with
+`--try` and listen.
 
 ## Re-singing after the singer changed (#453)
 

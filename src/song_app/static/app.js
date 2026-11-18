@@ -3308,10 +3308,12 @@ function panelPublish(panel, song, P, refresh, actions) {
 // dictionary reads more than one way ("wind", "read"), and the reading to sing there or
 // everywhere in the song. Until one is chosen the dictionary's first is sung. Loaded when
 // opened: finding the words runs the singer's dictionary, which takes a few seconds.
+// Below it (#484), a reading in the voice's own sounds for any word, in the language the word is
+// sung in (a Latin refrain in a Finnish song is "la"), and every reading saved, by language.
 function pronunciationSection(P) {
   const body = el("div", { className: "pronunciation-body" }, el("p", { className: "hint" }, "Reading the lyrics…"));
   const box = el("details", { className: "pronunciation", "data-pronunciation": "" },
-    el("summary", {}, "Pronunciation (English songs)"), body);
+    el("summary", {}, "Pronunciation"), body);
   let loaded = false;
   box.addEventListener("toggle", () => {
     if (!box.open || loaded) return;
@@ -3322,28 +3324,33 @@ function pronunciationSection(P) {
   const say = (r) => `“${r.say}”${r.as_in ? `, as in ${r.as_in}` : ""}`;
   function draw(reply) {
     const note = el("span", { className: "hint save-note" }, "");
+    const unsaved = () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; };
+    const langName = Object.fromEntries((reply.languages || []).map((l) => [l.code, l.name]));
     const byWord = {};
     for (const row of reply.places) (byWord[row.word] ||= []).push(row);
+    const enEvery = (reply.everywhere || {}).en || {};
     const everywhere = {};
     const placeSelects = [];
+    // a reading saved that is none of the dictionary's (a script's, or voice sounds) stays a choice
+    const options = (readings, chosen) => [...readings.map((r) => el("option", { value: r.sounds }, say(r))),
+      ...(chosen && !readings.some((r) => r.sounds === chosen) ? [el("option", { value: chosen }, chosen)] : [])];
     const groups = Object.entries(byWord).map(([word, rows]) => {
       const readings = rows[0].readings;
       const all = el("select", { "data-pron-everywhere": word },
-        el("option", { value: "" }, `the dictionary's: ${say(readings[0])}`),
-        ...readings.map((r) => el("option", { value: r.sounds }, say(r))));
-      all.value = reply.everywhere[word] || "";
+        el("option", { value: "" }, `the dictionary's: ${say(readings[0])}`), ...options(readings, enEvery[word]));
+      all.value = enEvery[word] || "";
       everywhere[word] = all;
       // a place with no reading of its own sings the word's everywhere one
-      const sameText = () => `same as everywhere: ${say(readings.find((r) => r.sounds === all.value) || readings[0])}`;
+      const sameText = () => `same as everywhere: ${readings.find((r) => r.sounds === all.value) ? say(readings.find((r) => r.sounds === all.value)) : all.value || say(readings[0])}`;
       const sames = [];
       all.addEventListener("input", () => { for (const o of sames) o.textContent = sameText(); });
       const list = rows.map((row) => {
         const same = el("option", { value: "" }, sameText());
         sames.push(same);
         const pick = el("select", { "data-pron-place": `${row.bar}:${row.beat}:${row.word}` },
-          same, ...readings.map((r) => el("option", { value: r.sounds }, say(r))));
+          same, ...options(readings, row.chosen));
         pick.value = row.chosen || "";
-        pick.addEventListener("input", () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; });
+        pick.addEventListener("input", unsaved);
         placeSelects.push([row, pick]);
         const words = row.line.split(" ");
         const line = el("span", { className: "pron-line" },
@@ -3352,37 +3359,88 @@ function pronunciationSection(P) {
           el("span", { className: "pron-place" }, `Bar ${row.bar}${row.n > 1 ? ` (${row.n}.)` : ""}`),
           line, el("span", { className: "hint" }, row.parts.join(", ")), pick);
       });
-      all.addEventListener("input", () => { note.className = "hint save-note"; note.textContent = "Unsaved changes"; });
+      all.addEventListener("input", unsaved);
       return el("div", { className: "pron-word" },
         el("div", { className: "row" }, el("strong", {}, word), el("span", { className: "hint" }, "everywhere in this song:"), all),
         ...list);
     });
     let stale = reply.stale;
+    const staleKey = (c) => `${c.lang}:${c.bar}:${Number(c.beat).toFixed(3)}:${c.word}`;
+    const staleKeys = new Set(stale.map(staleKey));
     const staleBox = el("div", { className: "pron-stale" });
     const drawStale = () => staleBox.replaceChildren(...(stale.length ? [
       el("p", { className: "hint err" },
         `${stale.length} reading(s) chosen earlier no longer match a word in the score: `
         + stale.map((c) => `“${c.word}” at bar ${c.bar}`).join(", ") + ". They are not sung."),
-      el("button", { onclick: () => { stale = []; drawStale(); note.textContent = "Unsaved changes"; } }, "Forget them"),
+      el("button", { onclick: () => { stale = []; drawStale(); unsaved(); } }, "Forget them"),
     ] : []));
     drawStale();
+    // Every saved reading the dictionary lists above do not hold, grouped by language, each with a
+    // remove button. They are sent back with each save unless removed.
+    const placeKeys = new Set(reply.places.map((p) => `${p.bar}:${Number(p.beat).toFixed(3)}:${p.word}`));
+    let saved = (reply.saved || []).filter((c) => !(c.lang === "en" && (c.bar == null ? c.word in byWord
+      : placeKeys.has(`${c.bar}:${Number(c.beat).toFixed(3)}:${c.word}`))) && !(c.bar != null && staleKeys.has(staleKey(c))));
+    const savedBox = el("div", { className: "pron-saved", "data-pron-saved": "" });
+    const drawSaved = () => {
+      const langs = [...new Set(saved.map((c) => c.lang))].sort();
+      savedBox.replaceChildren(...langs.map((lang) => el("div", { className: "pron-word" },
+        el("strong", {}, `Saved for ${langName[lang] || lang}`),
+        ...saved.filter((c) => c.lang === lang).map((c) => el("div", { className: "pron-row row", "data-pron-saved-row": `${lang}:${c.word}` },
+          el("span", { className: "pron-place" }, c.bar == null ? "everywhere" : `Bar ${c.bar}`),
+          el("strong", {}, c.word), el("code", {}, c.sounds),
+          el("button", { onclick: () => { saved = saved.filter((x) => x !== c); drawSaved(); unsaved(); } }, "Remove"))))));
+    };
+    drawSaved();
+    // a new reading in voice sounds, for a word everywhere in the song
+    const g2pLangs = reply.languages || [];
+    const songLang = g2pLangs.some((l) => l.code === reply.language) ? reply.language : "";
+    const newWord = el("input", { type: "text", placeholder: "word", "data-pron-new-word": "" });
+    const newLang = el("select", { "data-pron-new-lang": "" },
+      ...(songLang ? [] : [el("option", { value: "" }, "sung in…")]),
+      ...g2pLangs.map((l) => el("option", { value: l.code }, l.name)));
+    newLang.value = songLang;
+    const newSounds = el("input", { type: "text", placeholder: "voice sounds, e.g. it/k it/w it/i", "data-pron-new-sounds": "" });
+    const soundList = el("p", { className: "hint pron-sounds", "data-pron-sounds": "" });
+    const drawSounds = () => {
+      const lang = newLang.value;
+      if (!reply.pack) soundList.textContent = reply.note || "";
+      else soundList.textContent = lang ? `${langName[lang]} sounds: ${(reply.pack[lang] || []).join(" ")}` : "Choose the language the word is sung in.";
+    };
+    newLang.addEventListener("input", drawSounds);
+    for (const i of [newWord, newSounds]) i.addEventListener("input", unsaved);
+    drawSounds();
+    const addBox = el("div", { className: "pron-add" },
+      el("strong", {}, "A reading in the voice's own sounds"),
+      el("p", { className: "hint" }, "For a word in any language the song sings, everywhere in this song. Choose the language the word is sung in: a Latin refrain in a Finnish song is Latin."),
+      el("div", { className: "row" }, newWord, newLang, newSounds), soundList);
     const save = el("button", { className: "pron-save", onclick: async () => {
+      if (newWord.value.trim() || newSounds.value.trim()) {
+        if (!newLang.value || !newWord.value.trim() || !newSounds.value.trim()) {
+          note.className = "hint save-note err";
+          note.textContent = "Give the word, the language it is sung in and its sounds.";
+          return;
+        }
+      }
       const places = placeSelects.filter(([, pick]) => pick.value)
-        .map(([row, pick]) => ({ bar: row.bar, beat: row.beat, word: row.word, sounds: pick.value }));
-      const all = Object.fromEntries(Object.entries(everywhere).filter(([, s]) => s.value).map(([w, s]) => [w, s.value]));
+        .map(([row, pick]) => ({ bar: row.bar, beat: row.beat, word: row.text || row.word, sounds: pick.value, lang: "en" }));
+      const every = { en: Object.fromEntries(Object.entries(everywhere).filter(([, s]) => s.value).map(([w, s]) => [w, s.value])) };
+      for (const c of saved) {
+        if (c.bar == null) (every[c.lang] ||= {})[c.word] = c.sounds;
+        else places.push({ bar: c.bar, beat: c.beat, word: c.word, sounds: c.sounds, lang: c.lang });
+      }
+      if (newWord.value.trim()) (every[newLang.value] ||= {})[newWord.value.trim()] = newSounds.value.trim();
+      // every language this panel shows: English (the dictionary's list), each saved one, the new one's
+      const langs = [...new Set(["en", ...(reply.saved || []).map((c) => c.lang), ...Object.keys(every), ...stale.map((c) => c.lang)])];
       try {
-        draw(await postJSON(`${P}/pronunciation`, { places: [...places, ...stale], everywhere: all }));
+        draw(await postJSON(`${P}/pronunciation`, { places: [...places, ...stale], everywhere: every, langs }));
       } catch (e) { note.className = "hint save-note err"; note.textContent = e.message; }
     } }, "Save pronunciation");
     body.replaceChildren(
       el("p", { className: "hint" }, groups.length
-        ? "Words the dictionary reads more than one way. Choose the reading the song means; until you do, the dictionary's is sung."
-        : "No word in the lyrics has two readings."),
-      staleBox, ...groups,
-      ...(groups.length || stale.length ? [el("div", { className: "row" }, save, note)] : []));
-    if (!groups.length && !stale.length) return;
-    note.className = "hint save-note";
-    note.textContent = "";
+        ? "English words the dictionary reads more than one way. Choose the reading the song means; until you do, the dictionary's is sung."
+        : "No English word in the lyrics has two readings."),
+      staleBox, ...groups, savedBox, addBox,
+      el("div", { className: "row" }, save, note));
   }
   return box;
 }
