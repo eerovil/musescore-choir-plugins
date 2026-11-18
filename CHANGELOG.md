@@ -7,6 +7,14 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A printed rit. or accel. now slows down or speeds up the practice track and the sung voices,
+  beat by beat, to three quarters (or five quarters) of the speed by the next "a tempo", tempo
+  change, fermata or the end. The Publish panel lists each one, with a target BPM or "play as
+  written". A part whose name says no voice ("Solo") is sung by its clef instead of stopping
+  the run (`--voice NAME=VOICE` to choose), `sing_song.py --try PART:A-B` sings one phrase of
+  one part to listen to, and publishing piano only asks before it replaces a sung version on
+  the site. (#483)
+
 - Lines can be sung on another machine over plain SSH: `REMOTE_RUNNER=scripts/ssh-runner.sh`
   with `SSH_RUNNER_HOST`, and that machine's singer and voices. (#483)
 

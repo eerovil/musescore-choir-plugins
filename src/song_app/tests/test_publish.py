@@ -566,7 +566,7 @@ def _publish_client(monkeypatch, tmp_path):
     seen = {}
 
     def fake_bundle(cleaned, out_dir, *, initial_bpm=None, tempo_changes=None,
-                    part_names=None, staff_groups=None, log=lambda m: None):
+                    part_names=None, staff_groups=None, gradual=None, log=lambda m: None):
         seen.update(cleaned=cleaned, initial_bpm=initial_bpm, tempo_changes=tempo_changes)
         return _bundle(tmp_path)
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)
