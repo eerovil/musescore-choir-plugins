@@ -12,7 +12,7 @@ developers are listed under *Behind the scenes*.
   sing command folded under *Keep it sung instead*; errors in the panel are red again; each
   rit. or accel. reads as one sentence with its controls on the next line; and the Clean
   panel lists a scan's too-long voices bar by bar ("Bar 81, staff 4, voice 2: 3/4 of notes in
-  a 1/2 bar"), folded into one line once the song is cleaned. (#PR)
+  a 1/2 bar"), folded into one line once the song is cleaned. (#501)
 
 - A page with no music to sing, such as a title page, can be left out of a scan with a
   *Leave this page out* switch in the Systems editor. Before, the Scan button stayed off until
