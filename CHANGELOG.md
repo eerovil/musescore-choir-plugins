@@ -7,8 +7,9 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
-- A `bar` fix now also takes off cleaning's "was 9/8, cut to 4/4" red mark on the part it
-  rewrites, so the bar stops showing red; before, only an `unmark` took it off. (#488)
+- Cleaning's "was 9/8, cut to 4/4" red mark now says which voice lost notes, and a `bar` fix
+  that rewrites that voice (voice 1) takes the mark off, so the bar stops showing red; before,
+  only an `unmark` took it off. A cut in voice 2 still needs an `unmark`. (#488)
 
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)

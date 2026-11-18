@@ -131,15 +131,16 @@ def test_a_whole_bar_answers_its_notes_and_leaves_the_other_problems(root, shape
         "⚠ slur from A2 bar 1 removed; check the page", "⚠ voice?"]
 
 
-# Cleaning's "cut to" mark (#482): `long_bars` writes it on the staff it cut, it has
-# no `?` word, and only `unmark` took it off — after a `bar` fix had written the bar.
-CUT = "⚠ was 9/8, cut to 4/4; removed E4"
+# Cleaning's "cut to" mark (#482): `long_bars` writes it on the staff it cut, naming
+# the voices that lost music; it has no `?` word, and only `unmark` took it off —
+# after a `bar` fix had written the bar. A `bar` fix writes voice 1 only.
+CUT = "⚠ was 9/8, cut to 4/4 in voice 1; removed E4"
 
 
-def _with_cut(root):
+def _with_cut(root, text=CUT):
     voice = _measure(root, 1, 2).find("voice")
     mark = etree.SubElement(voice, "StaffText")
-    etree.SubElement(mark, "text").text = CUT
+    etree.SubElement(mark, "text").text = text
     voice.insert(0, mark)
     return root
 
@@ -195,11 +196,28 @@ def test_a_short_bar_keeps_its_cut_mark():
     assert "cut to" not in done[0]
 
 
-def test_a_cut_in_another_voice_keeps_the_mark(root):
+@pytest.mark.parametrize("text", [
+    "⚠ was 9/8, cut to 4/4 in voice 2; removed E3",
+    "⚠ was 9/8, cut to 4/4 in voices 1, 2; removed E4 E3",
+    "⚠ was 9/8, cut to 4/4; removed E4",  # written before marks named voices
+])
+def test_a_mark_naming_another_voice_stays(root, text):
+    # Voice 2 lost its note and now holds only a rest: a voice-1 fix answers none of it.
+    _with_cut(root, text)
+    second = etree.SubElement(_measure(root, 1, 2), "voice")
+    second.append(etree.fromstring(
+        "<Rest><durationType>whole</durationType></Rest>"))
+    done = apply_fixes(root, [_fix([_note("note_4", 59, 19), _note("note_4", 62, 16),
+                                    _note("note_2", 64, 18)])])
+    assert text in _texts(root)
+    assert "cut to" not in done[0]
+
+
+def test_a_sounding_voice_two_does_not_keep_a_voice_one_mark(root):
     _with_cut(root)
     second = etree.SubElement(_measure(root, 1, 2), "voice")
     second.append(etree.fromstring(
         "<Chord><durationType>whole</durationType><Note><pitch>52</pitch></Note></Chord>"))
     apply_fixes(root, [_fix([_note("note_4", 59, 19), _note("note_4", 62, 16),
                              _note("note_2", 64, 18)])])
-    assert CUT in _texts(root)
+    assert CUT not in _texts(root)

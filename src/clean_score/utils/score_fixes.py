@@ -1203,34 +1203,34 @@ def _strike(root: etree._Element, staff: int, measure: int, words) -> List[str]:
 
 
 def _strike_cut(bar: etree._Element) -> List[str]:
-    """Take cleaning's "was 9/8, cut to 4/4" mark off this staff's bar (#482).
+    """Take cleaning's "was 9/8, cut to 4/4 in voice 1" mark off this staff's bar (#482).
 
-    `long_bars` writes it on the staff whose notes it cut, and it says nothing a `?`
-    word could answer, so `_strike_words` leaves it. A `bar` fix that writes the
-    staff's only voice so it fills the bar answers it (`_fills_alone`).
+    `long_bars` writes it on the staff whose notes it cut and names the voices that
+    lost music; it says nothing a `?` word could answer, so `_strike_words` leaves
+    it. A `bar` fix writes voice 1 only, so it answers a mark that names voice 1
+    alone, once voice 1 fills the bar (`_replace_bar` may keep a short voice short).
+    A mark naming another voice, or written before marks named voices, stays for an
+    `unmark`: what that voice lost has not been put back.
     """
+    if not _fills_bar(bar):
+        return []
     struck: List[str] = []
     for el in list(bar.iter("StaffText")):
         text = el.findtext("text") or ""
-        if text.startswith("⚠ was ") and ", cut to " in text:
+        head = text.split(";")[0]
+        if text.startswith("⚠ was ") and head.endswith(" in voice 1") and ", cut to " in head:
             el.getparent().remove(el)
-            struck.append(text[2:].split(";")[0])
+            struck.append(head[2:])
     return struck
 
 
-def _fills_alone(measure: etree._Element) -> bool:
-    """True when voice 1 now fills the bar and no other voice of it holds a note.
-
-    The only bar a `bar` fix answers the cut mark on: `_replace_bar` may keep a
-    short voice short, and `long_bars` writes one mark for a staff whatever voice
-    it cut, while a `bar` fix writes voice 1 only.
-    """
+def _fills_bar(measure: etree._Element) -> bool:
+    """True when voice 1 of this staff's bar is exactly as long as the bar."""
     from .rejected_bars import _bar_lengths  # noqa: PLC0415 - a cycle
     staff = measure.getparent()
     length = _bar_lengths(staff)[staff.findall("Measure").index(measure)]
     total = sum((part for _, _, part in _timeline(_voice(measure))), Fraction(0))
-    others = measure.findall("voice")[1:]
-    return total == length and not any(v.find("Chord") is not None for v in others)
+    return total == length
 
 
 def _answered(struck: List[str]) -> str:
@@ -2754,7 +2754,7 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
             raise FixError(f"staff {staff} m{measure} ({kind}): {exc}") from None
         if kind in _KIND_WORDS:
             what += _answered(_strike(root, staff, measure, _KIND_WORDS[kind]))
-        if kind == "bar" and _fills_alone(_measure(root, staff, measure)):
+        if kind == "bar":
             cut = _strike_cut(_measure(root, staff, measure))
             if cut:
                 what += f" and took the mark off ({'; '.join(cut)})"
