@@ -2905,6 +2905,13 @@ progress to `songs/<slug>/.sing-run.json` (`progress.py`). The song list (`GET /
 `song_app/resing.py`) calls a song pending in a choir where the site lists it sung (its D1 `songs`
 rows, kept in `songs/.site-songs.json`) and this app did not publish that upload with the current
 version; the test list never counts.
+`SINGER_CHANGES` beside it says what each version changed: `"*"` (every song) or a language code
+(#484), so a version that changes English re-sings only songs sung in English. A song's language
+is `songs/<slug>/language.json` (`language_check.py`; not `.song.json`, so a job's stale save
+cannot undo it), set from the New song form, the Start panel (`POST /language`) or the first
+`--lang`; `--change-lang` replaces it. With none saved, a song is sung as Finnish only when its
+words look Finnish (`looks_foreign`), and the re-sing list reads that check once per score
+(`songs/.resing-language.json`).
 
 `SING_PROVIDER` (#483, `sing_ufr.providers`) picks the singer's onnxruntime provider: `cpu`,
 `cuda` (or `GPU=1` when unset), or `coreml`, which falls back to the processor when the build has

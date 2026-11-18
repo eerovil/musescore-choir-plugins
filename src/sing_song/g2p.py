@@ -8,7 +8,7 @@ English goes through the CMU pronouncing dictionary (g2p_en) word by word, and e
 sounds are dealt over its syllables: one vowel sound per syllable, the consonants between two
 vowels split between them. The others read the spelling of each syllable with that language's
 rules (German and Swedish with the voice's German sounds, church Latin with its Italian ones,
-Estonian like Finnish plus õ, ü, š, ž).
+Estonian like Finnish plus õ, ü, š, ž). English AY, AW and OY are sung as two vowels (#484).
 
 An English word's reading can be chosen (eeron-omat-taskit#143, #144), strongest first:
 - at one place in the song, on song-app's song page: SONG_PRONOUNCE names the song's
@@ -213,6 +213,14 @@ def estonian():
     rules(t, {"it/a", "it/e", "it/i", "it/o", "it/u", "de/ex", "en/eh", "fr/ee", "fr/uh"})
 
 {"en": english, "de": german, "sv": swedish, "la": latin, "et": estonian}[lang]()
+# English two-part vowels are sung as their two vowels (#484): the voice's own en/ay, en/aw and
+# en/oy came out as a vowel that does not move ("child" sang "chaald"), and a user wrote "child"
+# by hand as AA then IY. Done last, so a saved reading is split the same way.
+SPLIT = {"en/ay": ["en/aa", "en/iy"], "en/aw": ["en/aa", "en/uw"], "en/oy": ["en/ao", "en/iy"]}
+if lang == "en":
+    for n in notes:
+        if mine(n) and n.get("ph"):
+            n["ph"]["vs"] = [p for v in n["ph"]["vs"] for p in SPLIT.get(v, [v])]
 bad = sorted({p for n in notes if n.get("ph") for part in n["ph"].values() for p in part if p not in PH})
 if bad: sys.exit(f"sounds the voice does not have: {bad}")
 json.dump(notes, open(path, "w"), ensure_ascii=False, indent=0)

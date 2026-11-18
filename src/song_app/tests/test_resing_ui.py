@@ -19,7 +19,7 @@ import threading  # noqa: E402
 import uvicorn  # noqa: E402
 from playwright.sync_api import expect  # noqa: E402
 
-from src.sing_song import progress  # noqa: E402
+from src.sing_song import language_check, progress  # noqa: E402
 from src.song_app import publish, resing, server, state  # noqa: E402
 
 pytestmark = pytest.mark.browser
@@ -29,6 +29,9 @@ def _song(name, sites=None):
     song = state.create(name, per_system=False, voicing="men")
     song.data.update(stage="publish", publish={"sites": sites or {}})
     song.save()
+    # No score to read the words off, so say the language (#484): otherwise a song sung as
+    # Finnish with no language saved would be pending.
+    language_check.save(state.song_dir(song.slug), "fi", "test")
     return song
 
 

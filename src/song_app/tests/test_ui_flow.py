@@ -129,7 +129,7 @@ def _new_song(page, base, name, per_system=True):
     page.get_by_role("button", name="+ New song").click()
     page.get_by_placeholder("Song name").fill(name)
     page.locator("#f-xml").set_input_files(FIXTURE)
-    page.locator("select").select_option("men")     # laulun_aika is a male-choir score
+    page.locator("#f-voicing").select_option("men")     # laulun_aika is a male-choir score
     page.get_by_role("button", name="Create").click()
     expect(page.locator(".stagebar")).to_be_visible()
     if per_system:
@@ -578,7 +578,7 @@ def test_creating_a_song_requires_saying_who_sings_it(page, live_app):
     expect(page.locator(".newstatus")).to_contain_text("Choose who sings it")
     assert "#/song/" not in page.url, "it created the song anyway"
 
-    page.locator("select").select_option("mixed")
+    page.locator("#f-voicing").select_option("mixed")
     page.get_by_role("button", name="Create").click()
     page.wait_for_url("**/#/song/**", timeout=30_000)
 
@@ -597,7 +597,7 @@ def test_a_song_registered_from_a_pdf_alone_lands_on_scan(page, live_app):
     page.get_by_placeholder("Song name").fill("Virta venhettä vie")
     page.locator("#f-pdf").set_input_files(PDF_FIXTURE)
     expect(page.locator(".routehint")).to_contain_text("Starts at Scan")
-    page.locator("select").select_option("men")
+    page.locator("#f-voicing").select_option("men")
     page.get_by_role("button", name="Create").click()
 
     page.wait_for_url("**/#/song/**", timeout=30_000)
@@ -617,7 +617,7 @@ def test_creating_a_song_needs_one_file_and_says_which_are_missing(page, live_ap
     page.get_by_role("button", name="+ New song").click()
     expect(page.locator(".routehint")).to_contain_text("A PDF alone starts at Scan")
     page.get_by_placeholder("Song name").fill("Neither file")
-    page.locator("select").select_option("men")
+    page.locator("#f-voicing").select_option("men")
 
     page.get_by_role("button", name="Create").click()
     expect(page.locator(".newstatus")).to_contain_text("A score PDF or a score file is required")
@@ -648,7 +648,7 @@ def test_a_blank_name_takes_the_files_own_name(page, live_app):
     page.locator("#f-xml").set_input_files(FIXTURE)
     expect(name).to_have_value(stem)
     page.locator("#f-xml").set_input_files([])
-    page.locator("select").select_option("men")
+    page.locator("#f-voicing").select_option("men")
     if evidence := os.getenv("EVIDENCE_DIR"):
         page.screenshot(path=os.path.join(evidence, "new-song-blank-name.png"))
     page.get_by_role("button", name="Create").click()
