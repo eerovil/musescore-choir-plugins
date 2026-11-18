@@ -47,7 +47,7 @@ flowchart TD
 
 - **Song has a language saved?**: `songs/<slug>/language.json` (its own file, so an app job saving an older copy of `.song.json` cannot undo it), set on the New song form or the Start panel, or by the first `sing_song.py --lang` run.
 - **--lang given and different?**: `sing_song.py --lang` now only confirms the saved language. `--change-lang` changes it.
-- **Words look Finnish?**: a new check in `src/sing_song/main.py`, the reverse of `unmarked_finnish`: letters and pairs Finnish words seldom have (b, c, f, q, w, x, z, th, sh, ch, a lone g).
-- **Language rules, with the variant's changes**: `src/sing_song/languages.py` lists each language and variant (`la` Italian church, `la-de` German style) and what a variant changes in its base's rules.
-- **Voice sounds, any language**: a reading in `pronounce.json` written in the voice's own sound names (`de/h it/o it/d it/i it/e`), checked against the voice pack.
+- **Words look Finnish?**: `src/sing_song/language_check.py` (`looks_foreign`), the reverse of `unmarked_finnish`: at least three different words, and 15% of them, with letters or pairs Finnish words seldom have (b, c, f, q, w, x, z, th, sh, ch, a g not after n).
+- **Language rules, with the variant's changes**: the rules are `g2p.py`'s today. The variants come in the second pull request: `src/sing_song/languages.py` will list each language and variant (`la` Italian church, `la-de` German style) and what a variant changes in its base's rules.
+- **Voice sounds, any language**: second pull request, not built yet. A reading in `pronounce.json` written in the voice's own sound names (`de/h it/o it/d it/i it/e`), checked against the voice pack.
 - **Two-part vowels split: AY is AA then IY**: English AY, AW and OY become two vowel sounds in `g2p.py`, the way the reporter wrote "child" by hand.
