@@ -2835,8 +2835,11 @@ async function lyricsManual(panel, song, P, refresh) {
   const unboxed = el("div", { className: "lyerrs lyunboxed" });
   const drawUnboxed = () => {
     const s = sys();
-    const shown = new Set(boxesOf(S.n).flatMap((b) => warnsFor(b)));
-    const rest = lyricMismatches(song).filter((w) => !shown.has(w)
+    // By id, not by object: a sentence saved before warnings had fields is parsed
+    // afresh on every call, so two reads of one warning are two objects.
+    const wkey = (w) => w.id ?? w.message;
+    const shown = new Set(boxesOf(S.n).flatMap((b) => warnsFor(b)).map(wkey));
+    const rest = lyricMismatches(song).filter((w) => !shown.has(wkey(w))
       && (w.verse || 1) === S.verse
       && w.measure_start >= s.start && w.measure_start <= s.end);
     unboxed.replaceChildren(...(rest.length ? [

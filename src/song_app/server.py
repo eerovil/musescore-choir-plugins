@@ -2557,6 +2557,12 @@ def _on_cleaned_saved(slug: str) -> bool:
     return True
 
 
+def _is_save_temp(name: str) -> bool:
+    """A hidden temp file a score save writes (`lyric_txt._save_mscx`)."""
+    return (name.startswith(".") and name.endswith(".tmp")
+            and (f"{LYRICS_TMP}." in name or ".mscx." in name))
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     hub.loop = asyncio.get_running_loop()
@@ -2568,10 +2574,12 @@ async def _startup() -> None:
         traceback.print_exc()
     for song in state.list_songs():
         job_state.interrupt_running(song.dir)
-        # A lyric import cut off by the restart leaves its temp score (#482).
+        # A lyric import cut off by the restart leaves its temp score (#482), and a
+        # save cut off mid-write leaves the hidden file it was writing
+        # (`.<score>.<random>.tmp`, `lyric_txt._save_mscx`).
         try:
             for name in os.listdir(song.dir):
-                if name.endswith(LYRICS_TMP):
+                if name.endswith(LYRICS_TMP) or _is_save_temp(name):
                     os.remove(os.path.join(song.dir, name))
         except OSError:
             traceback.print_exc()

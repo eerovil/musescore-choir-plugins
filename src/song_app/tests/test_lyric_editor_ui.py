@@ -376,3 +376,22 @@ def test_a_warning_is_dismissed_under_its_box_and_one_no_box_shows_is_listed(liv
     expect(page.locator(".lyunboxed .lyerr")).to_have_count(0, timeout=30_000)
     left = page.request.get(f"{live}/api/songs/{slug}").json()["lyrics"].get("warnings")
     assert not left
+
+
+def test_a_warning_saved_as_a_sentence_shows_once_under_its_box(live, song, page):
+    """A warning saved before warnings had fields is read afresh each time it is
+    asked for, so it is matched by its id, not as the same object: it shows under
+    its box and not again in the list of warnings with no box here."""
+    slug, dest = song
+    path = os.path.join(dest, ".song.json")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["lyrics"] = {"json": "lyrics.json", "warnings": [
+        "Measures 1-3 (staffs 1): too few tokens (2 syllables, 5 slots)"]}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    _open(page, live, slug)
+    under = page.locator(".lyrow", has=_box(page, "1")).locator(".lyerr")
+    expect(under).to_have_count(1, timeout=30_000)
+    expect(under).to_contain_text("too few tokens")
+    expect(page.locator(".lyunboxed .lyerr")).to_have_count(0)

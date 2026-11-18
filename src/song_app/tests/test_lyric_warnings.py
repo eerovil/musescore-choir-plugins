@@ -202,3 +202,18 @@ def test_a_temp_file_left_by_a_restart_is_removed_on_startup(song, monkeypatch):
     with TestClient(server.app):
         pass
     assert not left.exists()
+
+
+def test_a_hidden_save_temp_left_by_a_restart_is_removed_on_startup(song):
+    """A save cut off mid-write leaves `.<score>.<random>.tmp`, for the import's temp
+    score and for the score itself; startup removes both and nothing else."""
+    _api, slug, dest = song
+    left = [dest / f".{CLEANED}{server.LYRICS_TMP}.k3j2.tmp", dest / f".{CLEANED}.a8x1.tmp"]
+    for path in left:
+        path.write_text("half")
+    kept = dest / ".song.json.tmp"
+    kept.write_text("{}")
+    with TestClient(server.app):
+        pass
+    assert not any(path.exists() for path in left)
+    assert kept.exists()
