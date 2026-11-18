@@ -1303,20 +1303,27 @@ def api_bounds(slug: str) -> Dict:
     return {
         "pages": pipeline.page_count(pdf),
         "systems": systems,
+        "skipped_pages": pipeline.skipped_pages(song.dir),
         "declared": declared,       # how many systems the score says there are
     }
 
 
 @app.put("/api/songs/{slug}/bounds")
 def api_save_bounds(slug: str, body: Dict = None) -> Dict:
-    """Persist edited boundaries: {"systems": [{page, top, bottom}, ...]}."""
+    """Persist edited boundaries: {"systems": [{page, top, bottom}, ...]}.
+
+    An optional `"skipped_pages": [n, ...]` says which pages hold no music to scan
+    (#480); left out of the body, the pages already left out stay so.
+    """
     song = _require(slug)
-    _song_pdf(song)
+    pdf = _song_pdf(song)
     bands = (body or {}).get("systems")
     if bands is None:
         raise HTTPException(400, "No systems given")
+    skipped = (body or {}).get("skipped_pages")
     try:
-        saved = pipeline.save_system_bounds(song.dir, bands, _bounds_score(song))
+        saved = pipeline.save_system_bounds(song.dir, bands, _bounds_score(song), skipped,
+                                            pages=_pages_of(pdf) if skipped is not None else None)
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(400, f"Bad bounds: {exc}")
     # Moving a band is changing the input a fragment was read from. Both the
@@ -1324,7 +1331,11 @@ def api_save_bounds(slug: str, body: Dict = None) -> Dict:
     # silently re-points everything after it — which is why nothing here compares
     # indices; each fragment is checked against the geometry now at its own.
     song = _require(slug)
-    return {"systems": saved, "discarded": scan.reconcile(song)}
+    discarded = scan.reconcile(song)
+    # The Scan panel's button waits for every page to be marked or left out.
+    hub.emit(slug, {"type": "state"})
+    return {"systems": saved, "skipped_pages": pipeline.skipped_pages(song.dir),
+            "discarded": discarded}
 
 
 @app.post("/api/songs/{slug}/find-systems")
@@ -1354,13 +1365,28 @@ async def api_find_systems(slug: str, body: Dict = None) -> Dict:
         except Exception as exc:
             traceback.print_exc()
             raise HTTPException(500, str(exc)) from None
-        return {"systems": found}
+        return {"systems": _outside_skipped(song, found)}
     try:
         reader = homr_install.begin_read()
     except homr_install.Refused as exc:
         raise HTTPException(409, str(exc)) from None
     with reader:
-        return await _find_with_homr(slug, pdf, body)
+        answer = await _find_with_homr(slug, pdf, body)
+    return {**answer, "systems": _outside_skipped(song, answer.get("systems", []))}
+
+
+def _pages_of(pdf: str) -> Optional[int]:
+    """The PDF's page count, or None when poppler cannot say."""
+    try:
+        return pipeline.page_count(pdf)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _outside_skipped(song, systems: List[Dict]) -> List[Dict]:
+    """A proposal holds no band on a page left out of the scan (#480)."""
+    skipped = set(pipeline.skipped_pages(song.dir))
+    return [b for b in systems if int(b.get("page", 0)) not in skipped]
 
 
 async def _find_with_homr(slug: str, pdf: str, body: Optional[Dict]) -> Dict:

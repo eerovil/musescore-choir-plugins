@@ -585,6 +585,35 @@ def test_a_page_with_no_bands_on_it_is_refused_rather_than_left_out(songs, reade
     assert reader.read == [], "nothing is read while a page is unmarked"
 
 
+def test_a_page_left_out_counts_as_marked_until_it_is_put_back(songs, reader, monkeypatch):
+    """#480: a title page or a page of piano solo has nothing to read."""
+    song = _song(songs, bands=2)
+    monkeypatch.setattr(pdf_systems, "page_count", lambda path: 3)
+    bands = pdf_systems.load_bounds(song.dir)
+
+    pdf_systems.save_bounds(song.dir, bands, skipped=[3, 2, 3])
+    assert pdf_systems.load_skipped(song.dir) == [2, 3]
+    assert scan.pages_without_bands(song) == []
+
+    pdf_systems.save_bounds(song.dir, bands)           # a relabel keeps them
+    assert pdf_systems.load_skipped(song.dir) == [2, 3]
+
+    pdf_systems.save_bounds(song.dir, bands, skipped=[])
+    assert scan.pages_without_bands(song) == [2, 3]
+
+
+def test_a_band_on_a_page_left_out_is_refused(songs):
+    from src.song_app import pipeline
+    song = _song(songs, bands=2)
+    before = pdf_systems.load_bounds(song.dir)
+    with pytest.raises(ValueError, match="1"):
+        pipeline.save_system_bounds(
+            song.dir, [{"page": b.page, "top": b.top, "bottom": b.bottom} for b in before],
+            skipped=[1])
+    assert pdf_systems.load_bounds(song.dir) == before
+    assert pdf_systems.load_skipped(song.dir) == []
+
+
 def test_no_poppler_is_not_the_same_as_no_bands(songs, reader, monkeypatch):
     """A missing binary must not read as an operator who has not drawn them."""
     def boom(path):
