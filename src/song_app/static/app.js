@@ -2033,13 +2033,13 @@ function sysBlock(sys) {
       rows));
 }
 
-// Run the clean's own checks again -- notes against the scan, MuseScore 3's check,
+// Run the clean's own checks again -- notes against the scan, MuseScore's check,
 // health -- on the cleaned score as it is now, without cleaning (#391). A score fixed
 // by hand showed them as stale, and a re-clean would have thrown the fixes away.
 function checkAgainButton(song, P) {
   const running = song.jobs?.check?.status === "running";
   const btn = el("button", { disabled: running, title:
-      "Compare the notes with the scan, ask MuseScore 3 whether it opens the score, "
+      "Compare the notes with the scan, ask MuseScore whether it opens the score, "
       + "and check health -- on the score as it is now. Changes nothing in the score.",
     onclick: async () => {
       btn.disabled = true;

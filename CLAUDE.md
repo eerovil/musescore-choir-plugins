@@ -2218,7 +2218,7 @@ state model are in `DESIGN.md`.
   redrawing reloads every crop; a system read while it is open therefore appears in it.
   On a phone it is the existing pane switcher and the compare rows, both already built
   for 390px.
-- **Every clean asks MuseScore 3 whether it would open the result** (#235). MuseScore
+- **Every clean asks MuseScore whether it would open the result** (#235). MuseScore
   checks a score as it opens it (`Score::sanityCheck`: voice 1 of each staff must fill
   the bar exactly, no other voice may run past it) and calls one that fails
   "corrupted" -- on Sangerhilsen the app crashed instead. Only the app runs that check;
@@ -2251,7 +2251,7 @@ state model are in `DESIGN.md`.
   page left in such a bar, and a file that will not open blocks the one route a person
   has for putting the right notes back.
 - **Check again and Undo last clean** (#391). `POST /recheck` (job `check`) runs the
-  clean's note comparison, MuseScore 3's check and health on the cleaned score as it
+  clean's note comparison, MuseScore's check (3 or 4) and health on the cleaned score as it
   is, and records them against its fingerprint. It **only reports**: unlike a clean it
   resets no bar MuseScore refuses (those become `musescore-corrupt` health rows), since
   the score may be a person's own edit. Before a clean replaces the score,
