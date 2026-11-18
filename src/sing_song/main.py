@@ -110,6 +110,23 @@ CLEF_VOICES = {"G": HIGH, "G8vb": LOW, "F": LOW, "F8vb": LOW, "F15mb": LOW}
 CLEF_NAMES = {"G": "treble", "G8vb": "treble-8", "F": "bass", "F8vb": "bass-8", "F15mb": "bass-15"}
 
 
+def opening_clef(staff):
+    """The clef written at the very start of a staff's first bar, before any note or rest, or
+    None. A clef change later in the song is not the part's clef: a Solo opening in treble
+    stays LYSE however low it goes later (#483)."""
+    measure = staff.find("Measure")
+    if measure is None:
+        return None
+    for voice in measure.iter("voice"):
+        for child in voice:
+            if child.tag in ("Chord", "Rest"):
+                break
+            if child.tag == "Clef":
+                return child.findtext("concertClefType")
+        break   # only the first voice opens the bar
+    return None
+
+
 def part_clefs(cleaned, count):
     """The clef each singing part of the cleaned score opens with, top first, as MuseScore names
     it ("G", "G8vb", "F"...): its first staff's first clef, else the staff's or instrument's
@@ -133,7 +150,7 @@ def part_clefs(cleaned, count):
         ids = _staff_ids(part)   # by number, or by position for a MuseScore 4 save
         staff = score.find(f"Staff[@id='{ids[0]}']") if ids else None
         if staff is not None:
-            clef = staff.findtext(".//Clef/concertClefType")
+            clef = opening_clef(staff)
         if not clef and own is not None:
             clef = own.findtext("defaultClef")
         clefs.append(clef or part.findtext("Instrument/clef") or "G")
@@ -830,7 +847,7 @@ def parse_trial(text):
     try:
         first, last = int(first), int(last if dash else first)
     except ValueError:
-        part = ""
+        raise argparse.ArgumentTypeError(f"--try {text!r}: give PART:A-B, e.g. Solo:12-16 or 2:5-8")
     if not colon or not part or first < 1 or last < first:
         raise argparse.ArgumentTypeError(f"--try {text!r}: give PART:A-B, e.g. Solo:12-16 or 2:5-8")
     return part, first, last

@@ -375,6 +375,31 @@ def test_the_clefs_are_read_off_the_cleaned_score_by_singing_part(tmp_path):
     assert publish_song.part_clefs(str(ms4), 2) == ["G", "F"]
 
 
+def test_a_later_clef_change_does_not_choose_the_parts_singer(tmp_path):
+    """A part opening with no clef of its own in bar 1 (its default is treble) and changing to
+    bass later is a treble part: the later clef is not read as its opening one."""
+    fermata = os.path.join(os.path.dirname(__file__), "..", "..", "score_export", "tests", "test_files",
+                           "fermata.mscx")
+    root = publish_song.etree.parse(fermata).getroot()
+    staff = root.find("Score/Staff[@id='1']")
+    measures = staff.findall("Measure")
+    assert len(measures) > 1
+    measures[0].find("voice/Clef").getparent().remove(measures[0].find("voice/Clef"))
+    voice = measures[-1].find("voice")
+    clef = publish_song.etree.SubElement(voice, "Clef")
+    publish_song.etree.SubElement(clef, "concertClefType").text = "F"
+    voice.insert(0, clef)
+    part = root.find("Score/Part")
+    own = part.find("Staff")
+    for old in own.findall("defaultClef"):
+        own.remove(old)
+    publish_song.etree.SubElement(own, "defaultClef").text = "G"
+    path = tmp_path / "later.mscx"
+    root.getroottree().write(str(path))
+    assert publish_song.part_clefs(str(path), 2)[0] == "G"
+    assert publish_song.part_voice("Solo", clef="G") == publish_song.HIGH
+
+
 def test_voice_names_one_part_or_every_part():
     assert publish_song.parse_voices(None) == (None, {})
     assert publish_song.parse_voices(["LYSE"]) == ("LYSE", {})
@@ -1118,10 +1143,22 @@ def test_a_trial_names_a_part_and_bars(text, parsed):
     assert publish_song.parse_trial(text) == parsed
 
 
-@pytest.mark.parametrize("text", ["Solo", "Solo:", ":3-4", "Solo:4-3", "Solo:0-2", "Solo:x-y"])
+@pytest.mark.parametrize("text", ["Solo", "Solo:", ":3-4", "Solo:4-3", "Solo:0-2", "Solo:x-y",
+                                  "Solo:foo", "Solo:1-x"])
 def test_a_trial_that_names_no_bars_is_refused(text):
-    with pytest.raises(Exception):
+    with pytest.raises(publish_song.argparse.ArgumentTypeError, match="give PART:A-B"):
         publish_song.parse_trial(text)
+
+
+@pytest.mark.parametrize("text", ["Solo:foo", "Solo:1-x", "Solo:4-3"])
+def test_a_mistyped_trial_is_a_usage_error_not_a_traceback(monkeypatch, capsys, text):
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "song", "--try", text])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("got past the --try check"))
+    with pytest.raises(SystemExit) as e:
+        publish_song.main()
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert "usage:" in err and "give PART:A-B" in err and "Traceback" not in err
 
 
 def test_a_trials_part_is_found_by_name_or_number():
