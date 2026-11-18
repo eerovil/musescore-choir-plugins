@@ -225,7 +225,8 @@ def test_a_named_line_wins_over_a_staff_number_line_for_the_same_resting_part():
     kinds = sorted(m.kind for m in result.mismatches)
     assert kinds == sorted([PART_RESTS, TWO_LINES])
     two = next(m for m in result.mismatches if m.kind == TWO_LINES)
-    assert two.lines == ("m2 verse 1 voice 1 staff 2",)
+    # Either line sent again answers it: the set-aside one, or the named one alone.
+    assert two.lines == ("m2 verse 1 voice 1 staff 2", "m2 verse 1 voice 1 staff 1")
     assert placed_lyrics(root) == {}
 
 

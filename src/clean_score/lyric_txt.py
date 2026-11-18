@@ -830,6 +830,10 @@ def _block_lines(
         name = next((n for n, sid in (name_map or {}).items() if sid == staff), f"staff {staff}")
         where = f", verse {verse}" if verse > 1 else ""
         where += f", voice {voice}" if voice > 1 else ""
+        # The warning names the line set aside and the named one it lost to, so
+        # sending either again (the named one alone is the usual correction) answers it.
+        kept = tuple(dict.fromkeys(i for ids in sources.get((staff, voice, verse, True), [])
+                                   for i in ids))
         for line_id in dict.fromkeys(dropped):
             notes.append(Mismatch(
                 kind=TWO_LINES,
@@ -838,7 +842,8 @@ def _block_lines(
                          f"{name}; the named line was used and the other was not placed."),
                 measure_start=measure_start,
                 measure_end=measure_end or measure_start,
-                staff_ids=(staff,), verse=verse, voice=voice, lines=line_id))
+                staff_ids=(staff,), verse=verse, voice=voice,
+                lines=tuple(dict.fromkeys(tuple(line_id) + kept))))
     own = {(staff, voice, verse) for staff, voice, verse, _ in texts}
     for base, followers in _follow_for_measure(system_map, measure_start).items():
         for (staff, voice, verse, by_name), words in list(texts.items()):

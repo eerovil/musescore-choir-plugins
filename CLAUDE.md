@@ -1292,7 +1292,7 @@ state model are in `DESIGN.md`.
   id, but carry `"box": true` and keep running on into an empty next system (#393). A
   `staff_number` line runs on as before. A named entry and a `staff_number` entry landing on
   one part, voice and verse in one block are not joined: the named one is used and the other
-  is a `two_lines` mismatch (`_block_lines`). A name no part carries, or one two parts
+  is a `two_lines` mismatch (`_block_lines`), which names both lines, so pasting either again (the named one alone, the usual correction) answers it. A name no part carries, or one two parts
   share, is an `unknown_part` mismatch and the line falls back to `staff_number`, or is not
   placed (and says so) when it has none that is a staff of the score; a staff id in
   `"parts"` the score has not is unknown too (not checked under `--split`); names are read like `lyric_parts` reads them (the instrument's

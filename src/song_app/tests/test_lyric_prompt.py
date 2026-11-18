@@ -107,18 +107,22 @@ def test_a_part_rests_warning_stays_until_its_own_line_is_sent_again():
     assert [m.kind for m in again.mismatches] == ["part_rests"]
 
 
-def test_a_two_lines_warning_stays_until_the_dropped_line_is_sent_again():
+def test_a_two_lines_warning_stays_until_either_line_is_sent_again():
     """A staff_number line set aside for a named one on the same part (#482) is said
-    until that line is pasted again."""
+    until either line is pasted again, the named one alone included."""
     root = _two_tenors_t2_resting_in_bar_2()
     first = _paste(root, {"staff_number": 1, "text": "yk-si"},
                    {"staff_number": 2, "text": "kak-si", "parts": ["T1"]})
     old = [m.to_dict() for m in first.mismatches]
     assert [w["kind"] for w in old] == ["two_lines"]
-    other = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T1"]})
+    other = _paste(root, {"staff_number": 2, "verse": 2, "text": "zz", "parts": ["T1"]})
     assert server._kept_warnings(old, other) == old
     resent = _paste(root, {"staff_number": 1, "text": "yk-si"})
     assert server._kept_warnings(old, resent) == []
+    # The usual correction: the extra line taken out and the named one pasted alone.
+    named_alone = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T1"]})
+    assert named_alone.mismatches == []
+    assert server._kept_warnings(old, named_alone) == []
 
 
 def test_correcting_one_of_two_lines_keeps_the_others_warning():
@@ -189,3 +193,15 @@ def test_typing_another_staff_keeps_the_pasted_lines_warning(song):
     typed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"2": {
         "2": "ee-ee"}}})
     assert [w["kind"] for w in typed.json()["mismatches"]] == ["part_rests"]
+
+
+def test_a_two_lines_warning_where_the_part_sings_is_answered_by_the_named_line_alone():
+    """The review's case: T1 sings, a staff_number line and a named line land on it
+    from different printed staves; pasting the named line alone answers the warning."""
+    root = _two_tenors_t2_resting_in_bar_2()
+    first = _paste(root, {"staff_number": 1, "text": "a b"},
+                   {"staff_number": 2, "text": "c d", "parts": ["T1"]})
+    old = [m.to_dict() for m in first.mismatches]
+    assert [w["kind"] for w in old] == ["two_lines"]
+    fixed = _paste(root, {"staff_number": 2, "text": "c d", "parts": ["T1"]})
+    assert server._kept_warnings(old, fixed) == []
