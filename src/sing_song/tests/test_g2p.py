@@ -193,6 +193,17 @@ def test_a_saved_reading_is_dealt_over_the_words_syllables(tmp_path):
                     {"lang": "la", "bar": None, "beat": None, "word": "sedet"}]
 
 
+def test_a_reading_on_fewer_notes_than_vowels_keeps_every_sound(tmp_path):
+    # review of #503: "amen" sung on one note lost the m between its two vowels
+    song = {"everywhere": {"la": {"amen": "it/a it/m it/e it/n", "mnmn": "it/m it/n"}}}
+    r, notes, _ = sing(tmp_path, "la", [(1, 0, "amen", None), (2, 0, "mn-mn", None)], song,
+                       sounds=LA + ["it/m"])
+    assert r.returncode == 0, r.stderr
+    assert notes[0]["ph"] == {"on": [], "vs": ["it/a", "it/m", "it/e"], "co": ["it/n"]}
+    # a hum: the first note hums every sound, the next holds the last
+    assert [n["ph"]["vs"] for n in notes[1:]] == [["it/m", "it/n"], ["it/n"]]
+
+
 def test_a_saved_latin_reading_lands_at_its_place_only(tmp_path):
     song = {"places": [{"bar": 2, "beat": 0, "word": "sed", "sounds": "it/s it/a it/d", "lang": "la"}]}
     r, notes, used = sing(tmp_path, "la", [(1, 0, "sed", None), (2, 0, "sed", None)], song)

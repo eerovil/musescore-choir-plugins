@@ -3436,7 +3436,8 @@ function pronunciationSection(P) {
       } catch (e) { note.className = "hint save-note err"; note.textContent = e.message; }
     } }, "Save pronunciation");
     body.replaceChildren(
-      el("p", { className: "hint" }, groups.length
+      el("p", { className: "hint", "data-pron-english": "" }, reply.english_note ? reply.english_note
+        : groups.length
         ? "English words the dictionary reads more than one way. Choose the reading the song means; until you do, the dictionary's is sung."
         : "No English word in the lyrics has two readings."),
       staleBox, ...groups, savedBox, addBox,

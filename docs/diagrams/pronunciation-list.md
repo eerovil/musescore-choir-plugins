@@ -16,9 +16,14 @@ flowchart TD
     two -- No --> quiet
     two -- Yes --> listed[Listed at each place the word is sung]
     listed --> choice[Director chooses a reading]
-    typed[Reading typed in voice sounds, with its language] --> check{Every sound in the voice pack?}
+    typed[Reading typed in voice sounds, or ARPAbet for English, with its language] --> haspack{A voice pack on this host?}
+    haspack -- Yes --> check{Every sound in the voice pack?}
+    haspack -- No --> shape{Every sound shaped like the language's sounds?}
     check -- No --> refused[Refused, naming the word and the sound]
+    shape -- No --> refused
     check -- Yes --> saved[Saved in pronounce.json under its language]
+    shape -- Yes --> unchecked[Saved, and the reply says it was not checked against a pack]
+    unchecked --> saved
     choice --> saved
     saved --> copy[The sing run copies pronounce.json once]
     copy --> run{Is the line sung in the reading's language?}
@@ -26,8 +31,8 @@ flowchart TD
     run -- No --> unused[Logged as a saved reading no run used]
     quiet --> default[g2p.py sings a saved choice, else the dictionary's reading]
     class words,letters,alike blue
-    class scat,two,check,run amber
-    class listed,choice,typed,refused green
+    class scat,two,check,haspack,shape,run amber
+    class listed,choice,typed,refused,unchecked green
     class saved,copy violet
     class quiet,sung,default,unused teal
 ```
@@ -47,6 +52,9 @@ flowchart TD
 - **Drop readings that sound alike when sung**: `distinct()` in `src/sing_song/readings.py`.
 - **Listed at each place the word is sung**: `api_pronunciation()` in `src/song_app/server.py`, drawn by `pronunciationSection` in `src/song_app/static/app.js`.
 - **Reading typed in voice sounds, with its language**: the "reading in voice sounds" box in `pronunciationSection`. The language select lists every language g2p sings (`languages.sung_by_g2p()` in `src/sing_song/languages.py`) and defaults to the song's.
+- **A voice pack on this host?**: `_pack_sounds()` in `src/song_app/server.py` reads `core/phonemes.json` under `UFR_DIR`, or finds none.
+- **Every sound shaped like the language's sounds?**: with no pack, `_check_reading()` accepts a sound shaped `prefix/name` whose prefix is one of the language's (`languages.py` "prefixes"); English ARPAbet goes through as g2p checks it.
+- **Saved, and the reply says it was not checked against a pack**: the reply's `note` (`NO_PACK`), shown under the new-reading box.
 - **Every sound in the voice pack?**: the save route in `src/song_app/server.py` checks each sound against `core/phonemes.json` under `UFR_DIR`. ARPAbet is allowed for English only, never mixed with voice sounds. With no pack only the sound's shape is checked, and the reply says so.
 - **Saved in pronounce.json under its language**: `places.save()` in `src/sing_song/places.py`: places carry `lang`, everywhere readings are `{lang: {word: sounds}}`. An entry with no language is English.
 - **The sing run copies pronounce.json once**: `copy_pronounce()` in `src/sing_song/main.py`, so a save made mid-run waits for the next run.

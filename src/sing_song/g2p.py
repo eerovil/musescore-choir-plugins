@@ -72,11 +72,12 @@ def is_voiced(sounds):
 
 def deal(ph, syl):
     """[(sound, is_vowel)] -> one {"on", "vs", "co"} per syllable: one vowel run per syllable (extra
-    vowels join the last, missing ones repeat the last), the consonants between two vowels split
-    between them. With no vowel at all (a hum) every syllable holds the first sound."""
+    vowels join the last, with the consonants between them, so no typed sound is lost; missing ones
+    repeat the last), the consonants between two syllables' vowels split between them. With no vowel at all (a hum) the first syllable holds every sound and the rest the last."""
     vpos = [i for i, (_, v) in enumerate(ph) if v]
     if not vpos:
-        return [{"on": [], "vs": [p for p, _ in ph][:1], "co": []} for _ in range(syl)]
+        sounds = [p for p, _ in ph]   # the first syllable hums them all, the rest hold the last
+        return [{"on": [], "vs": sounds if k == 0 else sounds[-1:], "co": []} for k in range(syl)]
     groups = [[v] for v in vpos[:syl - 1]] + [vpos[syl - 1:]] if len(vpos) >= syl else [[v] for v in vpos] + [[vpos[-1]]] * (syl - len(vpos))
     bounds = [[grp[0], grp[-1]] for grp in groups]
     out = []
@@ -86,10 +87,10 @@ def deal(ph, syl):
         gap = list(range(prev_end + 1, v0)) if v0 > prev_end else []
         take = gap[len(gap) // 2:] if gi > 0 else gap
         on = [ph[i][0] for i in take]
-        vs = [ph[i][0] for i in range(v0, v1 + 1) if ph[i][1]] if v1 >= v0 else [ph[v0][0]]
+        vs = [ph[i][0] for i in range(v0, v1 + 1)]   # every sound typed, consonants between joined vowels too
         after = list(range(v1 + 1, nxt)) if nxt > v1 else []
         co = [ph[i][0] for i in (after[: len(after) // 2] if gi + 1 < len(bounds) else after)]
-        out.append({"on": on, "vs": vs or [ph[v0][0]], "co": co})
+        out.append({"on": on, "vs": vs, "co": co})
     return out
 
 def saved(place, text, at, every):

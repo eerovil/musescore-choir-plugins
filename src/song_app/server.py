@@ -1934,13 +1934,14 @@ def _publish_busy(song: state.Song) -> bool:
                                     for kind in ("clean", "check", "publish"))
 
 
-def _readings(words: List[str]) -> Dict:
+def _readings(words: List[str]) -> Optional[Dict]:
     """{word: readings} of the words the dictionary reads more than one way, from
-    src/sing_song/readings.py in the singer's venv (g2p_en and its dictionary live there)."""
+    src/sing_song/readings.py in the singer's venv (g2p_en and its dictionary live there), or
+    None on a host with no singer venv: the readings typed by hand need none (#484 review)."""
     from src.sing_song.main import sing_venv
     python = os.path.join(sing_venv(), "bin", "python")
     if not os.path.exists(python):
-        raise HTTPException(503, f"No singer at {sing_venv()}: run scripts/install-singer.sh")
+        return None
     script = os.path.join(os.path.dirname(song_places.__file__), "readings.py")
     r = subprocess.run([python, "-I", script], input=json.dumps(words), capture_output=True,
                        text=True, timeout=300)
@@ -2015,6 +2016,12 @@ def api_pronunciation(slug: str) -> Dict:
     cleaned = _cleaned_or_400(song)
     every = song_places.places(cleaned)
     readings = _readings(sorted({p["word"] for p in every}))
+    english_note = None
+    if readings is None:
+        from src.sing_song.main import sing_venv
+        english_note = (f"The English dictionary's readings are not listed: no singer at {sing_venv()} "
+                        "(scripts/install-singer.sh). Readings typed in voice sounds still work.")
+        readings = {}
     choices = song_places.load(song.dir)
     chosen = {song_places.key(c): c["sounds"] for c in choices["places"] if c["lang"] == "en"}
     rows = [dict(p, readings=readings[p["word"]], chosen=chosen.get(song_places.key(p)))
@@ -2027,7 +2034,7 @@ def api_pronunciation(slug: str) -> Dict:
             "stale": song_places.stale(choices, cleaned), "language": song.language,
             "languages": [{"code": c, "name": n} for c, n in languages.names().items()
                           if c in languages.sung_by_g2p()],
-            "pack": pack, "note": None if pack is not None else NO_PACK}
+            "pack": pack, "note": None if pack is not None else NO_PACK, "english_note": english_note}
 
 
 @app.post("/api/songs/{slug}/pronunciation")

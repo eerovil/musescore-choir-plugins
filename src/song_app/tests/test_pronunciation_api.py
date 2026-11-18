@@ -33,6 +33,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "SONGS_DIR", str(songs))
     monkeypatch.setattr(server.song_places, "places", lambda score: [dict(p) for p in PLACES])
     asked = []
+    monkeypatch.setitem(server.__dict__, "_readings_real", server._readings)
     monkeypatch.setattr(server, "_readings", lambda words: asked.append(words) or {"wind": WIND})
     c = TestClient(server.app)
     c.asked, c.dir = asked, dest
@@ -49,6 +50,22 @@ def test_the_list_has_each_place_of_a_word_with_two_readings(client):
     assert data["stale"] == [] and data["everywhere"] == {} and data["saved"] == []
     assert {"code": "la-de", "name": "Latin (German style)"} in data["languages"]
     assert not any(x["code"] in ("fi", "no") for x in data["languages"])
+
+
+def test_with_no_singer_venv_readings_typed_by_hand_still_load_and_save(client, tmp_path, monkeypatch):
+    # review of #503: a host with no scripts/install-singer.sh venv got a 503 for the whole panel
+    monkeypatch.setattr(server, "_readings", server.__dict__["_readings_real"])
+    monkeypatch.setattr("src.sing_song.main.sing_venv", lambda: str(tmp_path / "no-venv"))
+    monkeypatch.delenv("UFR_DIR", raising=False)
+    r = client.get(f"/api/songs/{SLUG}/pronunciation")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["places"] == [] and "no singer" in data["english_note"]
+    assert data["languages"] and data["pack"] is None
+    r = client.post(f"/api/songs/{SLUG}/pronunciation",
+                    json={"everywhere": {"la": {"sed": "it/s it/a it/d"}}, "langs": ["la"]})
+    assert r.status_code == 200, r.text
+    assert {"bar": None, "beat": None, "word": "sed", "sounds": "it/s it/a it/d", "lang": "la"} in r.json()["saved"]
 
 
 def test_a_choice_is_kept_with_the_song_and_a_lost_place_reported(client):
