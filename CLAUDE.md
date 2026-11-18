@@ -1312,7 +1312,7 @@ state model are in `DESIGN.md`.
   rewrites the lengths, re-brackets the triplets, moves ties and slurs with their notes
   and takes `rhythm?` off the red mark (#290: only what a pick answers comes off — a
   whole-bar pick takes homr's `rhythm?`, `pitch?`, `accidental?`, `notes?`, a pitch pick
-  `pitch?` and `accidental?`; `voice?` and cleaning's own marks stay). It carries the fragment's content stamp, and
+  `pitch?` and `accidental?`; `voice?` and cleaning's own marks stay, except that `long_bars`' "was 9/8, cut to 4/4 in voice 1" mark names the voices it cut, and a `bar` fix, which writes voice 1 only, takes off a mark naming voice 1 alone once voice 1 fills the bar; a mark naming another voice, or from before marks named voices, needs an `unmark`, #482). It carries the fragment's content stamp, and
   `drop_stale_picks` removes it before a clean once that system has been read again
   differently. "None of these" is kept in `.song.json` (`readings.declined`).
 - **Every problem is one list, each with its choices** (#290, `problems.py`, `GET
