@@ -6,9 +6,13 @@ slug; the human display name lives in the state file. See DESIGN.md.
 
 from __future__ import annotations
 
+import copy
+import fcntl
 import hashlib
 import json
+import logging
 import os
+import pwd
 import re
 import threading
 import time
@@ -72,12 +76,84 @@ def file_fingerprint(path: str) -> Optional[str]:
     return "sha1:" + h.hexdigest()
 
 
+log = logging.getLogger(__name__)
+
+# The dicts a save merges key by key rather than writing whole (#498). Everything
+# else is merged a top-level key at a time: a record such as `health`
+# (`{checked_against, issues}`) is written by one writer as one unit, and stitching
+# it from two would make a record nobody wrote. `publish` holds the Publish panel's
+# settings beside the publish job's `sites`, and `sites` one record per choir, each
+# written by a different writer (the app, `sing_song.py --publish`).
+MERGED = {"publish": {"sites": {}}}
+
+_MISSING = object()
+
+
+def _merge(mine: Dict, base: Dict, disk: Dict, deeper: Dict) -> None:
+    """Merge into `mine`, in place: what this copy changed since `base` stays,
+    everything else becomes the disk's.
+
+    In place, so a reference taken into `mine` before a save (`pub =
+    song.data.setdefault("publish", {})`) still points into the song afterwards.
+    """
+    for key in set(mine) | set(base) | set(disk):
+        have, was = mine.get(key, _MISSING), base.get(key, _MISSING)
+        theirs = disk.get(key, _MISSING)
+        if key in deeper and isinstance(have, dict) and isinstance(theirs, dict):
+            _merge(have, was if isinstance(was, dict) else {}, theirs, deeper[key])
+            continue
+        if have != was:
+            continue                      # this copy's change, written whole
+        if theirs is _MISSING:
+            mine.pop(key, None)
+        elif isinstance(have, dict) and isinstance(theirs, dict):
+            have.clear()
+            have.update(copy.deepcopy(theirs))
+        else:
+            mine[key] = copy.deepcopy(theirs)
+
+
 class Song:
-    """In-memory view of a song's .song.json, with helpers to resolve its files."""
+    """In-memory view of a song's .song.json, with helpers to resolve its files.
+
+    A loaded song remembers what it was loaded with (`_base`), so a save writes
+    only what this copy changed and keeps what another writer saved meanwhile
+    (#498). A long job (a clean, a scan) holds its copy for minutes.
+    """
 
     def __init__(self, slug: str, data: Dict):
         self.slug = slug
-        self.data = data
+        self._data = data
+        self._base: Optional[Dict] = None
+        self._rebound = False
+        self._loaded_raw: Optional[str] = None
+
+    @property
+    def data(self) -> Dict:
+        return self._data
+
+    @data.setter
+    def data(self, value: Dict) -> None:
+        # Someone else's dict: the base no longer says what this copy changed.
+        # `adopt` is the way to take another copy's data with its base.
+        self._data = value
+        if self._base is not None:
+            self._rebound = True
+        self._base = None
+
+    def adopt(self, other: "Song") -> None:
+        """Take `other`'s data and what it was loaded with."""
+        if other is self:
+            return
+        self._data = other._data
+        self._base = copy.deepcopy(other._base) if other._base is not None else None
+        self._rebound = other._rebound
+        self._loaded_raw = other._loaded_raw
+
+    def _loaded(self, raw: str) -> None:
+        self._base = copy.deepcopy(self._data)
+        self._rebound = False
+        self._loaded_raw = raw
 
     # ---- paths -----------------------------------------------------------
     @property
@@ -129,19 +205,42 @@ class Song:
 
     # ---- persistence -----------------------------------------------------
     def save(self) -> None:
-        """Write the whole state, under the song's lock and in one rename.
+        """Write what this copy changed, under the song's lock and in one rename.
 
         The rename means a reader never sees half a file. The lock is what lets a
         writer that only owns a few fields (`server._rescan`) re-read and write in
-        one step without another save landing in between (#252).
+        one step without another save landing in between (#252), and it is held
+        across processes, so `sing_song.py` is kept apart from the app (#498).
+
+        The file is read again and merged (`_merge`): a top-level record this copy
+        changed since it was loaded is written whole, every other one is kept as
+        it is on disk now, and `MERGED` names the two dicts merged a key deeper.
+        A song never loaded writes whole.
         """
         with song_lock(self.slug):
             self.check_still_here()
-            self.data["updated_at"] = time.time()
+            raw = _read_raw(self.state_path())
+            disk = None
+            if raw is not None:
+                try:
+                    disk = _upgrade(json.loads(raw))
+                except ValueError:
+                    disk = None
+            if disk is not None and self._base is not None:
+                _merge(self._data, self._base, disk, MERGED)
+            elif disk is not None and self._rebound:
+                if raw == self._loaded_raw:
+                    pass    # nothing saved since this copy was loaded: whole is right
+                else:
+                    log.warning("%s: saving a rebound copy whole over a state saved "
+                                "since it was loaded (use Song.adopt)", self.slug)
+            self._data["updated_at"] = time.time()
+            text = json.dumps(self._data, indent=2, ensure_ascii=False)
             tmp = self.state_path() + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2, ensure_ascii=False)
+                f.write(text)
             os.replace(tmp, self.state_path())
+            self._loaded(text)
 
     def check_still_here(self) -> None:
         """Raise `SongGone` unless this copy is still the song on disk (#428).
@@ -188,27 +287,111 @@ class Song:
         }
 
 
-_LOCKS: Dict[str, threading.RLock] = {}
+def _read_raw(path: str) -> Optional[str]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def lock_dir() -> str:
+    """Where the song locks' files are, the same for every process of this account.
+
+    Off the account's home in the password database, not `$HOME`, `$TMPDIR` or
+    `$XDG_*`: the systemd service and a shell running `sing_song.py` may have
+    different ones, and two lock files would keep nothing apart (#498). Not in
+    `songs/` (its own git repo) nor beside it (an untracked folder in the checkout
+    makes the deploy refuse).
+    """
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    return os.path.join(home, ".local", "state", "musescore-choir-plugins", "song-locks")
+
+
+class _SongLock:
+    """A re-entrant lock held across threads *and* processes.
+
+    The thread lock keeps this process's threads apart and makes the lock
+    re-entrant; the outermost hold also takes `flock` on a file, which keeps other
+    processes apart. The kernel drops a `flock` when its holder dies, so a killed
+    job never strands it.
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self._thread = threading.RLock()
+        self._depth = 0
+        self._fd: Optional[int] = None
+
+    def acquire(self) -> None:
+        self._thread.acquire()
+        try:
+            if self._depth == 0:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                except BaseException:
+                    os.close(fd)
+                    raise
+                self._fd = fd
+            self._depth += 1
+        except BaseException:
+            self._thread.release()
+            raise
+
+    def release(self) -> None:
+        self._depth -= 1
+        if self._depth == 0 and self._fd is not None:
+            fd, self._fd = self._fd, None
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+        self._thread.release()
+
+    def __enter__(self) -> "_SongLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+
+_LOCKS: Dict[str, _SongLock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def song_lock(slug: str) -> threading.RLock:
-    """The lock every save of this song's state takes.
+def lock_path(slug: str, songs_dir: Optional[str] = None) -> str:
+    key = hashlib.sha1(os.path.realpath(songs_dir or SONGS_DIR).encode()).hexdigest()
+    return os.path.join(lock_dir(), key, f"{slug}.lock")
 
-    Routes load, work, then save the whole state, so a save from a stale copy
-    silently undoes whatever was saved since it was loaded. Hold this across a
-    re-load and the save that follows it to make the pair one step.
+
+def song_lock(slug: str, songs_dir: Optional[str] = None) -> _SongLock:
+    """The lock every save of this song's state takes, in every process.
+
+    Routes load, work, then save, so a save from a stale copy used to undo
+    whatever was saved since it was loaded. Hold this across a re-load and the
+    save that follows it to make the pair one step. `songs_dir` is for a writer
+    handed another songs folder; the lock is keyed by that folder's real path,
+    so a worktree's `songs` symlink and the main checkout's folder share it.
     """
+    path = lock_path(slug, songs_dir)
     with _LOCKS_GUARD:
-        return _LOCKS.setdefault(slug, threading.RLock())
+        lock = _LOCKS.get(path)
+        if lock is None:
+            lock = _LOCKS[path] = _SongLock(path)
+        return lock
 
 
 def load(slug: str) -> Optional[Song]:
     path = os.path.join(song_dir(slug), STATE_FILE)
-    if not os.path.exists(path):
+    raw = _read_raw(path)
+    if raw is None:
         return None
-    with open(path, "r", encoding="utf-8") as f:
-        return Song(slug, _upgrade(json.load(f)))
+    song = Song(slug, _upgrade(json.loads(raw)))
+    song._loaded(raw)
+    return song
 
 
 # The settings the site plays a song with. They used to be the Record stage's

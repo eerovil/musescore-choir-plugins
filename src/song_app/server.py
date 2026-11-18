@@ -666,7 +666,7 @@ def api_undo_clean(slug: str) -> Dict:
         # The restored fingerprint is in the state before the watcher sees the file
         # change, so it is read as our own write and not checked a second time.
         fresh.save()
-    song.data = fresh.data
+    song.adopt(fresh)
     hub.emit(slug, {"type": "log", "line": "Undid the last clean: the previous cleaned score is back."})
     hub.emit(slug, {"type": "state"})
     return _derived(song)
@@ -799,7 +799,7 @@ def _rescan(song: state.Song) -> None:
                 "issues": health.merge_issues(found, current.get("issues", [])),
             }
             fresh.save()
-    song.data = fresh.data
+    song.adopt(fresh)
 
 
 @app.post("/api/songs/{slug}/rescan")

@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- A clean, scan or other long job no longer erases what was saved to the song while it ran,
+  such as the publish record `sing_song.py --publish` writes: a save now writes only what that
+  job changed, and the app and the command-line tools take turns with the song's file. (#498)
+
 - A printed rit. or accel. now slows down or speeds up the practice track and the sung voices,
   beat by beat, to three quarters (or five quarters) of the speed by the next "a tempo", tempo
   change, fermata or the end. The Publish panel lists each one, with a target BPM or "play as

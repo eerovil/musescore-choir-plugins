@@ -764,6 +764,16 @@ Key test modules:
   import's `lyrics` record and stage survive. The rule it pins: `_rescan` writes only
   health and the fingerprint, onto the state re-read under `state.song_lock`, and
   every `Song.save` takes that lock and writes by rename.
+  **A save merges, and the lock reaches other processes** (#498, `test_state_merge.py`). A
+  clean held its start-of-run copy for minutes and saved it whole, erasing the publish record
+  `sing_song.py --publish` wrote meanwhile. `state.load` remembers what it read (`_base`), and
+  `Song.save` re-reads the file under the lock and writes only the top-level records this copy
+  changed since then, whole; `publish` and `publish.sites` (`state.MERGED`) are merged a key
+  deeper, so the panel's settings and a CLI's choir record both survive. Take another copy's
+  data with `song.adopt(fresh)`, never `song.data = fresh.data`, which drops the base and saves
+  whole. `song_lock` is re-entrant and also takes an `flock` under
+  `~/.local/state/musescore-choir-plugins/song-locks/` (the home from `pwd`, not `$HOME`), so
+  `sing_song.py` and `publish._move_records` wait for the app and the other way round.
 - `src/song_app/tests/test_score_file.py` / `test_score_file_ui.py` — added by this
   pull request for taking the score away to MuseScore and bringing it back (#216).
   The first is mostly about what must **not** be replaced: a PDF, a transfer that
