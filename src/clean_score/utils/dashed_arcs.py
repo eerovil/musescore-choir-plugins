@@ -11,7 +11,6 @@ holds the note and wrong for the one that does not, and the practice track sings
 one. So the arc is kept and the bar it starts in gets a red `⚠ dashed tie?` or
 `⚠ dashed slur?`. An `untie` or `unslur` fix answers it, and `unmark` keeps the arc.
 """
-from typing import Dict, List
 
 from lxml import etree
 
@@ -32,7 +31,7 @@ def _dashed(spanner: etree._Element) -> bool:
             and (spanner.findtext(f"{kind}/lineType") or "").strip() == DASHED)
 
 
-def mark_dashed_arcs(root: etree._Element) -> List[Dict]:
+def mark_dashed_arcs(root: etree._Element) -> list[dict]:
     """Mark each bar where a dashed tie or slur starts in a sung part.
 
     Returns `{part, measure, kind}` per mark written (1-based bars). The arc is left
@@ -40,7 +39,7 @@ def mark_dashed_arcs(root: etree._Element) -> List[Dict]:
     the arc can be wrong for.
     """
     names = staff_names(root)
-    out: List[Dict] = []
+    out: list[dict] = []
     for si, staff in enumerate(root.findall(".//Score/Staff"), start=1):
         if _INSTRUMENT.search(names.get(si, "")):
             continue
