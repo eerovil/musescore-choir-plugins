@@ -200,6 +200,28 @@ here. The one runner shipped is `src/kube_runner/runner.py`, for a node with an 
 a Kubernetes cluster: set `REMOTE_KUBE_CONTEXT` to its kubectl context. Its first job builds the
 venv there (minutes), and the first line copies the voices from `UFR_DIR`.
 
+**Any machine you can `ssh` into can sing** with `scripts/ssh-runner.sh` (it sings only; scanned
+bands are read here). On that machine, clone this repository, run `scripts/install-singer.sh
+<the voice pack zip>` there (download the pack onto it yourself: its terms forbid copying it
+around), and check `ssh <host> true` works without a password prompt. Then in `.env` here:
+
+```bash
+REMOTE_RUNNER=scripts/ssh-runner.sh
+SSH_RUNNER_HOST=user@host            # or a ~/.ssh/config name
+# SSH_RUNNER_SING_VENV, SSH_RUNNER_UFR_DIR: only if not install-singer.sh's defaults there
+# SSH_RUNNER_ENV="GPU=1"             # settings for the singer there only
+```
+
+Each line goes over with this checkout's `sing_ufr.py`, so the two machines cannot sing with
+different rules; the song's own settings (its language and so on) go with it, while the voices'
+folder, the card and the provider are the other machine's. A rented GPU machine works the same
+way: install the singer and the voice pack on it, and point `SSH_RUNNER_HOST` at it.
+
+**The singer's provider** is `SING_PROVIDER`: `cpu`, `cuda` (what `GPU=1` meant), or `coreml`,
+which tries Apple's CoreML and falls back to the processor, saying so in the log. The log names
+each model's provider. CoreML has not been measured: time it on one phrase with `--try PART:A-B`
+against `SING_PROVIDER=cpu`, listen to both, and report the numbers on the issue.
+
 ## 7. Publish (optional)
 
 Ask the person which list it goes on. With the site's Cloudflare keys in `.env`

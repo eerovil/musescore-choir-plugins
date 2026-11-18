@@ -178,7 +178,29 @@ STOP_GAP = float(os.environ.get("STOP_GAP", "0.3"))
 DOUBLE_STOP = os.environ.get("DOUBLE_STOP", "1") == "1"   # "huk-kuu": a doubled stop keeps its vowel short too
 TIMING = os.environ.get("TIMING", "flat")
 # GPU=1 runs on an NVIDIA card (the GTX 970 needs onnxruntime-gpu 1.17 with CUDA 11; see the note)
-PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"] if os.environ.get("GPU") else ["CPUExecutionProvider"]
+def providers(ort, env=os.environ, log=lambda m: print(m, file=sys.stderr)):
+    """The onnxruntime providers to sing on. SING_PROVIDER picks cpu, cuda or coreml (#483);
+    unset, GPU=1 means cuda as before. coreml (a Mac's Neural Engine and graphics) is tried
+    only when this onnxruntime has it, and falls back to the processor op by op."""
+    want = (env.get("SING_PROVIDER") or ("cuda" if env.get("GPU") else "cpu")).strip().lower()
+    if want == "cuda":
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if want == "coreml":
+        if "CoreMLExecutionProvider" in ort.get_available_providers():
+            return [("CoreMLExecutionProvider", {"MLComputeUnits": "ALL"}), "CPUExecutionProvider"]
+        log("SING_PROVIDER=coreml: this onnxruntime has no CoreML provider; singing on the processor")
+    elif want != "cpu":
+        log(f"SING_PROVIDER={want} is not one of cpu, cuda, coreml; singing on the processor")
+    return ["CPUExecutionProvider"]
+PROVIDERS = None   # chosen when the first model opens, so parts of this file run without onnxruntime
+def session(path):
+    """An onnxruntime session on the chosen providers, saying which provider it really got."""
+    global PROVIDERS
+    if PROVIDERS is None:
+        PROVIDERS = providers(ort)
+    s = ort.InferenceSession(path, providers=PROVIDERS)
+    print(f"{os.path.basename(path)}: {', '.join(s.get_providers())}", file=sys.stderr)
+    return s
 def cons_seq(cs, proposed=None):
     """Consonants sung between two vowels. Stops (k, p, t and d) get a closure (silence) before them, as
     DiffSinger voices expect; a doubled stop (the "tt" in "koittaa") gets one longer closure."""
@@ -258,8 +280,8 @@ def model_boundaries(notes, emb):
     """Return duration-model proposals for each note's preceding consonants and final coda."""
     if TIMING != "model": return {}, None
     phrases = model_phrases(notes)
-    ling = ort.InferenceSession(f"{D}/dsdur/millefeuille_v001.linguistic.onnx", providers=PROVIDERS)
-    dur = ort.InferenceSession(f"{D}/dsdur/millefeuille_v001.dur.onnx", providers=PROVIDERS)
+    ling = session(f"{D}/dsdur/millefeuille_v001.linguistic.onnx")
+    dur = session(f"{D}/dsdur/millefeuille_v001.dur.onnx")
     out = {}
     for phrase in phrases:
         words = [["SP"] + phrase[0]["on"]]
@@ -405,7 +427,7 @@ lf = np.convolve(np.pad(np.log2(f0), 3, mode="edge"), np.ones(7) / 7, "valid")
 f0 = (2 ** lf).astype(np.float32)
 if os.environ.get("DUMP_TOKENS"):        # the sounds and their frames, without singing (tests, #61)
     json.dump({"toks": toks, "durs": [int(d) for d in durs]}, open(os.environ["DUMP_TOKENS"], "w")); sys.exit(0)
-ac = ort.InferenceSession(f"{D}/core/acoustic.onnx", providers=PROVIDERS)
+ac = session(f"{D}/core/acoustic.onnx")
 def sing(toks, durs, f0):
     n = sum(durs); lang = [LANG.get(x.split("/")[0], 0) if "/" in x else 0 for x in toks]
     return ac.run(None, {"tokens": np.array([[PH[x] for x in toks]], np.int64),
@@ -476,7 +498,7 @@ wins = windows(toks, durs, int(os.environ.get("AC_CHUNK", "0")) or 10**9)
 mel = joined([sung(a, b) for a, b in wins], wins)
 assert mel.shape[1] == N, ("pieces lost frames", mel.shape, N)
 del ac
-voc = ort.InferenceSession(f"{D}/core/potluck.onnx", providers=PROVIDERS)
+voc = session(f"{D}/core/potluck.onnx")
 def vocode(mel, f0):
     """The vocoder on a whole song needs more than a 4 GB card has: run it in pieces of
     VOC_CHUNK frames that overlap by 32 frames, and cross-fade the overlaps."""

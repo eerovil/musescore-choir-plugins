@@ -1,4 +1,5 @@
 import os
+import os
 import json
 import shutil
 import subprocess
@@ -57,7 +58,7 @@ class Bundle:
         open(os.path.join(out, "score.mid"), "wb").write(b"MThd")
         self.timing = {"duration": 12.5, "measures": 3}; self.parts = parts
 DEFAULT_BPM = 80
-def build_bundle(cleaned, out, *, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, log=None):
+def build_bundle(cleaned, out, *, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, gradual=None, log=None):
     CALLS.append(dict(initial_bpm=initial_bpm, tempo_changes=tempo_changes, part_names=part_names, staff_groups=staff_groups))
     return Bundle(out, part_names or ["Track 1", "Track 2"])
 def score_credits(path):
@@ -336,6 +337,127 @@ def test_a_mens_song_is_sung_low_and_a_womens_high_whatever_a_part_is_called():
     for voicing in ("mixed", None):
         with pytest.raises(SystemExit, match="which voice sings the part 'Solo'"):
             publish_song.part_voice("Solo", voicing=voicing)
+
+
+def test_a_part_that_says_no_voice_takes_it_from_its_clef(capsys):
+    """#483: a "Solo" in a mixed song (or one with no voicing) is sung by its clef's voice."""
+    assert publish_song.part_voice("Solo", clef="G") == publish_song.HIGH
+    assert publish_song.part_voice("Solo", voicing="mixed", clef="G8vb") == publish_song.LOW
+    assert publish_song.part_voice("Solo", clef="F") == publish_song.LOW
+    assert "'Solo' says no voice; its clef (bass) gives REMY" in capsys.readouterr().out
+    # the name still wins over the clef, and the voicing over both
+    assert publish_song.part_voice("Tenori", clef="G") == publish_song.LOW
+    assert publish_song.part_voice("Solo", voicing="women", clef="F") == publish_song.HIGH
+    for clef in ("C3", "PERC", None):   # a C clef or none says nothing either
+        with pytest.raises(SystemExit, match="--voice Solo=LYSE"):
+            publish_song.part_voice("Solo", clef=clef)
+
+
+def test_the_clefs_are_read_off_the_cleaned_score_by_singing_part(tmp_path):
+    fermata = os.path.join(os.path.dirname(__file__), "..", "..", "score_export", "tests", "test_files",
+                           "fermata.mscx")
+    assert publish_song.part_clefs(fermata, 2) == ["G", "G"]
+    text = open(fermata, encoding="utf-8").read()
+    second = text.rindex("<concertClefType>G</concertClefType>")
+    bass = tmp_path / "bass.mscx"
+    bass.write_text(text[:second] + "<concertClefType>F</concertClefType>"
+                    + text[second + len("<concertClefType>G</concertClefType>"):], encoding="utf-8")
+    assert publish_song.part_clefs(str(bass), 2) == ["G", "F"]
+    # parts that cannot be paired with the bundle's say nothing, and neither does a missing file
+    assert publish_song.part_clefs(str(bass), 3) == [None, None, None]
+    assert publish_song.part_clefs(str(tmp_path / "none.mscx"), 1) == [None]
+    # MuseScore 4 saves a part's staves without their number: they are found by position
+    ms4 = tmp_path / "ms4.mscx"
+    root = publish_song.etree.parse(str(bass)).getroot()
+    for staff in root.iterfind("Score/Part/Staff"):
+        del staff.attrib["id"]
+    root.getroottree().write(str(ms4))
+    assert publish_song.part_clefs(str(ms4), 2) == ["G", "F"]
+
+
+def test_a_later_clef_change_does_not_choose_the_parts_singer(tmp_path):
+    """A part opening with no clef of its own in bar 1 (its default is treble) and changing to
+    bass later is a treble part: the later clef is not read as its opening one."""
+    fermata = os.path.join(os.path.dirname(__file__), "..", "..", "score_export", "tests", "test_files",
+                           "fermata.mscx")
+    root = publish_song.etree.parse(fermata).getroot()
+    staff = root.find("Score/Staff[@id='1']")
+    measures = staff.findall("Measure")
+    assert len(measures) > 1
+    measures[0].find("voice/Clef").getparent().remove(measures[0].find("voice/Clef"))
+    voice = measures[-1].find("voice")
+    clef = publish_song.etree.SubElement(voice, "Clef")
+    publish_song.etree.SubElement(clef, "concertClefType").text = "F"
+    voice.insert(0, clef)
+    part = root.find("Score/Part")
+    own = part.find("Staff")
+    for old in own.findall("defaultClef"):
+        own.remove(old)
+    publish_song.etree.SubElement(own, "defaultClef").text = "G"
+    path = tmp_path / "later.mscx"
+    root.getroottree().write(str(path))
+    assert publish_song.part_clefs(str(path), 2)[0] == "G"
+    assert publish_song.part_voice("Solo", clef="G") == publish_song.HIGH
+
+
+def test_voice_names_one_part_or_every_part():
+    assert publish_song.parse_voices(None) == (None, {})
+    assert publish_song.parse_voices(["LYSE"]) == ("LYSE", {})
+    assert publish_song.parse_voices(["Solo=remy", "Ääni 2 = LYSE"]) == (None, {"Solo": "REMY", "Ääni 2": "LYSE"})
+    assert publish_song.parse_voices(["REMY", "Solo=LYSE"]) == ("REMY", {"Solo": "LYSE"})
+    for bad in (["Solo=ALTO"], ["=LYSE"], ["BASS"]):
+        with pytest.raises(publish_song.argparse.ArgumentTypeError):
+            publish_song.parse_voices(bad)
+    parts = [{"name": "Sopraano"}, {"name": "Solo"}, {"name": "Piano"}]
+    assert publish_song.voices_for(parts, (None, {"Solo": "REMY", "Piano": "LYSE"}), "mixed",
+                                   [None, "G", None]) == [publish_song.HIGH, publish_song.LOW, publish_song.HIGH]
+    assert publish_song.voices_for(parts[:2], ("REMY", {"Solo": "LYSE"}), None,
+                                   [None, None]) == [publish_song.LOW, publish_song.HIGH]
+    with pytest.raises(SystemExit, match="'Sooloo', which the song has no part called"):
+        publish_song.voices_for(parts, (None, {"Sooloo": "REMY"}), None, ["G", "G", "G"])
+
+
+def test_voice_finds_its_part_in_any_case_or_by_number():
+    parts = [{"name": "Sopraano"}, {"name": "Solo"}, {"name": "Piano"}]
+    clefs = [None, "G", "G"]
+    assert publish_song.voices_for(parts, (None, {"solo": "REMY"}), None, clefs)[1] == publish_song.LOW
+    assert publish_song.voices_for(parts, (None, {"2": "REMY", "3": "LYSE"}), None, clefs) == [
+        publish_song.HIGH, publish_song.LOW, publish_song.HIGH]
+    with pytest.raises(SystemExit, match="both REMY and LYSE"):
+        publish_song.voices_for(parts, (None, {"Solo": "REMY", "2": "LYSE"}), None, clefs)
+    with pytest.raises(SystemExit, match="'4', which the song has no part called"):
+        publish_song.voices_for(parts, (None, {"4": "REMY"}), None, clefs)
+    # two parts that differ only in case: the name must be exact, or the number given
+    twins = [{"name": "Solo"}, {"name": "SOLO"}]
+    with pytest.raises(SystemExit, match="names parts 1 'Solo', 2 'SOLO'"):
+        publish_song.voices_for(twins, (None, {"solo": "REMY"}), None, ["G", "G"])
+    assert publish_song.voices_for(twins, (None, {"SOLO": "REMY"}), None, ["G", "G"]) == [
+        publish_song.HIGH, publish_song.LOW]
+
+
+def test_a_name_two_parts_share_asks_for_the_number():
+    # two parts both called "Solo": the first is not necessarily the one meant
+    same = [{"name": "Solo"}, {"name": "Kuoro"}, {"name": "Solo"}]
+    with pytest.raises(SystemExit, match="names parts 1 'Solo', 3 'Solo'; give the part's number"):
+        publish_song.voices_for(same, (None, {"Solo": "REMY"}), None, ["G", "G", "G"])
+    assert publish_song.voices_for(same, (None, {"3": "REMY"}), None, ["G", "G", "G"]) == [
+        publish_song.HIGH, publish_song.HIGH, publish_song.LOW]
+    with pytest.raises(SystemExit, match="names parts 1 'Solo', 3 'Solo'"):
+        publish_song.trial_part(("Solo", 1, 2), [p["name"] for p in same])
+    assert publish_song.trial_part(("3", 1, 2), [p["name"] for p in same]) == (3, 1, 2)
+
+
+def test_two_voices_for_every_part_are_refused():
+    with pytest.raises(publish_song.argparse.ArgumentTypeError, match="both LYSE and REMY"):
+        publish_song.parse_voices(["LYSE", "REMY"])
+    assert publish_song.parse_voices(["LYSE", "lyse"]) == ("LYSE", {})
+
+
+def test_a_wrong_voice_is_a_usage_error(tmp_path, monkeypatch):
+    song_folder(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, "--voice", "Solo=ALTO")
+    assert stop.value.code == 2
 
 
 def test_the_songs_voicing_is_read_off_its_state(tmp_path, monkeypatch):
@@ -749,15 +871,117 @@ def test_each_choir_is_published_in_turn_with_the_singer_version(tmp_path, monke
     folder = song_folder(tmp_path)
     seen = []
 
-    def fake_publish(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None,
-                     language=None):
-        assert language is None   # a piano-only run sings in no language
+    def fake_publish(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None, **kw):
+        assert kw.get("language") is None   # a piano-only run sings in no language
         seen.append((choir, version, progress.read(str(folder))))
     monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
+    no_site(monkeypatch)
     run_main(monkeypatch, tmp_path, "--no-sing", "--publish", "jm", "--publish", "public", "--publish", "jm")
     assert [(c, v) for c, v, _ in seen] == [("jm", progress.singer_version()), ("public", progress.singer_version())]
     assert [(r["state"], r["choir"], r["choir_index"], r["choir_count"]) for _, _, r in seen] == [
         ("publishing", "jm", 1, 2), ("publishing", "public", 2, 2)]
+    assert progress.read(str(folder))["choir_outcomes"] == {"jm": "published", "public": "published"}
+
+
+def no_site(monkeypatch, sung=()):
+    """No Cloudflare: the client is a stand-in, and the choirs in `sung` have a sung version."""
+    monkeypatch.setattr(publish_song, "site_client", lambda: "client")
+    asked = []
+
+    def sung_choirs(client, slug, choirs):
+        asked.append(list(choirs))
+        return [c for c in choirs if c in sung]
+    monkeypatch.setattr(publish_song, "sung_choirs", sung_choirs)
+    return asked
+
+
+def test_piano_only_over_a_sung_choir_stops_before_building(tmp_path, monkeypatch, capsys):
+    """#483: a --no-sing run does not replace a sung version on the site without asking."""
+    folder = song_folder(tmp_path)
+    no_site(monkeypatch, sung=("jm", "joy"))
+    monkeypatch.setattr(publish_song, "publish_to_site", lambda *a, **k: pytest.fail("published"))
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("built"))
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--no-sing", "--out", str(tmp_path / "out"),
+                                      "--publish", "jm", "--publish", "joy", "--publish", "yl"])
+    with pytest.raises(SystemExit) as stop:
+        publish_song.main()
+    assert stop.value.code == 3
+    message = ("jm, joy have a sung version on the site; this run would replace them with piano only. "
+               "Run again with --piano-over-sung to do that, or leave those choirs out of --publish.")
+    assert message in capsys.readouterr().err
+    run = progress.read(str(folder))
+    assert run["state"] == "failed" and run["error"] == message
+    assert run["choir_outcomes"] == {"jm": "refused-sung", "joy": "refused-sung", "yl": "not-tried"}
+
+
+def test_piano_over_sung_skips_the_check_and_says_so_to_publish(tmp_path, monkeypatch):
+    song_folder(tmp_path)
+    asked = no_site(monkeypatch, sung=("jm",))
+    seen = []
+    monkeypatch.setattr(publish_song, "publish_to_site",
+                        lambda slug, choir, *a, **kw: seen.append((choir, kw["piano_over_sung"])))
+    run_main(monkeypatch, tmp_path, "--no-sing", "--piano-over-sung", "--publish", "jm")
+    assert seen == [("jm", True)] and asked == []
+
+
+@pytest.mark.parametrize("args", [["--piano-over-sung"], ["--piano-over-sung", "--no-sing"],
+                                  ["--piano-over-sung", "--publish", "jm"]])
+def test_piano_over_sung_needs_no_sing_and_publish(tmp_path, monkeypatch, args):
+    song_folder(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, *args)
+    assert stop.value.code == 2
+
+
+def test_a_choir_refused_mid_run_lets_the_others_go_and_exits_3(tmp_path, monkeypatch, capsys):
+    """A sung version that landed after the up-front check: that choir is refused, the rest go."""
+    from src.song_app import publish
+    folder = song_folder(tmp_path)
+    no_site(monkeypatch)
+
+    def fake_publish(slug, choir, *a, **kw):
+        if choir == "joy":
+            raise publish.SungOnSite("joy")
+    monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, "--no-sing", "--publish", "jm", "--publish", "joy", "--publish", "yl")
+    assert stop.value.code == 3
+    message = ("joy has a sung version on the site and was not replaced. jm, yl were published. To replace "
+               "it with piano only, run again with --no-sing --piano-over-sung --publish joy.")
+    assert message in capsys.readouterr().err
+    run = progress.read(str(folder))
+    assert run["state"] == "failed" and run["error"] == message
+    assert run["choir_outcomes"] == {"jm": "published", "joy": "refused-sung", "yl": "published"}
+
+
+def test_a_failed_choir_stops_the_run_and_names_the_ones_not_tried(tmp_path, monkeypatch):
+    from src.song_app import publish
+    folder = song_folder(tmp_path)
+    no_site(monkeypatch)
+
+    def fake_publish(slug, choir, *a, **kw):
+        if choir == "joy":
+            raise publish.PublishError("D1 said no")
+    monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
+    with pytest.raises(SystemExit) as stop:
+        run_main(monkeypatch, tmp_path, "--no-sing", "--publish", "jm", "--publish", "joy", "--publish", "yl")
+    assert str(stop.value) == ("publish to joy failed: D1 said no. Not tried: yl; publish them with "
+                               "--publish joy --publish yl.")
+    run = progress.read(str(folder))
+    assert run["choir_outcomes"] == {"jm": "published", "joy": "failed", "yl": "not-tried"}
+    assert run["error"] == str(stop.value)
+
+
+def test_a_choir_that_cannot_be_checked_stops_the_run(tmp_path, monkeypatch):
+    from src.song_app import publish
+
+    class Client:
+        def query(self, sql, params):
+            raise publish.PublishError("timed out")
+    with pytest.raises(SystemExit) as stop:
+        publish_song.sung_choirs(Client(), "laulu", ["jm"])
+    assert str(stop.value) == "could not check jm on the site before publishing: timed out"
 
 
 def test_a_run_whose_process_is_gone_reads_as_failed(tmp_path):
@@ -858,3 +1082,241 @@ def test_choirs_that_say_a_word_differently_are_not_sung_in_one_run(tmp_path, mo
         with pytest.raises(SystemExit, match="its own run"):
             publish_song.pronounce_env("hodie", choirs)
     assert publish_song.pronounce_env("hodie", ["a", "c"])["CHOIR_WORDS"].count(os.pathsep) == 1
+
+# --try PART:A-B: one phrase of one part, to listen to (#483)
+def note(bar, syl=None, syllabic=None, sec=1.0, pitch=60, melisma=False):
+    return {"pitch": pitch, "beats": 1, "syl": syl, "syllabic": syllabic, "sec": sec, "melisma": melisma,
+            "bar": bar, "beat": 0}
+
+
+def silence(sec=1.0):
+    return {"pitch": None, "beats": 1, "syl": None, "sec": sec}
+
+
+def test_a_trial_keeps_whole_words_over_the_bars_edges():
+    notes = [note(1, "la", "single"), note(2, "ai", "begin"), note(3, "ka", "end"), note(3, "on", "single"),
+             note(4, "lyh", "begin"), note(5, "yt", "end"), note(5, melisma=True), note(5, "ja", "single")]
+    # bar 3 to 4: back to "ai" in bar 2, on to "yt" and the note held on it in bar 5, not "ja"
+    assert publish_song.try_window([notes], 3, 4) == (1.0, 7.0)
+
+
+def test_a_trial_is_the_first_pass_through_its_bars():
+    first = [note(1, "a", "single"), note(2, "b", "single")]
+    again = [note(1, "c", "single"), note(2, "d", "single")]
+    notes = first + [silence()] + again
+    assert publish_song.try_window([notes], 2, 2) == (1.0, 2.0)
+
+
+def test_a_trial_stops_where_a_repeat_jumps_back():
+    # bars 1-2 played twice with no rest between: the trial is the first time through only
+    notes = [note(1, "a", "single"), note(2, "b", "single"), note(1, "c", "single"), note(2, "d", "single")]
+    assert publish_song.try_window([notes], 1, 2) == (0.0, 2.0)
+
+
+def test_a_trials_onset_check_looks_only_at_its_phrase():
+    from src.sing_song import check_onsets
+    notes = [note(1), note(2), note(3)]
+    ref = [0.0, 1.0, 2.7]          # the piano starts bar 3's note somewhere else
+    points = [[0, 0, 0], [1, 1, 0], [2, 2, 0]]
+    assert [bar for bar, _, _ in check_onsets.off_notes(notes, ref, points)] == [3]
+    assert check_onsets.off_notes(notes, ref, points, (0.0, 2.0)) == []
+
+
+def test_a_trial_with_no_words_in_its_bars_is_none():
+    assert publish_song.try_window([[note(1, "a", "single"), silence(), note(3)]], 2, 2) is None
+
+
+def test_every_line_of_a_part_is_cut_at_the_same_moments():
+    high = [note(1, "a", "single"), note(2, "b", "single"), note(3, "c", "single")]
+    low = [note(1, "x", "single", sec=1.5), note(2, "y", "single", sec=1.5)]
+    start, end = publish_song.try_window([high, low], 2, 2)
+    assert (start, end) == (1.0, 3.0)
+    assert [n["syl"] for n in publish_song.cut(high, start, end)] == ["b", "c"]   # the low word runs to 3.0
+    cut_low = publish_song.cut(low, start, end)
+    # the low line's first note began before the phrase: its part inside is silence
+    assert [(n["pitch"], n["sec"]) for n in cut_low] == [(None, 0.5), (60, 1.5)]
+    assert sum(n["sec"] for n in cut_low) == pytest.approx(end - start)
+
+
+@pytest.mark.parametrize("text, parsed", [("Solo:12-16", ("Solo", 12, 16)), ("2:5", ("2", 5, 5)),
+                                          ("T1 a:3-4", ("T1 a", 3, 4))])
+def test_a_trial_names_a_part_and_bars(text, parsed):
+    assert publish_song.parse_trial(text) == parsed
+
+
+@pytest.mark.parametrize("text", ["Solo", "Solo:", ":3-4", "Solo:4-3", "Solo:0-2", "Solo:x-y",
+                                  "Solo:foo", "Solo:1-x"])
+def test_a_trial_that_names_no_bars_is_refused(text):
+    with pytest.raises(publish_song.argparse.ArgumentTypeError, match="give PART:A-B"):
+        publish_song.parse_trial(text)
+
+
+@pytest.mark.parametrize("text", ["Solo:foo", "Solo:1-x", "Solo:4-3"])
+def test_a_mistyped_trial_is_a_usage_error_not_a_traceback(monkeypatch, capsys, text):
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "song", "--try", text])
+    monkeypatch.setattr(publish_song, "build_bundle", lambda *a: pytest.fail("got past the --try check"))
+    with pytest.raises(SystemExit) as e:
+        publish_song.main()
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert "usage:" in err and "give PART:A-B" in err and "Traceback" not in err
+
+
+def test_a_trials_part_is_found_by_name_or_number():
+    names = ["Sopraano", "Solo", "2"]
+    assert publish_song.trial_part(("solo", 1, 2), names) == (2, 1, 2)
+    assert publish_song.trial_part(("2", 1, 2), names) == (3, 1, 2)   # a part called 2 before part 2
+    assert publish_song.trial_part(("1", 1, 2), names) == (1, 1, 2)
+    with pytest.raises(SystemExit) as e:
+        publish_song.trial_part(("Basso", 1, 2), names)
+    assert "1 Sopraano, 2 Solo, 3 2" in str(e.value)
+
+
+@pytest.mark.parametrize("flag", [["--publish", "jm"], ["--resume"], ["--no-sing"]])
+def test_a_trial_publishes_nothing_and_resumes_nothing(tmp_path, monkeypatch, capsys, flag):
+    with pytest.raises(SystemExit) as e:
+        run_main(monkeypatch, tmp_path, "--try", "Solo:1-2", *flag)
+    assert e.value.code == 2 and f"does not go with {flag[0]}" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_sing_with_a_trial_sings_that_phrase_into_try_only(tmp_path, monkeypatch):
+    from src.sing_song.tests.test_fold import chord, score
+    cleaned = score(tmp_path / "cleaned.mscx",
+                    [("T1", [chord(60, syl="la") * 4, chord(62, syl="lu") * 4]),
+                     ("B1", [chord(48, syl="do") * 4, chord(50, syl="re") * 4])])
+    bundle, work = tmp_path / "bundle", tmp_path / "work"
+    bundle.mkdir()
+    work.mkdir()
+    (bundle / "timing.json").write_text(json.dumps(
+        {"points": [[0, 0, 0], [4, 1, 0], [8, 1, 4]], "duration": 8, "measures": 2}))
+    sung, checked, real_run = [], [], publish_song.run
+
+    def run(cmd, **kw):
+        if str(cmd[2]).endswith("unroll.py"):
+            return real_run(cmd, **kw)
+        if str(cmd[2]).endswith("check_onsets.py"):
+            checked.append(cmd[3:])
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if no_silent(cmd, kw):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == "ffmpeg":
+            open(cmd[-1], "w").write("mp3")
+        elif cmd[:3] == ["nice", "-n", "19"]:
+            sung.append((os.path.basename(cmd[6]), [(n.get("pitch"), n.get("syl")) for n in json.load(open(cmd[6]))]))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(publish_song, "run", run)
+    monkeypatch.delenv("REMOTE_RUNNER", raising=False)
+    mp3 = tmp_path / "try" / "2-B1-bars-2-2.mp3"
+    mp3.parent.mkdir()
+    manifest = {"duration": 8, "parts": [{"name": "T1"}, {"name": "B1"}]}
+    tried = publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "fi",
+                              sys.executable, "/ufr", False, trial=(2, 2, 2, str(mp3)))
+    assert tried[0] == pytest.approx(4.0) and tried[1] >= 0   # bar 2 is four seconds of music
+    assert sung == [("p2-high.json", [(50, "re")] * 4)]
+    # the onsets are checked in the phrase only, so a bad bar elsewhere does not stop the trial
+    assert checked and all(c[-2:] == ["4.0000", "8.0000"] for c in checked)
+    assert mp3.read_text() == "mp3" and os.listdir(mp3.parent) == [mp3.name]
+    assert not (bundle / "parts").exists() or not os.listdir(bundle / "parts")
+    assert not (bundle / "words.json").exists()
+
+
+def test_a_trial_past_the_songs_last_bar_is_refused(tmp_path, monkeypatch):
+    # a two-bar song: --try B1:1-999 stops before anything is sung, rather than singing bars 1-2
+    from src.sing_song.tests.test_fold import chord, score
+    cleaned = score(tmp_path / "cleaned.mscx",
+                    [("T1", [chord(60, syl="la") * 4, chord(62, syl="lu") * 4]),
+                     ("B1", [chord(48, syl="do") * 4, chord(50, syl="re") * 4])])
+    bundle, work = tmp_path / "bundle", tmp_path / "work"
+    bundle.mkdir()
+    work.mkdir()
+    (bundle / "timing.json").write_text(json.dumps(
+        {"points": [[0, 0, 0], [4, 1, 0], [8, 1, 4]], "duration": 8, "measures": 2}))
+    ran = []
+    monkeypatch.setattr(publish_song, "run", lambda cmd, **kw: ran.append(cmd))
+    mp3 = tmp_path / "try" / "2-B1-bars-1-999.mp3"
+    manifest = {"duration": 8, "parts": [{"name": "T1"}, {"name": "B1"}]}
+    with pytest.raises(SystemExit, match="bars 1-999 run past the song, which has 2 bars"):
+        publish_song.sing(manifest, cleaned, str(bundle), str(work), ["remy_adult", "remy_adult"], "fi",
+                          sys.executable, "/ufr", False, trial=(2, 1, 999, str(mp3)))
+    assert ran == [] and not mp3.exists()
+
+
+def test_a_trial_says_how_long_its_music_is_and_how_long_singing_it_took():
+    assert publish_song.trial_said("/o/try/2-Solo-bars-1-4.mp3", 8.04, 31.26) == \
+        "Trial: /o/try/2-Solo-bars-1-4.mp3 (8.0 s of music, sung in 31.3 s)"
+
+
+def test_a_trials_folded_score_stays_under_try():
+    # --try --fold-divisi must leave a full run's <out>/<slug>_folded.mscx as it was
+    assert publish_song.folded_path("/o", "laulu", ("Solo", 1, 4)) == "/o/try/laulu_folded.mscx"
+    assert publish_song.folded_path("/o", "laulu") == "/o/laulu_folded.mscx"
+
+
+def test_a_trial_needs_only_its_own_parts_voice():
+    # Piano says no voice and has no clef: a full run stops on it, a --try of Solo does not
+    parts = [{"name": "Piano"}, {"name": "Solo"}]
+    with pytest.raises(SystemExit, match="'Piano'"):
+        publish_song.voices_for(parts, (None, {}), None, [None, "F"])
+    assert publish_song.voices_for(parts, (None, {}), None, [None, "F"], only=2) == [None, publish_song.LOW]
+
+
+def test_a_trial_run_keeps_no_record_for_the_song_list(tmp_path):
+    from src.sing_song import progress
+    run = progress.Run(str(tmp_path), (), "v1", kept=False)
+    run.step("singing", part=1)
+    run.finish()
+    assert os.listdir(tmp_path) == []
+    progress.Run(str(tmp_path), (), "v1").step("bundle")
+    assert os.listdir(tmp_path) == [progress.RUN_FILE]
+
+
+@pytest.mark.parametrize("trial", [[], ["--try", "Solo:1-1"]])
+def test_folded_divisi_still_finds_the_solos_clef(tmp_path, monkeypatch, trial):
+    """#483 review: --fold-divisi makes [S1, S1b, Solo] the bundle's [S1, Solo]; the clefs are read
+    off the folded score, so a Solo in a mixed song still takes its voice from its clef."""
+    from src.sing_song.tests.test_fold import chord, score
+    from src.sing_song.fold import fold
+    cleaned = score(tmp_path / "cleaned.mscx", [("S1", [chord(72) * 4]), ("S1b", [chord(69) * 4]),
+                                                ("Solo", [chord(48) * 4])])
+    root = publish_song.etree.parse(cleaned).getroot()
+    solo = root.find("Score/Staff[@id='3']/Measure/voice")
+    clef = publish_song.etree.Element("Clef")
+    publish_song.etree.SubElement(clef, "concertClefType").text = "F"
+    solo.insert(0, clef)
+    root.getroottree().write(cleaned)
+
+    def build_bundle(app, slug, out, folded):
+        assert folded
+        groups = [ids for _, ids in fold(cleaned, folded)]
+        return {"duration": 1.0, "parts": [{"name": "S1"}, {"name": "Solo"}]}, cleaned, groups
+    sung = {}
+
+    def sing(manifest, cleaned_, bundle, work, voices, *a, trial=None, **kw):
+        sung["voices"], sung["trial"] = voices, trial
+        return 1.0, 1.0
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("")
+    monkeypatch.setattr(publish_song, "ROOT", str(tmp_path))
+    monkeypatch.setattr(publish_song, "sing_venv", lambda: str(tmp_path / "venv"))
+    monkeypatch.setattr(publish_song, "is_ours", lambda d: True)
+    monkeypatch.setattr(publish_song, "pronounce_env", lambda *a: {})
+    monkeypatch.setattr(publish_song, "song_voicing", lambda slug: "mixed")
+    monkeypatch.setattr(publish_song, "build_bundle", build_bundle)
+    monkeypatch.setattr(publish_song, "sing", sing)
+    monkeypatch.setattr(publish_song, "trial_said", lambda *a: "tried")
+    monkeypatch.setattr(publish_song, "publish_to_site", lambda *a, **k: pytest.fail("published"),
+                        raising=False)
+    monkeypatch.setattr(sys, "argv", ["sing_song.py", "laulu", "--out", str(tmp_path / "out"),
+                                      "--fold-divisi", "--cpu", *trial])
+    try:
+        publish_song.main()
+    except SystemExit as e:
+        assert e.code in (None, 0), e.code
+    if trial:
+        assert sung["trial"][:3] == (2, 1, 1)
+        assert sung["voices"] == [None, publish_song.LOW[0]]
+    else:
+        assert sung["voices"] == [publish_song.HIGH[0], publish_song.LOW[0]]

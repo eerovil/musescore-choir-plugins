@@ -1380,7 +1380,8 @@ state model are in `DESIGN.md`.
   under `songs/`. From the phone the app is actually used from — or from any other
   computer — neither happens, so the Fix and Review stages could be read and never
   acted on. `GET /score-file` sends the cleaned `.mscx` as a download under its own
-  name, and `POST /score-file` puts the fixed one back: `pipeline.accept_uploaded_score`
+  name (with voice instruments written into the copy for a song cleaned before #481,
+  `pipeline.score_for_download`; the stored file and its fingerprint are untouched), and `POST /score-file` puts the fixed one back: `pipeline.accept_uploaded_score`
   parses it first and only then moves it into place, so a refused upload leaves the
   score that is there alone — this is the one route that overwrites the file every
   later stage is derived from. `.mscz` is accepted as well, because that is what
@@ -1586,6 +1587,13 @@ state model are in `DESIGN.md`.
   runner shipped is `src/kube_runner/runner.py` (see "Where heavy work runs" in
   `docs/pdf-to-practice-track.md`); on the owner's host it reads on eero-pc's GPU.
   `test_remote_runner.py` pins the contract with a stub runner.
+  `scripts/ssh-runner.sh` (#483) is a second runner, over plain SSH (`SSH_RUNNER_HOST`): it sings
+  lines only (`read-band` exits 2, so the band is read here), copies this checkout's `sing_ufr.py`
+  over with each line so the two sides cannot drift, and on SIGTERM ends the singer over there.
+  `src/sing_song/tests/test_ssh_runner.py` runs it against stub `ssh`/`scp`.
+  **A homr abort after a whole result is kept** (#483): homr can die in onnxruntime's shutdown
+  (SIGABRT, exit -6 or 134) after writing its MusicXML. `read_page` uses the file when it parses
+  and holds a measure, and logs it; any other crash, or an abort with no whole file, still fails.
   **One slot per page, not one per song.** The page is the unit `read_page` owns and
   each page writes its own MusicXML, so releasing between pages lets a suite in, and an interruption costs the page in flight rather than the song — the
   pages already read are on disk. A caller that would rather hold one lease across a
@@ -2218,16 +2226,27 @@ state model are in `DESIGN.md`.
   redrawing reloads every crop; a system read while it is open therefore appears in it.
   On a phone it is the existing pane switcher and the compare rows, both already built
   for 390px.
-- **Every clean asks MuseScore 3 whether it would open the result** (#235). MuseScore
+- **Every clean asks MuseScore whether it would open the result** (#235). MuseScore
   checks a score as it opens it (`Score::sanityCheck`: voice 1 of each staff must fill
   the bar exactly, no other voice may run past it) and calls one that fails
-  "corrupted" -- on Sangerhilsen the app crashed instead. **MuseScore 3 only**: with
-  MuseScore 4 as `MUSESCORE_CLI_PATH` the check answers `None` and the song records
-  "not checked" (#416). Only the app runs that check;
+  "corrupted" -- on Sangerhilsen the app crashed instead. Only the app runs that check;
   a command-line export does not, which is why every render went through and nobody
-  heard of it until a person opened the file. The one export that does run it is
-  `-o x.mlog`, so `pipeline.musescore_check` asks MuseScore itself rather than keeping
-  a copy of its rule here. Note MuseScore fills *gaps* with rests while reading, so a
+  heard of it until a person opened the file. The one MuseScore 3 export that does run
+  it is `-o x.mlog`, so with MuseScore 3 `pipeline.musescore_check` asks MuseScore
+  itself. **MuseScore 4 writes no `.mlog`** and refuses such a file outright when it
+  loads it, writing the reason only to its own log file (#481). So with MuseScore 4 the
+  check is the app's copy of that rule, `clean_score/utils/overlong_voices.py` (a voice
+  running past its bar), and the record says which ran (`verification.musescore.by`).
+  The raw scan is converted and rendered with `-f` so MuseScore 4 lets it in, and the
+  Clean panel lists those bars off `GET /systems`'s `overlong` (read off the converted
+  file on every load, so a reload shows them too) and the clean's log names them; the
+  cleaned check and publish never use `-f`. When a MuseScore 4 run fails,
+  `musescore_cli.failed_load_reason` reads the reason off its log (lines stamped during
+  the run, and only a refusal naming the file this run passed, since two songs may convert
+  at once) and the error names the bar
+  instead of blaming `MUSESCORE_CLI_PATH`; a MuseScore that does not start at all is
+  named once, in `musescore_cli.run`, so every render and export says so. Without any MuseScore the song records
+  "not checked". Note MuseScore fills *gaps* with rests while reading, so a
   short voice passes; what fails is a voice that runs past the bar, typically a
   misread triplet. `check_opens_in_musescore` runs after the recorded fixes: each
   staff-bar MuseScore rejects is reset to a whole-bar rest (`rejected_bars.clear_bar`,
@@ -2241,7 +2260,7 @@ state model are in `DESIGN.md`.
   page left in such a bar, and a file that will not open blocks the one route a person
   has for putting the right notes back.
 - **Check again and Undo last clean** (#391). `POST /recheck` (job `check`) runs the
-  clean's note comparison, MuseScore 3's check and health on the cleaned score as it
+  clean's note comparison, MuseScore's check (3 or 4) and health on the cleaned score as it
   is, and records them against its fingerprint. It **only reports**: unlike a clean it
   resets no bar MuseScore refuses (those become `musescore-corrupt` health rows), since
   the score may be a person's own edit. Before a clean replaces the score,
@@ -2385,6 +2404,16 @@ against the `laulun_aika.mscx` and `simple_1` fixtures.
    is made from, so a song cleaned before it is drawn right without a re-clean,
    which would cost its lyrics. `omr_systems.flatten` also steps to the bar's end
    before a right barline now, so new scans do not write the fake bar at all.
+11. `set_voice_instruments` (`utils/voice_instruments.py`, #481) runs last, in both
+   modes: every singing part gets a voice instrument id from its name (`S1` →
+   `soprano`/`voice.soprano`, A, T, B, `Bar` → baritone, any other name → `voice`/
+   `voice.vocals`). MuseScore 4 reads a part with no id, or MuseScore 3's `piano`, as a
+   piano and puts a new dynamic **below** the staff, where the words are; on a voice it
+   goes above. Only a part with no id or a piano id changes (any other id is someone's
+   choice), parts named as instruments (`Piano RH`, `Violin`, `Urut`), percussion and
+   rest-only staves are skipped, and the `Channel`/`program` is left alone, so the
+   sound and the MIDI do not change. Dynamics already in a score keep their side:
+   MuseScore 4 writes the side out when it converts an older file.
 
 Voice-count anomalies run first: a measure with >2 voices is beyond the splitter
 (which makes an upper/lower pair) and is either an OCR glitch or a real multi-way
@@ -2660,6 +2689,25 @@ timing are the same parts on the same clock.
   The copy rewrites every fermata's stretch so it adds one beat (a dotted quarter in
   6/8), worked out from the span MuseScore stretches: from the fermata's beat to the
   next note or rest on *any* staff. A fermata marked not to play is left alone.
+- **A printed rit. or accel. is played** (#483, `score.gradual_marks`, `add_gradual`).
+  MuseScore plays such a text at the speed before it, so a song slowing into its end
+  played straight through, and so did the voices sung off its clock. The copy writes
+  hidden tempo marks beat by beat, easing in a straight line to 75% of the speed
+  (accel.: 125%) on the last beat before the ramp ends: at an "a tempo" or "Tempo I"
+  text (back to the speed before the mark, or the opening one; a visible "a tempo" or
+  "Tempo I" tempo mark is set to that speed rather than to what the scan wrote), a tempo mark (which
+  keeps its own speed), a fermata (the speed before the mark comes back after it), the
+  next rit./accel. (which starts from where this one left off) or the end. A beat inside a
+  held note or rest still gets its mark, written at the voice's end behind a `location`
+  that steps back to the beat (`_place_at`, which MuseScore plays on time); a mark with no beat left is logged and
+  played as written. The spellings are in `_GRADUAL` (rit., ritard., riten., rall.,
+  accel. and their long forms, also inside "dim. e rit."); "ritmico" is not one. The
+  Publish panel lists the marks, each with where its ramp stops and why ("by bar 42
+  (fermata)", `gradual_marks`' `until`/`until_why`, counting the panel's saved tempo
+  changes), and saves `publish.gradual`
+  (`[{"measure", "bpm", "off"}]`, matched to the first mark in that bar; a second mark in
+  the bar is listed without controls and eases to 75%): a target BPM in place of 75%, or off. A saved setting whose bar has lost its mark is shown, dropped
+  on save, and ignored by a publish.
 
 `musescore.py` is the MuseScore 3 or 4 command line (`run_musescore`, bounded by
 `CLI_TIMEOUT` because a wedged MuseScore otherwise hangs the publish) and the part
@@ -2788,11 +2836,21 @@ tempo, part names, credits), then for each part: `unroll.py` writes each line (t
 of the staff) on the bundle's clock, `check_onsets.py` stops the run unless every note starts
 within 50 ms of a note in `score.mid`, `spoken.py` cuts a sentence on one held chord into a
 syllable a note, `g2p.py` gives the sounds of a song not in Finnish, `sing_ufr.py` sings it
-(UFR DiffSinger: every part of a men's song REMY and of a women's LYSE, by the song's voicing; in a mixed song or one with no voicing, LYSE for S/A/M parts and REMY for T/B, and a part called just "Solo" stops the run), two different lines of a part are mixed
+(UFR DiffSinger: every part of a men's song REMY and of a women's LYSE, by the song's voicing; in a mixed song or one with no voicing, LYSE for S/A/M parts and REMY for T/B, and a part whose name says no voice, like "Solo", by its clef: treble LYSE, bass or treble-8
+REMY, said in the log; `--voice NAME=VOICE` overrides one part, named case-insensitively when exactly one part has that name, else by its number; two different bare `--voice VOICE` are refused), two different lines of a part are mixed
 at half volume each, and `gate.py` fades the rests where the whole part rests (the voice
 leaves a hiss). `--fold-divisi` folds lettered divisi parts (`S1b`) into their part as further
 voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s to
-`publish.publish` as `Bundle.sung`. It came from eeron-omat-taskit's `sing-song/` (#439),
+`publish.publish` as `Bundle.sung`. A publish that sends piano only (`--no-sing --publish`, or the app's
+Publish) is refused, exit 3, when the site already has a sung version for that choir, checked
+against the site's own row right before writing it; `--piano-over-sung` (the panel's "Publish
+piano only" after it asks) replaces it (#483); the panel then also shows the `sing_song.py --publish`
+line that keeps it sung. Each publish writes under its own version prefix (time plus six hex
+characters), so a refused one deletes only its own files. `--try PART:A-B` sings bars A to B of one part
+(the first pass through them, so a repeat is not sung twice; `check_onsets.py` then checks only
+the notes starting in that phrase) and stops, to listen to a phrase before a whole run: it writes `try/<n>-<Name>-bars-A-B.mp3`
+under `--out`, keeps a word that starts in range whole, prints how long the music and the
+singing took, and publishes nothing. It came from eeron-omat-taskit's `sing-song/` (#439),
 where its history is. The bundle's `words.json` (`sung_words()`) lists each part's notes with
 the syllable sung on each; `--publish` sends it along (`Bundle.words`), and the site sings a
 note several parts start together once only where they sing the same syllable
@@ -2825,6 +2883,9 @@ cannot undo it), set from the New song form, the Start panel (`POST /language`) 
 words look Finnish (`looks_foreign`), and the re-sing list reads that check once per score
 (`songs/.resing-language.json`).
 
+`SING_PROVIDER` (#483, `sing_ufr.providers`) picks the singer's onnxruntime provider: `cpu`,
+`cuda` (or `GPU=1` when unset), or `coreml`, which falls back to the processor when the build has
+no CoreML; each model's provider is logged. The kube runner does not pass it on.
 The singer runs in its own venv (`scripts/install-singer.sh`, default
 `~/.local/share/musescore-choir-plugins/sing-venv`; CUDA 11 onnxruntime when there is an NVIDIA
 card, because eero-pc's GTX 970 is below newer builds' floor; it runs on this host's GTX

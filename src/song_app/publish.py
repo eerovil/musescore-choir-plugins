@@ -38,6 +38,7 @@ import io
 import json
 import os
 import re
+import secrets
 import time
 import urllib.error
 import urllib.parse
@@ -90,6 +91,25 @@ def _noop(_msg: str) -> None:
 
 class PublishError(RuntimeError):
     pass
+
+
+class SungOnSite(PublishError):
+    """A piano-only publish refused: the choir's live version on the site is sung (#483).
+
+    The app's panel and ``sing_song.py`` both recognise it by its kind and offer
+    to confirm (``piano_over_sung``) rather than showing a plain failure.
+    """
+
+    kind = "sung_on_site"
+
+    def __init__(self, choir: str, message: Optional[str] = None):
+        self.choir = choir
+        super().__init__(message or sung_message(choir))
+
+
+def sung_message(choir: str) -> str:
+    return (f"The {choir} list has a sung version of this song; publishing from here sends "
+            "piano only and would replace it.")
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +295,7 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
                  tempo_changes: Optional[List[Dict]] = None,
                  part_names: Optional[List[str]] = None,
                  staff_groups: Optional[Sequence[Sequence[str]]] = None,
+                 gradual: Optional[List[Dict]] = None,
                  log: Logger = _noop) -> Bundle:
     """MusicXML, MIDI, the timing and the part names, made off one prepared score.
 
@@ -286,6 +307,10 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
     works them out from the page when there are more than five singing parts, and
     an empty list shares none. Only the picture changes: the MIDI and the timing
     come off the unmerged copy, so the site still mixes one track per part.
+
+    `gradual` is the Publish panel's say on the score's printed rit. and accel.
+    marks (#483), `[{"measure", "bpm", "off"}]`; a mark it does not name eases
+    to three quarters (or five quarters) of its speed.
     """
     from src.score_export import musescore, score
 
@@ -294,7 +319,8 @@ def build_bundle(cleaned_path: str, out_dir: str, *, initial_bpm: Optional[int] 
         if count != len(part_names):
             raise PublishError(part_count_message(count))
     source, dropped = score.prepare(cleaned_path, out_dir, initial_bpm=initial_bpm,
-                                    tempo_changes=tempo_changes, part_names=part_names)
+                                    tempo_changes=tempo_changes, part_names=part_names,
+                                    gradual=gradual, log=log)
     if dropped:
         log(f"Leaving out {', '.join(dropped)} (no notes to sing)")
     names = musescore.part_names(etree.parse(source).getroot())
@@ -732,11 +758,35 @@ def replaced(choir: str, published: Dict[str, Dict],
     return [c for c in published if c in staging and c != choir]
 
 
+def live_row(client: "Cloudflare", choir: str, slug: str) -> Optional[Dict]:
+    """The site's D1 row for (choir, slug): its ``prefix`` and ``parts``, or None."""
+    rows = _rows(client.query("SELECT prefix, parts FROM songs WHERE choir = ? AND slug = ?",
+                              [choir, slug]), ("prefix", "parts"))
+    return rows[0] if rows else None
+
+
+def row_is_sung(row: Optional[Dict]) -> bool:
+    """Whether a D1 row's parts carry a sung MP3 (``publish`` marks each one ``sung``)."""
+    if not row:
+        return False
+    try:
+        parts = json.loads(row.get("parts") or "[]")
+    except (TypeError, ValueError):
+        return False
+    return any(isinstance(p, dict) and p.get("sung") for p in parts)
+
+
+def sung_on_site(client: "Cloudflare", choir: str, slug: str) -> bool:
+    """Whether the version the site serves for (choir, slug) is sung (#483)."""
+    return row_is_sung(live_row(client, choir, slug))
+
+
 def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudflare,
             credits: Optional[Dict[str, str]] = None,
             published: Optional[Dict[str, Dict]] = None,
             choirs: Optional[Sequence[Dict]] = None, places: Sequence[Dict] = (),
-            log: Logger = _noop) -> Dict:
+            log: Logger = _noop, piano_over_sung: bool = False,
+            records_now: Optional[Callable[[], Dict[str, Dict]]] = None) -> Dict:
     """Upload `bundle` and register it for `choir`. Returns the record to keep.
 
     The files go under a fresh version prefix first; the D1 row is pointed at
@@ -751,13 +801,24 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
     read here. `places` says where each part name the site's voice tree does
     not know goes (``place_statements``); those rows are written before
     anything goes up, as the site's own publish script does.
+
+    A piano-only bundle does not replace a sung version on the site unless
+    `piano_over_sung` says so (#483): the live row is read right before it is
+    written, and a sung one raises ``SungOnSite`` after taking this publish's own
+    uploads away. `records_now` re-reads the song's records after the row is
+    written, so a publish that landed meanwhile is cleaned up too; `published` is
+    used without it. The record returned says whether its version is the one live
+    (``live``): a caller saves it only then, since another publish may have
+    written the row after this one.
     """
     listed = list(choirs) if choirs is not None else site_choirs(client)
     known = [c["id"] for c in listed]
     staging = [c["id"] for c in listed if c.get("staging")]
     if choir not in known:
         raise PublishError(f"Unknown choir {choir!r}; the site has {', '.join(known) or 'none'}.")
-    version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    # The time alone is not unique: two publishes in one second would share a
+    # prefix, and one refused would then delete or overwrite the other's files.
+    version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + secrets.token_hex(3)
     prefix = f"songs/{choir}/{slug}/{version}/"
     parts = [{"name": name, **bundle.layout.get(name, {})} for name in bundle.parts]
     if bundle.sung and set(bundle.sung) != set(bundle.parts):
@@ -807,15 +868,32 @@ def publish(*, slug: str, title: str, choir: str, bundle: Bundle, client: Cloudf
         log(f"Uploading {name} ({len(data) // 1024} KB) — {index}/{len(uploads)}")
         client.put(prefix + name, data, kind)
 
+    files = [prefix + name for name, _data, _kind in uploads]
+    if not bundle.sung and not piano_over_sung:
+        # Read right before the row is written: D1 is what the site serves, and a
+        # sung publish from anywhere may have landed while this one was building.
+        row = live_row(client, choir, slug)
+        if row_is_sung(row):
+            for key in files:
+                client.delete(key)
+            raise SungOnSite(choir)
+
     log(f"Registering the song for {choir}")
     published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     client.query(UPSERT, [choir, slug, title, prefix, json.dumps(parts, ensure_ascii=False),
                           duration, published_at, *(named.get(name) for name in CREDITS)])
 
     record = {"choir": choir, "slug": slug, "version": version, "prefix": prefix, "at": time.time(),
-              "files": [prefix + name for name, _data, _kind in uploads],
-              "parts": [p["name"] for p in parts], "duration": duration, "credits": named}
+              "files": files,
+              "parts": [p["name"] for p in parts], "duration": duration, "credits": named,
+              "sung": bool(bundle.sung)}
+    if records_now is not None:
+        published = records_now()
     _clean_up(published or {}, record, client, log, staging)
+    row = live_row(client, choir, slug)
+    record["live"] = bool(row) and row.get("prefix") == prefix
+    if not record["live"]:
+        log("Another publish replaced this one on the site before it was recorded.")
     log(f"Published to the {choir} list.")
     return record
 
@@ -835,9 +913,13 @@ def _clean_up(published: Dict[str, Dict], current: Dict, client: Cloudflare,
                 log(f"Removed it from the {choir} list.")
         stale = [published.get(current["choir"])]
         stale += [published[c] for c in replaced(current["choir"], published, staging)]
+        # Never a file the site serves now: another publish may have written the
+        # row after this one, and its files are then the live ones (#483).
+        row = live_row(client, current["choir"], current["slug"])
+        live = (row or {}).get("prefix") or current["prefix"]
         for record in stale:
             for key in (record or {}).get("files") or []:
-                if key not in current["files"]:
+                if key not in current["files"] and not key.startswith(live):
                     client.delete(key)
     except PublishError as exc:
         log(f"Could not remove the previous version's files: {exc}")
