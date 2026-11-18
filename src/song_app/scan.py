@@ -210,6 +210,9 @@ def pages_without_bands(song: state.Song,
     A page count needs poppler. Without it this answers "no gaps" rather than
     "every page is a gap": a missing binary must not be indistinguishable from an
     operator who has not drawn the bands yet.
+
+    A page a person left out (`skipped_pages` in `.systems.json`, #480) is not a
+    gap: it was looked at and holds nothing to scan.
     """
     pdf = song.source_path("pdf")
     if not pdf or not os.path.exists(pdf):
@@ -220,6 +223,7 @@ def pages_without_bands(song: state.Song,
         return []
     drawn = {b.page for b in (pdf_systems.load_bounds(song.dir)
                               if bands is None else bands)}
+    drawn |= set(pdf_systems.load_skipped(song.dir))
     return [page for page in range(1, total + 1) if page not in drawn]
 
 

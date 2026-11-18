@@ -2129,6 +2129,12 @@ state model are in `DESIGN.md`.
   score would still look complete. Without poppler it answers "no gaps" rather than "every
   page is a gap" — a missing binary must not be indistinguishable from an operator who has
   not drawn them yet.
+  **A page with no music can be left out** (#480): a title page, a page of piano solo.
+  The Systems editor's *Leave this page out* switch stores it in `.systems.json` as
+  `"skipped_pages": [n, ...]` (`pdf_systems.load_skipped`), and `pages_without_bands` counts
+  it as marked. A band on a left-out page is refused on save, Find systems proposes none
+  there, and a save that does not name `skipped_pages` keeps the ones stored. Saving bands
+  pings the song's `state`, so the Scan button turns on without a reload.
 
 - `system_finder.py` is added by this pull request: **where the printed systems are**,
   proposed rather than decided. Every band on this host was drawn by a person dragging,
