@@ -1974,9 +1974,11 @@ def _end_repeat(root: etree._Element, measure_no: int, times: int) -> str:
 
 
 def _add_rehearsal(root: etree._Element, measure_no: int, text) -> str:
-    """Put a rehearsal mark reading ``text`` on the top staff at the start of bar
-    ``measure_no``, where MuseScore writes one: in the first voice, just ahead of
-    the bar's first note or rest."""
+    """Put a rehearsal mark reading ``text`` at the start of bar ``measure_no`` on
+    the top staff that sings anywhere in the song, where MuseScore writes one: in
+    the first voice, just ahead of the bar's first note or rest. A staff of only
+    rests (a click track) is passed over, since the publish copy drops it and the
+    mark with it."""
     text = str(text if text is not None else "").strip()
     if not text:
         raise FixError("give the mark's 'text', the letter or number the page prints")
@@ -1989,9 +1991,10 @@ def _add_rehearsal(root: etree._Element, measure_no: int, text) -> str:
         if there is not None:
             raise FixError(f"staff {staff.get('id')} already has rehearsal mark "
                            f"{there.findtext('text') or ''!r} here")
-    voice = staves[0].findall("Measure")[measure_no - 1].find("voice")
+    target = next((staff for staff in staves if staff.find(".//Chord") is not None), staves[0])
+    voice = target.findall("Measure")[measure_no - 1].find("voice")
     if voice is None:
-        raise FixError(f"staff {staves[0].get('id')} has no voice in measure {measure_no}")
+        raise FixError(f"staff {target.get('id')} has no voice in measure {measure_no}")
     at = len(voice)
     for index, child in enumerate(voice):
         if child.tag in ("Chord", "Rest", "Tuplet", "location"):
@@ -2000,7 +2003,7 @@ def _add_rehearsal(root: etree._Element, measure_no: int, text) -> str:
     mark = etree.Element("RehearsalMark")
     etree.SubElement(mark, "text").text = text
     voice.insert(at, mark)
-    return f"rehearsal mark {text!r} on staff {staves[0].get('id')}"
+    return f"rehearsal mark {text!r} on staff {target.get('id')}"
 
 
 def volta_spans(staff: etree._Element) -> List[Tuple[int, int]]:

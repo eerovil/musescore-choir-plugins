@@ -2,7 +2,7 @@
 
 homr has no output for rehearsal marks at all, so a scanned score reaches the app
 without the letters singers count bars from. This kind writes one where MuseScore
-keeps it: on the top staff, in the first voice, ahead of the bar's first note.
+keeps it: on the top staff that sings, in the first voice, ahead of the bar's first note.
 """
 import json
 import os
@@ -47,6 +47,18 @@ def test_the_mark_lands_on_the_top_staff_ahead_of_the_first_note():
     voice = root.find("Score/Staff").findall("Measure")[1].find("voice")
     assert [child.tag for child in voice] == ["RehearsalMark", "Chord"]
     assert "rehearsal mark 'B'" in done[0]
+
+
+def test_a_top_staff_of_only_rests_is_passed_over():
+    """A click staff on top is dropped from the publish copy, and the mark with it."""
+    root = _score()
+    for chord in root.find("Score/Staff").iter("Chord"):
+        rest = etree.Element("Rest")
+        etree.SubElement(rest, "durationType").text = "measure"
+        chord.getparent().replace(chord, rest)
+    done = apply_fixes(root, [MARK])
+    assert _marks(root) == [("2", 2, "B")]
+    assert "on staff 2" in done[0]
 
 
 def test_it_goes_after_a_signature_at_the_head_of_the_bar():

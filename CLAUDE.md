@@ -285,7 +285,7 @@ file order like `delbar`.
 
 `rehearsal` (#480, `measure`, `text`) puts a rehearsal mark on a bar: homr reads none at all,
 so a scanned score reached the site without the letters or numbers singers count bars from. The
-mark goes on the top staff, in the first voice ahead of the bar's first note, where MuseScore keeps
+mark goes on the top staff that sings (a rest-only click staff is passed over, since publish drops it), in the first voice ahead of the bar's first note, where MuseScore keeps
 it, and the publish copy carries it into the MusicXML. A bar that already has one, on any staff,
 refuses. There is no Fix panel button for it (nor for most kinds): it is written into `fixes.json`.
 
