@@ -95,7 +95,8 @@ def test_the_singer_finds_the_place_the_page_chose_in_every_part_and_pass(tmp_pa
                                     SONG_PRONOUNCE=str(tmp_path / "pronounce.json")))
         assert r.returncode == 0, r.stderr
         sung[staff] = [n["ph"]["vs"] for n in json.loads(out.read_text()) if n.get("syl") == "wind"]
-    assert sung == {"1": [["en/ay"], ["en/ay"]], "2": [["en/ih"], ["en/ih"]]}
+    # the two-part AY is sung as its two vowels (#484)
+    assert sung == {"1": [["en/aa", "en/iy"], ["en/aa", "en/iy"]], "2": [["en/ih"], ["en/ih"]]}
 
 
 def test_word_key_is_g2ps():

@@ -14,6 +14,13 @@ developers are listed under *Behind the scenes*.
   panel lists a scan's too-long voices bar by bar ("Bar 81, staff 4, voice 2: notes add up to
   3/4 in a 1/2 bar"), folded into one line once the song is cleaned. (#501)
 
+- A song's language is saved with it: choose it on the New song form or the song's Start panel,
+  or with the first `sing_song.py --lang`. A song with no language whose words do not look
+  Finnish is no longer sung as Finnish; the run stops and asks. English "I", "ow" and "oy"
+  sounds (child, now, boy) are sung as two vowels, and only songs sung in English wait for a
+  re-sing because of it. (#484)
+- A `delbar` fix refused by a repeat sign in the bar now says how to take the sign off first: an
+  `unrepeat` entry before it, written out with the bar and which sign. (#492)
 - A page with no music to sing, such as a title page, can be left out of a scan with a
   *Leave this page out* switch in the Systems editor. Before, the Scan button stayed off until
   every page had a system drawn on it, so the page had to be cut from the PDF first. (#490)

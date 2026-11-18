@@ -872,6 +872,7 @@ def test_each_choir_is_published_in_turn_with_the_singer_version(tmp_path, monke
     seen = []
 
     def fake_publish(slug, choir, bundle_dir, manifest, sung_by, places, cleaned, version=None, **kw):
+        assert kw.get("language") is None   # a piano-only run sings in no language
         seen.append((choir, version, progress.read(str(folder))))
     monkeypatch.setattr(publish_song, "publish_to_site", fake_publish)
     no_site(monkeypatch)
