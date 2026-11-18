@@ -405,13 +405,33 @@ def add_gradual(root: etree._Element, settings: Optional[Sequence[Dict]] = None,
             if after and (following is None or after < following):
                 plan.append((after, base))
     written = 0
+    top = root.find("./Score/Staff").findall("Measure")
     for (bar, at), bpm in plan:
-        voice = starts[bar].get(at) if bar < len(starts) else None
-        if voice is None:
+        if bar >= len(starts):
             continue
-        _insert_at(voice, at, _tempo_mark(round(bpm, 2)))
+        voice = starts[bar].get(at)
+        if voice is not None:
+            _insert_at(voice, at, _tempo_mark(round(bpm, 2)))
+        else:
+            # nothing starts on this beat (a held note): the mark still goes there
+            voice = top[bar].find("voice") if bar < len(top) else None
+            if voice is None:
+                continue
+            _place_at(voice, at, _tempo_mark(round(bpm, 2)))
         written += 1
     return written
+
+
+def _place_at(voice: etree._Element, at: Fraction, element: etree._Element) -> None:
+    """Put `element` at `at` in a bar where nothing of this voice starts there: at the
+    voice's end, a `location` stepping back (or on) to `at` before it, the way
+    MuseScore itself writes a mark that stands inside a held note."""
+    voice.append(element)
+    end = next(start for item, start in _walk(voice) if item is element)
+    if end != at:
+        step = etree.Element("location")
+        etree.SubElement(step, "fractions").text = str(at - end)
+        element.addprevious(step)
 
 
 def _set_speed(mark: etree._Element, bpm: float) -> None:

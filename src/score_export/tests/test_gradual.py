@@ -144,11 +144,17 @@ def test_a_mark_with_no_beat_left_is_played_as_written_and_said():
     assert "bar 1" in said[0] and "played as written" in said[0]
 
 
-def test_a_beat_where_nothing_starts_is_skipped_but_still_counted():
+def test_a_beat_inside_a_held_note_still_gets_its_mark():
     root = _score([[Q] * 4, [(1, "rit.", False), (2, None, False), Q], [(4, "a tempo", False)]])
     add_gradual(root)
-    # beat 3 of bar 2 is inside the half note: no mark, but beat 4 is still the last step
-    assert _speeds(root) == [(1, 1, 60), (2, 2, 55), (2, 3, 45), (3, 1, 60)]
+    # beat 3 of bar 2 is inside the half note: its mark stands at the voice's end,
+    # a location stepping back to beat 3, so the held note slows too (_speeds lists
+    # it after the bar's last chord, where it stands in the file)
+    assert _speeds(root) == [(1, 1, 60), (2, 2, 55), (2, 3, 45), (2, 4, 50), (3, 1, 60)]
+    voice = root.find("./Score/Staff/Measure[2]/voice")
+    held = [e for e in voice if e.tag in ("location", "Tempo")][-2:]
+    assert held[0].tag == "location" and held[0].findtext("fractions") == "-1/2"
+    assert round(float(held[1].findtext("tempo")) * 60, 2) == 50
 
 
 def _tempo_text(root, bar, beat, text, bpm):
@@ -214,3 +220,22 @@ def test_musescore_plays_the_ramp(fermata_mscx, tmp_path):
         return round(60 * 0.5 / (tempo.seconds(quarter + 0.5) - tempo.seconds(quarter)))
 
     assert [bpm_at(q) for q in (0, 1, 2, 4)] == [80, 70, 60, 80]
+
+
+@needs_musescore
+def test_musescore_slows_inside_a_held_note(fermata_mscx, tmp_path):
+    """The fixture's bar 2 opens on a half rest and nothing else starts on beat 2: a
+    rit. there still slows beat 2 on MuseScore's own clock, not only from beat 3."""
+    root = etree.parse(fermata_mscx).getroot()
+    voice = root.find("./Score/Staff/Measure[2]/voice")
+    voice.insert(0, etree.fromstring("<StaffText><text>rit.</text></StaffText>"))
+    marked = tmp_path / "held.mscx"
+    marked.write_bytes(etree.tostring(root))
+    source, _ = prepare(str(marked), str(tmp_path), initial_bpm=80)
+    tempo = TempoMap.from_midi(run_musescore(source, str(tmp_path / "h.mid")))
+
+    def bpm_at(quarter):
+        return round(60 * 0.5 / (tempo.seconds(quarter + 0.5) - tempo.seconds(quarter)))
+
+    # bar 2 starts at quarter 4: beat 1 as before, then 73, 67 and 60 a beat
+    assert [bpm_at(q) for q in (4, 5, 6, 7)] == [80, 73, 67, 60]

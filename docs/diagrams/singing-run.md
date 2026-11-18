@@ -9,35 +9,36 @@ line is sung: here, or on the machine `REMOTE_RUNNER` names.
 flowchart TD
     start[sing_song.py slug] --> bundle[Build the bundle: score, MIDI, timing]
     rit[rit. / accel. in the score: tempo eased beat by beat, Publish panel can tweak or switch off] --> bundle
-    bundle --> voice{Does the part's name say its voice?}
-    voice -- Yes --> named[S/A/M: LYSE, T/B: REMY]
-    voice -- No, e.g. Solo --> override{--voice Solo=... given?}
+    bundle --> override{--voice for this part, or for every part?}
     override -- Yes --> given[That voice]
     override -- No --> voicing{Song's voicing men or women?}
     voicing -- Yes --> byvoicing[REMY or LYSE by voicing]
-    voicing -- No --> clef[Voice by the part's clef, said in the log]
+    voicing -- No --> voice{Does the part's name say its voice?}
+    voice -- Yes --> named[S/A/M: LYSE, T/B: REMY]
+    voice -- No, e.g. Solo --> clef[Voice by the part's clef, said in the log]
     named --> trial{--try PART:BARS?}
     given --> trial
     byvoicing --> trial
     clef --> trial
-    trial -- Yes --> slice[Unroll that part only, cut to the bars, whole words kept]
-    slice --> singtry[Sing the slice]
+    trial -- Yes --> slice[Unroll that part only, cut to the first pass through the bars, whole words kept]
+    slice --> checktry[Check the onsets of that phrase only]
+    checktry --> singtry[Sing the slice]
     singtry --> tryfile[try/n-Name-bars-A-B.mp3, nothing published]
     trial -- No --> all[Unroll and check every part]
     all --> where{REMOTE_RUNNER set?}
     where -- No --> here[Sing every line here: CPU or NVIDIA]
     where -- Yes --> both[Share lines: here and the runner]
-    both --> runner[Kubernetes runner]
+    both --> runner[The REMOTE_RUNNER: Kubernetes or SSH]
     here --> mp3[parts/n-Name.mp3]
     runner --> mp3
     mp3 --> pub{--publish CHOIR?}
     pub -- Yes --> site[Publish with sung parts]
     pub -- No --> done[Practice track in --out]
 
-    class rit,clef,override,given,slice,singtry,tryfile amber
+    class rit,clef,given,slice,checktry,singtry,tryfile amber
     class named,byvoicing,all,here,both,runner,mp3 blue
     class site teal
-    class trial,voice,voicing,where,pub violet
+    class trial,override,voice,voicing,where,pub violet
 ```
 
 ## Colours
@@ -50,6 +51,9 @@ flowchart TD
 ## Boxes
 
 - **Voice by the part's clef, said in the log**: new in `part_voice` (`src/sing_song/main.py`): bass or treble-8 clef sings REMY, treble LYSE. Before #483 the run stopped here.
-- **Unroll that part only, cut to the bars, whole words kept**: new `--try` in `src/sing_song/main.py`; a word that starts inside the range is kept whole, so the slice may run a note or two past the last bar.
+- **Unroll that part only, cut to the first pass through the bars, whole words kept**: new `--try` in `src/sing_song/main.py`; a repeat that comes back to the bars is not sung again, and a word that starts inside the range is kept whole, so the slice may run a note or two past the last bar.
+- **Check the onsets of that phrase only**: `check_onsets.py` given the phrase's start and end seconds checks only the notes that start in it.
+- **--voice for this part, or for every part?**: `--voice NAME=VOICE` names one part (its name, if exactly one part has it, else its number); a bare `--voice VOICE` is every part's, and two different bare voices are refused.
+- **The REMOTE_RUNNER**: the Kubernetes runner (`src/kube_runner/runner.py`), or `scripts/ssh-runner.sh` (added by #496) for a machine reached over SSH.
 - **try/n-Name-bars-A-B.mp3, nothing published**: written under `--out`; no `parts/`, no `words.json`, no `.sing-run.json`, and `--publish` is refused with `--try`.
 - **rit. / accel. in the score**: new `score.gradual_marks` / `add_gradual` in `src/score_export/score.py`; a rit. eases to 75% (accel. 125%) by the next 'a tempo', tempo change, fermata or the end; the Publish panel's list saves `publish.gradual` with a target BPM or 'off'.

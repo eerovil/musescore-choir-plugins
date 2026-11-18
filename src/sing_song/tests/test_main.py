@@ -410,6 +410,24 @@ def test_voice_finds_its_part_in_any_case_or_by_number():
         publish_song.HIGH, publish_song.LOW]
 
 
+def test_a_name_two_parts_share_asks_for_the_number():
+    # two parts both called "Solo": the first is not necessarily the one meant
+    same = [{"name": "Solo"}, {"name": "Kuoro"}, {"name": "Solo"}]
+    with pytest.raises(SystemExit, match="names parts 1 'Solo', 3 'Solo'; give the part's number"):
+        publish_song.voices_for(same, (None, {"Solo": "REMY"}), None, ["G", "G", "G"])
+    assert publish_song.voices_for(same, (None, {"3": "REMY"}), None, ["G", "G", "G"]) == [
+        publish_song.HIGH, publish_song.HIGH, publish_song.LOW]
+    with pytest.raises(SystemExit, match="names parts 1 'Solo', 3 'Solo'"):
+        publish_song.trial_part(("Solo", 1, 2), [p["name"] for p in same])
+    assert publish_song.trial_part(("3", 1, 2), [p["name"] for p in same]) == (3, 1, 2)
+
+
+def test_two_voices_for_every_part_are_refused():
+    with pytest.raises(publish_song.argparse.ArgumentTypeError, match="both LYSE and REMY"):
+        publish_song.parse_voices(["LYSE", "REMY"])
+    assert publish_song.parse_voices(["LYSE", "lyse"]) == ("LYSE", {})
+
+
 def test_a_wrong_voice_is_a_usage_error(tmp_path, monkeypatch):
     song_folder(tmp_path)
     with pytest.raises(SystemExit) as stop:
@@ -868,6 +886,7 @@ def test_piano_only_over_a_sung_choir_stops_before_building(tmp_path, monkeypatc
     assert message in capsys.readouterr().err
     run = progress.read(str(folder))
     assert run["state"] == "failed" and run["error"] == message
+    assert run["choir_outcomes"] == {"jm": "refused-sung", "joy": "refused-sung", "yl": "not-tried"}
 
 
 def test_piano_over_sung_skips_the_check_and_says_so_to_publish(tmp_path, monkeypatch):
@@ -1062,6 +1081,21 @@ def test_a_trial_is_the_first_pass_through_its_bars():
     assert publish_song.try_window([notes], 2, 2) == (1.0, 2.0)
 
 
+def test_a_trial_stops_where_a_repeat_jumps_back():
+    # bars 1-2 played twice with no rest between: the trial is the first time through only
+    notes = [note(1, "a", "single"), note(2, "b", "single"), note(1, "c", "single"), note(2, "d", "single")]
+    assert publish_song.try_window([notes], 1, 2) == (0.0, 2.0)
+
+
+def test_a_trials_onset_check_looks_only_at_its_phrase():
+    from src.sing_song import check_onsets
+    notes = [note(1), note(2), note(3)]
+    ref = [0.0, 1.0, 2.7]          # the piano starts bar 3's note somewhere else
+    points = [[0, 0, 0], [1, 1, 0], [2, 2, 0]]
+    assert [bar for bar, _, _ in check_onsets.off_notes(notes, ref, points)] == [3]
+    assert check_onsets.off_notes(notes, ref, points, (0.0, 2.0)) == []
+
+
 def test_a_trial_with_no_words_in_its_bars_is_none():
     assert publish_song.try_window([[note(1, "a", "single"), silence(), note(3)]], 2, 2) is None
 
@@ -1118,11 +1152,14 @@ def test_sing_with_a_trial_sings_that_phrase_into_try_only(tmp_path, monkeypatch
     work.mkdir()
     (bundle / "timing.json").write_text(json.dumps(
         {"points": [[0, 0, 0], [4, 1, 0], [8, 1, 4]], "duration": 8, "measures": 2}))
-    sung, real_run = [], publish_song.run
+    sung, checked, real_run = [], [], publish_song.run
 
     def run(cmd, **kw):
         if str(cmd[2]).endswith("unroll.py"):
             return real_run(cmd, **kw)
+        if str(cmd[2]).endswith("check_onsets.py"):
+            checked.append(cmd[3:])
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         if no_silent(cmd, kw):
             return subprocess.CompletedProcess(cmd, 0, "", "")
         if cmd[0] == "ffmpeg":
@@ -1140,6 +1177,8 @@ def test_sing_with_a_trial_sings_that_phrase_into_try_only(tmp_path, monkeypatch
                               sys.executable, "/ufr", False, trial=(2, 2, 2, str(mp3)))
     assert tried[0] == pytest.approx(4.0) and tried[1] >= 0   # bar 2 is four seconds of music
     assert sung == [("p2-high.json", [(50, "re")] * 4)]
+    # the onsets are checked in the phrase only, so a bad bar elsewhere does not stop the trial
+    assert checked and all(c[-2:] == ["4.0000", "8.0000"] for c in checked)
     assert mp3.read_text() == "mp3" and os.listdir(mp3.parent) == [mp3.name]
     assert not (bundle / "parts").exists() or not os.listdir(bundle / "parts")
     assert not (bundle / "words.json").exists()

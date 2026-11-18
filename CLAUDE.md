@@ -2668,8 +2668,9 @@ timing are the same parts on the same clock.
   text (back to the speed before the mark, or the opening one; a visible "a tempo" or
   "Tempo I" tempo mark is set to that speed rather than to what the scan wrote), a tempo mark (which
   keeps its own speed), a fermata (the speed before the mark comes back after it), the
-  next rit./accel. (which starts from where this one left off) or the end. A beat where
-  nothing starts is counted but gets no mark; a mark with no beat left is logged and
+  next rit./accel. (which starts from where this one left off) or the end. A beat inside a
+  held note or rest still gets its mark, written at the voice's end behind a `location`
+  that steps back to the beat (`_place_at`, which MuseScore plays on time); a mark with no beat left is logged and
   played as written. The spellings are in `_GRADUAL` (rit., ritard., riten., rall.,
   accel. and their long forms, also inside "dim. e rit."); "ritmico" is not one. The
   Publish panel lists the marks and saves `publish.gradual`
@@ -2805,7 +2806,7 @@ of the staff) on the bundle's clock, `check_onsets.py` stops the run unless ever
 within 50 ms of a note in `score.mid`, `spoken.py` cuts a sentence on one held chord into a
 syllable a note, `g2p.py` gives the sounds of a song not in Finnish, `sing_ufr.py` sings it
 (UFR DiffSinger: every part of a men's song REMY and of a women's LYSE, by the song's voicing; in a mixed song or one with no voicing, LYSE for S/A/M parts and REMY for T/B, and a part whose name says no voice, like "Solo", by its clef: treble LYSE, bass or treble-8
-REMY, said in the log; `--voice NAME=VOICE` overrides one part, named case-insensitively or by its number), two different lines of a part are mixed
+REMY, said in the log; `--voice NAME=VOICE` overrides one part, named case-insensitively when exactly one part has that name, else by its number; two different bare `--voice VOICE` are refused), two different lines of a part are mixed
 at half volume each, and `gate.py` fades the rests where the whole part rests (the voice
 leaves a hiss). `--fold-divisi` folds lettered divisi parts (`S1b`) into their part as further
 voices (Katedralen, eeron-omat-taskit#104). `--publish <choir>` hands the MP3s to
@@ -2815,7 +2816,8 @@ against the site's own row right before writing it; `--piano-over-sung` (the pan
 piano only" after it asks) replaces it (#483); the panel then also shows the `sing_song.py --publish`
 line that keeps it sung. Each publish writes under its own version prefix (time plus six hex
 characters), so a refused one deletes only its own files. `--try PART:A-B` sings bars A to B of one part
-and stops, to listen to a phrase before a whole run: it writes `try/<n>-<Name>-bars-A-B.mp3`
+(the first pass through them, so a repeat is not sung twice; `check_onsets.py` then checks only
+the notes starting in that phrase) and stops, to listen to a phrase before a whole run: it writes `try/<n>-<Name>-bars-A-B.mp3`
 under `--out`, keeps a word that starts in range whole, prints how long the music and the
 singing took, and publishes nothing. It came from eeron-omat-taskit's `sing-song/` (#439),
 where its history is. The bundle's `words.json` (`sung_words()`) lists each part's notes with

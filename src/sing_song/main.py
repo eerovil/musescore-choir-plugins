@@ -152,6 +152,9 @@ def parse_voices(given):
         if voice not in VOICES:
             raise argparse.ArgumentTypeError(f"--voice {value!r}: the voice is LYSE or REMY")
         if name is None:
+            if every not in (None, voice):
+                raise argparse.ArgumentTypeError(
+                    f"--voice gives every part both {every} and {voice}; give one, and NAME=VOICE for the rest")
             every = voice
         elif not name.strip():
             raise argparse.ArgumentTypeError(f"--voice {value!r}: give the part's name before '='")
@@ -161,16 +164,15 @@ def parse_voices(given):
 
 
 def find_part(key, names):
-    """The part number (from 1) `key` names in `names`: its exact name, else its name in any case
-    when one part has it, else its number. None when it names no part; a name two parts share in
-    other cases is said and stops the run (#483)."""
-    for i, name in enumerate(names, 1):
-        if name == key:
-            return i
-    found = [i for i, name in enumerate(names, 1) if name.casefold() == key.casefold()]
+    """The part number (from 1) `key` names in `names`: the one part with that exact name, else
+    the one part with that name in any case, else its number. None when it names no part. A name
+    that fits more than one part stops the run asking for the number (#483): two parts may both be
+    called "Solo", and the first one is not necessarily the one meant."""
+    exact = [i for i, name in enumerate(names, 1) if name == key]
+    found = exact or [i for i, name in enumerate(names, 1) if name.casefold() == key.casefold()]
     if len(found) > 1:
         sys.exit(f"{key!r} names parts {', '.join(f'{i} {names[i - 1]!r}' for i in found)}; "
-                 "give its exact name or its number")
+                 "give the part's number instead")
     if found:
         return found[0]
     if key.isdigit() and 1 <= int(key) <= len(names):
@@ -467,7 +469,7 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
     switches = lang_from or {}
     if switches and lang not in G2P | {"fi"}:
         sys.exit(f"--lang-from needs --lang fi or one of {', '.join(sorted(G2P))}, not {lang}")
-    plan, unmarked, words, music = [], [], [], None
+    plan, unmarked, words, music, unchecked = [], [], [], None, []
     for i, (group, name) in enumerate(zip(groups, names), 1):
         if trial and i != trial[0]:
             continue
@@ -478,8 +480,12 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
                 js = os.path.join(work, f"p{i}-{key}.json")
                 run([sys.executable, "-I", os.path.join(HERE, "unroll.py"), cleaned, staff, timing, js],
                     env=dict(os.environ, LINE=line))
-                # before the spoken lines are cut: the piano has one note there, not one per syllable
-                run([sys.executable, "-I", os.path.join(HERE, "check_onsets.py"), js, midi, str(i - 1), timing])
+                # before the spoken lines are cut: the piano has one note there, not one per syllable.
+                # A trial checks only its own phrase, once it is known (below).
+                if trial:
+                    unchecked.append(js)
+                else:
+                    run([sys.executable, "-I", os.path.join(HERE, "check_onsets.py"), js, midi, str(i - 1), timing])
                 with open(js) as f:
                     notes = json.load(f)
                 # a line that sings what another of the part's lines sings is sung once, and a
@@ -495,6 +501,9 @@ def sing(manifest, cleaned, bundle_dir, work, voices, lang, python, ufr_dir, gpu
             window = try_window(lines.values(), trial[1], trial[2])
             if window is None:
                 sys.exit(f"{name} sings no words in bars {trial[1]}-{trial[2]}")
+            for js in unchecked:
+                run([sys.executable, "-I", os.path.join(HERE, "check_onsets.py"), js, midi, str(i - 1), timing,
+                     f"{window[0]:.4f}", f"{window[1]:.4f}"])
             lines = {k: cut(v, *window) for k, v in lines.items()}
             music = window[1] - window[0]
             log(f"trying {name}, bars {trial[1]}-{trial[2]}: {window[0]:.2f}-{window[1]:.2f} s")
@@ -600,10 +609,12 @@ def try_window(lines, first, last):
         sung = [k for k, n in enumerate(notes) if n.get("pitch") is not None]
         inside = []
         for k in sung:
+            if inside and notes[k]["bar"] < notes[inside[-1]]["bar"]:
+                break               # a repeat jumped back: its second pass is not this one
             if first <= notes[k]["bar"] <= last:
                 inside.append(k)
             elif inside:
-                break               # left the bars: a repeat's second pass is not this one
+                break               # left the bars
         if not inside or not any(notes[k].get("syl") for k in inside):
             continue
         at = sung.index(inside[0])
@@ -1121,6 +1132,9 @@ def sing_and_publish(a, run_record):
         # Before anything is built: a piano-only run would replace a sung version (#483).
         sung = sung_choirs(client, a.slug, choirs)
         if sung:
+            # the record says what became of every choir asked for, as publish_choirs() does
+            for choir in choirs:
+                run_record.choir_outcome(choir, "refused-sung" if choir in sung else "not-tried")
             stop(run_record, f"{', '.join(sung)} {'has' if len(sung) == 1 else 'have'} a sung version on "
                  f"the site; this run would replace {'it' if len(sung) == 1 else 'them'} with piano only. "
                  "Run again with --piano-over-sung to do that, or leave "
