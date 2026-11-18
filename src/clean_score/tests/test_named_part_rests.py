@@ -185,16 +185,16 @@ def test_without_systems_a_long_named_line_does_not_skip_a_resting_system():
     assert all(t == "_" for t in bars.get(3, []))
 
 
-def test_two_lines_naming_a_resting_part_warn_one_each():
-    """Each source line has its own warning, so correcting one keeps the other's."""
+def test_two_lines_naming_one_resting_part_are_one_line_and_one_warning():
+    """A line is known by what it says (#482): bar, verse, voice and the parts it
+    names. Two entries naming T2 in one block say the same and are joined."""
     root = _score()
     result = place_lyrics(root, [{"measure_start": 2, "lyrics": [
         {"staff_number": 1, "position": "below", "text": "yk-si", "parts": ["T2"]},
         {"staff_number": 2, "position": "below", "text": "kak-si", "parts": ["T2"]}]}],
         replace=True, systems=SYSTEMS)
     rests = [m for m in result.mismatches if m.kind == PART_RESTS]
-    assert len(rests) == 2
-    assert len({m.lines for m in rests}) == 2 and all(len(m.lines) == 1 for m in rests)
+    assert [m.lines for m in rests] == [("m2 verse 1 voice 1 parts T2",)]
 
 
 def test_a_bad_name_whose_staff_number_is_no_staff_says_the_line_was_not_placed():
@@ -226,7 +226,7 @@ def test_a_named_line_wins_over_a_staff_number_line_for_the_same_resting_part():
     assert kinds == sorted([PART_RESTS, TWO_LINES])
     two = next(m for m in result.mismatches if m.kind == TWO_LINES)
     # Either line sent again answers it: the set-aside one, or the named one alone.
-    assert two.lines == ("m2 verse 1 voice 1 staff 2", "m2 verse 1 voice 1 staff 1")
+    assert two.lines == ("m2 verse 1 voice 1 staff 2", "m2 verse 1 voice 1 parts T2")
     assert placed_lyrics(root) == {}
 
 
@@ -239,15 +239,15 @@ def test_a_named_blank_line_beside_a_staff_number_line_does_not_crash():
     assert [m.kind for m in result.mismatches] == [TWO_LINES]
 
 
-def test_a_line_is_named_by_the_printed_staff_it_stands_on():
-    """The by-system editor names a part by staff id and a paste by staff_number; both
-    are the same printed staff, so one answers the other's warning (#482)."""
+def test_a_box_typed_on_the_staff_is_another_line_than_the_named_paste():
+    """The by-system editor names a part by staff id; a paste that named another part
+    is not the same line, so typing the box does not answer its warning (#482)."""
     root = _score()
     pasted = place_lyrics(root, [{"measure_start": 2, "lyrics": [
         {"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]}], systems=SYSTEMS)
     typed = place_lyrics(root, [{"measure_start": 2, "measure_end": 2, "lyrics": [
         {"parts": [1], "text": "yk-si"}]}], systems=SYSTEMS)
-    assert set(pasted.mismatches[0].lines) & set(typed.lines)
+    assert not set(pasted.mismatches[0].lines) & set(typed.lines)
 
 
 def _bars_of(root, staff):

@@ -39,8 +39,11 @@ learn what happened.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -92,7 +95,39 @@ class Mismatch:
             "verse": self.verse,
             "voice": self.voice,
             "lines": list(self.lines),
+            **({"id": _line_warning_id(self.kind, self.lines, self.measure_start,
+                                       self.measure_end)}
+               if self.kind in LINE_KINDS else {}),
         }
+
+
+# The warnings about one source line (#482): answered by that line sent again, or
+# by a box written over their staff, verse, voice and bars; else dismissed.
+LINE_KINDS = (PART_RESTS, UNKNOWN_PART, TWO_LINES)
+
+
+def _digest(value: Any) -> str:
+    text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _line_warning_id(kind: str, lines, start: int, end: int) -> str:
+    return _digest(["line", kind, sorted(lines), start, end])
+
+
+def warning_id(w: Dict[str, Any]) -> str:
+    """A stored lyric warning's id: the one it was saved with, else one from its fields.
+
+    The kinds about a source line are saved with theirs (`Mismatch.to_dict`); every
+    other kind, and a warning saved before ids existed, gets one here from what
+    describes it, so the panel and the dismiss route compute the same id without
+    any `.song.json` being rewritten. Identical warnings share an id.
+    """
+    if isinstance(w.get("id"), str) and w["id"]:
+        return w["id"]
+    return _digest(["fields"] + [w.get(k) for k in (
+        "kind", "staff_ids", "measure_start", "measure_end", "verse", "voice",
+        "lines", "message")])
 
 
 @dataclass(frozen=True)
@@ -691,42 +726,22 @@ def _int_or(value: Any, default: Any) -> Any:
         return default
 
 
-def _place(target: int, block_map: Dict[int, List[int]]) -> Optional[str]:
-    """The printed staff (and side, on a staff two parts share) an output staff is."""
-    if not block_map:
-        return f"staff {target}"
-    for printed, outs in block_map.items():
-        if target in outs:
-            side = f" {('above', 'below')[outs.index(target)]}" if len(outs) >= 2 and \
-                outs.index(target) < 2 else ""
-            return f"staff {printed}{side}"
-    return None
-
-
 def _line_ids(measure_start: int, verse: int, voice: int, lyric: Dict[str, Any],
-              parts: List[Any], targets: List[int], block_map: Dict[int, List[int]],
-              block_positions: set) -> Tuple[str, ...]:
-    """Which source line this is, the same from one import to the next (#482).
+              parts: List[Any]) -> Tuple[str, ...]:
+    """Which source line this is: the line as written (#482).
 
-    A line is the printed place it stands on: a staff, and its side where two parts
-    share the staff. One with a staff_number is that staff, so correcting the name in
-    its "parts" keeps it the same line; one with only "parts" (the by-system editor's)
-    is where its parts are printed, so the editor's box for a staff answers the pasted
-    line on that staff. A line that covers both sides of a shared staff is both.
-    Only a line whose parts are printed nowhere is said by its parts.
+    Its block's bar (as filled in when the source gave none), its verse and voice,
+    and its part as given: the "parts" text, or its staff_number and position when
+    it has none. A corrected name is therefore another line, so its old warning is
+    not taken as answered; the person dismisses it. Implicit identities that tried
+    to follow a correction (the printed place, the places nobody reached) could not
+    also keep two different lines apart, and were taken out.
     """
     head = f"m{measure_start} verse {verse} voice {voice}"
-    sn = lyric.get("staff_number")
-    if isinstance(sn, int) and not isinstance(sn, bool):
-        outs = block_map.get(sn) or []
-        if len(outs) < 2:
-            return (f"{head} staff {sn}",)
-        derived = _derive_target_staves(sn, lyric.get("position"), block_map, block_positions)
-        return tuple(dict.fromkeys(f"{head} {_place(t, {sn: outs})}" for t in derived))
-    places = [_place(t, block_map) for t in targets]
-    if targets and all(places):
-        return tuple(dict.fromkeys(f"{head} {pl}" for pl in places))
-    return (f"{head} parts " + ",".join(str(p) for p in parts),)
+    if parts:
+        return (f"{head} parts " + ",".join(str(p) for p in parts),)
+    sn, pos = lyric.get("staff_number"), lyric.get("position")
+    return (f"{head} staff {sn}" + (f" {pos}" if pos else ""),)
 
 
 def _block_lines(
@@ -772,8 +787,6 @@ def _block_lines(
                 lyric.get("position"))
     texts: Dict[Tuple[int, int, int, bool], List[str]] = {}
     sources: Dict[Tuple[int, int, int, bool], List[Tuple[str, ...]]] = {}
-    placed_ids: set = set()      # the places this block's placed lines stand on
-    unplaced: List[Tuple[int, Mismatch]] = []  # unknown_part lines with no place
     for lyric in block_lyrics:
         verse = _int_or(lyric.get("verse"), 1)
         voice = _int_or(lyric.get("voice"), 1)
@@ -797,15 +810,11 @@ def _block_lines(
                 sn, lyric.get("position"), block_map,
                 positions.get((sn, verse), set()) if isinstance(sn, int) else set(),
             )
-        sn = lyric.get("staff_number")
-        line_id = _line_ids(measure_start, verse, voice, lyric, parts, targets, block_map,
-                            positions.get((sn, verse), set()) if isinstance(sn, int) else set())
+        line_id = _line_ids(measure_start, verse, voice, lyric, parts)
         if seen is not None:
             seen.extend(line_id)
         if not by_name and valid is not None:
             targets = [t for t in targets if t in valid]
-        if targets:
-            placed_ids.update(line_id)
         if unresolved and notes is not None:
             # A name no part carries, or two parts share (#482): said, and the line
             # falls back to its staff_number, or is not placed when it has none.
@@ -830,11 +839,7 @@ def _block_lines(
                 measure_start=measure_start,
                 measure_end=measure_end or measure_start,
                 verse=verse, voice=voice, lines=line_id)
-            if targets:
-                notes.append(note)
-            else:
-                unplaced.append((len(notes), note))
-                notes.append(note)
+            notes.append(note)
         # A line naming its part stays in its own system (#482). The editors' boxes
         # and cells name theirs too, and still run on into an empty next system
         # (#393), so a box is not "named" here.
@@ -843,21 +848,6 @@ def _block_lines(
             k = (staff, voice, verse, named)
             texts.setdefault(k, []).append(text)
             sources.setdefault(k, []).append(line_id)
-    # A line placed nowhere because its name is wrong has no place to be known by,
-    # and correcting the name gives it one (#482). It stands for the places of its
-    # system no other line of the block reached (any place, when every one was), so
-    # a correction sent to one of those answers its warning, while a line for a
-    # place the block had already given words to does not.
-    if unplaced and notes is not None:
-        if block_map:
-            every = [_place(t, block_map) for outs in block_map.values() for t in outs]
-        else:
-            every = [f"staff {t}" for t in sorted(valid or ())]
-        for at, note in unplaced:
-            head = f"m{measure_start} verse {note.verse} voice {note.voice}"
-            ids = [f"{head} {pl}" for pl in dict.fromkeys(every) if pl]
-            free = [i for i in ids if i not in placed_ids] or ids
-            notes[at] = replace(note, lines=tuple(dict.fromkeys(tuple(note.lines) + tuple(free))))
     # A named line and a staff_number line landing on one part, voice and verse are
     # not combined: the named one is used and the other is said (#482).
     for (staff, voice, verse, by_name) in list(texts):
@@ -1998,9 +1988,24 @@ def _load_mscx(path: str) -> etree._Element:
 
 
 def _save_mscx(root: etree._Element, path: str) -> None:
-    """Write score XML to file."""
-    with open(path, "wb") as f:
-        f.write(etree.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True))
+    """Write score XML to file, whole or not at all (#482).
+
+    Through a temp file beside it and `os.replace`, so a crash or a restart mid-write
+    leaves the old score or the new one, never half of each. The temp name does not
+    end in `_cleaned.mscx`, so the app's file watcher does not read it as a score.
+    """
+    data = etree.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
+    folder = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=folder)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        if os.path.exists(path):
+            os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 def export_file(mscx_path: str, txt_path: str) -> None:

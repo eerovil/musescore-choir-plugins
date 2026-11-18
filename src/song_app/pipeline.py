@@ -1609,13 +1609,17 @@ def has_opening_tempo(mscx_path: str) -> bool:
 
 
 def run_lyric_import(
-    json_path: str, cleaned_path: str, replace: bool = False, song_dir: str = ""
+    json_path: str, cleaned_path: str, replace: bool = False, song_dir: str = "",
+    out_path: str = "",
 ) -> LyricImport:
-    """Import lyric JSON in place into the cleaned score; return the placement result.
+    """Import lyric JSON into the cleaned score; return the placement result.
 
     Not a full replace any more (#397): only the parts, voices, verses and systems the
-    JSON names change. The printed systems decide how far a line may run on.
+    JSON names change. The printed systems decide how far a line may run on. The
+    result is written over the score, or to `out_path` when given: the app places
+    into a temp file and moves it over the score only once it knows the score did
+    not change meanwhile (#482).
     """
     root = etree.parse(cleaned_path).getroot() if song_dir else None
-    return import_file(json_path, cleaned_path, cleaned_path, replace=replace,
+    return import_file(json_path, cleaned_path, out_path or cleaned_path, replace=replace,
                        systems=_printed_systems(song_dir, root))

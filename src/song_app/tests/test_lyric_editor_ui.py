@@ -332,3 +332,35 @@ def test_a_line_running_on_refreshes_the_next_systems_picture_too(live, song, pa
     expect(page.locator(".lyedstatus")).to_contain_text("Imported", timeout=30_000)
     changed = page.evaluate("() => Object.keys(sysVer.by).map(Number).sort((a, b) => a - b)")
     assert changed == [1, 2], changed
+
+
+def test_a_warning_is_dismissed_under_its_box_and_one_no_box_shows_is_listed(live, song, page):
+    """Dismiss (#482): a warning the app cannot see answered -- a corrected name, a
+    part resting where a pasted line put it -- is taken off by a person. One about a
+    staff with no box in this system is listed above the boxes, not lost."""
+    slug, dest = song
+    path = os.path.join(dest, ".song.json")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["lyrics"] = {"json": "lyrics.json", "warnings": [
+        {"kind": "too_few", "measure_start": 1, "measure_end": 3, "staff_ids": [1],
+         "verse": 1, "voice": 1, "syllables": 2, "slots": 11,
+         "message": "Measures 1-3 (staff 1): too few syllables (2 for 11 notes)"},
+        {"kind": "part_rests", "measure_start": 1, "measure_end": 3, "staff_ids": [9],
+         "verse": 1, "voice": 1, "message": "m1: the line names T3, which has no notes in bars 1-3"},
+    ]}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    _open(page, live, slug)
+    under = page.locator(".lyrow", has=_box(page, "1")).locator(".lyerr")
+    expect(under).to_contain_text("too few", timeout=30_000)
+    unboxed = page.locator(".lyunboxed .lyerr")
+    expect(unboxed).to_contain_text("T3")
+    _shot(page, "editor-dismiss.png")
+    under.get_by_role("button", name="Dismiss").click()
+    expect(under).to_have_count(0, timeout=30_000)
+    expect(unboxed).to_have_count(1)
+    unboxed.get_by_role("button", name="Dismiss").click()
+    expect(page.locator(".lyunboxed .lyerr")).to_have_count(0, timeout=30_000)
+    left = page.request.get(f"{live}/api/songs/{slug}").json()["lyrics"].get("warnings")
+    assert not left

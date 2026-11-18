@@ -96,15 +96,17 @@ def test_a_part_rests_warning_stays_until_its_own_line_is_sent_again():
     old = [m.to_dict() for m in first.mismatches]
     assert [w["kind"] for w in old] == ["part_rests"]
     # Another part pasted into the same system does not answer it.
-    other = _paste(root, {"staff_number": 1, "text": "yk-si", "parts": ["T1"]})
+    other = _paste(root, {"staff_number": 2, "text": "yk-si", "parts": ["T1"]})
     assert server._kept_warnings(old, other) == old
-    # The same printed line with its name corrected answers it.
+    # Nor does the line with its name corrected: that is another line now, and only
+    # the person can say the two are one (#482, Dismiss).
     fixed = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T1"]})
-    assert server._kept_warnings(old, fixed) == []
-    # Sent again unchanged: the new warning stands and the old one is not doubled.
+    assert server._kept_warnings(old, fixed) == old
+    # Sent again as written: the new warning stands and the old one is not doubled.
     again = _paste(root, {"staff_number": 2, "text": "kak-si", "parts": ["T2"]})
     assert server._kept_warnings(old, again) == []
     assert [m.kind for m in again.mismatches] == ["part_rests"]
+    assert again.mismatches[0].to_dict()["id"] == old[0]["id"]
 
 
 def test_a_two_lines_warning_stays_until_either_line_is_sent_again():
@@ -125,118 +127,66 @@ def test_a_two_lines_warning_stays_until_either_line_is_sent_again():
     assert server._kept_warnings(old, named_alone) == []
 
 
-def test_correcting_one_of_two_lines_keeps_the_others_warning():
+def test_two_wrongly_named_lines_are_two_warnings_neither_answered_by_a_correction():
     root = _two_tenors_t2_resting_in_bar_2()
     first = _paste(root,
                    {"staff_number": 1, "position": "below", "text": "yk-si", "parts": ["T2"]},
                    {"staff_number": 2, "position": "below", "text": "kak-si", "parts": ["T2"]})
     old = [m.to_dict() for m in first.mismatches]
-    assert [w["kind"] for w in old] == ["part_rests", "part_rests"]
+    # Two lines naming one resting part, both as written: the import joins them, so
+    # they are one line and one warning.
+    assert [w["kind"] for w in old] == ["part_rests"]
     fixed = _paste(root, {"staff_number": 2, "position": "below", "text": "kak-si",
                           "parts": ["T1"]})
-    kept = server._kept_warnings(old, fixed)
-    assert [w["lines"] for w in kept] == [w["lines"] for w in old
-                                          if "staff 1" in w["lines"][0]]
+    assert server._kept_warnings(old, fixed) == old
 
 
-def test_an_unknown_part_warning_is_answered_by_its_line_sent_again_corrected_or_not():
-    """A name-only line placed nowhere stands for the places its paste left without
-    words, so its name corrected answers it, and so does the line sent again (#482)."""
+def test_an_unknown_part_warning_is_answered_by_its_line_sent_again_as_written():
     root = _two_tenors_t2_resting_in_bar_2()
     first = _paste(root, {"text": "yk-si", "parts": ["Typo"]})
     old = [m.to_dict() for m in first.mismatches]
     assert [w["kind"] for w in old] == ["unknown_part"]
     corrected = _paste(root, {"text": "yk-si", "parts": ["T1"]})
-    assert server._kept_warnings(old, corrected) == []
+    assert server._kept_warnings(old, corrected) == old
     again = _paste(root, {"text": "yk-si", "parts": ["Typo"]})
     assert server._kept_warnings(old, again) == []
 
 
-
-def test_a_pasted_lines_warning_is_answered_by_typing_that_staff_in_the_editor(song):
-    """The paste named a part that rests; typing the words into the box of the part
-    printed on that staff answers it, and the song moves on to Review (#482)."""
-    api, slug, dest = song
-    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
-    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
-    for name in os.listdir(dest):
-        if name.endswith(".systems.json"):
-            os.remove(dest / name)
-    pasted = api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
-        {"measure_start": 1, "lyrics": [{"staff_number": 1, "text": "ou-ou", "parts": ["T1"]},
-                                        {"staff_number": 2, "text": "ii-ii", "parts": ["T2"]}]},
-        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]},
-        {"measure_start": 3, "lyrics": [{"staff_number": 1, "text": "aa-aa", "parts": ["T1"]},
-                                        {"staff_number": 2, "text": "ee-ee", "parts": ["T2"]}]},
-    ])})
-    assert pasted.status_code == 200, pasted.text
-    assert [w["kind"] for w in pasted.json()["mismatches"]] == ["part_rests"]
-    assert json.loads((dest / ".song.json").read_text())["stage"] == "lyrics"
-    grid = api.get(f"/api/songs/{slug}/lyric-grid").json()
-    keys = [b["key"] for b in grid["boxes"]["1"]]
-    assert keys == ["1"]                                 # T2 rests: no box of its own
-    typed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {
-        "1": "yk-si"}}})
-    assert typed.status_code == 200, typed.text
-    assert typed.json()["mismatches"] == []
-    assert json.loads((dest / ".song.json").read_text())["stage"] == "review"
-
-
-def test_typing_another_staff_keeps_the_pasted_lines_warning(song):
-    api, slug, dest = song
-    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
-    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
-    for name in os.listdir(dest):
-        if name.endswith(".systems.json"):
-            os.remove(dest / name)
-    api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
-        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]},
-    ])})
-    typed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"2": {
-        "2": "ee-ee"}}})
-    assert [w["kind"] for w in typed.json()["mismatches"]] == ["part_rests"]
-
-
-def test_a_two_lines_warning_where_the_part_sings_is_answered_by_the_named_line_alone():
-    """The review's case: T1 sings, a staff_number line and a named line land on it
-    from different printed staves; pasting the named line alone answers the warning."""
+def test_two_misspelt_names_are_two_ids():
     root = _two_tenors_t2_resting_in_bar_2()
-    first = _paste(root, {"staff_number": 1, "text": "a b"},
-                   {"staff_number": 2, "text": "c d", "parts": ["T1"]})
+    first = _paste(root, {"text": "a", "parts": ["TypoA"]}, {"text": "b", "parts": ["TypoB"]})
     old = [m.to_dict() for m in first.mismatches]
-    assert [w["kind"] for w in old] == ["two_lines"]
-    fixed = _paste(root, {"staff_number": 2, "text": "c d", "parts": ["T1"]})
-    assert server._kept_warnings(old, fixed) == []
+    assert [w["kind"] for w in old] == ["unknown_part", "unknown_part"]
+    assert old[0]["id"] != old[1]["id"]
+    corrected = _paste(root, {"text": "a", "parts": ["T1"]})
+    assert server._kept_warnings(old, corrected) == old
 
 
-def test_a_two_lines_warning_is_answered_through_the_api_and_the_song_reaches_review(song):
-    """The review's request: post both clashing lines, then the named line alone; no
-    warning is kept and the song moves on to Review (#482)."""
-    api, slug, dest = song
+def test_the_id_differs_by_kind_and_names_the_part_as_written():
+    a = lyric_txt._line_warning_id("part_rests", ("m2 verse 1 voice 1 parts T2",), 2, 2)
+    b = lyric_txt._line_warning_id("two_lines", ("m2 verse 1 voice 1 parts T2",), 2, 2)
+    c = lyric_txt._line_warning_id("part_rests", ("m2 verse 1 voice 1 parts T1",), 2, 2)
+    assert len({a, b, c}) == 3
+    assert lyric_txt._line_ids(2, 1, 1, {"staff_number": 2, "parts": ["T2"]}, ["T2"]) == (
+        "m2 verse 1 voice 1 parts T2",)
+    assert lyric_txt._line_ids(2, 1, 1, {"staff_number": 2, "position": "below"}, []) == (
+        "m2 verse 1 voice 1 staff 2 below",)
+
+
+def test_warning_id_keeps_a_stored_id_and_is_stable_for_an_old_warning():
+    assert lyric_txt.warning_id({"id": "abc", "kind": "too_few"}) == "abc"
+    old = {"kind": "too_few", "staff_ids": [1], "measure_start": 3, "measure_end": 4,
+           "verse": 1, "voice": 1, "message": "Measures 3-4: ..."}
+    assert lyric_txt.warning_id(old) == lyric_txt.warning_id(dict(old))
+    assert lyric_txt.warning_id(old) != lyric_txt.warning_id({**old, "measure_start": 2})
+
+
+def _two_tenor_song(dest):
     tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
     tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
     for name in os.listdir(dest):
         if name.endswith(".systems.json"):
             os.remove(dest / name)
-    pasted = api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
-        {"measure_start": 1, "lyrics": [{"staff_number": 1, "text": "ou-ou", "parts": ["T1"]},
-                                        {"staff_number": 2, "text": "ii-ii", "parts": ["T2"]}]},
-        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "a b"},
-                                        {"staff_number": 2, "text": "c d", "parts": ["T1"]}]},
-        {"measure_start": 3, "lyrics": [{"staff_number": 1, "text": "aa-aa", "parts": ["T1"]},
-                                        {"staff_number": 2, "text": "ee-ee", "parts": ["T2"]}]},
-    ])})
-    assert pasted.status_code == 200, pasted.text
-    assert [w["kind"] for w in pasted.json()["mismatches"]] == ["two_lines"]
-    assert json.loads((dest / ".song.json").read_text())["stage"] == "lyrics"
-    fixed = api.post(f"/api/songs/{slug}/lyrics", json={"json": json.dumps([
-        {"measure_start": 2, "lyrics": [{"staff_number": 2, "text": "c d", "parts": ["T1"]}]},
-    ])})
-    assert fixed.status_code == 200, fixed.text
-    assert fixed.json()["mismatches"] == []
-    data = json.loads((dest / ".song.json").read_text())
-    assert data["stage"] == "review"
-    assert data["lyrics"]["warnings"] == []
 
 
 def _post_blocks(api, slug, blocks):
@@ -245,15 +195,88 @@ def _post_blocks(api, slug, blocks):
     return r.json()
 
 
-def test_a_wrong_name_corrected_on_a_name_only_line_reaches_review(song):
-    """The review's case: a line with only "parts", the name misspelt, is pasted again
-    with the name corrected; its warning is answered and the song moves on (#482)."""
+def _saved(dest):
+    return json.loads((dest / ".song.json").read_text())
+
+
+FULL = [
+    {"measure_start": 1, "lyrics": [{"staff_number": 1, "text": "ou-ou", "parts": ["T1"]},
+                                    {"staff_number": 2, "text": "ii-ii", "parts": ["T2"]}]},
+    {"measure_start": 3, "lyrics": [{"staff_number": 1, "text": "aa-aa", "parts": ["T1"]},
+                                    {"staff_number": 2, "text": "ee-ee", "parts": ["T2"]}]},
+]
+
+
+def test_typing_the_staff_does_not_answer_a_resting_parts_warning_but_dismiss_does(song):
+    """The paste named a part that rests. Typing the box of the part that sings there
+    is another line, so the warning stays; Dismiss takes it and the song moves on."""
     api, slug, dest = song
-    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
-    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
-    for name in os.listdir(dest):
-        if name.endswith(".systems.json"):
-            os.remove(dest / name)
+    _two_tenor_song(dest)
+    pasted = _post_blocks(api, slug, FULL[:1] + [
+        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "yk-si", "parts": ["T2"]}]},
+    ] + FULL[1:])
+    assert [w["kind"] for w in pasted["mismatches"]] == ["part_rests"]
+    assert _saved(dest)["stage"] == "lyrics"
+    grid = api.get(f"/api/songs/{slug}/lyric-grid").json()
+    assert [b["key"] for b in grid["boxes"]["1"]] == ["1"]   # T2 rests: no box
+    typed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {
+        "1": "yk-si"}}})
+    assert typed.status_code == 200, typed.text
+    [warning] = typed.json()["mismatches"]
+    assert warning["kind"] == "part_rests" and warning["id"]
+    shown = api.get(f"/api/songs/{slug}").json()["lyrics"]["warnings"]
+    assert [w["id"] for w in shown] == [warning["id"]]
+    gone = api.post(f"/api/songs/{slug}/lyrics/warnings/dismiss", json={"id": warning["id"]})
+    assert gone.status_code == 200, gone.text
+    assert _saved(dest)["stage"] == "review"
+    assert _saved(dest)["lyrics"]["warnings"] == []
+    again = api.post(f"/api/songs/{slug}/lyrics/warnings/dismiss", json={"id": warning["id"]})
+    assert again.status_code == 404
+
+
+def test_a_two_lines_warning_is_answered_by_typing_its_staff_for_its_verse_and_bars(song):
+    api, slug, dest = song
+    _two_tenor_song(dest)
+    pasted = _post_blocks(api, slug, FULL[:1] + [
+        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "a b"},
+                                        {"staff_number": 2, "text": "c d", "parts": ["T1"]}]},
+    ] + FULL[1:])
+    assert [w["kind"] for w in pasted["mismatches"]] == ["two_lines"]
+    # T1's box in another system, or T1's verse 2 box in this one, does not answer it.
+    other = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"2": {"1": "oo oo"}}})
+    assert [w["kind"] for w in other.json()["mismatches"]] == ["two_lines"]
+    verse2 = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 2, "boxes": {"1": {"1": "x y"}}})
+    assert [w["kind"] for w in verse2.json()["mismatches"]] == ["two_lines"]
+    # An emptied box is a write: the person says there are no words there.
+    typed = api.post(f"/api/songs/{slug}/lyrics", json={"verse": 1, "boxes": {"1": {"1": ""}}})
+    assert typed.status_code == 200, typed.text
+    assert typed.json()["mismatches"] == []
+    assert _saved(dest)["stage"] == "review"
+
+
+def test_a_two_lines_warning_is_answered_through_the_api_and_the_song_reaches_review(song):
+    """Post both clashing lines, then the named line alone; no warning is kept and
+    the song moves on to Review (#482)."""
+    api, slug, dest = song
+    _two_tenor_song(dest)
+    pasted = _post_blocks(api, slug, FULL[:1] + [
+        {"measure_start": 2, "lyrics": [{"staff_number": 1, "text": "a b"},
+                                        {"staff_number": 2, "text": "c d", "parts": ["T1"]}]},
+    ] + FULL[1:])
+    assert [w["kind"] for w in pasted["mismatches"]] == ["two_lines"]
+    assert _saved(dest)["stage"] == "lyrics"
+    fixed = _post_blocks(api, slug, [
+        {"measure_start": 2, "lyrics": [{"staff_number": 2, "text": "c d", "parts": ["T1"]}]},
+    ])
+    assert fixed["mismatches"] == []
+    data = _saved(dest)
+    assert data["stage"] == "review"
+    assert data["lyrics"]["warnings"] == []
+
+
+def test_a_wrong_name_corrected_stays_until_dismissed(song):
+    api, slug, dest = song
+    _two_tenor_song(dest)
     first = _post_blocks(api, slug, [
         {"measure_start": 1, "lyrics": [{"parts": ["T1"], "text": "ou-ou"},
                                         {"parts": ["T2"], "text": "ii-ii"}]},
@@ -262,23 +285,72 @@ def test_a_wrong_name_corrected_on_a_name_only_line_reaches_review(song):
                                         {"parts": ["T2"], "text": "ee-ee"}]},
     ])
     assert [w["kind"] for w in first["mismatches"]] == ["unknown_part"]
-    assert json.loads((dest / ".song.json").read_text())["stage"] == "lyrics"
     fixed = _post_blocks(api, slug, [{"measure_start": 2, "lyrics": [{"parts": ["T1"], "text": "a b"}]}])
-    assert fixed["mismatches"] == []
-    data = json.loads((dest / ".song.json").read_text())
-    assert data["stage"] == "review"
-    assert data["lyrics"]["warnings"] == []
+    [left] = fixed["mismatches"]
+    assert left["kind"] == "unknown_part"
+    assert _saved(dest)["stage"] == "lyrics"
+    api.post(f"/api/songs/{slug}/lyrics/warnings/dismiss", json={"id": left["id"]})
+    assert _saved(dest)["stage"] == "review"
+
+
+def test_an_old_warning_without_an_id_can_be_dismissed(song):
+    """A `too_few` saved before ids existed gets one on reading, and dismissing the
+    last warning moves a song on Lyrics to Review."""
+    api, slug, dest = song
+    fp = state.file_fingerprint(str(dest / CLEANED))
+    data = _saved(dest)
+    old = {"kind": "too_few", "message": "Measures 3-4: too few", "measure_start": 3,
+           "measure_end": 4, "staff_ids": [1], "verse": 1, "voice": 1}
+    data["lyrics"] = {"json": "lyrics.json", "imported_against": fp, "warnings": [old]}
+    (dest / ".song.json").write_text(json.dumps(data))
+    [shown] = api.get(f"/api/songs/{slug}").json()["lyrics"]["warnings"]
+    assert shown["id"] == lyric_txt.warning_id(old)
+    assert "id" not in _saved(dest)["lyrics"]["warnings"][0]
+    assert api.post(f"/api/songs/{slug}/lyrics/warnings/dismiss",
+                    json={"id": shown["id"]}).status_code == 200
+    assert _saved(dest)["stage"] == "review"
+
+
+def test_a_dismiss_on_a_stale_score_or_another_stage_does_not_move_the_stage(song):
+    api, slug, dest = song
+    w = {"kind": "too_few", "message": "m", "measure_start": 3, "staff_ids": [1]}
+    for stage, against in (("lyrics", "an older score"), ("fix", None)):
+        data = _saved(dest)
+        fp = against or state.file_fingerprint(str(dest / CLEANED))
+        data.update(stage=stage, lyrics={"imported_against": fp, "warnings": [w]})
+        (dest / ".song.json").write_text(json.dumps(data))
+        r = api.post(f"/api/songs/{slug}/lyrics/warnings/dismiss",
+                     json={"id": lyric_txt.warning_id(w)})
+        assert r.status_code == 200
+        assert _saved(dest)["stage"] == stage
+        assert _saved(dest)["lyrics"]["warnings"] == []
+
+
+def test_a_corrected_paste_with_one_block_fewer_keeps_the_shifted_blocks_warnings(song):
+    """Null bars take their system's first bar by position, so leaving a block out
+    shifts the later ones: their old warnings stay, their new ones are raised."""
+    api, slug, dest = song
+    _two_tenor_song(dest)
+    first = _post_blocks(api, slug, [
+        {"measure_start": None, "lyrics": [{"parts": ["T1"], "text": "ou-ou"}]},
+        {"measure_start": None, "lyrics": [{"parts": ["T2"], "text": "a b"}]},
+        {"measure_start": None, "lyrics": [{"parts": ["T1"], "text": "aa-aa"}]},
+    ])
+    [rests] = first["mismatches"]
+    assert rests["kind"] == "part_rests" and rests["measure_start"] == 2
+    second = _post_blocks(api, slug, [
+        {"measure_start": None, "lyrics": [{"parts": ["T2"], "text": "a b"}]},
+        {"measure_start": None, "lyrics": [{"parts": ["T2"], "text": "c d"}]},
+    ])
+    kinds = sorted((w["kind"], w["measure_start"]) for w in second["mismatches"])
+    assert ("part_rests", 2) in kinds
+    assert rests["id"] in [w["id"] for w in second["mismatches"]]
 
 
 def test_a_wrong_name_is_not_answered_by_a_line_for_a_part_the_paste_already_had(song):
-    """A misspelt name stands for the places its paste left without words, so sending
-    again a line the paste already placed keeps the warning (#482)."""
+    """Sending again only the line the paste placed keeps the misspelt one's warning."""
     api, slug, dest = song
-    tree = etree.ElementTree(_two_tenors_t2_resting_in_bar_2())
-    tree.write(str(dest / CLEANED), encoding="utf-8", xml_declaration=True)
-    for name in os.listdir(dest):
-        if name.endswith(".systems.json"):
-            os.remove(dest / name)
+    _two_tenor_song(dest)
     first = _post_blocks(api, slug, [
         {"measure_start": 2, "lyrics": [{"parts": ["T1"], "text": "a b"},
                                         {"parts": ["Typo"], "text": "x"}]},
@@ -286,5 +358,4 @@ def test_a_wrong_name_is_not_answered_by_a_line_for_a_part_the_paste_already_had
     assert [w["kind"] for w in first["mismatches"]] == ["unknown_part"]
     again = _post_blocks(api, slug, [{"measure_start": 2, "lyrics": [{"parts": ["T1"], "text": "a b"}]}])
     assert [w["kind"] for w in again["mismatches"]] == ["unknown_part"]
-    kept = json.loads((dest / ".song.json").read_text())["lyrics"]["warnings"]
-    assert [w["kind"] for w in kept] == ["unknown_part"]
+    assert [w["kind"] for w in _saved(dest)["lyrics"]["warnings"]] == ["unknown_part"]

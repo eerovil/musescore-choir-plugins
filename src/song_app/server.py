@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import traceback
 import urllib.parse
+from contextlib import contextmanager
 from typing import Dict, List, Optional, Set
 
 import dotenv
@@ -28,6 +29,7 @@ from src.sing_song import places as song_places
 from src.sing_song import languages
 from src.sing_song import language_check
 from src.sing_song import progress
+from src.clean_score import lyric_txt
 from src.clean_score.utils.score_fixes import FixError
 from src.score_export.score import START as START_TEMPO
 from src.score_export import staff_groups
@@ -170,6 +172,10 @@ def _derived(song: state.Song) -> Dict:
         "slug": song.slug,
         # The language it is sung in (#484): its own file, not .song.json; None when unsaved.
         "language": song.language,
+        # The lyric warnings with the ids Dismiss sends back (#482).
+        "lyrics": {**(song.data.get("lyrics") or {}),
+                   "warnings": _with_ids((song.data.get("lyrics") or {}).get("warnings"))}
+        if song.data.get("lyrics") else song.data.get("lyrics"),
         "stages": state.STAGES,
         "stage_index": state.STAGES.index(song.stage) if song.stage in state.STAGES else 0,
         "has_pdf": bool(pdf and os.path.exists(pdf)),
@@ -229,6 +235,29 @@ def _job_finish(song: state.Song, kind: str, error: Optional[str] = None) -> Non
         job_state.finish(song.dir, kind, error=error)
     except Exception:
         traceback.print_exc()
+
+
+# Every job that writes a song's cleaned score or reads it at length, and the one
+# tuple each of them is started against (#482): whichever reaches `state.start_job`
+# first runs and the other answers 409, decided in one lock-held check. `lyrics` is
+# the lyric import; `fix` is a short route rewriting the score (an upload, a recorded
+# slur, a picked reading or problem answer, an undo of the last clean).
+WRITERS = ("scan", "clean", "check", "publish", "lyrics", "fix")
+
+
+@contextmanager
+def _fix_job(song: state.Song, refused: str):
+    """Run a short score-rewriting route as a `fix` job, finished on every exit."""
+    if is_scanning(song) or not state.start_job(song, "fix", WRITERS):
+        raise HTTPException(409, refused)
+    error = None
+    try:
+        yield
+    except BaseException as exc:
+        error = str(getattr(exc, "detail", "") or exc) or type(exc).__name__
+        raise
+    finally:
+        _job_finish(song, "fix", error)
 
 
 # --------------------------------------------------------------------------
@@ -487,7 +516,7 @@ def _start_scan(song: state.Song, slug: str, body: Optional[Dict],
         except omr.HomrMissing as exc:
             raise HTTPException(400, str(exc)) from None
     if is_scanning(song) or not state.start_job(
-            song, "scan", ("scan", "clean", "check", "publish"),
+            song, "scan", WRITERS,
             pdf_systems.file_version(song.source_path("pdf"))):
         raise HTTPException(409, "Another scan, clean, or publish is "
                                  "already running for this song.")
@@ -732,7 +761,7 @@ def _run_clean(slug: str) -> None:
 async def api_clean(slug: str) -> Dict:
     song = _require(slug)
     if is_scanning(song) or not state.start_job(
-            song, "clean", ("scan", "clean", "check", "publish"),
+            song, "clean", WRITERS,
             state.file_fingerprint(song.source_path("xml"))):
         raise HTTPException(409, "Another scan, clean, or publish is already running for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_clean, slug)
@@ -743,11 +772,8 @@ async def api_clean(slug: str) -> Dict:
 def api_undo_clean(slug: str) -> Dict:
     """Put back the cleaned score the last clean replaced, with its records (#391)."""
     song = _require(slug)
-    if is_scanning(song) or any(
-            job_state.is_running(song.dir, kind)
-            for kind in ("clean", "check", "publish")):
-        raise HTTPException(409, "Something is running for this song; undo once it has finished.")
-    with state.song_lock(song.slug):
+    with _fix_job(song, "Something is running for this song; undo once it has finished."), \
+            state.song_lock(song.slug):
         fresh = state.load(song.slug) or song
         try:
             clean_backup.restore(fresh)
@@ -835,7 +861,7 @@ async def api_recheck(slug: str) -> Dict:
     # Not beside a publish either: each saves the whole song state, and the later
     # save would put back the earlier one's copy of the other's result.
     if is_scanning(song) or not state.start_job(
-            song, "check", ("scan", "clean", "check", "publish")):
+            song, "check", WRITERS):
         raise HTTPException(409, "A scan, clean, check, or publish is already running "
                                  "for this song.")
     asyncio.get_running_loop().run_in_executor(None, _run_check, slug)
@@ -950,15 +976,17 @@ def api_record_slur(slug: str, body: Dict) -> Dict:
         index, span = int(body.get("index", 0)), int(body.get("span", 1))
     except (TypeError, ValueError):
         raise HTTPException(400, "staff, measure, index and span have to be numbers")
-    try:
-        done = pipeline.record_slur_fix(
-            song.dir, cleaned, staff, measure, index, span, body.get("why", ""))
-    except FixError as exc:
-        raise HTTPException(400, str(exc))
-    except (OSError, RuntimeError) as exc:
-        raise HTTPException(500, str(exc))
-    # Straight to the log, not through job_state: this is instant, and opening a job
-    # for it would leave a "fix" job showing as running with nothing to finish it.
+    # A short `fix` job, so a clean, an upload or a lyric import cannot rewrite the
+    # score at the same time (#482); the log line goes straight to the page.
+    with _fix_job(song, "A scan, clean, lyric import or another fix is running for "
+                        "this song — wait for it to finish, then record the slur."):
+        try:
+            done = pipeline.record_slur_fix(
+                song.dir, cleaned, staff, measure, index, span, body.get("why", ""))
+        except FixError as exc:
+            raise HTTPException(400, str(exc))
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(500, str(exc))
     hub.emit(slug, {"type": "log", "line": f"Recorded a missing slur — {done['applied']}"})
     # Our own write, so claim it: otherwise the file watcher reads the score as
     # edited in MuseScore and re-checks it a second time.
@@ -1005,17 +1033,15 @@ def api_pick_reading(slug: str, body: Dict) -> Dict:
     offer, choice = str(body.get("offer") or ""), str(body.get("choice") or "")
     if not offer or not choice:
         raise HTTPException(400, "say which bar (offer) and which reading (choice)")
-    # A clean or a publish reads the score this rewrites.
-    if is_scanning(song) or any(
-            job_state.is_running(song.dir, kind) for kind in ("clean", "publish")):
-        raise HTTPException(409, "A scan, clean, or publish is running for this "
-                                 "song — wait for it to finish, then pick again.")
-    try:
-        done = bar_readings.record_pick(song, offer, choice)
-    except FixError as exc:
-        raise HTTPException(400, str(exc))
-    except (OSError, RuntimeError) as exc:
-        raise HTTPException(500, str(exc))
+    # A clean, a publish or a lyric import reads the score this rewrites.
+    with _fix_job(song, "A scan, clean, publish or lyric import is running for this "
+                        "song — wait for it to finish, then pick again."):
+        try:
+            done = bar_readings.record_pick(song, offer, choice)
+        except FixError as exc:
+            raise HTTPException(400, str(exc))
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(500, str(exc))
     hub.emit(slug, {"type": "log", "line": f"Picked a reading — {done['applied']}"})
     # Our own write, as with a recorded slur: claim it, or the watcher re-checks it.
     _rescan(song)
@@ -1047,23 +1073,21 @@ def api_pick_problem(slug: str, body: Dict) -> Dict:
     choice, kind, letter = (str(body.get(k) or "") for k in ("choice", "kind", "letter"))
     if not choice or not letter:
         raise HTTPException(400, "say which problem (choice) and which answer (letter)")
-    if is_scanning(song) or any(
-            job_state.is_running(song.dir, k) for k in ("clean", "publish")):
-        raise HTTPException(409, "A scan, clean, or publish is running for this "
-                                 "song — wait for it to finish, then pick again.")
-    try:
-        if kind == "slur":
-            done = problems.record_slur_choice(song, choice, letter)
-        elif kind == "repeat":
-            done = problems.record_repeat_choice(song, choice, letter)
-        elif kind == "volta":
-            done = problems.record_volta_choice(song, choice, letter)
-        else:
-            done = bar_readings.record_pick(song, choice, letter)
-    except FixError as exc:
-        raise HTTPException(400, str(exc))
-    except (OSError, RuntimeError) as exc:
-        raise HTTPException(500, str(exc))
+    with _fix_job(song, "A scan, clean, publish or lyric import is running for this "
+                        "song — wait for it to finish, then pick again."):
+        try:
+            if kind == "slur":
+                done = problems.record_slur_choice(song, choice, letter)
+            elif kind == "repeat":
+                done = problems.record_repeat_choice(song, choice, letter)
+            elif kind == "volta":
+                done = problems.record_volta_choice(song, choice, letter)
+            else:
+                done = bar_readings.record_pick(song, choice, letter)
+        except FixError as exc:
+            raise HTTPException(400, str(exc))
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(500, str(exc))
     hub.emit(slug, {"type": "log", "line": f"Picked {letter} — {done['applied']}"})
     _rescan(song)
     return _derived(song)
@@ -1231,13 +1255,20 @@ def api_landed(slug: str, index: int):
     return FileResponse(path, media_type="image/svg+xml", headers=dict(REVALIDATE))
 
 
-def _kept_warnings(previous: List, result) -> List[Dict]:
-    """Earlier import warnings this import did not answer (#397).
+def _kept_warnings(previous: List, result, box_import: bool = False) -> List[Dict]:
+    """Earlier import warnings this import did not answer (#397, #482).
 
     An import now changes only what it names, so a warning about a box it did not
     touch still stands. One is answered when the import rewrote its bars on one of
     its parts, for the same voice and verse. A warning with no bars to it, or one
     an older app saved as a sentence, belonged to the import that made it.
+
+    A warning about a source line (`part_rests`, `unknown_part`, `two_lines`) is
+    answered only when the match is certain (#482): this import sent a line with
+    the same identity (the part as written, in the same bar, verse and voice), or,
+    for a `part_rests` or `two_lines` warning, a Type by system box import wrote
+    its staff for the same verse and voice over its bars (an emptied box counts).
+    Anything else stays until a person dismisses it.
     """
     kept = []
     for w in previous or []:
@@ -1245,21 +1276,59 @@ def _kept_warnings(previous: List, result) -> List[Dict]:
             continue
         start, end = w["measure_start"], w.get("measure_end") or w["measure_start"]
         verse, voice = w.get("verse") or 1, w.get("voice") or 1
+
+        def wrote(sid):
+            return any(x.staff == sid and x.verse == verse and x.voice == voice
+                       and x.start <= end and x.end >= start for x in result.written)
+
+        if w.get("kind") in lyric_txt.LINE_KINDS:
+            if set(w.get("lines") or ()) & set(getattr(result, "lines", ()) or ()):
+                continue
+            if (box_import and w.get("kind") != lyric_txt.UNKNOWN_PART
+                    and any(wrote(sid) for sid in w.get("staff_ids") or [])):
+                continue
+            kept.append(w)
+            continue
         # One warning can name several staves (the same range, kind and counts are
         # said once); only the staves this import rewrote are answered.
-        if w.get("kind") in ("part_rests", "unknown_part", "two_lines"):
-            # About a source line, not a staff (#482): answered once this import sent
-            # that line again, corrected or not (if not, its own warning says it again).
-            if not set(w.get("lines") or ()) & set(getattr(result, "lines", ()) or ()):
-                kept.append(w)
-            continue
-        left = [sid for sid in (w.get("staff_ids") or []) if not any(
-            x.staff == sid and x.verse == verse and x.voice == voice
-            and x.start <= end and x.end >= start
-            for x in result.written)]
+        left = [sid for sid in (w.get("staff_ids") or []) if not wrote(sid)]
         if left:
             kept.append({**w, "staff_ids": left})
     return kept
+
+
+def _with_ids(warnings) -> List:
+    """The stored lyric warnings, each with the id Dismiss sends back (#482).
+
+    Worked out on reading (`lyric_txt.warning_id`), so a warning saved before ids
+    existed has one too and no `.song.json` needs rewriting.
+    """
+    return [{**w, "id": lyric_txt.warning_id(w)} if isinstance(w, dict) else w
+            for w in warnings or []]
+
+
+def _settle_lyrics_stage(song: state.Song, cleaned: Optional[str]) -> bool:
+    """Move a song on Lyrics to Review once nothing is left to answer (#482).
+
+    Only when the warnings were made against the score as it is now: an import
+    against an older score proves nothing about this one. Returns whether it moved.
+    """
+    lyrics = song.data.get("lyrics") or {}
+    if (song.stage == "lyrics" and cleaned and os.path.exists(cleaned)
+            and lyrics.get("imported_against")
+            and lyrics["imported_against"] == state.file_fingerprint(cleaned)
+            and not lyrics.get("warnings")):
+        song.set_stage("review")
+        return True
+    return False
+
+
+# The lyric import places the words here first and moves the file over the score
+# only once it knows the score did not change meanwhile (#482). The name does not
+# end in `_cleaned.mscx`, so the file watcher never reads it as a score.
+LYRICS_TMP = ".lyrics-tmp"
+SCORE_MOVED = ("the score changed while the words were being imported "
+               "(saved in MuseScore?); import again")
 
 
 @app.get("/api/songs/{slug}/lyrics-json")
@@ -1281,6 +1350,12 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     the boxes changed, an empty one clearing its words (#397). `cells` is the older
     editor's verse-1 form. Either way only what is named changes; every other verse,
     voice, part and system keeps its words, and so do the warnings about them.
+
+    It runs as a `lyrics` job (#482), so a clean, an upload or a recorded fix cannot
+    rewrite the score under it, nor it under them. Nothing that reads the score runs
+    before the job starts. The score's fingerprint is taken first; the words are
+    placed into a temp file and moved over the score under the song lock only if the
+    score on disk still has that fingerprint (a save in MuseScore takes no job).
     """
     song = _require(slug)
     cleaned = song.cleaned_path()
@@ -1289,6 +1364,8 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
     body = body or {}
     cells = body.get("cells")
     boxes = body.get("boxes")
+    verse = 1
+    json_text = ""
     if boxes:
         try:
             verse = int(body.get("verse") or 1)
@@ -1296,78 +1373,148 @@ def api_lyrics(slug: str, body: Dict) -> Dict:
             raise HTTPException(400, "Which verse?")
         if verse < 1:
             raise HTTPException(400, "Which verse?")
-        blocks = pipeline.lyric_box_blocks(cleaned, verse, boxes, song.dir)
-        if not blocks:
-            raise HTTPException(400, "Nothing changed")
-        json_text = json.dumps(blocks, ensure_ascii=False, indent=2)
-        json_name = "lyrics-editor.json"
-    elif cells:
-        blocks = pipeline.lyric_blocks(cleaned, cells, song.dir)
-        if not blocks:
-            raise HTTPException(400, "Nothing typed yet")
-        json_text = json.dumps(blocks, ensure_ascii=False, indent=2)
-        json_name = "lyrics-editor.json"
-    else:
+    elif not cells:
         json_text = body.get("json", "")
-        if not json_text.strip():
+        if not isinstance(json_text, str) or not json_text.strip():
             raise HTTPException(400, "Paste the lyric JSON first")
-        json_name = "lyrics.json"
-    # The editor's import is kept beside the paste rather than over it, so the
-    # paste box still opens on what was pasted.
-    json_path = song.path(json_name)
-    with open(json_path, "w", encoding="utf-8") as f:
-        f.write(json_text)
-    previous_fingerprint = state.file_fingerprint(cleaned)
+    if is_scanning(song) or not state.start_job(song, "lyrics", WRITERS):
+        raise HTTPException(409, "Another job is changing this score; import again once it is done")
+    tmp = cleaned + LYRICS_TMP
+    error: Optional[str] = "Import stopped"
+    finished = False
     try:
-        result = pipeline.run_lyric_import(json_path, cleaned, song_dir=song.dir)
-    except Exception as exc:
-        raise HTTPException(400, f"Import failed: {exc}")
-    current_fingerprint = state.file_fingerprint(cleaned)
-    # Claim the write before the slow health check below (#336). The file watcher
-    # sees the score change at once, and until the new fingerprint is on disk it
-    # takes the import for an edit made in MuseScore: it checks the score again and
-    # tells the page the score moved, so the page fetches every system's picture
-    # again instead of the one or two the import changed.
-    with state.song_lock(song.slug):
-        claimed = state.load(song.slug) or song
-        claimed.data["cleaned_fingerprint"] = current_fingerprint
-        claimed.save()
-    previous = song.data.get("lyrics") or {}
-    # Earlier warnings are about the score they were made against; after a re-clean
-    # or an edit their staves and bars may mean something else.
-    if previous.get("imported_against") != previous_fingerprint:
-        previous = {**previous, "warnings": []}
-    song.data["lyrics"] = {
-        "json": "lyrics.json" if json_name == "lyrics.json" else previous.get("json") or json_name,
-        "imported_against": current_fingerprint,
-        "warnings": _kept_warnings(previous.get("warnings"), result)
-                    + [m.to_dict() for m in result.mismatches],
-    }
-    # Import may add full-measure rests to otherwise empty measures, so health must
-    # be checked again rather than rebound to the new fingerprint without evidence.
-    # Pitch events do not change during lyric placement, so this narrower result can
-    # safely follow the controlled XML edit without repeating the source comparison.
-    # Nor do note lengths, which are all MuseScore's own check looks at.
-    for name in ("notes", "musescore"):
-        data = song.data.get("verification", {}).get(name, {})
-        if data.get("checked_against") == previous_fingerprint:
-            data["checked_against"] = current_fingerprint
-    previous_issues = song.data.get("health", {}).get("issues", [])
-    song.data["health"] = {
-        "checked_against": current_fingerprint,
-        "issues": health.merge_issues(_health_scan(song, cleaned), previous_issues),
-    }
-    song.data["cleaned_fingerprint"] = current_fingerprint
-    if not song.data["lyrics"]["warnings"]:
-        song.set_stage("review")
-    song.save()
+        # First, before anything reads the score: the compare below is against this.
+        before = state.file_fingerprint(cleaned)
+        if boxes:
+            blocks = pipeline.lyric_box_blocks(cleaned, verse, boxes, song.dir)
+            if not blocks:
+                raise HTTPException(400, "Nothing changed")
+        elif cells:
+            blocks = pipeline.lyric_blocks(cleaned, cells, song.dir)
+            if not blocks:
+                raise HTTPException(400, "Nothing typed yet")
+        if boxes or cells:
+            json_text = json.dumps(blocks, ensure_ascii=False, indent=2)
+            json_name = "lyrics-editor.json"
+        else:
+            json_name = "lyrics.json"
+        # The editor's import is kept beside the paste rather than over it, so the
+        # paste box still opens on what was pasted.
+        json_path = song.path(json_name)
+        with open(json_path, "w", encoding="utf-8") as f:
+            f.write(json_text)
+        try:
+            result = pipeline.run_lyric_import(json_path, cleaned, song_dir=song.dir, out_path=tmp)
+        except Exception as exc:
+            raise HTTPException(400, f"Import failed: {exc}")
+        with state.song_lock(song.slug):
+            song.check_still_here()
+            fresh = state.load(song.slug) or song
+            if state.file_fingerprint(cleaned) != before:
+                raise HTTPException(409, SCORE_MOVED)
+            os.replace(tmp, cleaned)
+            after = state.file_fingerprint(cleaned)
+            # Claimed in the same hold as the write (#336): the file watcher sees the
+            # score change at once, and must read it as the app's own write.
+            fresh.data["cleaned_fingerprint"] = after
+            previous = fresh.data.get("lyrics") or {}
+            # Earlier warnings are about the score they were made against; after a
+            # re-clean or an edit their staves and bars may mean something else.
+            kept = (_kept_warnings(previous.get("warnings"), result, box_import=bool(boxes))
+                    if previous.get("imported_against") == before else [])
+            fresh.data["lyrics"] = {
+                "json": "lyrics.json" if json_name == "lyrics.json"
+                        else previous.get("json") or json_name,
+                "imported_against": after,
+                "warnings": kept + [m.to_dict() for m in result.mismatches],
+            }
+            if not fresh.data["lyrics"]["warnings"]:
+                fresh.set_stage("review")
+            elif fresh.stage == "review":
+                fresh.set_stage("lyrics")
+            # Pitches and note lengths do not change during lyric placement, so the
+            # note comparison and MuseScore's check still hold for the new file.
+            for name in ("notes", "musescore"):
+                data = fresh.data.get("verification", {}).get(name, {})
+                if data.get("checked_against") == before:
+                    data["checked_against"] = after
+            fresh.save()
+        song.adopt(fresh)
+        # Import may add full-measure rests to otherwise empty measures, so health
+        # must be checked again rather than rebound to the new fingerprint.
+        found = _health_scan(song, cleaned)
+        with state.song_lock(song.slug):
+            song.check_still_here()
+            late = state.load(song.slug) or song
+            # Saved since the hold (MuseScore, an upload): the watcher checks that
+            # file, and these findings are about one that is gone.
+            if state.file_fingerprint(cleaned) == after:
+                late.data["health"] = {
+                    "checked_against": after,
+                    "issues": health.merge_issues(
+                        found, late.data.get("health", {}).get("issues", [])),
+                }
+            # A dismiss while this ran could not move the stage itself.
+            _settle_lyrics_stage(late, cleaned)
+            late.save()
+            _job_finish(song, "lyrics")
+            finished = True
+        song.adopt(late)
+        error = None
+    except BaseException as exc:
+        error = str(getattr(exc, "detail", "") or exc) or type(exc).__name__
+        raise
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        if not finished:
+            try:
+                with state.song_lock(song.slug):
+                    _job_finish(song, "lyrics", error)
+                    if os.path.isdir(song.dir):
+                        left = state.load(song.slug)
+                        if left is not None and _settle_lyrics_stage(left, cleaned):
+                            left.save()
+            except Exception:
+                traceback.print_exc()
     # The bars that did not take their words, said in the reply itself rather than
     # left for the caller to dig out of the song's `lyrics.warnings` (#340).
     # `imported` is what this import alone said, so a caller can tell its own, and
     # `written` the bars it rewrote, which can run on past the system it was sent for.
-    return {**_derived(song), "mismatches": song.data["lyrics"]["warnings"],
+    return {**_derived(song), "mismatches": _with_ids(song.data["lyrics"]["warnings"]),
             "imported": [m.to_dict() for m in result.mismatches],
             "written": [w.to_dict() for w in result.written]}
+
+
+@app.post("/api/songs/{slug}/lyrics/warnings/dismiss")
+def api_dismiss_lyric_warning(slug: str, body: Dict) -> Dict:
+    """Take one lyric warning off the list: the person has answered it (#482).
+
+    Any kind, by the id `GET /songs/{slug}` gives it. Writes only `lyrics.warnings`
+    and the stage, never the score, so it is no job. The last one moves a song on
+    Lyrics to Review only when the warnings were made against the score as it is
+    now, and never while an import runs: that import decides the stage itself.
+    """
+    wid = (body or {}).get("id")
+    if not isinstance(wid, str) or not wid:
+        raise HTTPException(400, "Which warning?")
+    song = _require(slug)
+    with state.song_lock(song.slug):
+        song.check_still_here()
+        fresh = state.load(song.slug) or song
+        lyrics = dict(fresh.data.get("lyrics") or {})
+        warnings = lyrics.get("warnings") or []
+        left = [w for w in warnings
+                if not (isinstance(w, dict) and lyric_txt.warning_id(w) == wid)]
+        if len(left) == len(warnings):
+            raise HTTPException(404, "That warning is no longer on the list")
+        lyrics["warnings"] = left
+        fresh.data["lyrics"] = lyrics
+        if not job_state.is_running(fresh.dir, "lyrics"):
+            _settle_lyrics_stage(fresh, fresh.cleaned_path())
+        fresh.save()
+    song.adopt(fresh)
+    return _derived(song)
 
 
 # --------------------------------------------------------------------------
@@ -1711,18 +1858,16 @@ async def api_upload_score_file(slug: str, file: UploadFile = None) -> Dict:
     cleaned = _cleaned_or_400(song)
     if not file or not file.filename:
         raise HTTPException(400, "No file was uploaded")
-    if is_scanning(song) or any(
-            job_state.is_running(song.dir, kind)
-            for kind in ("clean", "check", "publish")):
-        raise HTTPException(409, "A scan, clean, check, or publish is running for this "
-                                 "song — replacing the score underneath it would be read "
-                                 "half-written.")
-    try:
-        summary = pipeline.accept_uploaded_score(cleaned, file.filename, await file.read())
-    except pipeline.ScoreUploadError as exc:
-        raise HTTPException(400, str(exc))
-    except OSError as exc:
-        raise HTTPException(500, str(exc))
+    data = await file.read()
+    with _fix_job(song, "A scan, clean, check, publish, lyric import or fix is running "
+                        "for this song — replacing the score underneath it would be "
+                        "read half-written."):
+        try:
+            summary = pipeline.accept_uploaded_score(cleaned, file.filename, data)
+        except pipeline.ScoreUploadError as exc:
+            raise HTTPException(400, str(exc))
+        except OSError as exc:
+            raise HTTPException(500, str(exc))
     hub.emit(slug, {"type": "log", "line": (
         f"Replaced the cleaned score with {os.path.basename(file.filename)} — "
         f"{summary['staves']} staves, {summary['measures']} bars")})
@@ -2003,7 +2148,7 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
 
 def _publish_busy(song: state.Song) -> bool:
     return is_scanning(song) or any(job_state.is_running(song.dir, kind)
-                                    for kind in ("clean", "check", "publish"))
+                                    for kind in WRITERS if kind != "scan")
 
 
 def _readings(words: List[str]) -> Optional[Dict]:
@@ -2300,7 +2445,7 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     if tree.get("error"):
         raise HTTPException(tree.get("status", 400), tree["error"])
     if _publish_busy(song) or not state.start_job(
-            song, "publish", ("scan", "clean", "check", "publish"), fingerprint):
+            song, "publish", WRITERS, fingerprint):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
     with state.song_lock(slug):
@@ -2421,6 +2566,13 @@ async def _startup() -> None:
         traceback.print_exc()
     for song in state.list_songs():
         job_state.interrupt_running(song.dir)
+        # A lyric import cut off by the restart leaves its temp score (#482).
+        try:
+            for name in os.listdir(song.dir):
+                if name.endswith(LYRICS_TMP):
+                    os.remove(os.path.join(song.dir, name))
+        except OSError:
+            traceback.print_exc()
     if os.path.isdir(state.SONGS_DIR):
         asyncio.create_task(_watch_cleaned())
 

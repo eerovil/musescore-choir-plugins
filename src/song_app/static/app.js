@@ -2672,6 +2672,21 @@ function lyricMismatches(song) {
   });
 }
 
+// Dismiss: the person has answered a warning the app cannot see answered (#482) --
+// a corrected name, words checked against the page. Only warnings with an id (all of
+// them since #482; the server gives an old saved one an id on reading).
+function dismissButton(P, song, w, after) {
+  if (!w.id) return "";
+  return el("button", { className: "dismiss", title: "I have checked this; take it off the list",
+    onclick: async (ev) => {
+      ev.currentTarget.disabled = true;
+      try {
+        Object.assign(song, await postJSON(`${P}/lyrics/warnings/dismiss`, { id: w.id }));
+      } catch (e) { appendLog(e.message, true); }
+      after();
+    } }, "Dismiss");
+}
+
 function autoGrow(ta) {
   ta.style.height = "auto";
   ta.style.height = ta.scrollHeight + "px";
@@ -2699,7 +2714,8 @@ async function lyricsPaste(panel, song, P, refresh) {
     const warns = lyricMismatches(song);
     warnBox.replaceChildren(...(warns.length ? [
       el("p", { className: "sub" }, "Mismatches (often a note problem — check the measure in MuseScore):"),
-      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w.message)))] : []));
+      el("ul", { className: "warnlist" }, warns.map((w) => el("li", {}, w.message, " ",
+        dismissButton(P, song, w, () => { drawWarns(); refresh(); }))))] : []));
   };
   drawWarns();
   panel.append(warnBox);
@@ -2806,11 +2822,29 @@ async function lyricsManual(panel, song, P, refresh) {
     && (w.staff_ids || []).includes(b.id)
     && w.measure_start >= sys().start && w.measure_start <= sys().end);
   const warnRows = [];
+  const afterDismiss = () => { drawWarns(); refresh(); };
   const warnLines = (b) => warnsFor(b).map((w) => el("div", { className: "lyerr" },
     `⚠ m${w.measure_start}–${w.measure_end}`
     + `${w.measure_end > sys().end ? " (runs into the next system)" : ""}: `
-    + `${w.message.split("): ").pop()}`));
-  const drawWarns = () => { for (const [box, b] of warnRows) box.replaceChildren(...warnLines(b)); };
+    + `${w.message.split("): ").pop()} `, dismissButton(P, song, w, afterDismiss)));
+  // A warning about this system that no box here shows: a pasted line naming a part
+  // that rests here has no box (#482).
+  const unboxed = el("div", { className: "lyerrs lyunboxed" });
+  const drawUnboxed = () => {
+    const s = sys();
+    const shown = new Set(boxesOf(S.n).flatMap((b) => warnsFor(b)));
+    const rest = lyricMismatches(song).filter((w) => !shown.has(w)
+      && (w.verse || 1) === S.verse
+      && w.measure_start >= s.start && w.measure_start <= s.end);
+    unboxed.replaceChildren(...(rest.length ? [
+      el("p", { className: "sub" }, "Not under any box here:"),
+      ...rest.map((w) => el("div", { className: "lyerr" },
+        `⚠ ${w.message} `, dismissButton(P, song, w, afterDismiss)))] : []));
+  };
+  const drawWarns = () => {
+    for (const [box, b] of warnRows) box.replaceChildren(...warnLines(b));
+    drawUnboxed();
+  };
 
   const statusEl = el("span", { className: "lyedstatus" });
   const showStatus = () => {
@@ -2902,6 +2936,7 @@ async function lyricsManual(panel, song, P, refresh) {
     nextBtn.disabled = S.n + 1 >= grid.systems.length;
     landedBtn.textContent = S.landed ? "Show the page" : "Show what landed";
     warnRows.length = 0;
+    drawUnboxed();
     const boxes = boxesOf(S.n);
     if (!boxes.length) {
       body.replaceChildren(...listView([], "No part sings in this system."));
@@ -2921,6 +2956,7 @@ async function lyricsManual(panel, song, P, refresh) {
       && boxes.every((b) => found.printed.includes(b.printed)));
     const focusKey = document.activeElement?.dataset?.box;
     warnRows.length = 0;
+    drawUnboxed();
     body.replaceChildren(...(matched ? staffView(boxes, found)
       : listView(boxes, s.crop != null && !S.landed
         ? "The staves in this picture could not be matched to the parts, so the boxes are listed under it." : "")));
@@ -2995,6 +3031,7 @@ async function lyricsManual(panel, song, P, refresh) {
       "_ is a note with no new syllable: after a word ending in - it holds that word "
       + "(e-lei- _ _ son). A word ending in - carries on into the next system. "
       + "Empty a box and import to take its words out."),
+    unboxed,
     body,
     el("div", { className: "lyedbar" }, prevBtn, importBtn, statusEl, landedBtn, nextBtn),
     makeLog());

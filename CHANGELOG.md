@@ -12,7 +12,7 @@ developers are listed under *Behind the scenes*.
   staff numbers. A line naming a part that has no notes there is not placed and is shown
   as a warning, and so is a name the song has no part for (that line goes by its staff
   number, or is not placed if that number is no staff of the song). Each such warning
-  stays until its own line is pasted again, or that staff is typed in Type by system. A line naming its part stays in its own printed system, and when a pasted line names a part another line already reaches by staff number, the named one is used and the other is warned about. The Clean grid shows a system where every staff rests as one line. (#482)
+  stays until its own line is pasted again, until a resting-part or two-lines warning's staff is typed in Type by system, or until it is dismissed with its Dismiss button (a corrected name is another line, so check it and dismiss the old warning). An import no longer overwrites a score saved in MuseScore meanwhile; it says so instead. A line naming its part stays in its own printed system, and when a pasted line names a part another line already reaches by staff number, the named one is used and the other is warned about. The Clean grid shows a system where every staff rests as one line. (#482)
 - Words typed for a part now land on the right bars after bars were added to a cleaned
   score in MuseScore: the systems are counted again from the score's own line breaks. When
   they cannot be, the Fix panel says the words map is out of date and asks for a clean. (#482)

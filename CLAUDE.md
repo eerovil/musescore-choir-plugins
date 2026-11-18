@@ -1300,17 +1300,28 @@ state model are in `DESIGN.md`.
   number in quotes that is one part's name and another staff's id (a bare number is always
   a staff id, and a quoted number a part is named is that part); names are read like `lyric_parts` reads them (the instrument's
   name when the part has none). These three warnings are about a source line, named in their
-  `lines` (one warning per source line, even where two lines name the same part;
-  `lyric_txt._line_ids`: the bar, verse, voice and the **printed place**, a staff and its
-  side only where two parts share it; a line with only `"parts"` is where those parts are
-  printed in that system, and only a line whose parts are printed nowhere is its parts;
-  a line placed nowhere for a wrong name also stands for the places of its system no other
-  line of that paste reached, any place when all were, so its name corrected answers it),
-  and every import lists the lines it read (`LyricImport.lines`); a later import drops such
-  a warning only when it sends that line again, its name corrected or not
-  (`server._kept_warnings`), so pasting another part into the same system keeps it. Since
-  the place is the line, typing that staff's box in **Type by system** answers a pasted
-  line's warning too, and the song can move on to Review.
+  `lines` (`lyric_txt._line_ids`), and every import lists the lines it read
+  (`LyricImport.lines`); a later import drops such a warning only when it sends that line again
+  (`server._kept_warnings`), so pasting another part into the same system keeps it.
+  **A line is the line as written** (#482, design v11): `m{start} verse {v} voice {vo}`
+  plus `parts a,b` for a named line or `staff {n}[ {pos}]` for a numbered one, so two
+  entries naming one part in one block are one line and one warning, and a `two_lines`
+  warning names the line set aside and the named one. A warning is answered by itself
+  only when (a) that same line is sent again, or (b), for `part_rests` and `two_lines`,
+  a box import writes the warning's staff, verse and voice over its bars (an emptied box
+  counts). **A corrected name does not answer it**: a line with another name is another
+  line. What the app cannot see answered, a person takes off with **Dismiss** (a button
+  on every warning, in the paste list and in Type by system, where a warning about a
+  staff with no box in that system is listed above the boxes): `POST
+  /lyrics/warnings/dismiss {"id"}`, each warning's `id` being `lyric_txt.warning_id`
+  (stored, or a hash of its fields for one saved before ids). Dismissing the last one
+  moves a song on Lyrics to Review only when the words were imported against the score
+  as it is and no import is running.
+  **The import is a `lyrics` job** (#482): it writes the words into `<score>.lyrics-tmp`,
+  compares the score's fingerprint under the song lock and moves the copy over with
+  `os.replace`; a score saved meanwhile (MuseScore, an upload) is kept and the import
+  answers 409. Health is written afterwards only if the score is still the imported one.
+  Startup removes leftover `*.lyrics-tmp` files.
 - The clean panel's per-system grid mirrors the backend's answer rules: a blank cell
   inherits the staff's previous answer (shown as a faint placeholder) and `-` marks the
   staff silent from there on, clearing the carry — both cleared and never-named slots are
@@ -2372,10 +2383,13 @@ state model are in `DESIGN.md`.
   the clean made (`mark_made`), and Undo refuses (409) once the score differs from it,
   since anything done after the clean would be lost. `fixes.json` is not restored.
   A new job that writes the song shares the busy guard with every sibling job, both ways:
-  it refuses while they run, and they refuse while it runs. There is no single list: add its
-  kind to every `state.start_job(..., ("scan", "clean", "check", "publish"))` exclusion tuple
-  in `server.py`, to `_publish_busy` and to `/undo-clean`'s own running-job check, and test
-  both directions. Its undo refuses once the score has changed since.
+  it refuses while they run, and they refuse while it runs. The list is one tuple,
+  `server.WRITERS` (`scan`, `clean`, `check`, `publish`, `lyrics`, and `fix` for the short
+  routes that rewrite the score: an upload, a recorded slur, a picked reading or answer,
+  Undo, each run through `_fix_job`). Add its kind there, start it with
+  `state.start_job(song, kind, WRITERS)`, and test both directions. `_publish_busy` reads
+  the same tuple. `homr_install.SONG_JOBS` is a separate list (the jobs a homr install
+  waits for). Its undo refuses once the score has changed since.
 - **Hazards guarded:** re-cleaning warns it discards manual edits (the Clean
   button label changes once a cleaned file exists); lyric import uses `--replace`.
   No automatic LLM (users have no API key) — the lyrics stage supports either a
