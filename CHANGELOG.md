@@ -10,6 +10,12 @@ developers are listed under *Behind the scenes*.
 - The Publish panel keeps the choir you chose when it is drawn again: a saved score redrew it with
   the choir box empty, and Publish said "Choose a choir first." (#474)
 
+- Every singing part of a cleaned score is now a voice (soprano, alto, tenor, bass, baritone, or
+  plain voice), and so is the score you download for a song cleaned earlier. MuseScore 4 took
+  these parts for a piano and put a dynamic added there below the staff, over the words; now it
+  goes above. The sound is not changed. Dynamics already in an older score keep their side.
+  (#481)
+
 - Behind the scenes: `scripts/` is a regular package, so the tests import its scripts even
   where another project's `scripts` package is on the path. (#475)
 

@@ -8,6 +8,7 @@ import os
 import subprocess
 import tempfile
 import traceback
+import urllib.parse
 from typing import Dict, List, Optional, Set
 
 import dotenv
@@ -1532,12 +1533,23 @@ def api_score_file(slug: str):
 
     `open-score` above only works for somebody sitting at this host. This is the
     other half of the same idea for everybody else: take the file to whatever
-    machine has MuseScore on it.
+    machine has MuseScore on it. Singing parts get voice instruments in the copy
+    sent (#481), so MuseScore 4 puts new dynamics above the staff; the file here is
+    not touched.
     """
     song = _require(slug)
     cleaned = _cleaned_or_400(song)
-    return FileResponse(cleaned, media_type="application/octet-stream",
-                        filename=os.path.basename(cleaned), headers=dict(REVALIDATE))
+    name = os.path.basename(cleaned)
+    copy = pipeline.score_for_download(cleaned)
+    if copy is None:
+        return FileResponse(cleaned, media_type="application/octet-stream",
+                            filename=name, headers=dict(REVALIDATE))
+    # Said the way FileResponse says it, so a name with ä in it survives.
+    quoted = urllib.parse.quote(name)
+    disposition = (f"attachment; filename*=utf-8''{quoted}" if quoted != name
+                   else f'attachment; filename="{name}"')
+    return Response(copy, media_type="application/octet-stream",
+                    headers={**REVALIDATE, "Content-Disposition": disposition})
 
 
 @app.post("/api/songs/{slug}/score-file")
