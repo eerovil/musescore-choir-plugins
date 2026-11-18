@@ -902,6 +902,9 @@ def sing_and_publish(a, run_record):
         manifest["sung"] = True
         for part, (_, credit) in zip(manifest["parts"], sung_by):
             part["voice"] = credit
+    elif a.lang or a.change_lang:
+        # nothing is sung, but a language given is still saved (or refused) as the song's
+        song_language(os.path.join(ROOT, "songs", a.slug), a.lang, a.change_lang, [])
     with open(os.path.join(bundle_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, ensure_ascii=False)
     choirs = list(dict.fromkeys(a.publish))

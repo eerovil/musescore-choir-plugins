@@ -32,6 +32,13 @@ def test_the_first_lang_is_saved(tmp_path):
     assert saved(tmp_path)["language"] == "de" and saved(tmp_path)["by"] == "sing_song.py"
 
 
+def test_a_run_that_sings_nothing_still_saves_the_lang_given(tmp_path):
+    # --no-sing passes no words: a language given is saved without reading any
+    assert sing.song_language(str(tmp_path), "en", None, []) == "en"
+    assert saved(tmp_path)["language"] == "en"
+    assert sing.song_language(str(tmp_path), None, "de", []) == "de"
+
+
 def test_change_lang_changes_it(tmp_path):
     language_check.save(str(tmp_path), "fi", "app")
     assert sing.song_language(str(tmp_path), None, "en", ENGLISH) == "en"
