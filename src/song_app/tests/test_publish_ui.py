@@ -13,6 +13,7 @@ import threading
 import time
 
 import pytest
+from lxml import etree
 
 _NEEDS = "pip install pytest-playwright && playwright install chromium"
 pytest.importorskip("playwright.sync_api", reason=_NEEDS)
@@ -73,7 +74,7 @@ def live(tmp_path, monkeypatch):
     cf = FakeCloudflare()
     monkeypatch.setattr(publish.urllib.request, "urlopen", cf)
     monkeypatch.setattr(publish, "build_bundle",
-                        lambda cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, log=None: _bundle(
+                        lambda cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, gradual=None, log=None: _bundle(
                             tmp_path, parts=("T1", "T2", "B1", "B2")))
 
     song = state.create("Hanget soi", per_system=False, voicing="men")
@@ -200,7 +201,7 @@ def test_the_part_names_typed_on_the_panel_are_published(live, page, size, monke
     base, slug, _cf = live
     handed = []
 
-    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None,
+    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, gradual=None,
                     log=None):
         handed.append(part_names)
         return _bundle(tmp_path, parts=tuple(part_names))
@@ -241,7 +242,7 @@ def test_stale_part_names_stop_publish_until_saved(live, page, monkeypatch, tmp_
     base, slug, cf = live
     handed = []
 
-    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None,
+    def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None, staff_groups=None, gradual=None,
                     log=None):
         handed.append(part_names)
         return _bundle(tmp_path, parts=tuple(part_names))
@@ -362,7 +363,7 @@ def test_shared_staves_are_offered_above_five_parts_and_published_as_set(
     handed = []
 
     def fake_bundle(cleaned, out, initial_bpm=None, tempo_changes=None, part_names=None,
-                    staff_groups=None, log=None):
+                    staff_groups=None, gradual=None, log=None):
         handed.append(staff_groups)
         return _bundle(tmp_path, parts=tuple(SIX))
     monkeypatch.setattr(publish, "build_bundle", fake_bundle)
@@ -492,3 +493,144 @@ def test_a_slow_answer_for_older_part_names_does_not_replace_the_newer_one(live,
     held[0].continue_()
     page.wait_for_timeout(500)
     expect(asks).to_have_text(["Kertoja", "A1"])
+
+
+def _sung_on_site(tmp_path, cf, slug, choir="jm"):
+    """A singing run published `slug` to `choir`: the site's row has sung parts."""
+    from src.song_app.tests.test_publish_guard import _sung
+    from src.song_app.tests.test_publish import CONFIG
+    publish.publish(slug=slug, title="Hanget soi", choir=choir,
+                    bundle=_sung(tmp_path, _bundle(tmp_path, parts=("T1", "T2", "B1", "B2"))),
+                    client=publish.Cloudflare(CONFIG, cf))
+
+
+@pytest.mark.parametrize("recorded", [True, False], ids=["recorded", "site-only"])
+def test_publishing_over_a_sung_version_asks_first(live, page, tmp_path, recorded):
+    """#483: Publish sends piano only, so a sung version on the site is replaced only
+    from the panel's own button. With the app's record it is refused at once (409);
+    with only the site's row the job refuses and the panel reads the saved error."""
+    base, slug, cf = live
+    _sung_on_site(tmp_path, cf, slug)
+    if recorded:
+        with state.song_lock(slug):
+            song = state.load(slug)
+            song.data.setdefault("publish", {})["sites"] = {"jm": {
+                "choir": "jm", "prefix": cf.listed("jm")[0][2], "files": [], "parts": ["T1"],
+                "at": 1_800_000_000, "sung": True}}
+            song.save()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+    section = page.locator(".publish-section")
+    section.locator("select.publish-choir").select_option("jm")
+    note = page.locator(".publish-section .publish-sung")
+    if recorded:
+        # the app's record says sung: said as soon as the choir is chosen
+        expect(note).to_be_visible()
+        section.locator("select.publish-choir").select_option("")
+        expect(note).to_be_hidden()
+        section.locator("select.publish-choir").select_option("jm")
+        expect(note).to_be_visible()
+    else:
+        expect(note).to_be_hidden()
+    section.locator("button.publish-btn").click()
+
+    expect(note).to_be_visible(timeout=15000)
+    expect(note.locator("input.publish-sing-cmd")).to_have_value(
+        f".venv/bin/python sing_song.py {slug} --publish jm")
+    expect(note).to_contain_text("The Joensuun Mieslaulajat (jm) list has a sung version of this song.")
+    expect(note).to_contain_text("would replace it")
+    assert all(p["sung"] for p in __import__("json").loads(cf.listed("jm")[0][3]))
+    note.scroll_into_view_if_needed()
+    _shot(page, f"publish-sung-{'recorded' if recorded else 'site'}-1280.png")
+
+    page.locator(".publish-section button.publish-piano-only").click()
+    status = page.locator(".publish-section .publish-status")
+    expect(status).to_contain_text("Published to Joensuun Mieslaulajat (jm)", timeout=15000)
+    expect(page.locator(".publish-section .publish-sung")).to_be_hidden()
+    assert not any(p.get("sung") for p in __import__("json").loads(cf.listed("jm")[0][3]))
+    assert errors == []
+
+
+@pytest.mark.parametrize("size", [(1280, 900), (390, 844)], ids=["desktop", "phone"])
+def test_the_scores_rit_is_listed_and_its_setting_saved(live, page, size):
+    """#483: a printed rit. eases the speed; the panel lists it, takes a target BPM
+    or switches it off, and says when a saved setting has lost its mark."""
+    base, slug, _cf = live
+    song = state.load(slug)
+    cleaned = song.cleaned_path()
+    root = etree.parse(cleaned).getroot()
+    voice = root.find("./Score/Staff/Measure/voice")
+    first = next(i for i, e in enumerate(voice) if e.tag == "Chord")
+    voice.insert(first, etree.fromstring("<StaffText><text>poco rit.</text></StaffText>"))
+    # under a name the file watcher does not re-check, so no redraw lands mid-test
+    marked = song.path("hanget-rit.mscx")
+    with open(marked, "wb") as fh:
+        fh.write(etree.tostring(root))
+    with state.song_lock(slug):
+        song = state.load(slug)
+        song.data["cleaned"] = os.path.basename(marked)
+        song.data["review"] = {"approved_against": state.file_fingerprint(marked)}
+        song.data["publish"] = {"gradual": [{"measure": 7, "bpm": 40, "off": False}]}
+        song.save()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    page.goto(f"{base}/#/song/{slug}")
+
+    rows = page.locator("[data-gradual] .gradual-row")
+    expect(rows).to_have_count(1)
+    expect(rows.first).to_contain_text("Bar 1: “poco rit.”")
+    # the fixture's bar 1 holds a fermata on its last beat, which ends the ramp
+    expect(page.locator("[data-gradual-until='1']")).to_have_text("by bar 1 beat 4 (fermata)")
+    expect(page.locator("[data-gradual-stale='7']")).to_contain_text("no rit. or accel.")
+    page.locator("[data-gradual-bpm='1']").fill("50")
+    expect(page.locator("[data-save-note]")).to_have_text("Unsaved changes")
+    page.locator("[data-gradual]").scroll_into_view_if_needed()
+    _shot(page, f"publish-rit-{size[0]}.png")
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    assert state.load(slug).data["publish"]["gradual"] == [{"measure": 1, "bpm": 50, "off": False}]
+    page.reload()
+    expect(page.locator("[data-gradual-bpm='1']")).to_have_value("50")
+    expect(page.locator("[data-gradual-stale]")).to_have_count(0)
+
+    page.locator("[data-gradual-off='1']").check()
+    expect(page.locator("[data-gradual-bpm='1']")).to_be_disabled()
+    page.locator("button.publish-save").click()
+    expect(page.locator("[data-save-note]")).to_have_text("Saved")
+    assert state.load(slug).data["publish"]["gradual"] == [{"measure": 1, "bpm": 50, "off": True}]
+    assert errors == []
+
+
+def test_a_second_mark_in_one_bar_is_listed_without_controls_of_its_own(live, page):
+    """#483: a setting is per bar and applies to the bar's first mark, so a second
+    mark in that bar is said, not given controls that would edit the first's."""
+    base, slug, _cf = live
+    song = state.load(slug)
+    root = etree.parse(song.cleaned_path()).getroot()
+    voice = root.find("./Score/Staff/Measure/voice")
+    chords = [i for i, e in enumerate(voice) if e.tag == "Chord"]
+    voice.insert(chords[2], etree.fromstring("<StaffText><text>accel.</text></StaffText>"))
+    voice.insert(chords[0], etree.fromstring("<StaffText><text>rit.</text></StaffText>"))
+    marked = song.path("hanget-two.mscx")
+    with open(marked, "wb") as fh:
+        fh.write(etree.tostring(root))
+    with state.song_lock(slug):
+        song = state.load(slug)
+        song.data["cleaned"] = os.path.basename(marked)
+        song.save()
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator("[data-gradual] .gradual-row")).to_have_count(1)
+    expect(page.locator("[data-gradual] .gradual-row")).to_contain_text("“rit.”")
+    expect(page.locator("[data-gradual-bpm='1']")).to_have_count(1)
+    expect(page.locator("[data-gradual-same-bar='1']")).to_contain_text("“accel.”")
+
+
+def test_a_score_with_no_rit_says_so(live, page):
+    base, slug, _cf = live
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base}/#/song/{slug}")
+    expect(page.locator("[data-gradual]")).to_have_text("No rit. or accel. in the score.")

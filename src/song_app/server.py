@@ -170,6 +170,11 @@ def _derived(song: state.Song) -> Dict:
         "has_pdf": bool(pdf and os.path.exists(pdf)),
         "has_cleaned": bool(cleaned and os.path.exists(cleaned)),
         "needs_initial_bpm": needs_initial_bpm,
+        # the score's printed rit./accel. marks, for the Publish panel (#483)
+        "gradual_marks": pipeline.gradual_marks(
+            cleaned, (song.data.get("publish") or {}).get("tempo_changes"),
+            (song.data.get("publish") or {}).get("bpm"))
+        if cleaned and os.path.exists(cleaned) else [],
         # Printed-system bounds, labelled with the measures they cover: what lets
         # the viewer show one system and the lyric editor ask per system.
         "systems": systems,
@@ -1782,6 +1787,38 @@ def _places(value) -> List[Dict]:
     return out
 
 
+def _gradual(cleaned: str, value) -> List[Dict]:
+    """The Publish panel's say on the score's printed rit./accel. marks (#483):
+    `[{"measure": 30, "bpm": 50, "off": false}]`. `bpm` null eases to the default
+    (three quarters for a rit., five quarters for an accel.). A bar with no mark
+    in the score is a 400, so a setting cannot quietly point at nothing."""
+    if not isinstance(value, list):
+        raise HTTPException(400, "Gradual changes must be a list")
+    marks = {m["measure"] for m in pipeline.gradual_marks(cleaned)}
+    out: Dict[int, Dict] = {}
+    for item in value:
+        try:
+            measure = _whole_number(item.get("measure"))
+        except (AttributeError, TypeError, ValueError):
+            raise HTTPException(400, "Each rit./accel. setting needs a whole bar number") from None
+        if measure not in marks:
+            raise HTTPException(400, f"Bar {measure} has no rit. or accel. in the score")
+        bpm = item.get("bpm")
+        if bpm is not None and bpm != "":
+            try:
+                bpm = _whole_number(bpm)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"rit./accel. at bar {measure}: BPM must be "
+                                         "a whole number") from None
+            if not 20 <= bpm <= 300:
+                raise HTTPException(400, f"rit./accel. at bar {measure}: BPM must be "
+                                         "between 20 and 300")
+        else:
+            bpm = None
+        out[measure] = {"measure": measure, "bpm": bpm, "off": bool(item.get("off"))}
+    return [out[m] for m in sorted(out)]
+
+
 def _publish_settings(song: state.Song, opts: Dict) -> Dict:
     """What the site plays and shows a song with, out of a request (#400).
 
@@ -1797,6 +1834,10 @@ def _publish_settings(song: state.Song, opts: Dict) -> Dict:
         raise HTTPException(400, "Clean the score first")
     out: Dict = {"tempo_changes": _tempo_changes(
         cleaned, opts.get("tempo_changes", saved.get("tempo_changes", [])))}
+    if "gradual" in opts:
+        out["gradual"] = _gradual(cleaned, opts["gradual"])
+    elif "gradual" in saved:
+        out["gradual"] = saved["gradual"]
     if not pipeline.has_opening_tempo(cleaned):
         try:
             bpm = _whole_number(opts.get("bpm", saved.get("bpm", publish.DEFAULT_BPM)))
@@ -1901,8 +1942,14 @@ async def api_publish_settings(slug: str, body: Dict = None) -> Dict:
     return _derived(song)
 
 
+def _publish_records_now(slug: str) -> Dict[str, Dict]:
+    """The song's publish records as saved now, not as the job found them (#483)."""
+    with state.song_lock(slug):
+        return publish.records(_require(slug).data.get("publish") or {})
+
+
 def _run_publish(slug: str, choir: str, config: "publish.Config",
-                 choirs: Optional[List[Dict]] = None) -> None:
+                 choirs: Optional[List[Dict]] = None, piano_over_sung: bool = False) -> None:
     song = _require(slug)
     log = lambda m: _job_emit(slug, "publish", m)
     try:
@@ -1921,27 +1968,45 @@ def _run_publish(slug: str, choir: str, config: "publish.Config",
                     tempo_changes=settings.get("tempo_changes"),
                     part_names=settings.get("part_names"),
                     staff_groups=settings.get("staff_groups"),
+                    gradual=settings.get("gradual"),
                     log=slot.guard(log))
                 slot.check()
             record = publish.publish(
                 slug=song.slug, title=song.name, choir=choir, bundle=bundle,
                 client=publish.Cloudflare(config), credits=credits,
                 published=published, choirs=choirs,
-                places=settings.get("places") or [], log=log)
+                places=settings.get("places") or [], log=log,
+                piano_over_sung=piano_over_sung,
+                records_now=lambda: _publish_records_now(slug))
         record["published_against"] = state.file_fingerprint(cleaned)
         with state.song_lock(slug):
             song = _require(slug)
             pub = song.data.setdefault("publish", {})
             sites = publish.records(pub)
-            staging = [c["id"] for c in (choirs or []) if c.get("staging")]
-            for gone in publish.replaced(choir, sites, staging):
-                del sites[gone]
-            sites[choir] = record
+            if record.pop("live", True):
+                staging = [c["id"] for c in (choirs or []) if c.get("staging")]
+                for gone in publish.replaced(choir, sites, staging):
+                    del sites[gone]
+                sites[choir] = record
+            else:
+                # Another publish wrote the site's row after this one (#483): its
+                # record, not this one, says what the site serves.
+                log("Another publish replaced this one before it was recorded; "
+                    "its record was not saved.")
             # One record per choir (#384): a song can be in public and one choir at once.
             pub.pop("site", None)
             pub.update({"sites": sites, "choir": choir, "error": None})
             song.save()
         _job_finish(song, "publish")
+    except publish.SungOnSite as exc:
+        # Kept as a kind, not a sentence, so the panel can offer the confirm (#483).
+        error = {"kind": exc.kind, "choir": exc.choir, "message": str(exc)}
+        with state.song_lock(slug):
+            song = _require(slug)
+            song.data.setdefault("publish", {}).update({"error": error, "choir": choir})
+            song.save()
+        _job_emit(slug, "publish", str(exc), "error")
+        _job_finish(song, "publish", str(exc))
     except Exception as exc:
         traceback.print_exc()
         with state.song_lock(slug):
@@ -1985,6 +2050,16 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
     # to publish against, and the upload would fail anyway.
     if not choir:
         raise HTTPException(400, "Choose a choir first.")
+    # The app publishes piano only (#483): a sung version this app recorded for the
+    # choir is not replaced unless the panel's confirm says so. The job checks the
+    # site itself too, since a sung version may have come from elsewhere.
+    piano_over_sung = bool(body.get("piano_only"))
+    if not piano_over_sung:
+        with state.song_lock(slug):
+            recorded = publish.records(_require(slug).data.get("publish") or {}).get(choir) or {}
+        if recorded.get("sung"):
+            raise HTTPException(409, {"kind": publish.SungOnSite.kind, "choir": choir,
+                                      "message": publish.sung_message(choir)})
     if _publish_busy(song):
         raise HTTPException(409, "Another job is running for this song — publish "
                                  "after it finishes.")
@@ -2011,7 +2086,7 @@ async def api_publish(slug: str, body: Dict = None) -> Dict:
         song.data.setdefault("publish", {}).update(settings)
         song.save()
     asyncio.get_running_loop().run_in_executor(None, _run_publish, slug, choir, config,
-                                               listing["choirs"])
+                                               listing["choirs"], piano_over_sung)
     return {"started": True}
 
 
