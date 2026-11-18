@@ -86,7 +86,7 @@ def test_the_new_song_form_sends_the_language(live, page, tmp_path):
     page.goto(base)
     page.get_by_role("button", name="+ New song").click()
     page.wait_for_selector("#f-language option[value=en]", state="attached")
-    pdf = tmp_path / "Messias.pdf"
+    pdf = tmp_path / "Evening Hymn.pdf"
     pdf.write_bytes(b"%PDF-1.4\n")
     page.set_input_files("#f-pdf", str(pdf))
     page.locator("#f-voicing").select_option("mixed")
@@ -94,7 +94,7 @@ def test_the_new_song_form_sends_the_language(live, page, tmp_path):
     _evidence(page, "issue-484-new-song-language.png")
     page.locator("button", has_text="Create").click()
     page.wait_for_selector(".stagebar")
-    assert language_check.saved(str(songs / "messias")) == "en"
+    assert language_check.saved(str(songs / "evening-hymn")) == "en"
     assert not errors, errors
 
 
