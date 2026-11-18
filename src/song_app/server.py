@@ -631,8 +631,9 @@ def api_save_systems(slug: str, answers: Dict = None) -> Dict:
     client_stamps = body.get("stamps") if isinstance(body.get("answers"), dict) else None
     if isinstance(body.get("answers"), dict):
         body = body["answers"]
-    parsed = {int(si): {int(sid): v for sid, v in staves.items()}
-              for si, staves in body.items()}
+    # A system's answers may hold `per_system.ALL_REST` beside the staff ids:
+    # "No voices here" (#482).
+    parsed = pipeline.per_system.parse_answers(body)
     # The readings these answers are about: the ones the grid showed when the
     # panel loaded it, or failing that the fragments as this request found them,
     # before the slow conversion below.

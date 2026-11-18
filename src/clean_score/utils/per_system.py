@@ -60,6 +60,29 @@ Answers = Dict[int, Dict[int, str]]
 
 CLEARED = "-"
 
+# A system answered `{ALL_REST: REST}` sings nothing (#482): the page prints piano or
+# instruments only there. Its notes go to no part, every part rests through its bars,
+# and the names carry on past it from the system before, which "-" on every row
+# would stop. The key sits beside the staff ids in one system's answers.
+ALL_REST = "*"
+REST = "rest"
+
+
+def is_rest_system(system_answers: Optional[Dict]) -> bool:
+    """True when a system's answers say no voice sings there (`ALL_REST`)."""
+    return (system_answers or {}).get(ALL_REST) == REST
+
+
+def _answer_key(key):
+    """A staff id as an int; the rest marker `ALL_REST` as itself."""
+    return key if key == ALL_REST else int(key)
+
+
+def parse_answers(entry: Dict) -> Answers:
+    """Answers as stored in JSON (string keys) back to their int-keyed form."""
+    return {int(sidx): {_answer_key(sid): ans for sid, ans in staves.items()}
+            for sidx, staves in entry.items()}
+
 # {system_index: {(staff_id, voice_index): part_name}} — internal, resolved form.
 _Decls = Dict[int, Dict[Tuple[int, int], str]]
 
@@ -124,6 +147,8 @@ class SystemLayout:
     start: int
     end: int
     staves: List[StaffRow] = field(default_factory=list)
+    # Answered "No voices here" (`ALL_REST`): nothing on it is a part.
+    rest: bool = False
 
     def to_dict(self) -> Dict:
         return {
@@ -131,6 +156,7 @@ class SystemLayout:
             "measure_start": self.start,
             "measure_end": self.end,
             "staves": [s.to_dict() for s in self.staves],
+            "rest": self.rest,
         }
 
 
@@ -290,8 +316,7 @@ def saved_answers(input_path: Optional[str]) -> Optional[Answers]:
     entry = raw.get(key) or raw.get(_legacy_key_for(input_path))
     if not entry:
         return None
-    return {int(sidx): {int(sid): ans for sid, ans in staves.items()}
-            for sidx, staves in entry.items()}
+    return parse_answers(entry)
 
 
 def has_answers(input_path: Optional[str]) -> bool:
@@ -364,8 +389,7 @@ def update_answers(input_path: Optional[str],
                     f"The answer file {_ANSWER_FILE} is not a mapping; "
                     "it was left as it is.")
         entry = raw.get(key) or raw.get(_legacy_key_for(input_path))
-        current = ({int(sidx): {int(sid): ans for sid, ans in staves.items()}
-                    for sidx, staves in entry.items()} if entry else None)
+        current = parse_answers(entry) if entry else None
         new = change(current)
         if new is None:
             raw.pop(key, None)
@@ -494,7 +518,8 @@ def system_layout(
                 summary=_first_nonempty_summary(staff, a, b),
                 answer=recorded.get(sidx, {}).get(sid, ""),
             ))
-        layouts.append(SystemLayout(index=sidx, start=a + 1, end=b + 1, staves=rows))
+        layouts.append(SystemLayout(index=sidx, start=a + 1, end=b + 1, staves=rows,
+                                    rest=is_rest_system(recorded.get(sidx))))
     return layouts
 
 
@@ -536,11 +561,15 @@ def _answers_in_force(
     """Each (system, staff) with the answer that applies there and where it was typed.
 
     A staff left unanswered in a system inherits its answer from the previous system;
-    CLEARED is yielded as itself and stops that inheritance.
+    CLEARED is yielded as itself and stops that inheritance. A system answered
+    `ALL_REST` yields nothing and leaves the carry alone, so the system after it
+    inherits from the one before it.
     """
     last_answer: Dict[int, Tuple[str, int]] = {}
     for layout in layouts:
         sys_ans = answers.get(layout.index, {})
+        if is_rest_system(sys_ans):
+            continue
         for row in layout.staves:
             raw = sys_ans.get(row.staff_id, "")
             if raw == "":
@@ -560,7 +589,8 @@ def _decls_from_answers(layouts: List[SystemLayout], answers: Answers) -> _Decls
 
     A staff left unanswered in a system inherits its answer from the previous system;
     CLEARED declares nothing and stops that inheritance (the staff stays unnamed until
-    it is answered again). Names beyond the staff's voice count are ignored.
+    it is answered again). Names beyond the staff's voice count are ignored. A system
+    answered `ALL_REST` declares nothing, so every part rests there.
     """
     decls: _Decls = {}
     for layout, row, raw, _ in _answers_in_force(layouts, answers):
@@ -972,7 +1002,7 @@ def _fill_from_fallbacks(
 
 def _build_lyric_map(
     bounds: List[Tuple[int, int]], decls: _Decls, parts: List[str],
-    staves: Optional[List[int]] = None,
+    staves: Optional[List[int]] = None, rest: Set[int] = frozenset(),
 ) -> List[Dict]:
     """
     Per-system printed-staff -> output-staff(s) map for lyric placement.
@@ -998,6 +1028,8 @@ def _build_lyric_map(
     order rather than rank order — and, given `staves`, "staves": how many staves that
     system prints. "map" ranks the staves, which is what the lyric JSON numbers; the
     Fix panel needs the page position instead, to know which part homr read (#310).
+    A system in `rest` (answered "No voices here") carries "rest": true and an empty
+    "map": the lyric import gives it no line of the words (#482).
     """
     part_id = {name: i + 1 for i, name in enumerate(parts)}
     fallbacks = _fallback_of(parts)
@@ -1028,6 +1060,8 @@ def _build_lyric_map(
                 follow.setdefault(part_id[base], []).append(part_id[child])
         if follow:
             entry["follow"] = follow
+        if sidx in rest:
+            entry["rest"] = True
         out.append(entry)
     return out
 
@@ -1182,6 +1216,10 @@ def clean_per_system(
     for selector in _STRIP_SELECTORS:
         delete_all_elements_by_selector(root, selector)
 
-    lyric_map = _build_lyric_map(bounds, decls, parts, [len(l.staves) for l in layouts])
+    # A system with no staff to name sings nothing either (#482).
+    rest = {l.index for l in layouts
+            if is_rest_system(answers.get(l.index)) or not l.staves}
+    lyric_map = _build_lyric_map(bounds, decls, parts, [len(l.staves) for l in layouts],
+                                 rest)
     _write_lyric_metadata(root, parts, lyric_map)
     return PerSystemResult(parts=parts, lyric_map=lyric_map)

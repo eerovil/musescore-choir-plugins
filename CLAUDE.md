@@ -1331,6 +1331,13 @@ state model are in `DESIGN.md`.
   one line, "Every staff rests here; names carry on to the next system" (#482), rather
   than an empty block that read as a missing system. The owner chose not to number its
   resting staves off the scan.
+  A system the page prints with staves but no singing (a piano interlude) is ticked
+  **No voices here (piano or instruments only)** under its heading (#482): its rows are
+  switched off and saved as `{"*": "rest"}` beside whatever was typed there
+  (`per_system.ALL_REST`, read back by `per_system.parse_answers`), so unticking gives
+  the names back. The clean rests every part through it and the names carry past it.
+  The terminal prompt (`per_system_prompt`) keeps such a system, and the names saved beside the
+  tick, and does not ask about it.
 - **Heavy slots** (`heavy_slot.py`). A homr read or a homr install is every core the
   machine has, and so is an agent's test suite — several at once is all of them slow
   rather than any finishing sooner. AgentDeck owns that queue (a small pool of
@@ -2578,7 +2585,12 @@ the lyric block gives the b-part words of its own. The Review stage's note check
 counts those borrowed bars as copies of the base part's notes, not as a difference.
 A rest the scan wrote in its own voice or staff stays. Naming the part that way is the
 person's reading that the single line is unison, which is what the rebuild otherwise
-refuses to guess. **A line left unnamed is said out loud** (#330): the rebuild takes one name per
+refuses to guess. **A system with no voices** (#482) is answered `{"*": "rest"}`
+(`per_system.ALL_REST`): `_answers_in_force` skips it without touching the carry, so
+it declares nothing, every part gets measure rests there, the next system inherits the
+names from the one before it, `dropped_voices` reports nothing in it, and its lyric map
+entry is `"map": {}` with `"rest": true` (also written for a system with no staves).
+**A line left unnamed is said out loud** (#330): the rebuild takes one name per
 line, top first, so a two-voice staff answered with one name keeps the upper line and
 loses the rest — usually an answer typed once in system 1 and carried into a system
 where the page prints two lines there (Lemmen nosto lost ~150 alto notes that way).
@@ -2753,7 +2765,10 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
   A null `measure_start` (the LLM emits null when no measure number is printed at the
   start of a line) is auto-filled by `_fill_missing_measure_starts` (reported as `filled_measure_starts`): blocks are one
   per printed system in order, so each null block takes the start measure of the
-  system at its position (`per_system.system_ranges`); explicit values are left alone, and a
+  system at its position (`per_system.system_ranges`), skipping a system the map marks
+  `rest` (#482: it prints no words) unless there is one block for every printed system,
+  rest ones included; a `staff_number` line in a `rest` system is not placed and comes
+  back as `part_rests`; explicit values are left alone, and a
   block-count vs system-count mismatch is warned (so the user verifies alignment).
 - Import is in-place on the tree and **changes only what it names** (#392, #397):
   a JSON line is one part, voice and verse from its block's `measure_start`, and fills
