@@ -3,7 +3,7 @@
 A design doc for a unified app over the choir-track toolkit.
 
 > **Status: implemented** (`src/song_app/`, launched by `./song.py`). This doc is
-> the rationale and state model; see CLAUDE.md for the as-built module map.
+> the rationale and state model; see CLAUDE.md and `docs/guide/` for the as-built module map.
 
 ## The problem
 

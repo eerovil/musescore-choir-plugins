@@ -85,7 +85,7 @@ prevent: it would starve any render or test suite beside it.
 path. Using it would mean a homr service on the Mac under launchd, a remote
 engine in `omr.py`, Tailscale between them, and a fallback to local homr
 whenever the laptop is asleep — and the Mac would become host state no checkout
-can reproduce, which is the complaint `CLAUDE.md` already makes about the `omr`
+can reproduce, which is the complaint `docs/guide/omr.md` already makes about the `omr`
 distrobox container that `scripts/install-homr.sh` replaced.
 
 If it is ever built, the shape is: **native macOS, not a container**, one page

@@ -1,7 +1,7 @@
 # Handoff — August 2026
 
 State of the workflow after taking two songs through it end to end. Durable
-knowledge lives in `CLAUDE.md` (how the code works) and
+knowledge lives in `CLAUDE.md` and `docs/guide/` (how the code works) and
 `fixtures/virta-venhetta-vie/STEPS.md` (how that song was produced, wrong turns
 included). This file is the session-specific part: where things stand and what is
 open.
@@ -62,7 +62,7 @@ and any wrong note that still fills its bar are all unverified.
 - **`fixes.json` is strict.** A recorded score edit that no longer matches raises
   rather than being skipped, so a pipeline change that moves a note fails the build
   instead of quietly leaving the defect.
-- **The playbook in CLAUDE.md ("Reading a scanned score") was expensive to learn.**
+- **The playbook in `docs/guide/reading-a-scanned-score.md` was expensive to learn.**
   Crop before concluding; let the slot arithmetic check the reading; read the XML
   before blaming the OCR; and remember that self-consistency is not correctness.
 

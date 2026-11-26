@@ -2,8 +2,8 @@
 
 - Asked to build a practice track from a PDF (or to put a song on the stemmanauhat site)?
   Follow [docs/pdf-to-practice-track.md](docs/pdf-to-practice-track.md) step by step.
-- Everything else: read CLAUDE.md, the full guide to this repository. It is long; list its
-  headings with `grep -n '^#' CLAUDE.md` and read the section for your task.
+- Everything else: read CLAUDE.md. It is short and lists the files under `docs/guide/`, one
+  per topic; read the file for your task before you change anything.
 - When a slug or part name becomes a path, check it in one shared helper before any write or
   `rmtree` (`check_slug` in `src/sing_song/main.py` is one), and test it with `..`, `/` and an
   absolute path.

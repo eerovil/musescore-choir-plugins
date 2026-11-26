@@ -82,7 +82,7 @@ The scan gets most notes right and some wrong; a practice track with a wrong not
   .../system/<n>` is the page's picture of that system. Compare them bar by bar, part by part.
 - `GET .../problems` lists the bars homr itself doubted (`⚠`), with its other readings.
 - Every correction is an entry in the song's `fixes.json`, then `POST .../clean` again. A hand
-  edit to the cleaned score is lost at the next clean. CLAUDE.md, "The prototyping fixture",
+  edit to the cleaned score is lost at the next clean. `docs/guide/fixes-json.md`
   describes each kind of entry (`bar`, `slur`, `tie`, `delbar`, ...) and the mistakes agents
   made with them.
 - An `unmark` entry, saying what you checked, takes off a `⚠` homr put on a bar that is right.
