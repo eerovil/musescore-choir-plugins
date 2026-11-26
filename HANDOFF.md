@@ -62,7 +62,7 @@ and any wrong note that still fills its bar are all unverified.
 - **`fixes.json` is strict.** A recorded score edit that no longer matches raises
   rather than being skipped, so a pipeline change that moves a note fails the build
   instead of quietly leaving the defect.
-- **The playbook in CLAUDE.md ("Reading a scanned score") was expensive to learn.**
+- **The playbook in `docs/guide/reading-a-scanned-score.md` was expensive to learn.**
   Crop before concluding; let the slot arithmetic check the reading; read the XML
   before blaming the OCR; and remember that self-consistency is not correctness.
 

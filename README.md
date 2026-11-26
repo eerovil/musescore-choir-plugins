@@ -102,4 +102,4 @@ under copyright; keep it in a private repository of your own.
   and the MuseScore 3 plugins in `plugins/`.
 - [DESIGN.md](DESIGN.md) — why the app is shaped the way it is.
 - [SETUP.md](SETUP.md) — setting up a new machine.
-- [CLAUDE.md](CLAUDE.md) — detailed notes for whoever works on the code.
+- [CLAUDE.md](CLAUDE.md) and [docs/guide/](docs/guide/) — detailed notes for whoever works on the code.
