@@ -14,7 +14,7 @@ folds into a menu (`style.css`).
 
 A personal toolkit for producing **choir practice tracks** from MuseScore
 sheet music. The app works with MuseScore 3 or 4 (#414); MuseScore 3 is still the
-default and the only one that runs the corruption check below, and the QML plugins
+default and the only one that runs the corruption check (`docs/guide/song-app.md`), and the QML plugins
 are MuseScore 3 only. It has two halves:
 
 1. **MuseScore QML plugins** (`plugins/`) that run *inside* MuseScore 3 to edit
@@ -149,18 +149,18 @@ request rather than a local count. Full rules and the module list: `docs/guide/t
 
 - A song's defect is fixed from the printed page into that song's `fixes.json`, with the
   reason. Do not add an automatic repair pass for it, and do not hand-edit the cleaned
-  score: a re-clean rebuilds it (`fixes-json.md`).
+  score: a re-clean rebuilds it (`docs/guide/fixes-json.md`).
 - `scanned.musicxml` is derived; regenerate it, never edit it. homr is not a pip
-  requirement and must not become one (`scan.md`, `omr.md`).
-- If homr got the page wrong, the fix belongs in the fork (`omr-fork-rule.md`).
+  requirement and must not become one (`docs/guide/scan.md`, `docs/guide/omr.md`).
+- If homr got the page wrong, the fix belongs in the fork (`docs/guide/omr-fork-rule.md`).
 - `clean_score`'s `GLOBALS` is one per process: cleans take turns, never run two at once.
 - A new job that writes a song goes in `server.WRITERS` and starts with `state.start_job`;
-  take another copy's data with `song.adopt(fresh)`, never `song.data = ...` (`song-app.md`).
+  take another copy's data with `song.adopt(fresh)`, never `song.data = ...` (`docs/guide/song-app.md`).
 - Key lyric boxes and part lookups by staff id, never by part name. `lyric_txt.py`'s
-  export and import must stay symmetric (`lyric-placement.md`).
+  export and import must stay symmetric (`docs/guide/lyric-placement.md`).
 - A part name the site's voice tree does not know: ask Eero where it goes, never guess.
-  Publish only when asked, to the choir named (`singing.md`).
-- The live app is on port 8123; port 8000 belongs to another project (`host.md`).
+  Publish only when asked, to the choir named (`docs/guide/singing.md`).
+- The live app is on port 8123; port 8000 belongs to another project (`docs/guide/host.md`).
 
 ## Conventions & gotchas
 

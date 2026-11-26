@@ -5,7 +5,7 @@ Part of this repository's agent guide; the index is [CLAUDE.md](../../CLAUDE.md)
 ## Layout
 
 ```
-plugins/                 QML plugins for MuseScore 3 (install separately, see below)
+plugins/                 QML plugins for MuseScore 3 (install separately, see plugins.md)
 song.py                  Launcher for the song web app (FastAPI; src/song_app/)
 clean_score.py           CLI wrapper → src/clean_score/main.py (split voices into staves)
 lyric_txt.py             CLI wrapper → src/clean_score/lyric_txt.py (lyrics <-> txt/json)
@@ -15,7 +15,7 @@ src/song_app/            Local web app tying the workflow together (see DESIGN.m
   state.py               Song state machine (.song.json), slug, stages
   health.py              Health check (malformed-tick / extra-voice scan; no mutation)
   pdf_systems.py         Crop the source PDF into one image per printed system
-  omr.py                 Run homr on a page image -> MusicXML (its own venv; see below)
+  omr.py                 Run homr on a page image -> MusicXML (its own venv; see omr.md)
   omr_systems.py         Scan one printed system at a time; flatten + assemble
   scan.py                The scan stage: crop + read every band, assemble, invalidate
   system_finder.py       Propose the printed-system bands off a page (homr's staves)
@@ -30,7 +30,7 @@ src/clean_score/         Score-cleaning package
   utils/                 part_types, reversed_voices, missing_ties,
                          corrupted_measures, utils, globals
   tests/                 pytest
-src/sing_song/           Sing a song's parts with the UFR DiffSinger voices (see its section below)
+src/sing_song/           Sing a song's parts with the UFR DiffSinger voices (see singing.md)
   main.py                bundle + unroll + onset check + sing + MP3s; --publish through publish.py
   sing_ufr.py            the singer (runs in scripts/install-singer.sh's venv)
   ufr_pack.py            the voices' folder from the UFR pack as it downloads (install-singer.sh <zip>)
@@ -38,7 +38,7 @@ src/sing_song/           Sing a song's parts with the UFR DiffSinger voices (see
   places.py, readings.py the song page's Pronunciation list: where a word is sung, its readings
   tests/                 pytest
 src/kube_runner/         REMOTE_RUNNER for a GPU in a Kubernetes cluster: read a band, sing a line
-src/score_export/        The cleaned score made ready to publish (see its section below)
+src/score_export/        The cleaned score made ready to publish (see score-export.md)
   score.py               the publish copy: silent parts out, marks off, tempos, fermata hold
   musescore.py           the MuseScore 3 or 4 CLI (run_musescore, part_names, CLI_TIMEOUT)
   clock.py               MuseScore's clock: TempoMap from the MIDI, bar order from .mpos

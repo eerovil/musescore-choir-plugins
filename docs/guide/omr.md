@@ -44,7 +44,7 @@ Part of this repository's agent guide; the index is [CLAUDE.md](../../CLAUDE.md)
   fixtures, and the measurement harness — and it is not going back, since the harness
   alone is a large share of that and belongs there. Since #220 it is **level with
   upstream `main`** at each sync: everything upstream has is merged in (see "Where an OMR
-  fix belongs" above, which also says which side of the line a new fix falls on).
+  fix belongs" in [omr-fork-rule.md](omr-fork-rule.md), which also says which side of the line a new fix falls on).
   The app passes homr **`--no-title`**: it never uses the title homr reads, and since
   upstream's 9ec3a78 reading one means fetching OCR weights first.
   It also passes **`--mark-doubt`** (#245), to a homr whose source has it
@@ -220,7 +220,7 @@ Part of this repository's agent guide; the index is [CLAUDE.md](../../CLAUDE.md)
   slurs nobody engraved, one of 5¼ bars and one of 3, covering 21 notes; a slur
   continuation takes no syllable, so the page offers **91 lyric slots for 132 notes**.
   Sixteen swallowed. The direction is the trap: it reads as `too_few`, which the
-  playbook below teaches a reader to attribute to a voice sharing another staff's
+  playbook ([reading-a-scanned-score.md](reading-a-scanned-score.md)) teaches a reader to attribute to a voice sharing another staff's
   words. So `read_page` pairs the tokens the way MuseScore does and keeps only pairs at
   most **one barline** apart (`MAX_SLUR_BARS`, env `OMR_MAX_SLUR_BARS`). That threshold
   is measured, not assumed: across all seven benchmark parses every pair is nought or
@@ -281,7 +281,7 @@ Part of this repository's agent guide; the index is [CLAUDE.md](../../CLAUDE.md)
   then pads that hole and health goes quiet, so a loudly wrong bar becomes a quietly
   wrong one, which is this project's named failure mode occurring inside a repair. Hence
   `read_page`'s `repairs` argument: a caller that has to tell somebody passes a list, and
-  `scan.py` writes what comes back into the song's `fixes.json` (below). A log line is
+  `scan.py` writes what comes back into the song's `fixes.json` ([scan.md](scan.md), [fixes-json.md](fixes-json.md)). A log line is
   not a record. The dotted eighth that bar also lost is **not** fixable in principle — a
   dot rides inside a single rhythm token, so there is nothing to recover — and the
   `rest_0` token bug behind the four-quarter whole rest is homr's under the #141 rule,

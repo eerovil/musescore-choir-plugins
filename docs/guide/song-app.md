@@ -69,7 +69,7 @@ state model are in `DESIGN.md`.
   with the score twice. Instead an AI reads them off the page
   (`page_images(grid=True)` overlays a labelled percentage scale, which turns
   estimating coordinates into reading them) and a person corrects them by dragging
-  in the **Systems** viewer tab; `system_finder.py` (below) can now propose them
+  in the **Systems** viewer tab; `system_finder.py` ([scan.md](scan.md)) can now propose them
   from homr's own staff detection, and it proposes into that same editor rather
   than writing anything. They live in `.systems.json` beside the song as
   fractions of page height, so they survive any change of resolution, and the app
@@ -148,7 +148,7 @@ state model are in `DESIGN.md`.
   went off on most scanned songs whose notes were right: homr marks a bar it is merely
   unsure of, on purpose, so `slur?`, `tie?` and the rest filled the share (Nälkämaan
   laulu 69%, all slur questions). The owner had it removed outright rather than
-  reweighted: the count, the Fix rows and the Scan panel's attribution below say enough.
+  reweighted: the count, the Fix rows and the Scan panel's attribution ([scan.md](scan.md)) say enough.
   **At the Scan stage health is not knowable**: it needs a cleaned score, which is two
   stages along. What the scan stage gets instead is **attribution**: once a song has been cleaned, `scan.findings_by_system`
   maps each finding's bar to the printed system it fell in, and the panel names the

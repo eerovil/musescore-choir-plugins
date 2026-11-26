@@ -191,7 +191,7 @@ reads the bar back out in the same numbering and the same tokens a fix writes, s
 is shown and what is recorded cannot drift apart, and `pipeline.record_slur_fix`
 appends the entry *and* applies it to the cleaned score. Both, because either alone
 fails: recorded-not-applied leaves the score looking unrepaired until the next clean,
-and applied-not-recorded is the hand edit this file exists to replace. Only the new
+and applied-not-recorded is the hand edit `fixes.json` exists to replace. Only the new
 entry is applied — `slur` is not idempotent, so replaying the file would double every
 earlier one. The wrong repair people reach for instead is an empty syllable (`_`) in
 the lyric editor, which patches the words while the score still says two attacks: the

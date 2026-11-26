@@ -1,7 +1,7 @@
 # Handoff — August 2026
 
 State of the workflow after taking two songs through it end to end. Durable
-knowledge lives in `CLAUDE.md` (how the code works) and
+knowledge lives in `CLAUDE.md` and `docs/guide/` (how the code works) and
 `fixtures/virta-venhetta-vie/STEPS.md` (how that song was produced, wrong turns
 included). This file is the session-specific part: where things stand and what is
 open.

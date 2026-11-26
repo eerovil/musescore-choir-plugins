@@ -209,7 +209,7 @@ Part of this repository's agent guide; the index is [CLAUDE.md](../../CLAUDE.md)
   released when it raises, and a 404 heartbeat stops it.
 - The **Fix** panel lists the health issues and the outstanding free-text fixes, and
   this pull request proposes it also **record a missing slur** — see the `fixes.json`
-  notes above for why that judgement can only come from a person. Two routes:
+  notes in [fixes-json.md](fixes-json.md) for why that judgement can only come from a person. Two routes:
   `GET /bar` hands back the singing parts, the bar count and one bar's chords in the
   numbering a recorded fix uses (`pipeline.bar_for_fix`), and `POST /fixes/slur`
   appends the entry and applies it (`pipeline.record_slur_fix`), then claims its own

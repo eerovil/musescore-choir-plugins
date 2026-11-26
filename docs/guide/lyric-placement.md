@@ -116,7 +116,7 @@ systems. `to_dict()` puts them on the wire for the browser; the CLI wrapper prin
   verse-1 lyrics first (for MusicXML imports with garbled OCR lyrics). A score with no
   verse 1 anywhere (words stored as verse 2) is read from verse 2 for verse 1.
 
-When editing this file, the export and import paths must stay symmetric — the
+When editing `lyric_txt.py`, the export and import paths must stay symmetric — the
 test `test_lyric_txt_spanner.py` asserts export→import round-trips back to the
 original XML. The `il-man il-ki-rii-vi-` case (where a word's syllables span a
 measure boundary) is covered by the two `measure_14` regression tests; the
