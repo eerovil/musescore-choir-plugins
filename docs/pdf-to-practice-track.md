@@ -96,9 +96,9 @@ The scan gets most notes right and some wrong; a practice track with a wrong not
   staff again with `from: ["measure:R"]`. Check lengths, time signatures and voltas in the
   cleaned `.mscx` too.
 - Check the play order, not only the signs: after `sing_song.py <slug> --no-sing`, the bundle's
-  `timing.json` `points` are `[seconds, bar index from 0, beat]` in played order. A repeat inside a
-  repeat with "1." and "2." endings around it (Karjalan laulu, eeron-omat-taskit #292:
-  `|: 1-6 :|` inside `|: 1-16 :|`) cannot be written with repeat signs: on the second time
+  `/var/tmp/practice-<slug>/timing.json` `points` are `[seconds, bar index from 0, beat]` in played order. A repeat inside a
+  repeat with endings (Karjalan laulu, eeron-omat-taskit #292: `|: 1-6 :|` inside
+  `|: 1-16 :|`, whose "1.-5." and "6." endings follow bar 11) cannot be written with repeat signs: on the second time
   through, MuseScore 3 skips the outer "1." ending whatever the repeat counts. Write it as
   D.C. al Coda with `marker` and `jump` entries (`play_repeats: true`) instead.
 - Triplets and slurs are what the scan gets wrong most. A slur decides which notes share a
