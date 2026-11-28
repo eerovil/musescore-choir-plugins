@@ -121,6 +121,19 @@ refuses it. Publishing keeps it.
 
     {"kind": "rehearsal", "measure": 17, "text": "B", "why": "the page prints B at bar 17"}
 
+`marker` and `jump` put a coda or segno sign and a D.C. or D.S. jump on a bar, where a
+repeat sign cannot give the order the page asks for (Karjalan laulu, eeron-omat-taskit
+#292: a repeat inside a repeat, whose second time MuseScore skips the outer "1." ending).
+`marker` `type` is `segno`, `coda`, `tocoda` or `fine`; `jump` `type` is `dc`,
+`dcalfine`, `dcalcoda`, `ds`, `dsalfine` or `dsalcoda`, and `play_repeats` plays the
+repeats again after the jump. A bar that already has a marker refuses a second marker,
+and one with a jump a second jump. The markers a jump needs come ahead of it in the
+list, or it refuses.
+
+    {"kind": "marker", "measure": 11, "type": "tocoda", "why": "6. verse leaves at 11"}
+    {"kind": "marker", "measure": 17, "type": "coda", "why": "the 6. verse ending"}
+    {"kind": "jump", "measure": 16, "type": "dcalcoda", "play_repeats": true, "why": "..."}
+
 `volta` (#319) puts the "1." and "2." brackets over an end repeat: "1." over the
 `bars` bars ending at `measure`, which must carry the end repeat, and "2." over the
 `second` bars after it (default 1). Only the "1." length changes what is played --
@@ -2069,6 +2082,98 @@ def _add_rehearsal(root: etree._Element, measure_no: int, text) -> str:
     return f"rehearsal mark {text!r} on staff {target.get('id')}"
 
 
+# The repeat texts MuseScore 3 writes, by the name a fix gives them: (style, text, label).
+MARKERS = {
+    "segno": ("Repeat Text Left", "Segno", "segno"),
+    "coda": ("Repeat Text Left", "Coda", "codab"),
+    "tocoda": ("Repeat Text Right", "To Coda", "coda"),
+    "fine": ("Repeat Text Right", "Fine", "fine"),
+}
+
+# The jumps, by name: (text, jumpTo, playUntil, continueAt). The labels are the
+# markers' above; "start" and "end" are the score's own ends.
+JUMPS = {
+    "dc": ("D.C.", "start", "end", ""),
+    "dcalfine": ("D.C. al Fine", "start", "fine", ""),
+    "dcalcoda": ("D.C. al Coda", "start", "coda", "codab"),
+    "ds": ("D.S.", "segno", "end", ""),
+    "dsalfine": ("D.S. al Fine", "segno", "fine", ""),
+    "dsalcoda": ("D.S. al Coda", "segno", "coda", "codab"),
+}
+
+
+def _repeat_text_bar(root: etree._Element, measure_no: int, tag: str) -> etree._Element:
+    """The bar a Marker or Jump goes in: bar ``measure_no`` of the top staff of a
+    part publishing keeps, as for a rehearsal mark. One already there, on any staff,
+    refuses."""
+    staves = _all_staves(root)
+    for staff in staves:
+        measures = staff.findall("Measure")
+        if measure_no < 1 or measure_no > len(measures):
+            raise FixError(f"staff {staff.get('id')} has no measure {measure_no}")
+        there = measures[measure_no - 1].find(tag)
+        if there is not None:
+            raise FixError(f"staff {staff.get('id')} already has {tag} "
+                           f"{there.findtext('text') or ''!r} here")
+    from src.score_export.score import _staff_ids, part_is_silent
+    score = root.find("Score")
+    music = {staff.get("id"): staff for staff in staves}
+    kept = {sid for part in (score.findall("Part") if score is not None else [])
+            if not part_is_silent(part, music) for sid in _staff_ids(part)}
+    target = next((staff for staff in staves if staff.get("id") in kept), staves[0])
+    return target.findall("Measure")[measure_no - 1]
+
+
+def _insert_before_voice(bar: etree._Element, element: etree._Element) -> None:
+    """MuseScore writes a Marker or Jump as a child of the bar, just ahead of its
+    first voice."""
+    voice = bar.find("voice")
+    bar.insert(list(bar).index(voice) if voice is not None else len(bar), element)
+
+
+def _add_marker(root: etree._Element, measure_no: int, name) -> str:
+    """Put a segno, coda, "To Coda" or Fine on bar ``measure_no``: a place a jump
+    goes to or plays until."""
+    if not isinstance(name, str) or name not in MARKERS:
+        raise FixError(f"'type' must be one of {', '.join(MARKERS)}, not {name!r}")
+    style, text, label = MARKERS[name]
+    bar = _repeat_text_bar(root, measure_no, "Marker")
+    mark = etree.Element("Marker")
+    etree.SubElement(mark, "style").text = style
+    etree.SubElement(mark, "text").text = text
+    etree.SubElement(mark, "label").text = label
+    _insert_before_voice(bar, mark)
+    return f"marker {text!r}"
+
+
+def _add_jump(root: etree._Element, measure_no: int, name, play_repeats: bool) -> str:
+    """Put a D.C. or D.S. jump at the end of bar ``measure_no``. ``play_repeats``
+    plays the repeats again after the jump, as a da capo that sings every verse
+    again needs; MuseScore otherwise takes each repeat once."""
+    if not isinstance(name, str) or name not in JUMPS:
+        raise FixError(f"'type' must be one of {', '.join(JUMPS)}, not {name!r}")
+    text, jump_to, play_until, continue_at = JUMPS[name]
+    if not isinstance(play_repeats, bool):
+        raise FixError(f"'play_repeats' must be true or false, not {play_repeats!r}")
+    labels = {m.findtext("label") for m in root.iter("Marker")}
+    for label in (jump_to, play_until, continue_at):
+        if label not in ("", "start", "end") and label not in labels:
+            name_of = next(n for n, (_s, _t, lab) in MARKERS.items() if lab == label)
+            raise FixError(f"no {name_of!r} marker on the score; put that `marker` "
+                           f"entry ahead of the jump")
+    bar = _repeat_text_bar(root, measure_no, "Jump")
+    jump = etree.Element("Jump")
+    etree.SubElement(jump, "style").text = "Repeat Text Right"
+    etree.SubElement(jump, "text").text = text
+    etree.SubElement(jump, "jumpTo").text = jump_to
+    etree.SubElement(jump, "playUntil").text = play_until
+    etree.SubElement(jump, "continueAt").text = continue_at
+    if play_repeats:
+        etree.SubElement(jump, "playRepeats").text = "1"
+    _insert_before_voice(bar, jump)
+    return f"jump {text!r}" + (", repeats played again" if play_repeats else "")
+
+
 def volta_spans(staff: etree._Element) -> List[Tuple[int, int]]:
     """Each volta on a staff as ``(first bar, last bar)``, bars numbered from 1."""
     spans = []
@@ -2773,6 +2878,18 @@ def apply_fixes(root: etree._Element, fixes: List[Dict]) -> List[str]:
                 what = _add_rehearsal(root, measure, fix.get("text"))
             except FixError as exc:
                 raise FixError(f"m{measure} (rehearsal): {exc}") from None
+            done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
+            continue
+        if kind in ("marker", "jump"):
+            measure = int(fix["measure"])
+            try:
+                if kind == "marker":
+                    what = _add_marker(root, measure, fix.get("type"))
+                else:
+                    what = _add_jump(root, measure, fix.get("type"),
+                                     fix.get("play_repeats", False))
+            except FixError as exc:
+                raise FixError(f"m{measure} ({kind}): {exc}") from None
             done.append(f"m{measure}: {what} — {fix.get('why', 'no reason recorded')}")
             continue
         if kind == "insbar":

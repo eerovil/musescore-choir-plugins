@@ -7,6 +7,10 @@ developers are listed under *Behind the scenes*.
 
 ## Unreleased
 
+- **Fixes**: `fixes.json` can write the coda, segno and D.C./D.S. signs a scan cannot
+  read: `marker` (segno, coda, To Coda, Fine) and `jump` (D.C. or D.S., al Fine or al
+  Coda, optionally playing the repeats again). A song whose repeats cannot be written as
+  repeat signs, such as a repeat inside a repeat, then plays in its printed order. (#515)
 - **Publish**: *Sing and publish* sings the parts and publishes the sung song to the
   chosen choir from the app, with progress and a Stop button; under *Pronunciation*,
   *▶ Try* sings a word's bar, or any part over any bars, and plays it in the page. A

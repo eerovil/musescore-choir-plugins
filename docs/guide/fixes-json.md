@@ -172,6 +172,21 @@ mark goes on the top staff of a part publish keeps (a rest-only click staff or a
 it, and the publish copy carries it into the MusicXML. A bar that already has one, on any staff,
 refuses. There is no Fix panel button for it (nor for most kinds): it is written into `fixes.json`.
 
+`marker` (`measure`, `type`: `segno`, `coda`, `tocoda` or `fine`) and `jump` (`measure`,
+`type`: `dc`, `dcalfine`, `dcalcoda`, `ds`, `dsalfine` or `dsalcoda`, and `play_repeats`)
+write the coda, segno and D.C./D.S. signs homr cannot read. They are for an order repeat
+signs cannot give: Karjalan laulu (eeron-omat-taskit #292) repeats bars 1-6 inside a repeat
+of 1-16 with "1.-5." and "6." endings, and on the second time through MuseScore 3 skips
+the outer "1." ending, whatever the repeat counts. Written as D.C. al Coda instead -- a
+`tocoda` marker where the last verse leaves, a `dcalcoda` jump with `play_repeats` at the
+end of the "1." ending, a `coda` marker on the "6." ending -- it plays as printed. Both go
+on the top staff a publish keeps, ahead of the bar's voice, where MuseScore writes them;
+a bar that already has a marker refuses a second marker, and one with a jump a second
+jump. The markers a jump needs (`segno`, `tocoda` and `coda`, `fine`) come ahead of it in
+the list, or it refuses. `play_repeats` (true or false) makes repeats play again after
+the jump; MuseScore otherwise plays each once. The song page sings verse n on the n-th
+time through a bar, so a jump that plays repeats again also sings their later verses.
+
 A further kind, `text`, is just a sentence (`{"kind": "text", "what": "..."}`), because
 most edits are none of the other three — turning a bar-length rest into a whole-bar
 rest came up on one song in one sitting and could not be written down at all. Nothing interprets it: `apply_fixes` steps over
