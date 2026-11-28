@@ -95,6 +95,12 @@ The scan gets most notes right and some wrong; a practice track with a wrong not
   Measure) takes three steps: `bar` every staff to the same rest, `barlen`, then `bar` each
   staff again with `from: ["measure:R"]`. Check lengths, time signatures and voltas in the
   cleaned `.mscx` too.
+- Check the play order, not only the signs: after `sing_song.py <slug> --no-sing`, the bundle's
+  `timing.json` `points` are `[seconds, bar index from 0, beat]` in played order. A repeat inside a
+  repeat with "1." and "2." endings around it (Karjalan laulu, eeron-omat-taskit #292:
+  `|: 1-6 :|` inside `|: 1-16 :|`) cannot be written with repeat signs: on the second time
+  through, MuseScore 3 skips the outer "1." ending whatever the repeat counts. Write it as
+  D.C. al Coda with `marker` and `jump` entries (`play_repeats: true`) instead.
 - Triplets and slurs are what the scan gets wrong most. A slur decides which notes share a
   syllable, so a missing one shows up as a lyric that does not fit (next step).
 
@@ -122,6 +128,10 @@ under each note of a slurred pair ("wa - ah") uses the slur for phrasing only: t
 
 A second verse under a repeated passage is a second entry with `"verse": 2`; the singer sings it
 on the second pass.
+
+A clean writes the score afresh **without the words**. After every `POST .../clean` that comes
+after this step, send the same lyrics JSON again (`songs/<slug>/lyrics.json` holds it). Otherwise
+`sing_song.py` stops with "<part> has no lyrics to sing" (#292).
 
 ## 5. Tempo, names, credits
 
