@@ -181,7 +181,9 @@ the outer "1." ending, whatever the repeat counts. Written as D.C. al Coda inste
 `tocoda` marker where the last verse leaves, a `dcalcoda` jump with `play_repeats` at the
 end of the "1." ending, a `coda` marker on the "6." ending -- it plays as printed. Both go
 on the top staff a publish keeps, ahead of the bar's voice, where MuseScore writes them;
-a bar that already has one refuses another. `play_repeats` makes repeats play again after
+a bar that already has a marker refuses a second marker, and one with a jump a second
+jump. The markers a jump needs (`segno`, `tocoda` and `coda`, `fine`) come ahead of it in
+the list, or it refuses. `play_repeats` (true or false) makes repeats play again after
 the jump; MuseScore otherwise plays each once. The song page sings verse n on the n-th
 time through a bar, so a jump that plays repeats again also sings their later verses.
 

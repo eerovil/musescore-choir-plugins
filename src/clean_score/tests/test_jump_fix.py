@@ -47,7 +47,9 @@ def test_a_marker_goes_in_the_top_staff_ahead_of_the_voice():
 
 def test_a_jump_carries_where_it_goes_and_plays_until():
     root = _score()
-    apply_fixes(root, [{"kind": "jump", "measure": 3, "type": "dcalcoda", "play_repeats": True}])
+    apply_fixes(root, [{"kind": "marker", "measure": 2, "type": "tocoda"},
+                       {"kind": "marker", "measure": 4, "type": "coda"},
+                       {"kind": "jump", "measure": 3, "type": "dcalcoda", "play_repeats": True}])
     jump = root.find("Score/Staff").findall("Measure")[2].find("Jump")
     assert [(c.tag, c.text) for c in jump] == [
         ("style", "Repeat Text Right"), ("text", "D.C. al Coda"), ("jumpTo", "start"),
@@ -61,9 +63,30 @@ def test_repeats_are_taken_once_unless_asked():
 
 
 @pytest.mark.parametrize("kind", ["marker", "jump"])
-def test_an_unknown_type_refuses(kind):
+@pytest.mark.parametrize("name", ["dalsegno", ["coda"], {"a": 1}, None])
+def test_an_unknown_type_refuses(kind, name):
     with pytest.raises(FixError, match=rf"m2 \({kind}\): 'type' must be one of"):
-        apply_fixes(_score(), [{"kind": kind, "measure": 2, "type": "dalsegno"}])
+        apply_fixes(_score(), [{"kind": kind, "measure": 2, "type": name}])
+
+
+@pytest.mark.parametrize("value", ["false", "0", 1, None])
+def test_play_repeats_must_be_true_or_false(value):
+    with pytest.raises(FixError, match="'play_repeats' must be true or false"):
+        apply_fixes(_score(), [{"kind": "jump", "measure": 2, "type": "dc", "play_repeats": value}])
+
+
+@pytest.mark.parametrize("name, missing", [("dcalcoda", "tocoda"), ("ds", "segno"),
+                                           ("dcalfine", "fine")])
+def test_a_jump_whose_marker_is_missing_refuses(name, missing):
+    with pytest.raises(FixError, match=f"no '{missing}' marker"):
+        apply_fixes(_score(), [{"kind": "jump", "measure": 3, "type": name}])
+
+
+def test_a_marker_and_a_jump_may_share_a_bar():
+    root = _score()
+    apply_fixes(root, [{"kind": "marker", "measure": 3, "type": "fine"},
+                       {"kind": "jump", "measure": 3, "type": "dcalfine"}])
+    assert [s[2] for s in _signs(root)] == ["Marker", "Jump"]
 
 
 def test_a_bar_that_already_has_one_refuses():
@@ -107,9 +130,17 @@ def test_musescore_plays_the_written_da_capo_al_coda(tmp_path):
     root = _plain_five_bars(tmp_path)
     assert _order(root, tmp_path) == [0, 1, 2, 3, 4]
     apply_fixes(root, [{"kind": "marker", "measure": 3, "type": "tocoda"},
-                       {"kind": "jump", "measure": 4, "type": "dcalcoda"},
-                       {"kind": "marker", "measure": 5, "type": "coda"}])
+                       {"kind": "marker", "measure": 5, "type": "coda"},
+                       {"kind": "jump", "measure": 4, "type": "dcalcoda"}])
     assert _order(root, tmp_path) == [0, 1, 2, 3, 0, 1, 2, 4]
+
+
+@pytest.mark.skipif(not _musescore(), reason="MUSESCORE_CLI_PATH is not set to a real binary")
+def test_musescore_plays_a_plain_da_capo_to_the_end(tmp_path):
+    """`dc` writes playUntil "end", MuseScore 3's own default for a D.C."""
+    root = _plain_five_bars(tmp_path)
+    apply_fixes(root, [{"kind": "jump", "measure": 3, "type": "dc"}])
+    assert _order(root, tmp_path) == [0, 1, 2, 0, 1, 2, 3, 4]
 
 
 @pytest.mark.skipif(not _musescore(), reason="MUSESCORE_CLI_PATH is not set to a real binary")
@@ -118,6 +149,6 @@ def test_play_repeats_sings_the_inner_repeat_again(tmp_path):
     root = _plain_five_bars(tmp_path)
     apply_fixes(root, [{"kind": "endrepeat", "measure": 2},
                        {"kind": "marker", "measure": 3, "type": "tocoda"},
-                       {"kind": "jump", "measure": 4, "type": "dcalcoda", "play_repeats": True},
-                       {"kind": "marker", "measure": 5, "type": "coda"}])
+                       {"kind": "marker", "measure": 5, "type": "coda"},
+                       {"kind": "jump", "measure": 4, "type": "dcalcoda", "play_repeats": True}])
     assert _order(root, tmp_path) == [0, 1, 0, 1, 2, 3, 0, 1, 0, 1, 2, 4]
